@@ -34,12 +34,42 @@ interface OrderItem {
   notes?: string;
 }
 
+interface SalesOrder {
+  id: string;
+  so_number: string;
+  customer_id: string;
+  customer_po_number: string;
+  customer_po_date: string;
+  customer_po_file_url?: string;
+  so_date: string;
+  expected_delivery_date?: string;
+  notes?: string;
+  status: string;
+  subtotal_amount: number;
+  tax_amount: number;
+  total_amount: number;
+  sales_order_items?: Array<{
+    id: string;
+    product_id: string;
+    quantity: number;
+    unit_price: number;
+    discount_percent: number;
+    discount_amount: number;
+    tax_percent: number;
+    tax_amount: number;
+    line_total: number;
+    item_delivery_date?: string;
+    notes?: string;
+  }>;
+}
+
 interface SalesOrderFormProps {
+  existingOrder?: SalesOrder;
   onSuccess: () => void;
   onCancel: () => void;
 }
 
-export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormProps) {
+export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: SalesOrderFormProps) {
   const { user } = useAuth();
   const { t } = useLanguage();
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -76,6 +106,41 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
     fetchCustomers();
     fetchProducts();
   }, []);
+
+  useEffect(() => {
+    if (existingOrder) {
+      setFormData({
+        customer_id: existingOrder.customer_id,
+        customer_po_number: existingOrder.customer_po_number,
+        customer_po_date: existingOrder.customer_po_date,
+        so_date: existingOrder.so_date,
+        expected_delivery_date: existingOrder.expected_delivery_date || '',
+        notes: existingOrder.notes || '',
+      });
+
+      if (existingOrder.sales_order_items && existingOrder.sales_order_items.length > 0) {
+        const mappedItems: OrderItem[] = existingOrder.sales_order_items.map(item => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          discount_percent: item.discount_percent,
+          discount_amount: item.discount_amount,
+          tax_percent: item.tax_percent,
+          tax_amount: item.tax_amount,
+          line_total: item.line_total,
+          item_delivery_date: item.item_delivery_date || '',
+          notes: item.notes || '',
+        }));
+        setItems(mappedItems);
+
+        mappedItems.forEach(item => {
+          if (item.product_id) {
+            fetchStockInfo(item.product_id);
+          }
+        });
+      }
+    }
+  }, [existingOrder]);
 
   const fetchCustomers = async () => {
     try {
@@ -263,7 +328,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
     try {
       setLoading(true);
 
-      let poFileUrl = null;
+      let poFileUrl = existingOrder?.customer_po_file_url || null;
       if (poFile) {
         poFileUrl = await uploadPoFile();
       }
@@ -272,53 +337,109 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
       const tax = items.reduce((sum, item) => sum + item.tax_amount, 0);
       const total = items.reduce((sum, item) => sum + item.line_total, 0);
 
-      const { data: soData, error: soError } = await supabase
-        .from('sales_orders')
-        .insert({
-          so_number: '',
-          customer_id: formData.customer_id,
-          customer_po_number: formData.customer_po_number,
-          customer_po_date: formData.customer_po_date,
-          customer_po_file_url: poFileUrl,
-          so_date: formData.so_date,
-          expected_delivery_date: formData.expected_delivery_date || null,
-          notes: formData.notes || null,
-          status: submitForApproval ? 'pending_approval' : 'draft',
-          subtotal_amount: subtotal,
-          tax_amount: tax,
-          total_amount: total,
-          created_by: user?.id,
-        })
-        .select()
-        .single();
+      if (existingOrder) {
+        // Update existing order
+        const { error: soError } = await supabase
+          .from('sales_orders')
+          .update({
+            customer_id: formData.customer_id,
+            customer_po_number: formData.customer_po_number,
+            customer_po_date: formData.customer_po_date,
+            customer_po_file_url: poFileUrl,
+            so_date: formData.so_date,
+            expected_delivery_date: formData.expected_delivery_date || null,
+            notes: formData.notes || null,
+            status: submitForApproval ? 'pending_approval' : 'draft',
+            subtotal_amount: subtotal,
+            tax_amount: tax,
+            total_amount: total,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingOrder.id);
 
-      if (soError) throw soError;
+        if (soError) throw soError;
 
-      const itemsToInsert = items.map(item => ({
-        sales_order_id: soData.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        discount_percent: item.discount_percent,
-        discount_amount: item.discount_amount,
-        tax_percent: item.tax_percent,
-        tax_amount: item.tax_amount,
-        line_total: item.line_total,
-        item_delivery_date: item.item_delivery_date || null,
-        notes: item.notes || null,
-      }));
+        // Delete old items
+        const { error: deleteError } = await supabase
+          .from('sales_order_items')
+          .delete()
+          .eq('sales_order_id', existingOrder.id);
 
-      const { error: itemsError } = await supabase
-        .from('sales_order_items')
-        .insert(itemsToInsert);
+        if (deleteError) throw deleteError;
 
-      if (itemsError) throw itemsError;
+        // Insert new items
+        const itemsToInsert = items.map(item => ({
+          sales_order_id: existingOrder.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          discount_percent: item.discount_percent,
+          discount_amount: item.discount_amount,
+          tax_percent: item.tax_percent,
+          tax_amount: item.tax_amount,
+          line_total: item.line_total,
+          item_delivery_date: item.item_delivery_date || null,
+          notes: item.notes || null,
+        }));
 
-      alert(`Sales order created successfully${submitForApproval ? ' and submitted for approval' : ''}!`);
+        const { error: itemsError } = await supabase
+          .from('sales_order_items')
+          .insert(itemsToInsert);
+
+        if (itemsError) throw itemsError;
+
+        alert(`Sales order updated successfully${submitForApproval ? ' and submitted for approval' : ''}!`);
+      } else {
+        // Create new order
+        const { data: soData, error: soError } = await supabase
+          .from('sales_orders')
+          .insert({
+            so_number: '',
+            customer_id: formData.customer_id,
+            customer_po_number: formData.customer_po_number,
+            customer_po_date: formData.customer_po_date,
+            customer_po_file_url: poFileUrl,
+            so_date: formData.so_date,
+            expected_delivery_date: formData.expected_delivery_date || null,
+            notes: formData.notes || null,
+            status: submitForApproval ? 'pending_approval' : 'draft',
+            subtotal_amount: subtotal,
+            tax_amount: tax,
+            total_amount: total,
+            created_by: user?.id,
+          })
+          .select()
+          .single();
+
+        if (soError) throw soError;
+
+        const itemsToInsert = items.map(item => ({
+          sales_order_id: soData.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          discount_percent: item.discount_percent,
+          discount_amount: item.discount_amount,
+          tax_percent: item.tax_percent,
+          tax_amount: item.tax_amount,
+          line_total: item.line_total,
+          item_delivery_date: item.item_delivery_date || null,
+          notes: item.notes || null,
+        }));
+
+        const { error: itemsError } = await supabase
+          .from('sales_order_items')
+          .insert(itemsToInsert);
+
+        if (itemsError) throw itemsError;
+
+        alert(`Sales order created successfully${submitForApproval ? ' and submitted for approval' : ''}!`);
+      }
+
       onSuccess();
     } catch (error: any) {
-      console.error('Error creating sales order:', error.message);
-      alert('Failed to create sales order: ' + error.message);
+      console.error(existingOrder ? 'Error updating sales order:' : 'Error creating sales order:', error.message);
+      alert((existingOrder ? 'Failed to update sales order: ' : 'Failed to create sales order: ') + error.message);
     } finally {
       setLoading(false);
     }

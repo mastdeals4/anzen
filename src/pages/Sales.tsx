@@ -25,6 +25,8 @@ interface SalesInvoice {
   payment_terms_days: number | null;
   notes: string | null;
   linked_challan_ids?: string[] | null;
+  paid_amount?: number;
+  balance_amount?: number;
   customers?: {
     company_name: string;
     gst_vat_type: string;
@@ -150,7 +152,23 @@ export function Sales() {
         .order('invoice_date', { ascending: false });
 
       if (error) throw error;
-      setInvoices(data || []);
+
+      // Calculate paid amount and balance for each invoice
+      const invoicesWithPayments = await Promise.all((data || []).map(async (inv) => {
+        const { data: paidData } = await supabase
+          .rpc('get_invoice_paid_amount', { p_invoice_id: inv.id });
+
+        const paidAmount = paidData || 0;
+        const balance = inv.total_amount - paidAmount;
+
+        return {
+          ...inv,
+          paid_amount: paidAmount,
+          balance_amount: balance
+        };
+      }));
+
+      setInvoices(invoicesWithPayments);
     } catch (error) {
       console.error('Error loading invoices:', error);
     } finally {
@@ -713,27 +731,43 @@ export function Sales() {
     },
     {
       key: 'total_amount',
-      label: 'Amount',
-      render: (inv: SalesInvoice) => `Rp ${inv.total_amount.toLocaleString('id-ID')}`
+      label: 'Total Amount',
+      render: (inv: SalesInvoice) => (
+        <span className="font-medium">Rp {inv.total_amount.toLocaleString('id-ID')}</span>
+      )
+    },
+    {
+      key: 'paid_amount',
+      label: 'Paid Amount',
+      render: (inv: SalesInvoice) => (
+        <span className="text-green-600 font-medium">
+          Rp {(inv.paid_amount || 0).toLocaleString('id-ID')}
+        </span>
+      )
+    },
+    {
+      key: 'balance_amount',
+      label: 'Balance',
+      render: (inv: SalesInvoice) => (
+        <span className={`font-medium ${
+          (inv.balance_amount || 0) === 0 ? 'text-gray-400' : 'text-orange-600'
+        }`}>
+          Rp {(inv.balance_amount || 0).toLocaleString('id-ID')}
+        </span>
+      )
     },
     {
       key: 'payment_status',
-      label: 'Payment',
+      label: 'Payment Status',
       render: (inv: SalesInvoice) => (
-        <select
-          value={inv.payment_status}
-          onChange={(e) => updatePaymentStatus(inv, e.target.value as any)}
-          onClick={(e) => e.stopPropagation()}
-          className={`px-2 py-1 rounded text-xs font-medium border-0 ${
-            inv.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
-            inv.payment_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-            'bg-red-100 text-red-800'
-          }`}
-        >
-          <option value="pending">Pending</option>
-          <option value="partial">Partial</option>
-          <option value="paid">Paid</option>
-        </select>
+        <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+          inv.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
+          inv.payment_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+          'bg-red-100 text-red-800'
+        }`}>
+          {inv.payment_status === 'pending' ? 'Unpaid' :
+           inv.payment_status === 'partial' ? 'Partially Paid' : 'Paid'}
+        </span>
       )
     },
   ];

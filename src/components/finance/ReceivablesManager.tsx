@@ -45,6 +45,8 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
+  const [customerInvoices, setCustomerInvoices] = useState<SalesInvoice[]>([]);
+  const [selectedAllocations, setSelectedAllocations] = useState<{[key: string]: number}>({});
   const [formData, setFormData] = useState({
     payment_number: '',
     payment_date: new Date().toISOString().split('T')[0],
@@ -84,11 +86,9 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
       if (banksRes.error) throw banksRes.error;
 
       const invoicesWithPaid = await Promise.all((invoicesRes.data || []).map(async (inv) => {
-        const { data: pymts } = await supabase
-          .from('customer_payments')
-          .select('amount')
-          .eq('invoice_id', inv.id);
-        const paidAmount = pymts?.reduce((sum, p) => sum + Number(p.amount), 0) || 0;
+        const { data: paidData } = await supabase
+          .rpc('get_invoice_paid_amount', { p_invoice_id: inv.id });
+        const paidAmount = paidData || 0;
         return { ...inv, paid_amount: paidAmount };
       }));
 
@@ -102,7 +102,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     }
   };
 
-  const handleRecordPayment = (invoice: SalesInvoice) => {
+  const handleRecordPayment = async (invoice: SalesInvoice) => {
     setSelectedInvoice(invoice);
     const remainingAmount = invoice.total_amount - (invoice.paid_amount || 0);
     setFormData({
@@ -110,6 +110,36 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
       payment_number: `PAY-${Date.now()}`,
       amount: remainingAmount,
     });
+
+    // Load all unpaid invoices for this customer
+    try {
+      const { data: custInvoices, error } = await supabase
+        .from('sales_invoices')
+        .select('*')
+        .eq('customer_id', invoice.customer_id)
+        .in('payment_status', ['pending', 'partial'])
+        .order('invoice_date', { ascending: true });
+
+      if (error) throw error;
+
+      // Calculate paid amounts
+      const invoicesWithBalance = await Promise.all((custInvoices || []).map(async (inv) => {
+        const { data: paidData } = await supabase
+          .rpc('get_invoice_paid_amount', { p_invoice_id: inv.id });
+        const paidAmount = paidData || 0;
+        return { ...inv, paid_amount: paidAmount };
+      }));
+
+      setCustomerInvoices(invoicesWithBalance);
+
+      // Pre-select the clicked invoice
+      setSelectedAllocations({
+        [invoice.id]: remainingAmount
+      });
+    } catch (error) {
+      console.error('Error loading customer invoices:', error);
+    }
+
     setModalOpen(true);
   };
 
@@ -117,16 +147,29 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     e.preventDefault();
     if (!selectedInvoice) return;
 
+    // Validation
+    const totalAllocated = Object.values(selectedAllocations).reduce((sum, amount) => sum + amount, 0);
+    if (totalAllocated > formData.amount) {
+      alert('Total allocated amount cannot exceed payment amount');
+      return;
+    }
+
+    if (totalAllocated === 0) {
+      alert('Please allocate the payment to at least one invoice');
+      return;
+    }
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      const { error } = await supabase
+      // 1. Insert payment record
+      const { data: payment, error: paymentError } = await supabase
         .from('customer_payments')
         .insert([{
           payment_number: formData.payment_number,
           customer_id: selectedInvoice.customer_id,
-          invoice_id: selectedInvoice.id,
+          invoice_id: null,
           payment_date: formData.payment_date,
           amount: formData.amount,
           payment_method: formData.payment_method,
@@ -134,15 +177,35 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
           reference_number: formData.reference_number || null,
           notes: formData.notes || null,
           created_by: user.id,
-        }]);
+        }])
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (paymentError) throw paymentError;
+
+      // 2. Insert allocation records
+      const allocations = Object.entries(selectedAllocations)
+        .filter(([_, amount]) => amount > 0)
+        .map(([invoiceId, amount]) => ({
+          invoice_id: invoiceId,
+          payment_id: payment.id,
+          allocated_amount: amount,
+          created_by: user.id,
+        }));
+
+      const { error: allocError } = await supabase
+        .from('invoice_payment_allocations')
+        .insert(allocations);
+
+      if (allocError) throw allocError;
 
       setModalOpen(false);
       setSelectedInvoice(null);
+      setCustomerInvoices([]);
+      setSelectedAllocations({});
       resetForm();
       loadData();
-      alert('Payment recorded successfully!');
+      alert('Payment recorded and allocated successfully!');
     } catch (error: any) {
       console.error('Error recording payment:', error);
       alert(`Failed to record payment: ${error.message}`);
@@ -342,32 +405,19 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         onClose={() => {
           setModalOpen(false);
           setSelectedInvoice(null);
+          setCustomerInvoices([]);
+          setSelectedAllocations({});
           resetForm();
         }}
         title="Record Customer Payment"
+        maxWidth="max-w-4xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           {selectedInvoice && (
             <div className="bg-blue-50 p-4 rounded-lg">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div>
-                  <span className="text-gray-600">Invoice:</span>
-                  <span className="ml-2 font-medium">{selectedInvoice.invoice_number}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Customer:</span>
-                  <span className="ml-2 font-medium">{selectedInvoice.customers?.company_name}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Invoice Amount:</span>
-                  <span className="ml-2 font-medium">Rp {selectedInvoice.total_amount.toLocaleString('id-ID')}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Remaining:</span>
-                  <span className="ml-2 font-medium text-red-600">
-                    Rp {(selectedInvoice.total_amount - (selectedInvoice.paid_amount || 0)).toLocaleString('id-ID')}
-                  </span>
-                </div>
+              <div className="text-sm">
+                <div className="font-medium text-lg mb-2">{selectedInvoice.customers?.company_name}</div>
+                <div className="text-gray-600">Recording payment for customer invoices</div>
               </div>
             </div>
           )}
@@ -464,12 +514,104 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
             </div>
           </div>
 
+          {/* Invoice Allocation Section */}
+          {customerInvoices.length > 0 && (
+            <div className="border rounded-lg p-4 space-y-3 max-h-96 overflow-y-auto">
+              <h3 className="font-medium text-gray-900">Allocate Payment to Invoices</h3>
+              <p className="text-sm text-gray-600">Select invoices and enter amount to allocate to each</p>
+
+              {customerInvoices.map((invoice) => {
+                const balance = invoice.total_amount - (invoice.paid_amount || 0);
+                const isSelected = selectedAllocations[invoice.id] !== undefined;
+                const allocatedAmount = selectedAllocations[invoice.id] || 0;
+
+                return (
+                  <div key={invoice.id} className="border rounded p-3 space-y-2">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedAllocations(prev => ({
+                                ...prev,
+                                [invoice.id]: Math.min(balance, formData.amount - Object.values(selectedAllocations).reduce((a,b) => a+b, 0))
+                              }));
+                            } else {
+                              const newAllocations = {...selectedAllocations};
+                              delete newAllocations[invoice.id];
+                              setSelectedAllocations(newAllocations);
+                            }
+                          }}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{invoice.invoice_number}</div>
+                          <div className="text-xs text-gray-600">Date: {new Date(invoice.invoice_date).toLocaleDateString()}</div>
+                          <div className="text-xs mt-1">Total: Rp {invoice.total_amount.toLocaleString('id-ID')}</div>
+                          <div className="text-xs text-orange-600 font-medium">Balance: Rp {balance.toLocaleString('id-ID')}</div>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <div className="ml-3 w-32">
+                          <input
+                            type="number"
+                            value={allocatedAmount || ''}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value) || 0;
+                              if (value > balance) {
+                                alert('Cannot allocate more than balance');
+                                return;
+                              }
+                              setSelectedAllocations(prev => ({
+                                ...prev,
+                                [invoice.id]: value
+                              }));
+                            }}
+                            className="w-full px-2 py-1 border rounded text-sm"
+                            placeholder="Amount"
+                            min="0"
+                            max={balance}
+                            step="0.01"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Allocation Summary */}
+              <div className="border-t pt-3 space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium">Payment Amount:</span>
+                  <span className="font-bold">Rp {formData.amount.toLocaleString('id-ID')}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Allocated:</span>
+                  <span className={Object.values(selectedAllocations).reduce((a,b) => a+b, 0) > formData.amount ? 'text-red-600 font-bold' : 'text-green-600'}>
+                    Rp {Object.values(selectedAllocations).reduce((a,b) => a+b, 0).toLocaleString('id-ID')}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Unallocated:</span>
+                  <span className="text-gray-600">
+                    Rp {(formData.amount - Object.values(selectedAllocations).reduce((a,b) => a+b, 0)).toLocaleString('id-ID')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end gap-3 pt-4">
             <button
               type="button"
               onClick={() => {
                 setModalOpen(false);
                 setSelectedInvoice(null);
+                setCustomerInvoices([]);
+                setSelectedAllocations({});
                 resetForm();
               }}
               className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
@@ -479,6 +621,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
             <button
               type="submit"
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              disabled={Object.values(selectedAllocations).reduce((a,b) => a+b, 0) === 0}
             >
               Record Payment
             </button>

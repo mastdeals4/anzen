@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Layout } from '../components/Layout';
-import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck } from 'lucide-react';
+import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
 
@@ -60,7 +60,7 @@ interface SalesOrder {
 }
 
 export default function SalesOrders() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<SalesOrder[]>([]);
@@ -71,6 +71,12 @@ export default function SalesOrders() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<SalesOrder | null>(null);
+  const [editingOrder, setEditingOrder] = useState<SalesOrder | null>(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [orderToReject, setOrderToReject] = useState<string | null>(null);
+  const [showPOModal, setShowPOModal] = useState(false);
+  const [selectedPOUrl, setSelectedPOUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSalesOrders();
@@ -244,6 +250,88 @@ export default function SalesOrders() {
     setShowViewModal(true);
   };
 
+  const handleEditOrder = (order: SalesOrder) => {
+    setEditingOrder(order);
+    setShowCreateModal(true);
+  };
+
+  const handleApproveOrder = async (orderId: string) => {
+    if (!confirm('Approve this sales order? Stock will be reserved automatically.')) return;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      // Update order status to approved
+      const { error: updateError } = await supabase
+        .from('sales_orders')
+        .update({
+          status: 'approved',
+          approved_by: user.id,
+          approved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId);
+
+      if (updateError) throw updateError;
+
+      // Call stock reservation function
+      const { error: reserveError } = await supabase
+        .rpc('reserve_stock_for_sales_order', { p_sales_order_id: orderId });
+
+      if (reserveError) {
+        console.error('Error reserving stock:', reserveError);
+        alert('Order approved but stock reservation failed. Please check inventory.');
+      } else {
+        alert('Sales order approved and stock reserved successfully!');
+      }
+
+      fetchSalesOrders();
+    } catch (error: any) {
+      console.error('Error approving order:', error.message);
+      alert('Failed to approve order');
+    }
+  };
+
+  const handleRejectOrder = async () => {
+    if (!orderToReject || !rejectionReason.trim()) {
+      alert('Please enter a rejection reason');
+      return;
+    }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('sales_orders')
+        .update({
+          status: 'rejected',
+          rejected_by: user.id,
+          rejected_at: new Date().toISOString(),
+          rejection_reason: rejectionReason,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderToReject);
+
+      if (error) throw error;
+
+      alert('Sales order rejected');
+      setShowRejectModal(false);
+      setRejectionReason('');
+      setOrderToReject(null);
+      fetchSalesOrders();
+    } catch (error: any) {
+      console.error('Error rejecting order:', error.message);
+      alert('Failed to reject order');
+    }
+  };
+
+  const handleViewPO = (poUrl: string) => {
+    setSelectedPOUrl(poUrl);
+    setShowPOModal(true);
+  };
+
   const stats = {
     total: salesOrders.length,
     pending_approval: salesOrders.filter(o => o.status === 'pending_approval').length,
@@ -384,6 +472,45 @@ export default function SalesOrders() {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
+                        {order.customer_po_file_url && (
+                          <button
+                            onClick={() => handleViewPO(order.customer_po_file_url!)}
+                            className="text-purple-600 hover:text-purple-800"
+                            title="View Customer PO"
+                          >
+                            <Paperclip className="w-4 h-4" />
+                          </button>
+                        )}
+                        {(order.status === 'draft' || order.status === 'rejected') && (
+                          <button
+                            onClick={() => handleEditOrder(order)}
+                            className="text-indigo-600 hover:text-indigo-800"
+                            title="Edit"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                        )}
+                        {order.status === 'pending_approval' && profile?.role === 'admin' && (
+                          <>
+                            <button
+                              onClick={() => handleApproveOrder(order.id)}
+                              className="text-green-600 hover:text-green-800"
+                              title="Approve Order"
+                            >
+                              <CheckCircle className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setOrderToReject(order.id);
+                                setShowRejectModal(true);
+                              }}
+                              className="text-red-600 hover:text-red-800"
+                              title="Reject Order"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
                         {order.status === 'draft' && (
                           <>
                             <button
@@ -424,16 +551,24 @@ export default function SalesOrders() {
       {showCreateModal && (
         <Modal
           isOpen={showCreateModal}
-          onClose={() => setShowCreateModal(false)}
-          title="Create Sales Order"
+          onClose={() => {
+            setShowCreateModal(false);
+            setEditingOrder(null);
+          }}
+          title={editingOrder ? "Edit Sales Order" : "Create Sales Order"}
           maxWidth="max-w-6xl"
         >
           <SalesOrderForm
+            existingOrder={editingOrder || undefined}
             onSuccess={() => {
               setShowCreateModal(false);
+              setEditingOrder(null);
               fetchSalesOrders();
             }}
-            onCancel={() => setShowCreateModal(false)}
+            onCancel={() => {
+              setShowCreateModal(false);
+              setEditingOrder(null);
+            }}
           />
         </Modal>
       )}
@@ -520,6 +655,99 @@ export default function SalesOrders() {
                 <p className="text-sm text-red-900 mt-1">{selectedOrder.rejection_reason}</p>
               </div>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {showRejectModal && (
+        <Modal
+          isOpen={showRejectModal}
+          onClose={() => {
+            setShowRejectModal(false);
+            setRejectionReason('');
+            setOrderToReject(null);
+          }}
+          title="Reject Sales Order"
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Rejection Reason <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                rows={4}
+                className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="Enter reason for rejecting this sales order..."
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setShowRejectModal(false);
+                  setRejectionReason('');
+                  setOrderToReject(null);
+                }}
+                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRejectOrder}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                disabled={!rejectionReason.trim()}
+              >
+                Reject Order
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showPOModal && selectedPOUrl && (
+        <Modal
+          isOpen={showPOModal}
+          onClose={() => {
+            setShowPOModal(false);
+            setSelectedPOUrl(null);
+          }}
+          title="Customer Purchase Order"
+          maxWidth="max-w-4xl"
+        >
+          <div className="space-y-4">
+            {selectedPOUrl.toLowerCase().endsWith('.pdf') ? (
+              <iframe
+                src={selectedPOUrl}
+                className="w-full h-[600px] border rounded-lg"
+                title="Customer PO Document"
+              />
+            ) : (
+              <img
+                src={selectedPOUrl}
+                alt="Customer PO Document"
+                className="w-full h-auto rounded-lg"
+              />
+            )}
+            <div className="flex gap-2 justify-end">
+              <a
+                href={selectedPOUrl}
+                download
+                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+              >
+                <Download className="w-4 h-4" />
+                Download
+              </a>
+              <button
+                onClick={() => {
+                  setShowPOModal(false);
+                  setSelectedPOUrl(null);
+                }}
+                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </Modal>
       )}
