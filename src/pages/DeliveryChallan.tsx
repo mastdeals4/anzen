@@ -7,7 +7,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, Eye, Edit, FileText } from 'lucide-react';
+import { Plus, Trash2, Eye, Edit, FileText, CheckCircle, XCircle } from 'lucide-react';
 
 interface DeliveryChallan {
   id: string;
@@ -93,6 +93,9 @@ export function DeliveryChallan() {
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [editingChallan, setEditingChallan] = useState<DeliveryChallan | null>(null);
   const [originalItems, setOriginalItems] = useState<ChallanItem[]>([]);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [challanToReject, setChallanToReject] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     challan_number: '',
     customer_id: '',
@@ -545,6 +548,65 @@ export function DeliveryChallan() {
     }
   };
 
+  const handleApproveChallan = async (challanId: string) => {
+    if (!confirm('Approve this Delivery Challan? It will be available for invoice creation.')) return;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('delivery_challans')
+        .update({
+          approval_status: 'approved',
+          approved_by: user.id,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', challanId);
+
+      if (error) throw error;
+
+      alert('Delivery Challan approved successfully!');
+      loadChallans();
+    } catch (error: any) {
+      console.error('Error approving challan:', error.message);
+      alert('Failed to approve challan');
+    }
+  };
+
+  const handleRejectChallan = async () => {
+    if (!challanToReject || !rejectionReason.trim()) {
+      alert('Please enter a rejection reason');
+      return;
+    }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('delivery_challans')
+        .update({
+          approval_status: 'rejected',
+          rejected_by: user.id,
+          rejected_at: new Date().toISOString(),
+          rejection_reason: rejectionReason
+        })
+        .eq('id', challanToReject);
+
+      if (error) throw error;
+
+      alert('Delivery Challan rejected');
+      setShowRejectModal(false);
+      setRejectionReason('');
+      setChallanToReject(null);
+      loadChallans();
+    } catch (error: any) {
+      console.error('Error rejecting challan:', error.message);
+      alert('Failed to reject challan');
+    }
+  };
+
   const resetForm = () => {
     setEditingChallan(null);
     setOriginalItems([]);
@@ -584,7 +646,7 @@ export function DeliveryChallan() {
     },
     {
       key: 'approval_status',
-      label: 'Status',
+      label: 'Status / Approval',
       render: (challan: DeliveryChallan) => {
         const statusColors = {
           pending_approval: 'bg-yellow-100 text-yellow-800',
@@ -597,9 +659,42 @@ export function DeliveryChallan() {
           rejected: 'Rejected'
         };
         return (
-          <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[challan.approval_status]}`}>
-            {statusLabels[challan.approval_status]}
-          </span>
+          <div className="flex items-center justify-center gap-2">
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[challan.approval_status]}`}>
+              {statusLabels[challan.approval_status]}
+            </span>
+            {challan.approval_status === 'pending_approval' && profile?.role === 'admin' && (
+              <div className="flex items-center gap-1 ml-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleApproveChallan(challan.id);
+                  }}
+                  className="p-2 bg-green-100 hover:bg-green-200 rounded-lg transition-colors"
+                  title="Approve Delivery Challan"
+                >
+                  <CheckCircle className="w-6 h-6 text-green-600" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChallanToReject(challan.id);
+                    setShowRejectModal(true);
+                  }}
+                  className="p-2 bg-red-100 hover:bg-red-200 rounded-lg transition-colors"
+                  title="Reject Delivery Challan"
+                >
+                  <XCircle className="w-6 h-6 text-red-600" />
+                </button>
+              </div>
+            )}
+            {challan.approval_status === 'approved' && (
+              <CheckCircle className="w-5 h-5 text-green-600 ml-2" title="Approved" />
+            )}
+            {challan.approval_status === 'rejected' && (
+              <XCircle className="w-5 h-5 text-red-600 ml-2" title="Rejected" />
+            )}
+          </div>
         );
       }
     },
@@ -1023,6 +1118,52 @@ export function DeliveryChallan() {
             onClose={() => setViewModalOpen(false)}
             companySettings={companySettings}
           />
+        )}
+
+        {showRejectModal && (
+          <Modal
+            isOpen={showRejectModal}
+            onClose={() => {
+              setShowRejectModal(false);
+              setRejectionReason('');
+              setChallanToReject(null);
+            }}
+            title="Reject Delivery Challan"
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Rejection Reason <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  rows={4}
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  placeholder="Enter reason for rejecting this delivery challan..."
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => {
+                    setShowRejectModal(false);
+                    setRejectionReason('');
+                    setChallanToReject(null);
+                  }}
+                  className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRejectChallan}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                  disabled={!rejectionReason.trim()}
+                >
+                  Reject Challan
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
       </div>
     </Layout>

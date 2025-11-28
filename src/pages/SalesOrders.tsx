@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Layout } from '../components/Layout';
-import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download } from 'lucide-react';
+import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download, ExternalLink } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
 
@@ -421,7 +421,7 @@ export default function SalesOrders() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">SO Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivery Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status / Approval</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
@@ -461,7 +461,40 @@ export default function SalesOrders() {
                       Rp {order.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {getStatusBadge(order.status)}
+                      <div className="flex items-center justify-center gap-2">
+                        {getStatusBadge(order.status)}
+                        {order.status === 'pending_approval' && profile?.role === 'admin' && (
+                          <div className="flex items-center gap-1 ml-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleApproveOrder(order.id);
+                              }}
+                              className="p-2 bg-green-100 hover:bg-green-200 rounded-lg transition-colors"
+                              title="Approve Order"
+                            >
+                              <CheckCircle className="w-6 h-6 text-green-600" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOrderToReject(order.id);
+                                setShowRejectModal(true);
+                              }}
+                              className="p-2 bg-red-100 hover:bg-red-200 rounded-lg transition-colors"
+                              title="Reject Order"
+                            >
+                              <XCircle className="w-6 h-6 text-red-600" />
+                            </button>
+                          </div>
+                        )}
+                        {order.status === 'approved' && (
+                          <CheckCircle className="w-5 h-5 text-green-600 ml-2" title="Approved" />
+                        )}
+                        {order.status === 'rejected' && (
+                          <XCircle className="w-5 h-5 text-red-600 ml-2" title="Rejected" />
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-2">
@@ -489,27 +522,6 @@ export default function SalesOrders() {
                           >
                             <Edit className="w-4 h-4" />
                           </button>
-                        )}
-                        {order.status === 'pending_approval' && profile?.role === 'admin' && (
-                          <>
-                            <button
-                              onClick={() => handleApproveOrder(order.id)}
-                              className="text-green-600 hover:text-green-800"
-                              title="Approve Order"
-                            >
-                              <CheckCircle className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                setOrderToReject(order.id);
-                                setShowRejectModal(true);
-                              }}
-                              className="text-red-600 hover:text-red-800"
-                              title="Reject Order"
-                            >
-                              <XCircle className="w-4 h-4" />
-                            </button>
-                          </>
                         )}
                         {order.status === 'draft' && (
                           <>
@@ -713,40 +725,23 @@ export default function SalesOrders() {
             setSelectedPOUrl(null);
           }}
           title="Customer Purchase Order"
-          maxWidth="max-w-4xl"
         >
-          <div className="space-y-4">
-            {selectedPOUrl.toLowerCase().endsWith('.pdf') ? (
-              <iframe
-                src={selectedPOUrl}
-                className="w-full h-[600px] border rounded-lg"
-                title="Customer PO Document"
-              />
-            ) : (
-              <img
-                src={selectedPOUrl}
-                alt="Customer PO Document"
-                className="w-full h-auto rounded-lg"
-              />
-            )}
-            <div className="flex gap-2 justify-end">
-              <a
-                href={selectedPOUrl}
-                download
-                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-              >
-                <Download className="w-4 h-4" />
-                Download
-              </a>
-              <button
-                onClick={() => {
-                  setShowPOModal(false);
-                  setSelectedPOUrl(null);
-                }}
-                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
-              >
-                Close
-              </button>
+          <div className="space-y-3">
+            <a
+              href={selectedPOUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition"
+            >
+              <FileText className="w-6 h-6 text-blue-600 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900">Customer Purchase Order</p>
+                <p className="text-xs text-gray-500 mt-1">Click to open in new tab</p>
+              </div>
+              <ExternalLink className="w-5 h-5 text-gray-400 flex-shrink-0" />
+            </a>
+            <div className="text-xs text-gray-500 text-center pt-2">
+              Document opens in a new browser tab
             </div>
           </div>
         </Modal>

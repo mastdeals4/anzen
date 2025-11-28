@@ -21,6 +21,7 @@ import { GmailCallback } from './pages/GmailCallback';
 import SalesOrders from './pages/SalesOrders';
 import ImportRequirements from './pages/ImportRequirements';
 import { AgeingReport } from './pages/reports/AgeingReport';
+import { ApprovalNotifications } from './components/ApprovalNotifications';
 import { initializeNotificationChecks } from './utils/notifications';
 
 function AppContent() {
@@ -95,7 +96,12 @@ function AppContent() {
     }
   };
 
-  return renderPage();
+  return (
+    <>
+      {renderPage()}
+      <ApprovalNotifications />
+    </>
+  );
 }
 
 function App() {
