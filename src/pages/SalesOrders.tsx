@@ -277,7 +277,7 @@ export default function SalesOrders() {
 
       // Call stock reservation function
       const { error: reserveError } = await supabase
-        .rpc('reserve_stock_for_sales_order', { p_sales_order_id: orderId });
+        .rpc('fn_reserve_stock_for_so', { p_so_id: orderId });
 
       if (reserveError) {
         console.error('Error reserving stock:', reserveError);

@@ -10,15 +10,54 @@
   input[type='tel'],
   textarea,
   select {
-    @apply py-1.5 px-3;
+    @apply py-1 px-2.5 text-sm;
   }
 
   label {
-    @apply mb-0.5;
+    @apply mb-0.5 text-sm;
   }
 
   .form-group {
-    @apply mb-3;
+    @apply mb-2.5;
+  }
+
+  /* Compact table styling */
+  table {
+    @apply text-sm;
+  }
+
+  table thead th {
+    @apply px-4 py-2 text-xs;
+  }
+
+  table tbody td {
+    @apply px-4 py-2.5 text-sm;
+  }
+
+  /* Compact badges and pills */
+  .badge,
+  [class*="rounded-full"][class*="px-"],
+  [class*="bg-"][class*="text-xs"] {
+    @apply px-2 py-0.5 text-xs leading-tight;
+  }
+
+  /* Compact cards */
+  .card, .bg-white.rounded-lg {
+    @apply p-4;
+  }
+
+  /* Compact spacing */
+  .space-y-6 > * + * {
+    margin-top: 1rem !important;
+  }
+
+  .space-y-4 > * + * {
+    margin-top: 0.75rem !important;
+  }
+
+  /* Compact buttons */
+  button:not(.no-compact) {
+    @apply py-1.5 px-3 text-sm;
   }
 
   .email-content {
