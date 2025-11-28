@@ -331,7 +331,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
     const hasEnough = stock.free_stock >= quantity;
     return (
       <div className={`text-xs ${hasEnough ? 'text-green-600' : 'text-red-600'}`}>
-        {t.salesOrders.freeStock}: {stock.free_stock} {!hasEnough && '(Insufficient!)'}
+        {t('salesOrders.freeStock')}: {stock.free_stock} {!hasEnough && '(Insufficient!)'}
       </div>
     );
   };
@@ -344,14 +344,14 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
     <form className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t.sales.customer} *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.customer')} *</label>
           <select
             value={formData.customer_id}
             onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
             className="w-full border rounded-lg px-3 py-2"
             required
           >
-            <option value="">{t.common.filter} {t.sales.customer}</option>
+            <option value="">{t('common.filter')} {t('sales.customer')}</option>
             {customers.map(customer => (
               <option key={customer.id} value={customer.id}>
                 {customer.company_name}
@@ -361,7 +361,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t.salesOrders.customerPoNumber} *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.customerPoNumber')} *</label>
           <input
             type="text"
             value={formData.customer_po_number}
@@ -372,7 +372,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t.salesOrders.customerPoDate} *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.customerPoDate')} *</label>
           <input
             type="date"
             value={formData.customer_po_date}
@@ -383,7 +383,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t.salesOrders.soDate}</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.soDate')}</label>
           <input
             type="date"
             value={formData.so_date}
@@ -393,7 +393,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t.salesOrders.expectedDeliveryDate}</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.expectedDeliveryDate')}</label>
           <input
             type="date"
             value={formData.expected_delivery_date}
@@ -403,7 +403,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t.salesOrders.uploadPo}</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.uploadPo')}</label>
           <div className="flex items-center gap-2">
             <input
               type="file"
@@ -425,7 +425,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">{t.salesOrders.notes}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.notes')}</label>
         <textarea
           value={formData.notes}
           onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -442,7 +442,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
             onClick={addItem}
             className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm"
           >
-            <Plus className="w-4 h-4" /> {t.sales.addItem}
+            <Plus className="w-4 h-4" /> {t('sales.addItem')}
           </button>
         </div>
 
@@ -451,7 +451,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
             <div key={index} className="border rounded-lg p-3 bg-gray-50">
               <div className="grid grid-cols-6 gap-2">
                 <div className="col-span-2">
-                  <label className="text-xs text-gray-600">{t.salesOrders.product} *</label>
+                  <label className="text-xs text-gray-600">{t('salesOrders.product')} *</label>
                   <select
                     value={item.product_id}
                     onChange={(e) => handleProductChange(index, e.target.value)}
@@ -469,7 +469,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-600">{t.sales.quantity} *</label>
+                  <label className="text-xs text-gray-600">{t('sales.quantity')} *</label>
                   <input
                     type="text"
                     value={item.quantity === 0 ? '' : item.quantity}
@@ -496,7 +496,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-600">{t.sales.unitPrice}</label>
+                  <label className="text-xs text-gray-600">{t('sales.unitPrice')}</label>
                   <input
                     type="text"
                     value={item.unit_price === 0 ? '' : item.unit_price}
@@ -522,7 +522,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-600">{t.salesOrders.discountPercent}</label>
+                  <label className="text-xs text-gray-600">{t('salesOrders.discountPercent')}</label>
                   <input
                     type="text"
                     value={item.discount_percent === 0 ? '' : item.discount_percent}
@@ -548,7 +548,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-600">{t.salesOrders.taxPercent}</label>
+                  <label className="text-xs text-gray-600">{t('salesOrders.taxPercent')}</label>
                   <input
                     type="text"
                     value={item.tax_percent === 0 ? '' : item.tax_percent}
@@ -597,7 +597,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
 
                 <div className="flex items-end justify-between">
                   <div>
-                    <label className="text-xs text-gray-600">{t.salesOrders.lineTotal}</label>
+                    <label className="text-xs text-gray-600">{t('salesOrders.lineTotal')}</label>
                     <div className="text-sm font-medium">Rp {item.line_total.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</div>
                   </div>
                   <button
@@ -617,15 +617,15 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
       <div className="bg-gray-50 p-4 rounded-lg">
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
-            <span>{t.sales.subtotal}:</span>
+            <span>{t('sales.subtotal')}:</span>
             <span className="font-medium">Rp {subtotal.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
           </div>
           <div className="flex justify-between text-sm">
-            <span>{t.sales.tax}:</span>
+            <span>{t('sales.tax')}:</span>
             <span className="font-medium">Rp {totalTax.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
           </div>
           <div className="flex justify-between text-lg font-bold border-t pt-2">
-            <span>{t.salesOrders.grandTotal}:</span>
+            <span>{t('salesOrders.grandTotal')}:</span>
             <span>Rp {grandTotal.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
           </div>
         </div>
@@ -638,7 +638,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
           className="px-4 py-2 border rounded-lg hover:bg-gray-50"
           disabled={loading}
         >
-          {t.common.cancel}
+          {t('common.cancel')}
         </button>
         <button
           type="button"
@@ -646,7 +646,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
           className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
           disabled={loading}
         >
-          {loading ? `${t.common.loading}` : t.salesOrders.saveAsDraft}
+          {loading ? t('common.loading') : t('salesOrders.saveAsDraft')}
         </button>
         <button
           type="button"
@@ -654,7 +654,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           disabled={loading}
         >
-          {loading ? `${t.common.submit}...` : t.salesOrders.submitForApproval}
+          {loading ? `${t('common.submit')}...` : t('salesOrders.submitForApproval')}
         </button>
       </div>
     </form>

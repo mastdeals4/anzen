@@ -370,7 +370,7 @@ export default function SalesOrders() {
                       {order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString() : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      ${order.total_amount.toLocaleString()}
+                      Rp {order.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {getStatusBadge(order.status)}
