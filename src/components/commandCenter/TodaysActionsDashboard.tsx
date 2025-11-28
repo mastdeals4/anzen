@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Clock, AlertCircle, CheckCircle2, Calendar, Phone, Send, ChevronRight } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { useNavigation } from '../../contexts/NavigationContext';
+import { Clock, AlertCircle, CheckCircle2, Calendar, Phone, Send, ChevronRight, FileText, ClipboardCheck } from 'lucide-react';
 
 interface Reminder {
   id: string;
@@ -21,12 +23,17 @@ interface TodaysActionsDashboardProps {
 }
 
 export function TodaysActionsDashboard({ onActionClick }: TodaysActionsDashboardProps) {
+  const { profile } = useAuth();
+  const { setCurrentPage } = useNavigation();
   const [todayReminders, setTodayReminders] = useState<Reminder[]>([]);
   const [overdueReminders, setOverdueReminders] = useState<Reminder[]>([]);
+  const [pendingSalesOrders, setPendingSalesOrders] = useState(0);
+  const [pendingDeliveryChallans, setPendingDeliveryChallans] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadReminders();
+    loadApprovals();
 
     const subscription = supabase
       .channel('reminders_changes')
@@ -100,6 +107,28 @@ export function TodaysActionsDashboard({ onActionClick }: TodaysActionsDashboard
     }
   };
 
+  const loadApprovals = async () => {
+    try {
+      if (profile?.role === 'admin' || profile?.role === 'sales') {
+        const { count: soCount } = await supabase
+          .from('sales_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_approval');
+        setPendingSalesOrders(soCount || 0);
+      }
+
+      if (profile?.role === 'admin') {
+        const { count: dcCount } = await supabase
+          .from('delivery_challans')
+          .select('id', { count: 'exact', head: true })
+          .eq('approval_status', 'pending_approval');
+        setPendingDeliveryChallans(dcCount || 0);
+      }
+    } catch (error) {
+      console.error('Error loading approvals:', error);
+    }
+  };
+
   const completeReminder = async (id: string) => {
     try {
       const { error } = await supabase
@@ -157,7 +186,7 @@ export function TodaysActionsDashboard({ onActionClick }: TodaysActionsDashboard
     );
   }
 
-  const totalActions = todayReminders.length + overdueReminders.length;
+  const totalActions = todayReminders.length + overdueReminders.length + pendingSalesOrders + pendingDeliveryChallans;
 
   if (totalActions === 0) {
     return (
@@ -195,6 +224,51 @@ export function TodaysActionsDashboard({ onActionClick }: TodaysActionsDashboard
       </div>
 
       <div className="p-4 space-y-3">
+        {(pendingSalesOrders > 0 || pendingDeliveryChallans > 0) && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="w-4 h-4 text-yellow-600" />
+              <h3 className="text-sm font-semibold text-yellow-600">Pending Approvals</h3>
+            </div>
+            <div className="space-y-2">
+              {pendingSalesOrders > 0 && (
+                <div
+                  onClick={() => setCurrentPage('sales-orders')}
+                  className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg hover:shadow-md transition cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">
+                      Sales Orders Pending Approval
+                    </p>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      {pendingSalesOrders} order{pendingSalesOrders !== 1 ? 's' : ''} waiting for your review
+                    </p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                </div>
+              )}
+              {pendingDeliveryChallans > 0 && (
+                <div
+                  onClick={() => setCurrentPage('delivery-challan')}
+                  className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg hover:shadow-md transition cursor-pointer"
+                >
+                  <ClipboardCheck className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">
+                      Delivery Challans Pending Approval
+                    </p>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      {pendingDeliveryChallans} challan{pendingDeliveryChallans !== 1 ? 's' : ''} waiting for your review
+                    </p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {overdueReminders.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-2">

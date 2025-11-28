@@ -130,12 +130,6 @@ export function Dashboard() {
 
   const baseStatCards = [
     {
-      title: t('dashboard.totalProducts'),
-      value: stats.totalProducts,
-      icon: Package,
-      color: 'blue',
-    },
-    {
       title: t('dashboard.lowStock'),
       value: stats.lowStockItems,
       icon: AlertTriangle,
@@ -148,34 +142,10 @@ export function Dashboard() {
       color: 'red',
     },
     {
-      title: t('dashboard.totalCustomers'),
-      value: stats.totalCustomers,
-      icon: Users,
-      color: 'green',
-    },
-    {
       title: t('dashboard.salesThisMonth'),
       value: stats.salesThisMonth,
       icon: TrendingUp,
       color: 'blue',
-    },
-    {
-      title: t('dashboard.revenueThisMonth'),
-      value: `Rp ${stats.revenueThisMonth.toLocaleString('id-ID')}`,
-      icon: DollarSign,
-      color: 'green',
-    },
-    {
-      title: t('dashboard.profitThisMonth'),
-      value: `Rp ${stats.profitThisMonth.toLocaleString('id-ID')}`,
-      icon: TrendingUp,
-      color: 'emerald',
-    },
-    {
-      title: t('dashboard.pendingFollowUps'),
-      value: stats.pendingFollowUps,
-      icon: Bell,
-      color: 'purple',
     },
   ];
 

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
+import { Layout } from '../components/Layout';
 import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
@@ -252,8 +253,9 @@ export default function SalesOrders() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
+    <Layout>
+      <div className="p-6">
+        <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Sales Orders</h1>
           <p className="text-gray-600 mt-1">Manage customer purchase orders and track delivery</p>
@@ -521,6 +523,7 @@ export default function SalesOrders() {
           </div>
         </Modal>
       )}
-    </div>
+      </div>
+    </Layout>
   );
 }

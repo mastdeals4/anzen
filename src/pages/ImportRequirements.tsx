@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { Layout } from '../components/Layout';
 import { AlertTriangle, TrendingUp, Package, Calendar, FileText } from 'lucide-react';
 
 interface ImportRequirement {
@@ -188,7 +189,8 @@ export default function ImportRequirements() {
   };
 
   return (
-    <div className="p-6">
+    <Layout>
+      <div className="p-6">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Import Requirements</h1>
         <p className="text-gray-600 mt-1">Track and manage product import needs based on stock shortages</p>
@@ -364,6 +366,7 @@ export default function ImportRequirements() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </Layout>
   );
 }
