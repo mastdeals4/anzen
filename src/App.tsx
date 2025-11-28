@@ -20,6 +20,7 @@ import { Setup } from './pages/Setup';
 import { GmailCallback } from './pages/GmailCallback';
 import SalesOrders from './pages/SalesOrders';
 import ImportRequirements from './pages/ImportRequirements';
+import { AgeingReport } from './pages/reports/AgeingReport';
 import { initializeNotificationChecks } from './utils/notifications';
 
 function AppContent() {
@@ -85,6 +86,8 @@ function AppContent() {
         return <Sales />;
       case 'finance':
         return <Finance />;
+      case 'ageing-report':
+        return <AgeingReport />;
       case 'settings':
         return <Settings />;
       default:

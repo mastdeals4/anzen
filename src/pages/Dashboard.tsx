@@ -28,6 +28,8 @@ interface DashboardStats {
   pendingFollowUps: number;
   pendingSalesOrders: number;
   pendingDeliveryChallans: number;
+  overdueInvoicesCount: number;
+  overdueInvoicesAmount: number;
 }
 
 export function Dashboard() {
@@ -45,6 +47,8 @@ export function Dashboard() {
     pendingFollowUps: 0,
     pendingSalesOrders: 0,
     pendingDeliveryChallans: 0,
+    overdueInvoicesCount: 0,
+    overdueInvoicesAmount: 0,
   });
   const [loading, setLoading] = useState(true);
 
@@ -67,6 +71,7 @@ export function Dashboard() {
         settings,
         pendingSalesOrdersResult,
         pendingDCResult,
+        overdueInvoicesResult,
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('batches').select('*').eq('is_active', true),
@@ -93,6 +98,11 @@ export function Dashboard() {
           .from('delivery_challans')
           .select('id', { count: 'exact', head: true })
           .eq('approval_status', 'pending_approval'),
+        supabase
+          .from('sales_invoices')
+          .select('id, total_amount, due_date')
+          .in('payment_status', ['pending', 'partial'])
+          .lt('due_date', new Date().toISOString().split('T')[0]),
       ]);
 
       const lowStockThreshold = settings?.data?.low_stock_threshold || 100;
@@ -109,6 +119,18 @@ export function Dashboard() {
 
       const estimatedProfit = totalRevenue - (totalSubtotal * 0.7);
 
+      // Calculate overdue amounts
+      const overdueInvoicesWithBalances = await Promise.all(
+        (overdueInvoicesResult.data || []).map(async (inv) => {
+          const { data: paidData } = await supabase
+            .rpc('get_invoice_paid_amount', { p_invoice_id: inv.id });
+          const paidAmount = paidData || 0;
+          return inv.total_amount - paidAmount;
+        })
+      );
+
+      const overdueAmount = overdueInvoicesWithBalances.reduce((sum, balance) => sum + balance, 0);
+
       setStats({
         totalProducts: productsResult.count || 0,
         lowStockItems: lowStockCount,
@@ -120,6 +142,8 @@ export function Dashboard() {
         pendingFollowUps: activitiesResult.count || 0,
         pendingSalesOrders: pendingSalesOrdersResult.count || 0,
         pendingDeliveryChallans: pendingDCResult.count || 0,
+        overdueInvoicesCount: overdueInvoicesResult.data?.length || 0,
+        overdueInvoicesAmount: overdueAmount,
       });
     } catch (error) {
       console.error('Error loading dashboard:', error);
@@ -150,6 +174,16 @@ export function Dashboard() {
   ];
 
   const approvalCards = [];
+  if (profile?.role === 'admin' || profile?.role === 'accounts') {
+    approvalCards.push({
+      title: 'Overdue Invoices',
+      value: stats.overdueInvoicesCount,
+      subtitle: `Rp ${stats.overdueInvoicesAmount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+      icon: AlertTriangle,
+      color: 'red-gradient',
+      link: 'sales'
+    });
+  }
   if (profile?.role === 'admin' || profile?.role === 'sales') {
     approvalCards.push({
       title: 'Pending PO Approvals',
@@ -175,6 +209,7 @@ export function Dashboard() {
     blue: { bg: 'bg-blue-50', text: 'text-blue-600', icon: 'bg-blue-100' },
     orange: { bg: 'bg-orange-50', text: 'text-orange-600', icon: 'bg-orange-100' },
     red: { bg: 'bg-red-50', text: 'text-red-600', icon: 'bg-red-100' },
+    'red-gradient': { bg: 'bg-gradient-to-br from-red-500 to-orange-500', text: 'text-white', icon: 'bg-white/20' },
     green: { bg: 'bg-green-50', text: 'text-green-600', icon: 'bg-green-100' },
     emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', icon: 'bg-emerald-100' },
     purple: { bg: 'bg-purple-50', text: 'text-purple-600', icon: 'bg-purple-100' },
@@ -212,10 +247,15 @@ export function Dashboard() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-gray-600">{card.title}</p>
+                      <p className={`text-sm font-medium ${card.color === 'red-gradient' ? 'text-white/80' : 'text-gray-600'}`}>{card.title}</p>
                       <p className={`text-2xl font-bold ${colors.text} mt-2`}>
                         {card.value}
                       </p>
+                      {card.subtitle && (
+                        <p className={`text-sm mt-1 ${card.color === 'red-gradient' ? 'text-white/90' : 'text-gray-500'}`}>
+                          {card.subtitle}
+                        </p>
+                      )}
                     </div>
                     <div className={`${colors.icon} p-3 rounded-full`}>
                       <Icon className={`w-6 h-6 ${colors.text}`} />
