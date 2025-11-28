@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
+import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
 import { TodaysActionsDashboard } from '../components/commandCenter/TodaysActionsDashboard';
 import {
@@ -11,6 +13,8 @@ import {
   DollarSign,
   TrendingUp,
   Bell,
+  FileText,
+  ClipboardCheck,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -22,10 +26,14 @@ interface DashboardStats {
   revenueThisMonth: number;
   profitThisMonth: number;
   pendingFollowUps: number;
+  pendingSalesOrders: number;
+  pendingDeliveryChallans: number;
 }
 
 export function Dashboard() {
   const { t } = useLanguage();
+  const { profile } = useAuth();
+  const { setCurrentPage } = useNavigation();
   const [stats, setStats] = useState<DashboardStats>({
     totalProducts: 0,
     lowStockItems: 0,
@@ -35,6 +43,8 @@ export function Dashboard() {
     revenueThisMonth: 0,
     profitThisMonth: 0,
     pendingFollowUps: 0,
+    pendingSalesOrders: 0,
+    pendingDeliveryChallans: 0,
   });
   const [loading, setLoading] = useState(true);
 
@@ -55,6 +65,8 @@ export function Dashboard() {
         invoicesResult,
         activitiesResult,
         settings,
+        pendingSalesOrdersResult,
+        pendingDCResult,
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('batches').select('*').eq('is_active', true),
@@ -73,6 +85,14 @@ export function Dashboard() {
           .from('app_settings')
           .select('low_stock_threshold')
           .maybeSingle(),
+        supabase
+          .from('sales_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_approval'),
+        supabase
+          .from('delivery_challans')
+          .select('id', { count: 'exact', head: true })
+          .eq('approval_status', 'pending_approval'),
       ]);
 
       const lowStockThreshold = settings?.data?.low_stock_threshold || 100;
@@ -98,6 +118,8 @@ export function Dashboard() {
         revenueThisMonth: totalRevenue,
         profitThisMonth: Math.max(0, estimatedProfit),
         pendingFollowUps: activitiesResult.count || 0,
+        pendingSalesOrders: pendingSalesOrdersResult.count || 0,
+        pendingDeliveryChallans: pendingDCResult.count || 0,
       });
     } catch (error) {
       console.error('Error loading dashboard:', error);
@@ -106,7 +128,7 @@ export function Dashboard() {
     }
   };
 
-  const statCards = [
+  const baseStatCards = [
     {
       title: t('dashboard.totalProducts'),
       value: stats.totalProducts,
@@ -157,6 +179,28 @@ export function Dashboard() {
     },
   ];
 
+  const approvalCards = [];
+  if (profile?.role === 'admin' || profile?.role === 'sales') {
+    approvalCards.push({
+      title: 'Pending PO Approvals',
+      value: stats.pendingSalesOrders,
+      icon: FileText,
+      color: 'yellow',
+      link: 'sales-orders'
+    });
+  }
+  if (profile?.role === 'admin') {
+    approvalCards.push({
+      title: 'Pending DC Approvals',
+      value: stats.pendingDeliveryChallans,
+      icon: ClipboardCheck,
+      color: 'yellow',
+      link: 'delivery-challan'
+    });
+  }
+
+  const statCards = [...approvalCards, ...baseStatCards];
+
   const colorClasses: Record<string, { bg: string; text: string; icon: string }> = {
     blue: { bg: 'bg-blue-50', text: 'text-blue-600', icon: 'bg-blue-100' },
     orange: { bg: 'bg-orange-50', text: 'text-orange-600', icon: 'bg-orange-100' },
@@ -164,6 +208,7 @@ export function Dashboard() {
     green: { bg: 'bg-green-50', text: 'text-green-600', icon: 'bg-green-100' },
     emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', icon: 'bg-emerald-100' },
     purple: { bg: 'bg-purple-50', text: 'text-purple-600', icon: 'bg-purple-100' },
+    yellow: { bg: 'bg-yellow-50', text: 'text-yellow-600', icon: 'bg-yellow-100' },
   };
 
   return (
@@ -185,13 +230,15 @@ export function Dashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {statCards.map((card, index) => {
+            {statCards.map((card:any, index) => {
               const Icon = card.icon;
               const colors = colorClasses[card.color];
+              const isClickable = !!card.link;
               return (
                 <div
                   key={index}
-                  className={`${colors.bg} rounded-lg shadow p-6 transition hover:shadow-lg`}
+                  className={`${colors.bg} rounded-lg shadow p-6 transition hover:shadow-lg ${isClickable ? 'cursor-pointer' : ''}`}
+                  onClick={() => isClickable && setCurrentPage(card.link)}
                 >
                   <div className="flex items-center justify-between">
                     <div>

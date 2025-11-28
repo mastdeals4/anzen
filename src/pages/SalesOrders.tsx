@@ -8,8 +8,7 @@ import SalesOrderForm from '../components/SalesOrderForm';
 
 interface Customer {
   id: string;
-  customer_name: string;
-  customer_code: string;
+  company_name: string;
 }
 
 interface Product {
@@ -90,8 +89,7 @@ export default function SalesOrders() {
           *,
           customers (
             id,
-            customer_name,
-            customer_code
+            company_name
           ),
           sales_order_items (
             id,
@@ -129,9 +127,9 @@ export default function SalesOrders() {
     try {
       const { data, error } = await supabase
         .from('customers')
-        .select('id, customer_name, customer_code')
+        .select('id, company_name')
         .eq('is_active', true)
-        .order('customer_name');
+        .order('company_name');
 
       if (error) throw error;
       setCustomers(data || []);
@@ -147,7 +145,7 @@ export default function SalesOrders() {
       filtered = filtered.filter(order =>
         order.so_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
         order.customer_po_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        order.customers?.customer_name.toLowerCase().includes(searchTerm.toLowerCase())
+        order.customers?.company_name.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
@@ -357,8 +355,7 @@ export default function SalesOrders() {
                       <div className="text-sm font-medium text-gray-900">{order.so_number}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{order.customers?.customer_name}</div>
-                      <div className="text-xs text-gray-500">{order.customers?.customer_code}</div>
+                      <div className="text-sm text-gray-900">{order.customers?.company_name}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{order.customer_po_number}</div>
@@ -452,7 +449,7 @@ export default function SalesOrders() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium text-gray-700">Customer</label>
-                <p className="text-sm text-gray-900">{selectedOrder.customers?.customer_name}</p>
+                <p className="text-sm text-gray-900">{selectedOrder.customers?.company_name}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-gray-700">Status</label>

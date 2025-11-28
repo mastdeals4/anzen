@@ -19,7 +19,6 @@ import { Settings } from './pages/Settings';
 import { Setup } from './pages/Setup';
 import { GmailCallback } from './pages/GmailCallback';
 import SalesOrders from './pages/SalesOrders';
-import Approvals from './pages/Approvals';
 import ImportRequirements from './pages/ImportRequirements';
 import { initializeNotificationChecks } from './utils/notifications';
 
@@ -72,8 +71,6 @@ function AppContent() {
         return <Customers />;
       case 'sales-orders':
         return <SalesOrders />;
-      case 'approvals':
-        return <Approvals />;
       case 'import-requirements':
         return <ImportRequirements />;
       case 'crm':

@@ -5,15 +5,13 @@ import { Plus, Trash2, Upload, X, AlertCircle } from 'lucide-react';
 
 interface Customer {
   id: string;
-  customer_name: string;
-  customer_code: string;
+  company_name: string;
 }
 
 interface Product {
   id: string;
   product_name: string;
   product_code: string;
-  unit_price: number;
 }
 
 interface StockInfo {
@@ -81,9 +79,9 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
     try {
       const { data, error } = await supabase
         .from('customers')
-        .select('id, customer_name, customer_code')
+        .select('id, company_name')
         .eq('is_active', true)
-        .order('customer_name');
+        .order('company_name');
 
       if (error) throw error;
       setCustomers(data || []);
@@ -96,7 +94,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
     try {
       const { data, error } = await supabase
         .from('products')
-        .select('id, product_name, product_code, unit_price')
+        .select('id, product_name, product_code')
         .eq('is_active', true)
         .order('product_name');
 
@@ -142,7 +140,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
 
     const newItems = [...items];
     newItems[index].product_id = productId;
-    newItems[index].unit_price = product.unit_price || 0;
+    newItems[index].unit_price = 0;
     setItems(newItems);
     calculateLineTotal(index);
     fetchStockInfo(productId);
@@ -338,7 +336,7 @@ export default function SalesOrderForm({ onSuccess, onCancel }: SalesOrderFormPr
             <option value="">Select Customer</option>
             {customers.map(customer => (
               <option key={customer.id} value={customer.id}>
-                {customer.customer_name} ({customer.customer_code})
+                {customer.company_name}
               </option>
             ))}
           </select>
