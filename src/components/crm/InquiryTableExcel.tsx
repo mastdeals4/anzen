@@ -384,13 +384,25 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('Not authenticated');
 
-        const parseDate = (dateStr: string) => {
+        const parseDate = (dateStr: any) => {
           if (!dateStr) return new Date().toISOString().split('T')[0];
 
+          // Handle Excel serial date numbers (e.g., 45261)
+          if (typeof dateStr === 'number') {
+            // Excel epoch starts on January 1, 1900 (but Excel incorrectly treats 1900 as a leap year)
+            const excelEpoch = new Date(1899, 11, 30); // December 30, 1899
+            const date = new Date(excelEpoch.getTime() + dateStr * 86400000);
+            const year = date.getFullYear();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const day = date.getDate().toString().padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          }
+
+          // Handle string formats
           const formats = [
-            /^(\d{1,2})-(\d{1,2})-(\d{4})$/,
-            /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
-            /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+            /^(\d{1,2})-(\d{1,2})-(\d{4})$/,     // DD-MM-YYYY
+            /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,   // DD/MM/YYYY
+            /^(\d{4})-(\d{1,2})-(\d{1,2})$/      // YYYY-MM-DD
           ];
 
           for (const format of formats) {
@@ -398,8 +410,10 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
             if (match) {
               let day, month, year;
               if (format.toString().includes('\\d{4}$')) {
+                // Format: DD-MM-YYYY or DD/MM/YYYY
                 [, day, month, year] = match;
               } else {
+                // Format: YYYY-MM-DD
                 [, year, month, day] = match;
               }
               return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
