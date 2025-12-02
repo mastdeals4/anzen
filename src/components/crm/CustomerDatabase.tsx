@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Users, Upload, Search, Edit, Trash2, Building, Mail, Phone, Globe, MapPin, Activity } from 'lucide-react';
+import { Users, Upload, Search, Edit, Trash2, Building, Mail, Phone, Globe, MapPin, Activity, Send } from 'lucide-react';
 import { Modal } from '../Modal';
 import { CustomerInteractionTimeline } from './CustomerInteractionTimeline';
+import { BulkEmailComposer } from './BulkEmailComposer';
 
 interface Contact {
   id: string;
@@ -46,6 +47,8 @@ export function CustomerDatabase({ canManage }: CustomerDatabaseProps) {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
+  const [bulkEmailModalOpen, setBulkEmailModalOpen] = useState(false);
 
   const [formData, setFormData] = useState({
     company_name: '',
@@ -271,6 +274,49 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
     return matchesSearch && matchesType;
   });
 
+  const handleSelectContact = (contactId: string) => {
+    const newSelected = new Set(selectedContacts);
+    if (newSelected.has(contactId)) {
+      newSelected.delete(contactId);
+    } else {
+      newSelected.add(contactId);
+    }
+    setSelectedContacts(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedContacts.size === filteredContacts.length) {
+      setSelectedContacts(new Set());
+    } else {
+      setSelectedContacts(new Set(filteredContacts.map(c => c.id)));
+    }
+  };
+
+  const handleBulkEmail = () => {
+    const contactsWithEmail = Array.from(selectedContacts)
+      .map(id => contacts.find(c => c.id === id))
+      .filter((c): c is Contact => !!c && !!c.email);
+
+    if (contactsWithEmail.length === 0) {
+      alert('Please select customers with email addresses');
+      return;
+    }
+
+    setBulkEmailModalOpen(true);
+  };
+
+  const getSelectedCustomersForEmail = () => {
+    return Array.from(selectedContacts)
+      .map(id => contacts.find(c => c.id === id))
+      .filter((c): c is Contact => !!c && !!c.email)
+      .map(c => ({
+        id: c.id,
+        company_name: c.company_name,
+        email: c.email,
+        contact_person: c.contact_person,
+      }));
+  };
+
   const customerTypeConfig = {
     prospect: { label: 'Prospect', color: 'bg-gray-100 text-gray-800' },
     active: { label: 'Active', color: 'bg-green-100 text-green-800' },
@@ -285,9 +331,23 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
           <Users className="w-5 h-5 text-blue-600" />
           <h3 className="text-lg font-semibold">Customer Database</h3>
           <span className="text-sm text-gray-500">({contacts.length} contacts)</span>
+          {selectedContacts.size > 0 && (
+            <span className="text-sm font-medium text-blue-600">
+              ({selectedContacts.size} selected)
+            </span>
+          )}
         </div>
         {canManage && (
           <div className="flex gap-2">
+            {selectedContacts.size > 0 && (
+              <button
+                onClick={handleBulkEmail}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+              >
+                <Send className="w-4 h-4" />
+                Send Bulk Email ({selectedContacts.size})
+              </button>
+            )}
             <button
               onClick={() => setImportModalOpen(true)}
               className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition"
@@ -365,6 +425,16 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  {canManage && (
+                    <th className="px-4 py-3 text-center font-semibold text-gray-700 w-12">
+                      <input
+                        type="checkbox"
+                        checked={selectedContacts.size === filteredContacts.length && filteredContacts.length > 0}
+                        onChange={handleSelectAll}
+                        className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                      />
+                    </th>
+                  )}
                   <th className="px-4 py-3 text-left font-semibold text-gray-700">Company</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-700">City</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-700">Category</th>
@@ -378,13 +448,23 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
               <tbody className="divide-y divide-gray-200">
                 {filteredContacts.length === 0 ? (
                   <tr>
-                    <td colSpan={canManage ? 8 : 7} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={canManage ? 9 : 7} className="px-4 py-8 text-center text-gray-500">
                       No contacts found
                     </td>
                   </tr>
                 ) : (
                   filteredContacts.map((contact) => (
                     <tr key={contact.id} className="hover:bg-gray-50 transition">
+                      {canManage && (
+                        <td className="px-4 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedContacts.has(contact.id)}
+                            onChange={() => handleSelectContact(contact.id)}
+                            className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <button
                           onClick={() => {
@@ -789,6 +869,28 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={bulkEmailModalOpen}
+        onClose={() => {
+          setBulkEmailModalOpen(false);
+          setSelectedContacts(new Set());
+        }}
+        title="Bulk Email"
+      >
+        <BulkEmailComposer
+          selectedCustomers={getSelectedCustomersForEmail()}
+          onClose={() => {
+            setBulkEmailModalOpen(false);
+            setSelectedContacts(new Set());
+          }}
+          onComplete={() => {
+            setBulkEmailModalOpen(false);
+            setSelectedContacts(new Set());
+            loadContacts();
+          }}
+        />
       </Modal>
     </div>
   );
