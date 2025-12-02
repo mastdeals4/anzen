@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Download, Upload, Trash2, Save, Send } from 'lucide-react';
+import { Plus, Download, Upload, Trash2, Save, Send, Search, Filter } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
 
@@ -30,11 +30,15 @@ interface EditingCell {
 
 export function CustomerDatabaseExcel() {
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [bulkEmailModalOpen, setBulkEmailModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [cityFilter, setCityFilter] = useState('');
+  const [customerTypeFilter, setCustomerTypeFilter] = useState('');
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
     created_at: 110,
     company_name: 200,
@@ -89,12 +93,40 @@ export function CustomerDatabaseExcel() {
 
       if (error) throw error;
       setCustomers(data || []);
+      setFilteredCustomers(data || []);
     } catch (error) {
       console.error('Error loading customers:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    let result = [...customers];
+
+    if (searchTerm) {
+      const search = searchTerm.toLowerCase();
+      result = result.filter(c =>
+        c.company_name?.toLowerCase().includes(search) ||
+        c.contact_person?.toLowerCase().includes(search) ||
+        c.email?.toLowerCase().includes(search) ||
+        c.city?.toLowerCase().includes(search)
+      );
+    }
+
+    if (cityFilter) {
+      result = result.filter(c => c.city === cityFilter);
+    }
+
+    if (customerTypeFilter) {
+      result = result.filter(c => c.customer_type === customerTypeFilter);
+    }
+
+    setFilteredCustomers(result);
+  }, [searchTerm, cityFilter, customerTypeFilter, customers]);
+
+  const uniqueCities = Array.from(new Set(customers.map(c => c.city).filter(Boolean))).sort();
+  const uniqueTypes = Array.from(new Set(customers.map(c => c.customer_type).filter(Boolean))).sort();
 
   const handleCellDoubleClick = (customer: Customer, field: string) => {
     setEditingCell({ rowId: customer.id, field });
@@ -193,10 +225,10 @@ export function CustomerDatabaseExcel() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedRows.size === customers.length) {
+    if (selectedRows.size === filteredCustomers.length) {
       setSelectedRows(new Set());
     } else {
-      setSelectedRows(new Set(customers.map(c => c.id)));
+      setSelectedRows(new Set(filteredCustomers.map(c => c.id)));
     }
   };
 
@@ -462,52 +494,100 @@ export function CustomerDatabaseExcel() {
   return (
     <div className="flex flex-col h-full bg-white rounded-lg shadow">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleAddRow}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Customer
-          </button>
-          {selectedRows.size > 0 && (
-            <>
-              <button
-                onClick={handleBulkEmail}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-green-600 border border-green-700 rounded-md hover:bg-green-700 transition"
-              >
-                <Send className="w-3.5 h-3.5" />
-                Send Email ({selectedRows.size})
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete ({selectedRows.size})
-              </button>
-            </>
-          )}
+      <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-200">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAddRow}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Customer
+            </button>
+            {selectedRows.size > 0 && (
+              <>
+                <button
+                  onClick={handleBulkEmail}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-green-600 border border-green-700 rounded-md hover:bg-green-700 transition"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  Send Email ({selectedRows.size})
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete ({selectedRows.size})
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              Import CSV
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleImportCSV}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={exportToExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export CSV
+            </button>
+          </div>
         </div>
+
+        {/* Search and Filter Bar */}
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition cursor-pointer">
-            <Upload className="w-3.5 h-3.5" />
-            Import CSV
+          <div className="flex-1 relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
-              type="file"
-              accept=".csv"
-              onChange={handleImportCSV}
-              className="hidden"
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by company, contact person, email, or city..."
+              className="w-full pl-10 pr-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
-          </label>
-          <button
-            onClick={exportToExcel}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition"
+          </div>
+          <select
+            value={cityFilter}
+            onChange={(e) => setCityFilter(e.target.value)}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
           >
-            <Download className="w-3.5 h-3.5" />
-            Export CSV
-          </button>
+            <option value="">All Cities</option>
+            {uniqueCities.map(city => (
+              <option key={city} value={city}>{city}</option>
+            ))}
+          </select>
+          <select
+            value={customerTypeFilter}
+            onChange={(e) => setCustomerTypeFilter(e.target.value)}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All Types</option>
+            {uniqueTypes.map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+          {(searchTerm || cityFilter || customerTypeFilter) && (
+            <button
+              onClick={() => {
+                setSearchTerm('');
+                setCityFilter('');
+                setCustomerTypeFilter('');
+              }}
+              className="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition"
+            >
+              Clear Filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -519,7 +599,7 @@ export function CustomerDatabaseExcel() {
               <th className="border border-gray-300 px-2 py-2 bg-gray-100 w-10">
                 <input
                   type="checkbox"
-                  checked={selectedRows.size === customers.length && customers.length > 0}
+                  checked={selectedRows.size === filteredCustomers.length && filteredCustomers.length > 0}
                   onChange={toggleSelectAll}
                   className="rounded"
                 />
@@ -558,7 +638,7 @@ export function CustomerDatabaseExcel() {
             </tr>
           </thead>
           <tbody>
-            {customers.map((customer) => (
+            {filteredCustomers.map((customer) => (
               <tr
                 key={customer.id}
                 className={`${selectedRows.has(customer.id) ? 'bg-blue-50' : 'hover:bg-gray-50'} transition`}
@@ -622,7 +702,11 @@ export function CustomerDatabaseExcel() {
       {/* Footer */}
       <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-sm text-gray-600">
         <div className="flex items-center justify-between">
-          <span>{customers.length} customer(s) total</span>
+          <span>
+            {filteredCustomers.length} customer(s)
+            {filteredCustomers.length !== customers.length && ` (filtered from ${customers.length} total)`}
+            {selectedRows.size > 0 && ` • ${selectedRows.size} selected`}
+          </span>
           <span className="text-xs text-gray-500">Double-click any cell to edit • Drag column borders to resize</span>
         </div>
       </div>
