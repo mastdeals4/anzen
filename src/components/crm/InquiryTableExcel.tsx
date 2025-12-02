@@ -433,7 +433,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
           inquiry_date: parseDate(row['Date']),
           pipeline_status: 'new',
           status: 'new',
-          inquiry_source: 'import',
+          inquiry_source: 'other',
           assigned_to: user.id,
           created_by: user.id,
         }));
