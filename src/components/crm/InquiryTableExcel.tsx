@@ -1797,3 +1797,4 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
     </div>
   );
 }
+
