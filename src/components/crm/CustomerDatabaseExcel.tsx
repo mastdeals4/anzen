@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Download, Upload, Trash2, Save } from 'lucide-react';
+import { Plus, Download, Upload, Trash2, Save, Send } from 'lucide-react';
+import { Modal } from '../Modal';
+import { BulkEmailComposer } from './BulkEmailComposer';
 
 interface Customer {
   id: string;
@@ -32,6 +34,7 @@ export function CustomerDatabaseExcel() {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [bulkEmailModalOpen, setBulkEmailModalOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
     created_at: 110,
     company_name: 200,
@@ -427,6 +430,31 @@ export function CustomerDatabaseExcel() {
     });
   };
 
+  const handleBulkEmail = () => {
+    const contactsWithEmail = Array.from(selectedRows)
+      .map(id => customers.find(c => c.id === id))
+      .filter((c): c is Customer => !!c && !!c.email);
+
+    if (contactsWithEmail.length === 0) {
+      alert('Please select customers with email addresses');
+      return;
+    }
+
+    setBulkEmailModalOpen(true);
+  };
+
+  const getSelectedCustomersForEmail = () => {
+    return Array.from(selectedRows)
+      .map(id => customers.find(c => c.id === id))
+      .filter((c): c is Customer => !!c && !!c.email)
+      .map(c => ({
+        id: c.id,
+        company_name: c.company_name,
+        email: c.email,
+        contact_person: c.contact_person,
+      }));
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-64">Loading customers...</div>;
   }
@@ -444,13 +472,22 @@ export function CustomerDatabaseExcel() {
             Add Customer
           </button>
           {selectedRows.size > 0 && (
-            <button
-              onClick={handleDeleteSelected}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete ({selectedRows.size})
-            </button>
+            <>
+              <button
+                onClick={handleBulkEmail}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-green-600 border border-green-700 rounded-md hover:bg-green-700 transition"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Send Email ({selectedRows.size})
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete ({selectedRows.size})
+              </button>
+            </>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -589,6 +626,28 @@ export function CustomerDatabaseExcel() {
           <span className="text-xs text-gray-500">Double-click any cell to edit • Drag column borders to resize</span>
         </div>
       </div>
+
+      <Modal
+        isOpen={bulkEmailModalOpen}
+        onClose={() => {
+          setBulkEmailModalOpen(false);
+          setSelectedRows(new Set());
+        }}
+        title="Bulk Email"
+      >
+        <BulkEmailComposer
+          selectedCustomers={getSelectedCustomersForEmail()}
+          onClose={() => {
+            setBulkEmailModalOpen(false);
+            setSelectedRows(new Set());
+          }}
+          onComplete={() => {
+            setBulkEmailModalOpen(false);
+            setSelectedRows(new Set());
+            loadCustomers();
+          }}
+        />
+      </Modal>
     </div>
   );
 }
