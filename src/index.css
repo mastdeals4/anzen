@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  input[type='text'],
+  input[type='email'],
+  input[type='number'],
+  input[type='date'],
+  input[type='tel'],
+  textarea,
+  select {
+    @apply py-1 px-2.5 text-sm;
+  }
+
+  label {
+    @apply mb-0.5 text-sm;
+  }
+
+  .form-group {
+    @apply mb-2.5;
+  }
+
+  /* Compact table styling */
+  table {
+    @apply text-sm;
+  }
+
+  table thead th {
+    @apply px-4 py-2 text-xs;
+  }
+
+  table tbody td {
+    @apply px-4 py-2.5 text-sm;
+  }
+
+  /* Compact badges and pills */
+  .badge,
+  [class*="rounded-full"][class*="px-"],
+  [class*="bg-"][class*="text-xs"] {
+    @apply px-2 py-0.5 text-xs leading-tight;
+  }
+
+  /* Compact cards */
+  .card, .bg-white.rounded-lg {
+    @apply p-4;
+  }
+
+  /* Compact spacing */
+  .space-y-6 > * + * {
+    margin-top: 1rem !important;
+  }
+
+  .space-y-4 > * + * {
+    margin-top: 0.75rem !important;
+  }
+
+  /* Compact buttons */
+  button:not(.no-compact) {
+    @apply py-1.5 px-3 text-sm;
+  }
+
+  /* Gmail-like email content styling */
+  .email-content {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    color: #202124;
+  }
+
+  .email-content p {
+    margin: 8px 0;
+  }
+
+  .email-content table {
+    border-collapse: collapse;
+    width: 100% !important;
+    margin: 16px 0;
+    font-size: 13px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+
+  .email-content th,
+  .email-content td {
+    border: 1px solid #000 !important;
+    padding: 8px 12px !important;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .email-content thead th,
+  .email-content th {
+    background-color: inherit !important;
+    font-weight: 700 !important;
+    color: inherit !important;
+  }
+
+  .email-content tbody td,
+  .email-content td {
+    background-color: inherit !important;
+    color: inherit !important;
+  }
+
+  /* Preserve inline styles from email */
+  .email-content table[style*="background"],
+  .email-content th[style*="background"],
+  .email-content td[style*="background"] {
+    background-color: inherit !important;
+  }
+
+  /* Yellow header styling - common in inquiry emails */
+  .email-content th[style*="yellow"],
+  .email-content th[bgcolor*="yellow"],
+  .email-content td[bgcolor*="yellow"] {
+    background-color: #ffff00 !important;
+  }
+
+  /* Purple/Lavender column styling */
+  .email-content td[bgcolor*="lavender"],
+  .email-content td[style*="lavender"],
+  .email-content th[bgcolor*="lavender"] {
+    background-color: #e6e6fa !important;
+  }
+
+  /* Blue text in emails */
+  .email-content span[style*="color"][style*="blue"],
+  .email-content p[style*="color"][style*="blue"] {
+    color: #00008b !important;
+    font-weight: 600;
+  }
+
+  .email-content strong,
+  .email-content b {
+    font-weight: 700;
+  }
+
+  .email-content ul,
+  .email-content ol {
+    margin: 8px 0;
+    padding-left: 24px;
+  }
+
+  .email-content li {
+    margin: 4px 0;
+  }
+}
