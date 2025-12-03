@@ -380,7 +380,7 @@ export function EnhancedGmailComposer({
   }
 
   return (
-    <div className={`fixed ${fullscreen ? 'inset-0' : 'bottom-0 right-4 w-[600px] h-[700px]'} bg-white rounded-t-lg shadow-2xl z-50 flex flex-col`}>
+    <div className={`fixed ${fullscreen ? 'inset-0' : 'bottom-0 right-6 w-[480px] h-[600px]'} bg-white rounded-t-lg shadow-2xl z-40 flex flex-col`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 rounded-t-lg">
         <h3 className="text-sm font-semibold text-gray-900">

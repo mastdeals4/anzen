@@ -644,21 +644,23 @@ export function GmailBrowserInbox() {
   };
 
   const handleCreateInquiry = async (email: EmailListItem) => {
-    if (!email || !email.subject) {
-      alert('Invalid email data');
+    if (!email) {
+      alert('No email selected');
       return;
     }
 
     setContextMenu(null);
 
     try {
-      sessionStorage.setItem('pendingEmailForInquiry', JSON.stringify({
-        subject: email.subject,
-        body: email.body || email.snippet,
-        fromEmail: email.fromEmail,
-        fromName: email.from,
+      const emailData = {
+        subject: email.subject || 'No Subject',
+        body: email.htmlBody || email.body || email.snippet || '',
+        fromEmail: email.fromEmail || '',
+        fromName: email.from || '',
         date: email.date ? email.date.toISOString() : new Date().toISOString(),
-      }));
+      };
+
+      sessionStorage.setItem('pendingEmailForInquiry', JSON.stringify(emailData));
 
       navigateTo('command-center');
     } catch (error) {
