@@ -420,9 +420,10 @@ export function InvoiceView({ invoice, items, onClose }: InvoiceViewProps) {
               </table>
             </div>
 
-            {/* Combined Totals and Amount in Words Section */}
+            {/* Combined Section: Amount in Words + Totals + Bank Details + Signatures */}
             <div className="border-2 border-black border-t-0">
-              <div className="flex items-stretch">
+              {/* Top Row: Amount in Words + Totals */}
+              <div className="flex items-stretch border-b-2 border-black">
                 {/* Left - Amount in Words */}
                 <div className="flex-1 p-2 border-r-2 border-black print:p-1.5">
                   <p className="text-xs font-bold print:text-[10px]">{language === 'id' ? 'Amount In words:' : 'Amount in words:'}</p>
@@ -447,20 +448,8 @@ export function InvoiceView({ invoice, items, onClose }: InvoiceViewProps) {
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Additional Notes */}
-            {invoice.notes && (
-              <div className="mt-3 border-2 border-black p-2 print:mt-2 print:p-1.5">
-                <p className="text-xs print:text-[10px]">
-                  <span className="font-bold">{language === 'id' ? 'Notes: ' : 'Notes: '}</span>
-                  <span>{invoice.notes}</span>
-                </p>
-              </div>
-            )}
-
-            {/* Bank Details and Signatures - Border Box attached to Grand Total */}
-            <div className="border-2 border-black border-t-0">
+              {/* Bottom Row: Bank Details + Authorized Signatory */}
               <div className="grid grid-cols-2 gap-0 text-xs print:text-[10px]">
                 {/* Column 1 - Bank Details */}
                 <div className="p-3 border-r-2 border-black print:p-2">
@@ -507,6 +496,16 @@ export function InvoiceView({ invoice, items, onClose }: InvoiceViewProps) {
                 }
               </p>
             </div>
+
+            {/* Additional Notes */}
+            {invoice.notes && (
+              <div className="mt-3 border-2 border-black p-2 print:mt-2 print:p-1.5">
+                <p className="text-xs print:text-[10px]">
+                  <span className="font-bold">{language === 'id' ? 'Notes: ' : 'Notes: '}</span>
+                  <span>{invoice.notes}</span>
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
