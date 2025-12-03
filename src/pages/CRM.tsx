@@ -4,7 +4,7 @@ import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive } from 'lucide-react';
-import { EmailInbox } from '../components/crm/EmailInbox';
+import { GmailBrowserInbox } from '../components/crm/GmailBrowserInbox';
 import { InquiryTableExcel } from '../components/crm/InquiryTableExcel';
 import { ReminderCalendar } from '../components/crm/ReminderCalendar';
 import { PipelineBoard } from '../components/crm/PipelineBoard';
@@ -188,24 +188,9 @@ export function CRM() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">CRM - Inquiry Management</h1>
-            <p className="text-gray-600 mt-1">Manage pharmaceutical inquiries with AI-powered email processing</p>
-          </div>
-          {canManage && (
-            <button
-              onClick={() => {
-                setEditingInquiry(null);
-                setModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add Inquiry
-            </button>
-          )}
+      <div className="space-y-4">
+        <div className="flex items-center">
+          <h1 className="text-xl font-semibold text-gray-900">CRM - Inquiry Management</h1>
         </div>
 
         <div className="bg-white rounded-lg shadow">
@@ -304,7 +289,7 @@ export function CRM() {
 
           <div className="p-6">
             {activeTab === 'email' && (
-              <EmailInbox onInquiryCreated={loadInquiries} />
+              <GmailBrowserInbox />
             )}
 
             {activeTab === 'table' && (
@@ -312,6 +297,10 @@ export function CRM() {
                 inquiries={inquiries}
                 onRefresh={loadInquiries}
                 canManage={canManage}
+                onAddInquiry={() => {
+                  setEditingInquiry(null);
+                  setModalOpen(true);
+                }}
               />
             )}
 

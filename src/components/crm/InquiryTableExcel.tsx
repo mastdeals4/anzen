@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import {
   ChevronDown, X, Mail, Phone, FileText, Calendar,
   Flame, ArrowUp, Minus, Send, MessageSquare, CheckSquare,
-  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle
+  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle, Plus
 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { GmailLikeComposer } from './GmailLikeComposer';
@@ -63,9 +63,10 @@ interface InquiryTableProps {
   inquiries: Inquiry[];
   onRefresh: () => void;
   canManage: boolean;
+  onAddInquiry?: () => void;
 }
 
-export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTableProps) {
+export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquiry }: InquiryTableProps) {
   const { profile } = useAuth();
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<ColumnFilter[]>([]);
@@ -921,6 +922,18 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
                   className="hidden"
                 />
               </label>
+              {onAddInquiry && (
+                <>
+                  <div className="w-px h-8 bg-gray-300 mx-2" />
+                  <button
+                    onClick={onAddInquiry}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Inquiry
+                  </button>
+                </>
+              )}
             </>
           )}
 
