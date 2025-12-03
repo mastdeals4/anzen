@@ -461,7 +461,7 @@ export function InvoiceView({ invoice, items, onClose }: InvoiceViewProps) {
 
             {/* Bank Details and Signatures - Border Box attached to Grand Total */}
             <div className="border-2 border-black border-t-0">
-              <div className="grid grid-cols-3 gap-0 text-xs print:text-[10px]">
+              <div className="grid grid-cols-2 gap-0 text-xs print:text-[10px]">
                 {/* Column 1 - Bank Details */}
                 <div className="p-3 border-r-2 border-black print:p-2">
                   <p className="font-semibold mb-2 print:mb-1">{language === 'id' ? 'Bank Details:' : 'Bank Details:'}</p>
@@ -489,21 +489,23 @@ export function InvoiceView({ invoice, items, onClose }: InvoiceViewProps) {
                   </div>
                 </div>
 
-                {/* Column 2 - Authorized By (Customer) */}
-                <div className="p-3 border-r-2 border-black print:p-2">
-                  <p className="font-semibold mb-1">{language === 'id' ? 'Authorized By:' : 'Authorized By:'}</p>
-                  <p className="font-semibold mb-10 print:mb-8">{customer?.company_name || ''}</p>
-                  <div className="w-4/5 border-t border-black pt-1">({language === 'id' ? 'Signature & Full Name' : 'Signature & Full Name'})</div>
-                  <p className="mt-2 font-semibold print:mt-1">{language === 'id' ? 'Date:' : 'Date:'}</p>
-                </div>
-
-                {/* Column 3 - Authorized Signatory */}
+                {/* Column 2 - Authorized Signatory */}
                 <div className="p-3 print:p-2">
                   <p className="font-semibold mb-1">{language === 'id' ? 'Authorized Signatory:' : 'Authorized Signatory:'}</p>
                   <p className="font-semibold mb-10 print:mb-8">PT. SHUBHAM ANZEN PHARMA JAYA</p>
                   <div className="w-4/5 border-t border-black pt-1">{language === 'id' ? 'Pharmacist' : 'Pharmacist'}</div>
                 </div>
               </div>
+            </div>
+
+            {/* Payment Terms Notice */}
+            <div className="border-2 border-black border-t-0 p-2.5 print:p-2">
+              <p className="text-xs font-semibold text-center print:text-[10px]">
+                {language === 'id'
+                  ? `Pembayaran jatuh tempo dalam ${getPaymentTermsText()} sejak tanggal barang dikirim.`
+                  : `Payment is due within ${getPaymentTermsText()} from the date on which the goods are delivered.`
+                }
+              </p>
             </div>
           </div>
         </div>
