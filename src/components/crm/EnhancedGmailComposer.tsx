@@ -300,7 +300,23 @@ export function EnhancedGmailComposer({
   };
 
   const handleSend = async () => {
-    if (toRecipients.length === 0 || !subject || !body) {
+    const allToEmails = [...toRecipients.map(r => r.email)];
+    const allCcEmails = [...ccRecipients.map(r => r.email)];
+    const allBccEmails = [...bccRecipients.map(r => r.email)];
+
+    if (toInput.trim() && validateEmail(toInput.trim())) {
+      allToEmails.push(toInput.trim());
+    }
+
+    if (ccInput.trim() && validateEmail(ccInput.trim())) {
+      allCcEmails.push(ccInput.trim());
+    }
+
+    if (bccInput.trim() && validateEmail(bccInput.trim())) {
+      allBccEmails.push(bccInput.trim());
+    }
+
+    if (allToEmails.length === 0 || !subject || !body) {
       alert('Please fill in recipient, subject, and message');
       return;
     }
@@ -309,9 +325,9 @@ export function EnhancedGmailComposer({
     try {
       if (onSend) {
         await onSend({
-          to: toRecipients.map(r => r.email),
-          cc: ccRecipients.map(r => r.email),
-          bcc: bccRecipients.map(r => r.email),
+          to: allToEmails,
+          cc: allCcEmails,
+          bcc: allBccEmails,
           subject,
           body,
           attachments: attachments.map(a => a.file)
@@ -416,7 +432,10 @@ export function EnhancedGmailComposer({
               onChange={(e) => handleInputChange(e.target.value, 'to')}
               onKeyDown={(e) => handleKeyDown(e, 'to')}
               onFocus={() => setActiveSuggestionField('to')}
-              placeholder={toRecipients.length === 0 ? 'Recipients' : ''}
+              onBlur={() => {
+                setTimeout(() => setShowSuggestions(false), 200);
+              }}
+              placeholder={toRecipients.length === 0 ? 'Type or search recipients' : ''}
               className="flex-1 min-w-[120px] outline-none text-sm py-1"
             />
           </div>
@@ -453,7 +472,10 @@ export function EnhancedGmailComposer({
                 onChange={(e) => handleInputChange(e.target.value, 'cc')}
                 onKeyDown={(e) => handleKeyDown(e, 'cc')}
                 onFocus={() => setActiveSuggestionField('cc')}
-                placeholder={ccRecipients.length === 0 ? 'Cc recipients' : ''}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
+                placeholder={ccRecipients.length === 0 ? 'Type or search Cc recipients' : ''}
                 className="flex-1 min-w-[120px] outline-none text-sm py-1"
               />
             </div>
@@ -479,7 +501,10 @@ export function EnhancedGmailComposer({
                 onChange={(e) => handleInputChange(e.target.value, 'bcc')}
                 onKeyDown={(e) => handleKeyDown(e, 'bcc')}
                 onFocus={() => setActiveSuggestionField('bcc')}
-                placeholder={bccRecipients.length === 0 ? 'Bcc recipients' : ''}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
+                placeholder={bccRecipients.length === 0 ? 'Type or search Bcc recipients' : ''}
                 className="flex-1 min-w-[120px] outline-none text-sm py-1"
               />
             </div>
@@ -488,11 +513,14 @@ export function EnhancedGmailComposer({
 
         {/* Autocomplete Suggestions */}
         {showSuggestions && customerSuggestions.length > 0 && activeSuggestionField && (
-          <div ref={suggestionsRef} className="absolute bg-white border border-gray-200 shadow-lg rounded-lg mt-1 max-h-48 overflow-y-auto z-50 w-96">
+          <div ref={suggestionsRef} className="absolute bg-white border border-gray-200 shadow-lg rounded-lg mt-1 max-h-48 overflow-y-auto z-50 w-96 ml-16">
             {customerSuggestions.map((customer, index) => (
               <button
                 key={index}
-                onClick={() => addRecipient(customer, activeSuggestionField)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  addRecipient(customer, activeSuggestionField);
+                }}
                 className="w-full px-4 py-2 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
               >
                 <div className="text-sm font-medium text-gray-900">{customer.name}</div>
@@ -502,6 +530,11 @@ export function EnhancedGmailComposer({
             ))}
           </div>
         )}
+
+        {/* Helper Text */}
+        <div className="px-4 pb-2 text-[11px] text-gray-500 italic">
+          Tip: Type email addresses and press Enter, comma, or space to add. Or search from contacts.
+        </div>
 
         {/* Subject */}
         <div className="flex items-center px-4 py-2">
@@ -517,15 +550,47 @@ export function EnhancedGmailComposer({
       </div>
 
       {/* Body - Rich Text Editor */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <style>{`
+          .quill-editor-container .ql-container {
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+            overflow-y: auto !important;
+            max-height: 100%;
+          }
+          .quill-editor-container .ql-editor {
+            min-height: 200px;
+            overflow-y: auto !important;
+          }
+          .quill-editor-container .ql-editor table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+          }
+          .quill-editor-container .ql-editor table td,
+          .quill-editor-container .ql-editor table th {
+            border: 1px solid #ddd;
+            padding: 8px;
+          }
+          .quill-editor-container .ql-editor blockquote {
+            border-left: 4px solid #ccc;
+            padding-left: 16px;
+            color: #666;
+            margin: 10px 0;
+          }
+          .quill-editor-container .ql-editor img {
+            max-width: 100%;
+            height: auto;
+          }
+        `}</style>
         <ReactQuill
           ref={quillRef}
           theme="snow"
           value={body}
           onChange={setBody}
           modules={modules}
-          className="h-full"
-          style={{ height: 'calc(100% - 42px)' }}
+          className="quill-editor-container flex-1"
+          style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
         />
       </div>
 
@@ -554,7 +619,7 @@ export function EnhancedGmailComposer({
         <div className="flex items-center gap-2">
           <button
             onClick={handleSend}
-            disabled={sending || toRecipients.length === 0 || !subject || !body}
+            disabled={sending || (toRecipients.length === 0 && (!toInput.trim() || !validateEmail(toInput.trim()))) || !subject || !body}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
           >
             {sending ? (
