@@ -90,6 +90,28 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
   const [offeredPriceInput, setOfferedPriceInput] = useState('');
   const filterRef = useRef<HTMLDivElement>(null);
 
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
+    checkbox: 50,
+    inquiry_number: 120,
+    inquiry_date: 120,
+    product_name: 200,
+    specification: 200,
+    quantity: 100,
+    supplier_name: 150,
+    company_name: 180,
+    mail_subject: 200,
+    aceerp_no: 120,
+    status: 130,
+    pipeline_status: 130,
+    our_side: 130,
+    purchase_price: 100,
+    offered_price: 100,
+    delivery_date: 120,
+    priority: 100,
+    remarks: 200,
+  });
+  const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
+
   const statusOptions = [
     { value: 'new', label: 'New' },
     { value: 'price_quoted', label: 'Price Quoted' },
@@ -122,6 +144,68 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizing) return;
+      const delta = e.clientX - resizing.startX;
+      const newWidth = Math.max(50, resizing.startWidth + delta);
+      setColumnWidths(prev => ({ ...prev, [resizing.column]: newWidth }));
+    };
+
+    const handleMouseUp = () => {
+      setResizing(null);
+    };
+
+    if (resizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [resizing]);
+
+  const handleResizeStart = (column: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setResizing({
+      column,
+      startX: e.clientX,
+      startWidth: columnWidths[column] || 150,
+    });
+  };
+
+  const ResizableHeader = ({
+    column,
+    label,
+    sortable = true,
+    className = ''
+  }: {
+    column: string;
+    label: string;
+    sortable?: boolean;
+    className?: string;
+  }) => (
+    <th
+      style={{ width: columnWidths[column], minWidth: columnWidths[column] }}
+      className={`relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 ${sortable ? 'cursor-pointer hover:bg-gray-100 select-none' : ''} ${className}`}
+      onClick={sortable ? () => handleSort(column) : undefined}
+    >
+      <div className="flex items-center gap-1">
+        <span className="truncate">{label}</span>
+        {sortable && getSortIcon(column)}
+      </div>
+      <div
+        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400 group"
+        onMouseDown={(e) => handleResizeStart(column, e)}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="absolute top-0 right-0 w-1 h-full bg-transparent group-hover:bg-blue-400" />
+      </div>
+    </th>
+  );
 
   const applyFiltersAndSort = () => {
     let result = [...inquiries];
@@ -927,71 +1011,17 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
                   />
                 </th>
 
-                {/* Inquiry Number - Sortable */}
-                <th
-                  onClick={() => handleSort('inquiry_number')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 whitespace-nowrap cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>No.</span>
-                    {getSortIcon('inquiry_number')}
-                  </div>
-                </th>
+                <ResizableHeader column="inquiry_number" label="No." className="whitespace-nowrap" />
 
-                {/* Date - Sortable */}
-                <th
-                  onClick={() => handleSort('inquiry_date')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 whitespace-nowrap cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Date</span>
-                    {getSortIcon('inquiry_date')}
-                  </div>
-                </th>
+                <ResizableHeader column="inquiry_date" label="Date" className="whitespace-nowrap" />
 
-                {/* Product - Sortable */}
-                <th
-                  onClick={() => handleSort('product_name')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[200px] cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Product</span>
-                    {getSortIcon('product_name')}
-                  </div>
-                </th>
+                <ResizableHeader column="product_name" label="Product" />
 
-                {/* Specification - Sortable */}
-                <th
-                  onClick={() => handleSort('specification')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[150px] cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Specification</span>
-                    {getSortIcon('specification')}
-                  </div>
-                </th>
+                <ResizableHeader column="specification" label="Specification" />
 
-                {/* Quantity - Sortable */}
-                <th
-                  onClick={() => handleSort('quantity')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Qty</span>
-                    {getSortIcon('quantity')}
-                  </div>
-                </th>
+                <ResizableHeader column="quantity" label="Qty" />
 
-                {/* Supplier - Sortable */}
-                <th
-                  onClick={() => handleSort('supplier_name')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[150px] cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Supplier</span>
-                    {getSortIcon('supplier_name')}
-                  </div>
-                </th>
+                <ResizableHeader column="supplier_name" label="Supplier" />
 
                 {/* Company - Sortable with Filter */}
                 <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[150px] relative">
@@ -1037,27 +1067,9 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
                   )}
                 </th>
 
-                {/* Mail Subject - Sortable */}
-                <th
-                  onClick={() => handleSort('mail_subject')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[180px] cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Mail Subject</span>
-                    {getSortIcon('mail_subject')}
-                  </div>
-                </th>
+                <ResizableHeader column="mail_subject" label="Mail Subject" />
 
-                {/* ACE ERP No - Sortable */}
-                <th
-                  onClick={() => handleSort('aceerp_no')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>ACE ERP#</span>
-                    {getSortIcon('aceerp_no')}
-                  </div>
-                </th>
+                <ResizableHeader column="aceerp_no" label="ACE ERP#" />
 
                 {/* Pipeline Status with filter */}
                 <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 relative min-w-[130px]">
@@ -1186,19 +1198,38 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
                 </th>
 
                 {profile?.role === 'admin' && (
-                  <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300">
+                  <th
+                    style={{ width: columnWidths.purchase_price, minWidth: columnWidths.purchase_price }}
+                    className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
+                  >
                     <span>P.Price</span>
+                    <div
+                      className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
+                      onMouseDown={(e) => handleResizeStart('purchase_price', e)}
+                    />
                   </th>
                 )}
 
-                {/* Offered Price */}
-                <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300">
+                <th
+                  style={{ width: columnWidths.offered_price, minWidth: columnWidths.offered_price }}
+                  className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
+                >
                   <span>O.Price</span>
+                  <div
+                    className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
+                    onMouseDown={(e) => handleResizeStart('offered_price', e)}
+                  />
                 </th>
 
-                {/* Delivery Date */}
-                <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300">
+                <th
+                  style={{ width: columnWidths.delivery_date, minWidth: columnWidths.delivery_date }}
+                  className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
+                >
                   <span>Delivery</span>
+                  <div
+                    className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
+                    onMouseDown={(e) => handleResizeStart('delivery_date', e)}
+                  />
                 </th>
 
                 {/* Priority with filter */}
@@ -1246,16 +1277,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
                   )}
                 </th>
 
-                {/* Remarks - Sortable */}
-                <th
-                  onClick={() => handleSort('remarks')}
-                  className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[200px] cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>Remarks</span>
-                    {getSortIcon('remarks')}
-                  </div>
-                </th>
+                <ResizableHeader column="remarks" label="Remarks" />
               </tr>
             </thead>
             <tbody>
