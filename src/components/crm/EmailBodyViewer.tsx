@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 interface EmailBodyViewerProps {
   htmlContent: string;
@@ -9,6 +10,7 @@ interface EmailBodyViewerProps {
 export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeHeight, setIframeHeight] = useState(500);
+  const [quotedSectionsCollapsed, setQuotedSectionsCollapsed] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (!iframeRef.current || !htmlContent) return;
@@ -24,7 +26,22 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
 
     const decodedHTML = decodeHTML(htmlContent);
 
-    const sanitizedHTML = DOMPurify.sanitize(decodedHTML, {
+    let processedHTML = decodedHTML;
+
+    processedHTML = processedHTML.replace(
+      /<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi,
+      (match, content, offset) => {
+        const id = Math.random().toString(36).substr(2, 9);
+        return `<div class="quoted-section" data-quote-id="${id}">
+          <div class="quoted-toggle" onclick="toggleQuote('${id}')">
+            <span class="toggle-icon">...</span>
+          </div>
+          <blockquote class="quoted-content" id="quote-${id}" style="display: none;">${content}</blockquote>
+        </div>`;
+      }
+    );
+
+    const sanitizedHTML = DOMPurify.sanitize(processedHTML, {
       ALLOWED_TAGS: [
         'html', 'head', 'body', 'meta', 'title', 'style',
         'p', 'br', 'div', 'span', 'a', 'img',
@@ -41,9 +58,10 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
         'src', 'alt', 'title', 'width', 'height',
         'align', 'valign',
         'border', 'cellpadding', 'cellspacing',
-        'bgcolor', 'color', 'face', 'size'
+        'bgcolor', 'color', 'face', 'size',
+        'data-quote-id', 'onclick'
       ],
-      ALLOW_DATA_ATTR: false,
+      ALLOW_DATA_ATTR: true,
       ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
     });
 
@@ -146,8 +164,39 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
         blockquote {
           margin: 8px 0;
           padding-left: 16px;
-          border-left: 3px solid #dadce0;
-          color: #5f6368;
+          border-left: 4px solid #ccc;
+          color: #666;
+        }
+
+        /* Quoted section styling */
+        .quoted-section {
+          margin: 12px 0;
+        }
+
+        .quoted-toggle {
+          display: inline-block;
+          color: #1a73e8;
+          cursor: pointer;
+          font-size: 13px;
+          padding: 4px 8px;
+          border-radius: 4px;
+          user-select: none;
+        }
+
+        .quoted-toggle:hover {
+          background-color: #f0f0f0;
+        }
+
+        .toggle-icon {
+          display: inline-block;
+          font-weight: bold;
+        }
+
+        .quoted-content {
+          margin-top: 8px;
+          padding-left: 16px;
+          border-left: 4px solid #ccc;
+          color: #666;
         }
 
         /* Headers */
@@ -192,6 +241,20 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
           <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           ${emailStyles}
+          <script>
+            function toggleQuote(id) {
+              const content = document.getElementById('quote-' + id);
+              const toggle = content.previousElementSibling.querySelector('.toggle-icon');
+
+              if (content.style.display === 'none') {
+                content.style.display = 'block';
+                toggle.textContent = '▼';
+              } else {
+                content.style.display = 'none';
+                toggle.textContent = '...';
+              }
+            }
+          </script>
         </head>
         <body>
           ${sanitizedHTML}
