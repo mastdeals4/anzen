@@ -103,6 +103,63 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
     };
   }, [loadEmails, handleRefresh]);
 
+  useEffect(() => {
+    const checkPendingEmail = async () => {
+      const pendingEmail = sessionStorage.getItem('pendingEmailForInquiry');
+      if (pendingEmail) {
+        sessionStorage.removeItem('pendingEmailForInquiry');
+
+        try {
+          const emailData = JSON.parse(pendingEmail);
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) throw new Error('Not authenticated');
+
+          const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-pharma-email`;
+
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              emailSubject: emailData.subject,
+              emailBody: emailData.body,
+              fromEmail: emailData.fromEmail,
+              fromName: emailData.fromName,
+            }),
+          });
+
+          const result = await response.json();
+
+          if (result.success || result.fallbackData) {
+            const mockEmail: Email = {
+              id: 'gmail-' + Date.now(),
+              from_email: emailData.fromEmail,
+              from_name: emailData.fromName,
+              subject: emailData.subject,
+              body: emailData.body,
+              received_date: emailData.date,
+              is_processed: false,
+              is_inquiry: false,
+              parsed_data: null,
+              converted_to_inquiry: null,
+            };
+
+            onEmailSelect(mockEmail, result.data || result.fallbackData);
+          } else {
+            alert('Failed to parse email from Gmail: ' + result.error);
+          }
+        } catch (error) {
+          console.error('Error processing pending email:', error);
+          alert('Failed to process email. Please try again.');
+        }
+      }
+    };
+
+    checkPendingEmail();
+  }, [onEmailSelect]);
+
   const handleEmailClick = async (email: Email) => {
     setParsingEmailId(email.id);
 

@@ -6,6 +6,7 @@ import {
   Search, ChevronRight, Loader, AlertCircle, CheckCircle, X, Reply as ReplyIcon, Forward as ForwardIcon, MoreVertical
 } from 'lucide-react';
 import { Modal } from '../Modal';
+import { useNavigation } from '../../contexts/NavigationContext';
 
 interface GmailConnection {
   id: string;
@@ -46,6 +47,7 @@ interface EmailListItem {
 type FolderType = 'INBOX' | 'SENT' | 'STARRED' | 'ALL' | 'TRASH' | 'DRAFT';
 
 export function GmailBrowserInbox() {
+  const { navigateTo } = useNavigation();
   const [connection, setConnection] = useState<GmailConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingEmails, setLoadingEmails] = useState(false);
@@ -60,9 +62,13 @@ export function GmailBrowserInbox() {
   const [showComposer, setShowComposer] = useState(false);
   const [composerMode, setComposerMode] = useState<'reply' | 'forward' | null>(null);
   const [composerTo, setComposerTo] = useState('');
+  const [composerCc, setComposerCc] = useState('');
+  const [composerBcc, setComposerBcc] = useState('');
   const [composerSubject, setComposerSubject] = useState('');
   const [composerBody, setComposerBody] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; email: EmailListItem } | null>(null);
   const [creatingInquiry, setCreatingInquiry] = useState(false);
@@ -460,12 +466,26 @@ export function GmailBrowserInbox() {
     try {
       const accessToken = await refreshAccessToken(connection);
 
+      const headers = [
+        'Content-Type: text/html; charset="UTF-8"',
+        'MIME-Version: 1.0',
+        `To: ${composerTo}`,
+      ];
+
+      if (composerCc) {
+        headers.push(`Cc: ${composerCc}`);
+      }
+
+      if (composerBcc) {
+        headers.push(`Bcc: ${composerBcc}`);
+      }
+
+      headers.push(`Subject: ${composerSubject}`);
+
       const emailContent = [
-        'Content-Type: text/plain; charset="UTF-8"\r\n',
-        'MIME-Version: 1.0\r\n',
-        `To: ${composerTo}\r\n`,
-        `Subject: ${composerSubject}\r\n\r\n`,
-        composerBody
+        ...headers.map(h => `${h}\r\n`),
+        '\r\n',
+        composerBody.replace(/\n/g, '<br>')
       ].join('');
 
       const encodedEmail = btoa(unescape(encodeURIComponent(emailContent)))
@@ -490,9 +510,13 @@ export function GmailBrowserInbox() {
       alert('Email sent successfully!');
       setShowComposer(false);
       setComposerTo('');
+      setComposerCc('');
+      setComposerBcc('');
       setComposerSubject('');
       setComposerBody('');
       setComposerMode(null);
+      setShowCc(false);
+      setShowBcc(false);
     } catch (err) {
       console.error('Error sending email:', err);
       alert('Failed to send email. Please try again.');
@@ -506,39 +530,18 @@ export function GmailBrowserInbox() {
     setContextMenu(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
+      sessionStorage.setItem('pendingEmailForInquiry', JSON.stringify({
+        subject: email.subject,
+        body: email.body || email.snippet,
+        fromEmail: email.fromEmail,
+        fromName: email.from,
+        date: email.date.toISOString(),
+      }));
 
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-pharma-email`;
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          emailSubject: email.subject,
-          emailBody: email.body || email.snippet,
-          fromEmail: email.fromEmail,
-          fromName: email.from,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to parse email');
-      }
-
-      const result = await response.json();
-
-      if (result.success) {
-        window.location.href = '/?tab=command-center';
-      } else {
-        alert('Failed to parse email: ' + result.error);
-      }
+      navigateTo('command-center');
     } catch (error) {
-      console.error('Error creating inquiry:', error);
-      alert('Failed to create inquiry. Please try again.');
+      console.error('Error preparing inquiry:', error);
+      alert('Failed to prepare inquiry. Please try again.');
     } finally {
       setCreatingInquiry(false);
     }
@@ -934,25 +937,105 @@ export function GmailBrowserInbox() {
         onClose={() => {
           setShowComposer(false);
           setComposerTo('');
+          setComposerCc('');
+          setComposerBcc('');
           setComposerSubject('');
           setComposerBody('');
           setComposerMode(null);
+          setShowCc(false);
+          setShowBcc(false);
         }}
         title={composerMode === 'reply' ? 'Reply to Email' : 'Forward Email'}
       >
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              To
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">
+                To
+              </label>
+              <div className="flex gap-2">
+                {!showCc && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCc(true)}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Cc
+                  </button>
+                )}
+                {!showBcc && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBcc(true)}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Bcc
+                  </button>
+                )}
+              </div>
+            </div>
             <input
               type="email"
               value={composerTo}
               onChange={(e) => setComposerTo(e.target.value)}
               placeholder="recipient@example.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />
           </div>
+
+          {showCc && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">
+                  Cc
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCc(false);
+                    setComposerCc('');
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              <input
+                type="email"
+                value={composerCc}
+                onChange={(e) => setComposerCc(e.target.value)}
+                placeholder="cc@example.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
+            </div>
+          )}
+
+          {showBcc && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">
+                  Bcc
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBcc(false);
+                    setComposerBcc('');
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              <input
+                type="email"
+                value={composerBcc}
+                onChange={(e) => setComposerBcc(e.target.value)}
+                placeholder="bcc@example.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -962,7 +1045,7 @@ export function GmailBrowserInbox() {
               type="text"
               value={composerSubject}
               onChange={(e) => setComposerSubject(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />
           </div>
 
@@ -974,7 +1057,8 @@ export function GmailBrowserInbox() {
               value={composerBody}
               onChange={(e) => setComposerBody(e.target.value)}
               rows={12}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              style={{ fontFamily: 'inherit' }}
             />
           </div>
 
@@ -984,18 +1068,22 @@ export function GmailBrowserInbox() {
               onClick={() => {
                 setShowComposer(false);
                 setComposerTo('');
+                setComposerCc('');
+                setComposerBcc('');
                 setComposerSubject('');
                 setComposerBody('');
                 setComposerMode(null);
+                setShowCc(false);
+                setShowBcc(false);
               }}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition text-sm"
             >
               Cancel
             </button>
             <button
               onClick={handleSendEmail}
               disabled={sendingEmail || !composerTo || !composerSubject}
-              className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               {sendingEmail ? (
                 <>
