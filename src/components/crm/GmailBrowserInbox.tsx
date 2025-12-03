@@ -250,9 +250,19 @@ export function GmailBrowserInbox() {
 
     const decodeBody = (data: string): string => {
       try {
-        return atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+        const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return new TextDecoder('utf-8').decode(bytes);
       } catch (e) {
-        return data;
+        try {
+          return atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+        } catch (e2) {
+          return data;
+        }
       }
     };
 
@@ -419,103 +429,103 @@ export function GmailBrowserInbox() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-16rem)] bg-white rounded-lg border border-gray-200">
-      {/* Left Sidebar - Folders */}
-      <div className="w-56 border-r border-gray-200 flex flex-col bg-gray-50">
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="text-sm font-semibold text-gray-700">Folders</h3>
+    <div className="flex h-[calc(100vh-16rem)] bg-white rounded-lg border border-gray-200 overflow-hidden">
+      {/* Left Sidebar - Folders (10%) */}
+      <div className="w-[10%] min-w-[140px] border-r border-gray-200 flex flex-col bg-gray-50">
+        <div className="p-3 border-b border-gray-200">
+          <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Folders</h3>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto py-1">
           <button
             onClick={() => setSelectedFolder('INBOX')}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition ${
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition ${
               selectedFolder === 'INBOX'
-                ? 'bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-500'
+                ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <Inbox className="w-4 h-4" />
+            <Inbox className="w-3.5 h-3.5" />
             <span>Inbox</span>
           </button>
           <button
             onClick={() => setSelectedFolder('STARRED')}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition ${
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition ${
               selectedFolder === 'STARRED'
-                ? 'bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-500'
+                ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <Star className="w-4 h-4" />
+            <Star className="w-3.5 h-3.5" />
             <span>Starred</span>
           </button>
           <button
             onClick={() => setSelectedFolder('SENT')}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition ${
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition ${
               selectedFolder === 'SENT'
-                ? 'bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-500'
+                ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-3.5 h-3.5" />
             <span>Sent</span>
           </button>
           <button
             onClick={() => setSelectedFolder('DRAFT')}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition ${
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition ${
               selectedFolder === 'DRAFT'
-                ? 'bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-500'
+                ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <Mail className="w-4 h-4" />
+            <Mail className="w-3.5 h-3.5" />
             <span>Drafts</span>
           </button>
           <button
             onClick={() => setSelectedFolder('ALL')}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition ${
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition ${
               selectedFolder === 'ALL'
-                ? 'bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-500'
+                ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <Archive className="w-4 h-4" />
+            <Archive className="w-3.5 h-3.5" />
             <span>All Mail</span>
           </button>
           <button
             onClick={() => setSelectedFolder('TRASH')}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition ${
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition ${
               selectedFolder === 'TRASH'
-                ? 'bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-500'
+                ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <Trash className="w-4 h-4" />
+            <Trash className="w-3.5 h-3.5" />
             <span>Trash</span>
           </button>
         </div>
-        <div className="p-4 border-t border-gray-200">
+        <div className="p-2 border-t border-gray-200">
           <button
             onClick={() => loadEmails()}
             disabled={loadingEmails}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingEmails ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3 h-3 ${loadingEmails ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Middle Panel - Email List */}
-      <div className="flex-1 flex flex-col border-r border-gray-200">
-        <div className="p-4 border-b border-gray-200">
+      {/* Middle Panel - Email List (30%) */}
+      <div className="w-[30%] min-w-[320px] flex flex-col border-r border-gray-200 bg-white">
+        <div className="p-3 border-b border-gray-200 bg-gray-50">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search emails..."
-              className="w-full pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
         </div>
@@ -543,12 +553,12 @@ export function GmailBrowserInbox() {
                   <div
                     key={email.id}
                     onClick={() => handleEmailClick(email)}
-                    className={`flex items-start gap-3 p-4 border-b border-gray-100 cursor-pointer transition ${
+                    className={`flex items-start gap-2 px-3 py-2.5 border-b border-gray-100 cursor-pointer transition ${
                       selectedEmail?.id === email.id
-                        ? 'bg-blue-50'
+                        ? 'bg-blue-50 border-l-2 border-l-blue-500'
                         : email.isUnread
                         ? 'bg-white hover:bg-gray-50'
-                        : 'bg-gray-50 hover:bg-gray-100'
+                        : 'bg-white hover:bg-gray-50'
                     }`}
                   >
                     <button
@@ -556,30 +566,30 @@ export function GmailBrowserInbox() {
                         e.stopPropagation();
                         toggleStar(email.id, email.isStarred);
                       }}
-                      className="mt-1"
+                      className="mt-0.5 flex-shrink-0"
                     >
                       <Star
-                        className={`w-4 h-4 ${
+                        className={`w-3.5 h-3.5 ${
                           email.isStarred ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'
                         } hover:text-yellow-400 transition`}
                       />
                     </button>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline justify-between gap-2 mb-1">
-                        <p className={`text-sm truncate ${email.isUnread ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
+                      <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                        <p className={`text-xs truncate ${email.isUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
                           {email.from}
                         </p>
-                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                        <span className="text-[10px] text-gray-500 whitespace-nowrap flex-shrink-0">
                           {formatDate(email.date)}
                         </span>
                       </div>
-                      <p className={`text-sm truncate mb-1 ${email.isUnread ? 'font-medium text-gray-900' : 'text-gray-600'}`}>
+                      <p className={`text-xs truncate mb-0.5 ${email.isUnread ? 'font-semibold text-gray-900' : 'text-gray-600'}`}>
                         {email.subject}
                       </p>
-                      <p className="text-xs text-gray-500 truncate">{email.snippet}</p>
+                      <p className="text-[10px] text-gray-500 line-clamp-1">{email.snippet}</p>
                     </div>
                     {email.isUnread && (
-                      <div className="w-2 h-2 rounded-full bg-blue-500 mt-2"></div>
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0"></div>
                     )}
                   </div>
                 ))}
@@ -599,18 +609,23 @@ export function GmailBrowserInbox() {
         </div>
       </div>
 
-      {/* Right Panel - Email Detail */}
-      <div className="w-1/2 flex flex-col bg-white">
+      {/* Right Panel - Email Preview (60%) */}
+      <div className="flex-1 w-[60%] flex flex-col bg-white overflow-hidden">
         {selectedEmail ? (
           <>
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">{selectedEmail.subject}</h2>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{selectedEmail.from}</p>
-                  <p className="text-xs text-gray-500">{selectedEmail.fromEmail}</p>
+            <div className="px-6 py-4 border-b border-gray-200 bg-white">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3 leading-tight">{selectedEmail.subject}</h2>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
+                    {selectedEmail.from.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">{selectedEmail.from}</p>
+                    <p className="text-xs text-gray-500 truncate">{selectedEmail.fromEmail}</p>
+                  </div>
                 </div>
-                <p className="text-sm text-gray-500">
+                <p className="text-xs text-gray-500 whitespace-nowrap">
                   {selectedEmail.date.toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
@@ -621,14 +636,15 @@ export function GmailBrowserInbox() {
                 </p>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto px-6 py-4 bg-gray-50">
               {loadingEmailBody ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader className="w-6 h-6 animate-spin text-blue-500" />
                 </div>
               ) : selectedEmail.body ? (
                 <div
-                  className="prose prose-sm max-w-none"
+                  className="prose prose-sm max-w-none bg-white rounded-lg p-4 shadow-sm"
+                  style={{ fontSize: '13px', lineHeight: '1.6' }}
                   dangerouslySetInnerHTML={{
                     __html: DOMPurify.sanitize(selectedEmail.body, {
                       ADD_ATTR: ['target'],
@@ -637,30 +653,31 @@ export function GmailBrowserInbox() {
                   }}
                 />
               ) : (
-                <div className="prose prose-sm max-w-none">
-                  <p className="text-gray-700 whitespace-pre-wrap">{selectedEmail.snippet}</p>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedEmail.snippet}</p>
                 </div>
               )}
             </div>
-            <div className="p-4 border-t border-gray-200 bg-gray-50">
+            <div className="px-4 py-3 border-t border-gray-200 bg-white">
               <div className="flex items-center gap-2">
-                <button className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition">
+                <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition">
                   Reply
                 </button>
-                <button className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition">
+                <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition">
                   Forward
                 </button>
-                <button className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition">
+                <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition">
                   Create Inquiry
                 </button>
               </div>
             </div>
           </>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400">
+          <div className="flex items-center justify-center h-full text-gray-400 bg-gray-50">
             <div className="text-center">
-              <Mail className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p className="text-sm">Select an email to view</p>
+              <Mail className="w-20 h-20 mx-auto mb-4 text-gray-300" />
+              <p className="text-sm text-gray-500 font-medium">Select an email to view</p>
+              <p className="text-xs text-gray-400 mt-1">Choose a message from your inbox</p>
             </div>
           </div>
         )}
