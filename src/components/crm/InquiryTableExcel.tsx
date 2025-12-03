@@ -71,7 +71,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
   const [filters, setFilters] = useState<ColumnFilter[]>([]);
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [filteredData, setFilteredData] = useState<Inquiry[]>(inquiries);
-  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' | null }>({ column: '', direction: null });
+  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' | null }>({ column: 'inquiry_date', direction: 'desc' });
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [emailModalOpen, setEmailModalOpen] = useState(false);
