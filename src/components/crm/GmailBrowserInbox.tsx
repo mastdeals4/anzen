@@ -75,7 +75,6 @@ export function GmailBrowserInbox() {
   const [composerReplyTo, setComposerReplyTo] = useState<typeof selectedEmail | null>(null);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; email: EmailListItem } | null>(null);
-  const [creatingInquiry, setCreatingInquiry] = useState(false);
 
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
@@ -650,7 +649,6 @@ export function GmailBrowserInbox() {
       return;
     }
 
-    setCreatingInquiry(true);
     setContextMenu(null);
 
     try {
@@ -662,14 +660,10 @@ export function GmailBrowserInbox() {
         date: email.date ? email.date.toISOString() : new Date().toISOString(),
       }));
 
-      setTimeout(() => {
-        navigateTo('command-center');
-        setCreatingInquiry(false);
-      }, 100);
+      navigateTo('command-center');
     } catch (error) {
       console.error('Error preparing inquiry:', error);
       alert('Failed to prepare inquiry. Please try again.');
-      setCreatingInquiry(false);
     }
   };
 
@@ -1008,20 +1002,10 @@ export function GmailBrowserInbox() {
                 </button>
                 <button
                   onClick={() => handleCreateInquiry(selectedEmail)}
-                  disabled={creatingInquiry}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition"
                 >
-                  {creatingInquiry ? (
-                    <>
-                      <Loader className="w-4 h-4 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="w-4 h-4" />
-                      Create Inquiry
-                    </>
-                  )}
+                  <CheckCircle className="w-4 h-4" />
+                  Process in Command Center
                 </button>
                 <button
                   onClick={() => handleDelete(selectedEmail)}
@@ -1086,7 +1070,7 @@ export function GmailBrowserInbox() {
             className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 border-t border-gray-100"
           >
             <CheckCircle className="w-4 h-4" />
-            Create Inquiry
+            Process in Command Center
           </button>
           <button
             onClick={() => handleDelete(contextMenu.email)}
