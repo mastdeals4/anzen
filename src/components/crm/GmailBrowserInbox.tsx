@@ -332,11 +332,26 @@ export function GmailBrowserInbox() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <p className="text-gray-700 font-medium mb-2">Connection Error</p>
-          <p className="text-sm text-gray-500">{error}</p>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center max-w-md px-6">
+          <AlertCircle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+          <p className="text-lg font-semibold text-gray-900 mb-2">Gmail Not Connected</p>
+          <p className="text-sm text-gray-600 mb-4">{error}</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-left">
+            <p className="text-sm font-medium text-blue-900 mb-2">To connect Gmail:</p>
+            <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+              <li>Go to Settings page</li>
+              <li>Navigate to Gmail Settings section</li>
+              <li>Click "Connect Gmail Account"</li>
+              <li>Authorize access to your Gmail account</li>
+            </ol>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition"
+          >
+            Refresh Page
+          </button>
         </div>
       </div>
     );
