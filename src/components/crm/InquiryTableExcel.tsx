@@ -998,7 +998,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
 
       {/* Excel-like Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           <table className="w-full text-sm border-collapse">
             <thead className="bg-gray-50">
               <tr className="border-b border-gray-300">
