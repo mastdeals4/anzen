@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import DOMPurify from 'dompurify';
 import {
   Inbox, Send, Star, Mail, Trash, Archive, RefreshCw,
-  Search, ChevronRight, Loader, AlertCircle, CheckCircle, X, Reply as ReplyIcon, Forward as ForwardIcon, MoreVertical
+  Search, ChevronRight, Loader, AlertCircle, CheckCircle, X, Reply as ReplyIcon, Forward as ForwardIcon, MoreVertical, FileText, Users
 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { useNavigation } from '../../contexts/NavigationContext';
@@ -36,12 +36,21 @@ interface EmailListItem {
   subject: string;
   from: string;
   fromEmail: string;
+  to?: string;
+  cc?: string;
   snippet: string;
   body?: string;
+  htmlBody?: string;
   date: Date;
   isUnread: boolean;
   isStarred: boolean;
   labels: string[];
+  attachments?: Array<{
+    filename: string;
+    mimeType: string;
+    size: number;
+    attachmentId: string;
+  }>;
 }
 
 type FolderType = 'INBOX' | 'SENT' | 'STARRED' | 'ALL' | 'TRASH' | 'DRAFT';
@@ -248,11 +257,15 @@ export function GmailBrowserInbox() {
       const headers = msg.payload.headers;
       const subject = getHeader(headers, 'subject') || '(No Subject)';
       const from = getHeader(headers, 'from') || '';
+      const to = getHeader(headers, 'to') || '';
+      const cc = getHeader(headers, 'cc') || '';
       const fromEmail = from.match(/<(.+?)>/)?.[1] || from;
       const fromName = from.replace(/<.+?>/, '').trim() || fromEmail;
       const date = new Date(parseInt(msg.internalDate));
       const isUnread = msg.labelIds?.includes('UNREAD') || false;
       const isStarred = msg.labelIds?.includes('STARRED') || false;
+
+      const { text, html, attachments } = getEmailBody(msg.payload);
 
       return {
         id: msg.id,
@@ -260,11 +273,16 @@ export function GmailBrowserInbox() {
         subject,
         from: fromName,
         fromEmail,
+        to,
+        cc,
         snippet: msg.snippet || '',
+        body: text,
+        htmlBody: html,
         date,
         isUnread,
         isStarred,
         labels: msg.labelIds || [],
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
     } catch (err) {
       console.error('Error parsing email:', err);
@@ -277,8 +295,16 @@ export function GmailBrowserInbox() {
     return header?.value || '';
   };
 
-  const getEmailBody = (payload: any): string => {
-    let body = '';
+  const stripHtmlTags = (html: string): string => {
+    const tmp = document.createElement('DIV');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
+  const getEmailBody = (payload: any): { text: string; html: string; attachments: any[] } => {
+    let textBody = '';
+    let htmlBody = '';
+    const attachments: any[] = [];
 
     const decodeBody = (data: string): string => {
       try {
@@ -298,26 +324,42 @@ export function GmailBrowserInbox() {
       }
     };
 
-    if (payload.body?.data) {
-      body = decodeBody(payload.body.data);
-    } else if (payload.parts) {
-      for (const part of payload.parts) {
+    const extractParts = (parts: any[]) => {
+      for (const part of parts) {
+        if (part.filename && part.body?.attachmentId) {
+          attachments.push({
+            filename: part.filename,
+            mimeType: part.mimeType,
+            size: part.body.size,
+            attachmentId: part.body.attachmentId,
+          });
+        }
+
         if (part.mimeType === 'text/html' && part.body?.data) {
-          body = decodeBody(part.body.data);
-          break;
-        } else if (part.mimeType === 'text/plain' && part.body?.data && !body) {
-          body = decodeBody(part.body.data);
+          htmlBody = decodeBody(part.body.data);
+        } else if (part.mimeType === 'text/plain' && part.body?.data) {
+          textBody = decodeBody(part.body.data);
         } else if (part.parts) {
-          const nestedBody = getEmailBody(part);
-          if (nestedBody) {
-            body = nestedBody;
-            if (part.mimeType === 'text/html') break;
-          }
+          extractParts(part.parts);
         }
       }
+    };
+
+    if (payload.body?.data) {
+      const body = decodeBody(payload.body.data);
+      if (payload.mimeType === 'text/html') {
+        htmlBody = body;
+      } else {
+        textBody = body;
+      }
+    } else if (payload.parts) {
+      extractParts(payload.parts);
     }
 
-    return body;
+    const finalText = textBody || (htmlBody ? stripHtmlTags(htmlBody) : '');
+    const finalHtml = htmlBody || textBody.replace(/\n/g, '<br>');
+
+    return { text: finalText, html: finalHtml, attachments };
   };
 
   const handleEmailClick = async (email: EmailListItem) => {
@@ -339,8 +381,19 @@ export function GmailBrowserInbox() {
 
         if (msgResponse.ok) {
           const msgData: GmailMessage = await msgResponse.json();
-          const body = getEmailBody(msgData.payload);
-          const updatedEmail = { ...email, body };
+          const { text, html, attachments } = getEmailBody(msgData.payload);
+          const headers = msgData.payload.headers;
+          const to = getHeader(headers, 'to') || '';
+          const cc = getHeader(headers, 'cc') || '';
+
+          const updatedEmail = {
+            ...email,
+            body: text,
+            htmlBody: html,
+            to,
+            cc,
+            attachments: attachments.length > 0 ? attachments : undefined,
+          };
           setSelectedEmail(updatedEmail);
           setEmails(emails.map(e => e.id === email.id ? updatedEmail : e));
         }
@@ -411,11 +464,21 @@ export function GmailBrowserInbox() {
     }
   };
 
-  const handleReply = (email: EmailListItem) => {
+  const handleReply = (email: EmailListItem, replyAll: boolean = false) => {
     setComposerMode('reply');
     setComposerTo(email.fromEmail);
+
+    if (replyAll && email.cc) {
+      setComposerCc(email.cc);
+      setShowCc(true);
+    }
+
     setComposerSubject(email.subject.startsWith('Re: ') ? email.subject : `Re: ${email.subject}`);
-    setComposerBody(`\n\n\nOn ${email.date.toLocaleString()}, ${email.from} wrote:\n> ${email.snippet}`);
+
+    const bodyText = email.body || email.snippet;
+    const quotedBody = bodyText.split('\n').map(line => `> ${line}`).join('\n');
+    setComposerBody(`\n\n\nOn ${email.date.toLocaleString()}, ${email.from} wrote:\n${quotedBody}`);
+
     setShowComposer(true);
     setContextMenu(null);
   };
@@ -424,7 +487,10 @@ export function GmailBrowserInbox() {
     setComposerMode('forward');
     setComposerTo('');
     setComposerSubject(email.subject.startsWith('Fwd: ') ? email.subject : `Fwd: ${email.subject}`);
-    setComposerBody(`\n\n\n---------- Forwarded message ---------\nFrom: ${email.from} <${email.fromEmail}>\nDate: ${email.date.toLocaleString()}\nSubject: ${email.subject}\n\n${email.body || email.snippet}`);
+
+    const bodyText = email.body || email.snippet;
+    setComposerBody(`\n\n\n---------- Forwarded message ---------\nFrom: ${email.from} <${email.fromEmail}>\nDate: ${email.date.toLocaleString()}\nSubject: ${email.subject}\nTo: ${email.to || ''}\n${email.cc ? `Cc: ${email.cc}\n` : ''}\n${bodyText}`);
+
     setShowComposer(true);
     setContextMenu(null);
   };
@@ -525,7 +591,51 @@ export function GmailBrowserInbox() {
     }
   };
 
+  const handleDownloadAttachment = async (email: EmailListItem, attachment: any) => {
+    if (!connection) return;
+
+    try {
+      const accessToken = await refreshAccessToken(connection);
+
+      const response = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${email.id}/attachments/${attachment.attachmentId}`,
+        {
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!response.ok) throw new Error('Failed to download attachment');
+
+      const data = await response.json();
+      const attachmentData = data.data.replace(/-/g, '+').replace(/_/g, '/');
+      const binaryString = atob(attachmentData);
+      const bytes = new Uint8Array(binaryString.length);
+
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const blob = new Blob([bytes], { type: attachment.mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = attachment.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading attachment:', err);
+      alert('Failed to download attachment');
+    }
+  };
+
   const handleCreateInquiry = async (email: EmailListItem) => {
+    if (!email || !email.subject) {
+      alert('Invalid email data');
+      return;
+    }
+
     setCreatingInquiry(true);
     setContextMenu(null);
 
@@ -535,14 +645,16 @@ export function GmailBrowserInbox() {
         body: email.body || email.snippet,
         fromEmail: email.fromEmail,
         fromName: email.from,
-        date: email.date.toISOString(),
+        date: email.date ? email.date.toISOString() : new Date().toISOString(),
       }));
 
-      navigateTo('command-center');
+      setTimeout(() => {
+        navigateTo('command-center');
+        setCreatingInquiry(false);
+      }, 100);
     } catch (error) {
       console.error('Error preparing inquiry:', error);
       alert('Failed to prepare inquiry. Please try again.');
-    } finally {
       setCreatingInquiry(false);
     }
   };
@@ -815,32 +927,71 @@ export function GmailBrowserInbox() {
                 <div className="flex items-center justify-center h-full">
                   <Loader className="w-6 h-6 animate-spin text-blue-500" />
                 </div>
-              ) : selectedEmail.body ? (
-                <div
-                  className="prose prose-sm max-w-none bg-white rounded-lg p-4 shadow-sm"
-                  style={{ fontSize: '13px', lineHeight: '1.6' }}
-                  dangerouslySetInnerHTML={{
-                    __html: DOMPurify.sanitize(selectedEmail.body, {
-                      ADD_ATTR: ['target'],
-                      ADD_TAGS: ['style']
-                    })
-                  }}
-                />
               ) : (
-                <div className="bg-white rounded-lg p-4 shadow-sm">
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedEmail.snippet}</p>
-                </div>
+                <>
+                  {selectedEmail.htmlBody ? (
+                    <div
+                      className="prose prose-sm max-w-none bg-white rounded-lg p-6 shadow-sm"
+                      style={{ fontSize: '14px', lineHeight: '1.6' }}
+                      dangerouslySetInnerHTML={{
+                        __html: DOMPurify.sanitize(selectedEmail.htmlBody, {
+                          ADD_ATTR: ['target', 'style'],
+                          ADD_TAGS: ['style'],
+                        })
+                      }}
+                    />
+                  ) : selectedEmail.body ? (
+                    <div className="bg-white rounded-lg p-6 shadow-sm">
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedEmail.body}</p>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-lg p-6 shadow-sm">
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedEmail.snippet}</p>
+                    </div>
+                  )}
+
+                  {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
+                    <div className="bg-white rounded-lg p-4 shadow-sm mt-4">
+                      <p className="text-xs font-semibold text-gray-700 mb-2 uppercase">Attachments ({selectedEmail.attachments.length})</p>
+                      <div className="space-y-2">
+                        {selectedEmail.attachments.map((attachment, index) => (
+                          <button
+                            key={index}
+                            onClick={() => handleDownloadAttachment(selectedEmail, attachment)}
+                            className="flex items-center gap-3 w-full p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition"
+                          >
+                            <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                            <div className="flex-1 text-left min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{attachment.filename}</p>
+                              <p className="text-xs text-gray-500">{(attachment.size / 1024).toFixed(1)} KB</p>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-gray-400" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <div className="px-4 py-3 border-t border-gray-200 bg-white">
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleReply(selectedEmail)}
+                  onClick={() => handleReply(selectedEmail, false)}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition"
                 >
                   <ReplyIcon className="w-4 h-4" />
                   Reply
                 </button>
+                {selectedEmail.cc && (
+                  <button
+                    onClick={() => handleReply(selectedEmail, true)}
+                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition"
+                  >
+                    <Users className="w-4 h-4" />
+                    Reply All
+                  </button>
+                )}
                 <button
                   onClick={() => handleForward(selectedEmail)}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition"
@@ -890,16 +1041,25 @@ export function GmailBrowserInbox() {
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50"
+          className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50 min-w-[160px]"
           style={{ top: contextMenu.y, left: contextMenu.x }}
         >
           <button
-            onClick={() => handleReply(contextMenu.email)}
+            onClick={() => handleReply(contextMenu.email, false)}
             className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
           >
             <ReplyIcon className="w-4 h-4" />
             Reply
           </button>
+          {contextMenu.email.cc && (
+            <button
+              onClick={() => handleReply(contextMenu.email, true)}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Users className="w-4 h-4" />
+              Reply All
+            </button>
+          )}
           <button
             onClick={() => handleForward(contextMenu.email)}
             className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
