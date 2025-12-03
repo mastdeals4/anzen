@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import DOMPurify from 'dompurify';
 import {
   Inbox, Send, Star, Mail, Trash, Archive, RefreshCw,
   Search, ChevronRight, Loader, AlertCircle, CheckCircle
@@ -34,6 +35,7 @@ interface EmailListItem {
   from: string;
   fromEmail: string;
   snippet: string;
+  body?: string;
   date: Date;
   isUnread: boolean;
   isStarred: boolean;
@@ -52,6 +54,7 @@ export function GmailBrowserInbox() {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [loadingEmailBody, setLoadingEmailBody] = useState(false);
 
   useEffect(() => {
     loadGmailConnection();
@@ -242,10 +245,68 @@ export function GmailBrowserInbox() {
     return header?.value || '';
   };
 
-  const handleEmailClick = (email: EmailListItem) => {
+  const getEmailBody = (payload: any): string => {
+    let body = '';
+
+    const decodeBody = (data: string): string => {
+      try {
+        return atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+      } catch (e) {
+        return data;
+      }
+    };
+
+    if (payload.body?.data) {
+      body = decodeBody(payload.body.data);
+    } else if (payload.parts) {
+      for (const part of payload.parts) {
+        if (part.mimeType === 'text/html' && part.body?.data) {
+          body = decodeBody(part.body.data);
+          break;
+        } else if (part.mimeType === 'text/plain' && part.body?.data && !body) {
+          body = decodeBody(part.body.data);
+        } else if (part.parts) {
+          const nestedBody = getEmailBody(part);
+          if (nestedBody) {
+            body = nestedBody;
+            if (part.mimeType === 'text/html') break;
+          }
+        }
+      }
+    }
+
+    return body;
+  };
+
+  const handleEmailClick = async (email: EmailListItem) => {
     setSelectedEmail(email);
     if (email.isUnread) {
       markAsRead(email.id);
+    }
+
+    if (!email.body && connection) {
+      setLoadingEmailBody(true);
+      try {
+        const accessToken = await refreshAccessToken(connection);
+        const msgResponse = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${email.id}?format=full`,
+          {
+            headers: { 'Authorization': `Bearer ${accessToken}` },
+          }
+        );
+
+        if (msgResponse.ok) {
+          const msgData: GmailMessage = await msgResponse.json();
+          const body = getEmailBody(msgData.payload);
+          const updatedEmail = { ...email, body };
+          setSelectedEmail(updatedEmail);
+          setEmails(emails.map(e => e.id === email.id ? updatedEmail : e));
+        }
+      } catch (err) {
+        console.error('Error loading email body:', err);
+      } finally {
+        setLoadingEmailBody(false);
+      }
     }
   };
 
@@ -561,9 +622,25 @@ export function GmailBrowserInbox() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
-              <div className="prose prose-sm max-w-none">
-                <p className="text-gray-700 whitespace-pre-wrap">{selectedEmail.snippet}</p>
-              </div>
+              {loadingEmailBody ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader className="w-6 h-6 animate-spin text-blue-500" />
+                </div>
+              ) : selectedEmail.body ? (
+                <div
+                  className="prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{
+                    __html: DOMPurify.sanitize(selectedEmail.body, {
+                      ADD_ATTR: ['target'],
+                      ADD_TAGS: ['style']
+                    })
+                  }}
+                />
+              ) : (
+                <div className="prose prose-sm max-w-none">
+                  <p className="text-gray-700 whitespace-pre-wrap">{selectedEmail.snippet}</p>
+                </div>
+              )}
             </div>
             <div className="p-4 border-t border-gray-200 bg-gray-50">
               <div className="flex items-center gap-2">
