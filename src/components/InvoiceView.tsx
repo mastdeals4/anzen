@@ -479,7 +479,7 @@ export function InvoiceView({ invoice, items, onClose }: InvoiceViewProps) {
                 </div>
 
                 {/* Column 2 - Authorized Signatory */}
-                <div className="p-3 print:p-2">
+                <div className="w-80 text-xs p-2 print:text-[10px] print:p-1.5">
                   <p className="font-semibold mb-1">{language === 'id' ? 'Authorized Signatory:' : 'Authorized Signatory:'}</p>
                   <p className="font-semibold mb-10 print:mb-8">PT. SHUBHAM ANZEN PHARMA JAYA</p>
                   <div className="w-4/5 border-t border-black pt-1">{language === 'id' ? 'Pharmacist' : 'Pharmacist'}</div>
