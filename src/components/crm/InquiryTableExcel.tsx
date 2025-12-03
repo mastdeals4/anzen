@@ -40,6 +40,7 @@ interface Inquiry {
   coa_required?: boolean;
   sample_required?: boolean;
   agency_letter_required?: boolean;
+  others_required?: boolean;
   price_sent_at?: string | null;
   coa_sent_at?: string | null;
   sample_sent_at?: string | null;
@@ -89,6 +90,14 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
   const [offeredPriceModalOpen, setOfferedPriceModalOpen] = useState(false);
   const [inquiryForOfferedPrice, setInquiryForOfferedPrice] = useState<Inquiry | null>(null);
   const [offeredPriceInput, setOfferedPriceInput] = useState('');
+  const [editRequirementsModalOpen, setEditRequirementsModalOpen] = useState(false);
+  const [requirementsForm, setRequirementsForm] = useState({
+    price_required: false,
+    coa_required: false,
+    sample_required: false,
+    agency_letter_required: false,
+    others_required: false,
+  });
   const filterRef = useRef<HTMLDivElement>(null);
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
@@ -298,6 +307,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         'COA Needed': inquiry.coa_required ? 'Yes' : 'No',
         'Sample Needed': inquiry.sample_required ? 'Yes' : 'No',
         'Agency Letter Needed': inquiry.agency_letter_required ? 'Yes' : 'No',
+        'Others Needed': inquiry.others_required ? 'Yes' : 'No',
         'Price Sent': inquiry.price_sent_at ? 'Yes' : 'No',
         'COA Sent': inquiry.coa_sent_at ? 'Yes' : 'No',
         'Sample Sent': inquiry.sample_sent_at ? 'Yes' : 'No',
@@ -380,6 +390,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         'COA Needed': inquiry.coa_required ? 'Yes' : 'No',
         'Sample Needed': inquiry.sample_required ? 'Yes' : 'No',
         'Agency Letter Needed': inquiry.agency_letter_required ? 'Yes' : 'No',
+        'Others Needed': inquiry.others_required ? 'Yes' : 'No',
         'Price Sent': inquiry.price_sent_at ? 'Yes' : 'No',
         'COA Sent': inquiry.coa_sent_at ? 'Yes' : 'No',
         'Sample Sent': inquiry.sample_sent_at ? 'Yes' : 'No',
@@ -431,6 +442,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       'COA Needed': 'Yes',
       'Sample Needed': 'No',
       'Agency Letter Needed': 'No',
+      'Others Needed': 'No',
       'Purchase Price': '100',
       'Purchase Price Currency': 'USD',
       'Offered Price': '150',
@@ -532,6 +544,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
           coa_required: (row['COA Needed'] || '').toLowerCase() === 'yes',
           sample_required: (row['Sample Needed'] || '').toLowerCase() === 'yes',
           agency_letter_required: (row['Agency Letter Needed'] || '').toLowerCase() === 'yes',
+          others_required: (row['Others Needed'] || '').toLowerCase() === 'yes',
           purchase_price: row['Purchase Price'] ? parseFloat(row['Purchase Price']) : null,
           purchase_price_currency: row['Purchase Price Currency'] || 'USD',
           offered_price: row['Offered Price'] ? parseFloat(row['Offered Price']) : null,
@@ -690,7 +703,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     }
   };
 
-  const markRequirementSent = async (inquiry: Inquiry, requirementType: 'price' | 'coa' | 'sample' | 'agency_letter') => {
+  const markRequirementSent = async (inquiry: Inquiry, requirementType: 'price' | 'coa' | 'sample' | 'agency_letter' | 'others') => {
     const sentAtField = `${requirementType}_sent_at` as keyof Inquiry;
     const isSent = inquiry[sentAtField];
 
@@ -875,6 +888,41 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     }
   };
 
+  const handleEditRequirements = () => {
+    const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
+    if (!selectedInquiry) return;
+
+    setRequirementsForm({
+      price_required: selectedInquiry.price_required ?? false,
+      coa_required: selectedInquiry.coa_required ?? false,
+      sample_required: selectedInquiry.sample_required ?? false,
+      agency_letter_required: selectedInquiry.agency_letter_required ?? false,
+      others_required: selectedInquiry.others_required ?? false,
+    });
+    setEditRequirementsModalOpen(true);
+  };
+
+  const saveRequirements = async () => {
+    const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
+    if (!selectedInquiry) return;
+
+    try {
+      const { error } = await supabase
+        .from('crm_inquiries')
+        .update(requirementsForm)
+        .eq('id', selectedInquiry.id);
+
+      if (error) throw error;
+
+      setEditRequirementsModalOpen(false);
+      alert('Customer requirements updated successfully!');
+      onRefresh();
+    } catch (error) {
+      console.error('Error updating requirements:', error);
+      alert('Failed to update requirements. Please try again.');
+    }
+  };
+
   const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
 
   return (
@@ -988,6 +1036,14 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               >
                 <CheckSquare className="w-3.5 h-3.5" />
                 Create Task
+              </button>
+              <button
+                onClick={handleEditRequirements}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100 transition"
+                title="Edit Customer Requirements"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                Edit Requirements
               </button>
               <button
                 onClick={handleDeleteSelected}
@@ -1850,6 +1906,80 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
             >
               Save & Mark Price as Sent
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Requirements Modal */}
+      <Modal
+        isOpen={editRequirementsModalOpen}
+        onClose={() => setEditRequirementsModalOpen(false)}
+        title="Edit Customer Requirements"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Check what the customer has requested:
+          </p>
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requirementsForm.price_required}
+                onChange={(e) => setRequirementsForm({ ...requirementsForm, price_required: e.target.checked })}
+                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">Price</span>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requirementsForm.coa_required}
+                onChange={(e) => setRequirementsForm({ ...requirementsForm, coa_required: e.target.checked })}
+                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">COA</span>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requirementsForm.sample_required}
+                onChange={(e) => setRequirementsForm({ ...requirementsForm, sample_required: e.target.checked })}
+                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">Sample</span>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requirementsForm.agency_letter_required}
+                onChange={(e) => setRequirementsForm({ ...requirementsForm, agency_letter_required: e.target.checked })}
+                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">Agency Letter</span>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requirementsForm.others_required}
+                onChange={(e) => setRequirementsForm({ ...requirementsForm, others_required: e.target.checked })}
+                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">Others</span>
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+            <button
+              onClick={() => setEditRequirementsModalOpen(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveRequirements}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition"
+            >
+              Save Requirements
             </button>
           </div>
         </div>

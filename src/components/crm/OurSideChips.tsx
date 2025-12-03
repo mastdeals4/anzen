@@ -6,13 +6,15 @@ interface OurSideChipsProps {
     coa_required?: boolean;
     sample_required?: boolean;
     agency_letter_required?: boolean;
+    others_required?: boolean;
     price_sent_at?: string | null;
     coa_sent_at?: string | null;
     sample_sent_at?: string | null;
     agency_letter_sent_at?: string | null;
+    others_sent_at?: string | null;
   };
   compact?: boolean;
-  onMarkSent?: (type: 'price' | 'coa' | 'sample' | 'agency_letter') => void;
+  onMarkSent?: (type: 'price' | 'coa' | 'sample' | 'agency_letter' | 'others') => void;
 }
 
 export function OurSideChips({ inquiry, compact = false, onMarkSent }: OurSideChipsProps) {
@@ -21,6 +23,7 @@ export function OurSideChips({ inquiry, compact = false, onMarkSent }: OurSideCh
     { type: 'coa' as const, letter: 'C', required: inquiry.coa_required ?? true, sent: inquiry.coa_sent_at, label: 'COA' },
     { type: 'sample' as const, letter: 'S', required: inquiry.sample_required, sent: inquiry.sample_sent_at, label: 'Sample' },
     { type: 'agency_letter' as const, letter: 'A', required: inquiry.agency_letter_required, sent: inquiry.agency_letter_sent_at, label: 'Agency Letter' },
+    { type: 'others' as const, letter: 'O', required: inquiry.others_required, sent: inquiry.others_sent_at, label: 'Others' },
   ];
 
   const anyRequired = requirements.some(r => r.required);
