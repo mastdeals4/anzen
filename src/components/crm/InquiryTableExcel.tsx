@@ -399,25 +399,36 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage }: InquiryTa
           }
 
           // Handle string formats
-          const formats = [
-            /^(\d{1,2})-(\d{1,2})-(\d{4})$/,     // DD-MM-YYYY
-            /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,   // DD/MM/YYYY
-            /^(\d{4})-(\d{1,2})-(\d{1,2})$/      // YYYY-MM-DD
-          ];
+          const str = dateStr.toString().trim();
 
-          for (const format of formats) {
-            const match = dateStr.toString().match(format);
-            if (match) {
-              let day, month, year;
-              if (format.toString().includes('\\d{4}$')) {
-                // Format: DD-MM-YYYY or DD/MM/YYYY
-                [, day, month, year] = match;
-              } else {
-                // Format: YYYY-MM-DD
-                [, year, month, day] = match;
-              }
-              return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-            }
+          // D/M/YY or DD/MM/YY format (e.g., 4/10/25, 10/11/25)
+          const twoDigitYear = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+          if (twoDigitYear) {
+            let [, day, month, year] = twoDigitYear;
+            // Convert 2-digit year to 4-digit (00-29 = 2000s, 30-99 = 1900s)
+            const fullYear = parseInt(year) < 30 ? `20${year}` : `19${year}`;
+            return `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          }
+
+          // DD-MM-YYYY format
+          const ddmmyyyy1 = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+          if (ddmmyyyy1) {
+            const [, day, month, year] = ddmmyyyy1;
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          }
+
+          // DD/MM/YYYY format
+          const ddmmyyyy2 = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (ddmmyyyy2) {
+            const [, day, month, year] = ddmmyyyy2;
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          }
+
+          // YYYY-MM-DD format
+          const yyyymmdd = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+          if (yyyymmdd) {
+            const [, year, month, day] = yyyymmdd;
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
           }
 
           return new Date().toISOString().split('T')[0];
