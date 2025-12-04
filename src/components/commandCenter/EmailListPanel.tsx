@@ -107,13 +107,20 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
     const checkPendingEmail = async () => {
       const pendingEmail = sessionStorage.getItem('pendingEmailForInquiry');
       if (pendingEmail) {
+        console.log('[EmailListPanel] Found pending email in sessionStorage');
         sessionStorage.removeItem('pendingEmailForInquiry');
 
         try {
           const emailData = JSON.parse(pendingEmail);
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session) throw new Error('Not authenticated');
+          console.log('[EmailListPanel] Parsed email data:', emailData);
 
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) {
+            console.error('[EmailListPanel] No session found');
+            throw new Error('Not authenticated');
+          }
+
+          console.log('[EmailListPanel] Calling parse-pharma-email edge function');
           const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-pharma-email`;
 
           const response = await fetch(apiUrl, {
@@ -130,7 +137,9 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
             }),
           });
 
+          console.log('[EmailListPanel] Response status:', response.status);
           const result = await response.json();
+          console.log('[EmailListPanel] Parse result:', result);
 
           if (result.success || result.fallbackData) {
             const mockEmail: Email = {
@@ -146,14 +155,18 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
               converted_to_inquiry: null,
             };
 
+            console.log('[EmailListPanel] Calling onEmailSelect with mock email');
             onEmailSelect(mockEmail, result.data || result.fallbackData);
           } else {
+            console.error('[EmailListPanel] Parse failed:', result.error);
             alert('Failed to parse email from Gmail: ' + result.error);
           }
         } catch (error) {
-          console.error('Error processing pending email:', error);
-          alert('Failed to process email. Please try again.');
+          console.error('[EmailListPanel] Error processing pending email:', error);
+          alert(`Failed to process email: ${error instanceof Error ? error.message : String(error)}`);
         }
+      } else {
+        console.log('[EmailListPanel] No pending email found in sessionStorage');
       }
     };
 
