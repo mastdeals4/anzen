@@ -527,6 +527,7 @@ export default function SalesOrders() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">SO Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivery Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Docs</th>
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status / Approval</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
@@ -534,13 +535,13 @@ export default function SalesOrders() {
             <tbody className="bg-white divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
                     Loading...
                   </td>
                 </tr>
               ) : filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
                     No sales orders found
                   </td>
                 </tr>
@@ -565,6 +566,22 @@ export default function SalesOrders() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       Rp {order.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center justify-center">
+                        {order.customer_po_file_url ? (
+                          <button
+                            onClick={() => handleViewPO(order.customer_po_file_url!)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 hover:bg-blue-100 transition"
+                            title="View Customer PO"
+                          >
+                            <FileText className="w-4 h-4" />
+                            <span className="text-sm font-medium">1</span>
+                          </button>
+                        ) : (
+                          <span className="text-gray-400 text-sm">-</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center justify-center gap-2">
@@ -611,15 +628,6 @@ export default function SalesOrders() {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        {order.customer_po_file_url && (
-                          <button
-                            onClick={() => handleViewPO(order.customer_po_file_url!)}
-                            className="text-purple-600 hover:text-purple-800"
-                            title="View Customer PO"
-                          >
-                            <Paperclip className="w-4 h-4" />
-                          </button>
-                        )}
                         {!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery'].includes(order.status) && (
                           <button
                             onClick={() => handleEditOrder(order)}
