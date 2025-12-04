@@ -289,23 +289,37 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
     if (!poFile) return null;
 
     try {
+      console.log('Starting file upload:', poFile.name);
       const fileExt = poFile.name.split('.').pop();
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
       const filePath = `customer-po/${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('sales-order-documents')
-        .upload(filePath, poFile);
+      console.log('Uploading to path:', filePath);
 
-      if (uploadError) throw uploadError;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('sales-order-documents')
+        .upload(filePath, poFile, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw uploadError;
+      }
+
+      console.log('File uploaded successfully:', uploadData);
 
       const { data: { publicUrl } } = supabase.storage
         .from('sales-order-documents')
         .getPublicUrl(filePath);
 
+      console.log('Public URL generated:', publicUrl);
+
       return publicUrl;
     } catch (error: any) {
-      console.error('Error uploading file:', error.message);
+      console.error('Error uploading file:', error);
+      alert(`Failed to upload PO file: ${error.message || 'Unknown error'}`);
       throw error;
     }
   };
@@ -349,7 +363,12 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
 
       let poFileUrl = existingOrder?.customer_po_file_url || null;
       if (poFile) {
+        console.log('Uploading PO file...');
         poFileUrl = await uploadPoFile();
+        console.log('PO file URL:', poFileUrl);
+        if (!poFileUrl) {
+          throw new Error('File upload returned no URL');
+        }
       }
 
       const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price - item.discount_amount), 0);
@@ -588,6 +607,22 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.uploadPo')}</label>
+          {existingOrder?.customer_po_file_url && !poFile && (
+            <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <span className="text-sm text-blue-700">PO file already uploaded</span>
+              </div>
+              <a
+                href={existingOrder.customer_po_file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:text-blue-800 underline"
+              >
+                View
+              </a>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <input
               type="file"
@@ -600,11 +635,18 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
                 type="button"
                 onClick={() => setPoFile(null)}
                 className="text-red-600 hover:text-red-800"
+                title="Remove selected file"
               >
                 <X className="w-5 h-5" />
               </button>
             )}
           </div>
+          {poFile && (
+            <p className="mt-1 text-sm text-green-600 flex items-center gap-1">
+              <FileText className="w-4 h-4" />
+              Ready to upload: {poFile.name}
+            </p>
+          )}
         </div>
       </div>
 
