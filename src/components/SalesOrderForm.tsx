@@ -84,6 +84,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
     so_date: new Date().toISOString().split('T')[0],
     expected_delivery_date: '',
     notes: '',
+    currency: 'IDR',
   });
 
   const [poFile, setPoFile] = useState<File | null>(null);
@@ -116,6 +117,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
         so_date: existingOrder.so_date,
         expected_delivery_date: existingOrder.expected_delivery_date || '',
         notes: existingOrder.notes || '',
+        currency: (existingOrder as any).currency || 'IDR',
       });
 
       if (existingOrder.sales_order_items && existingOrder.sales_order_items.length > 0) {
@@ -409,6 +411,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
             customer_po_date: formData.customer_po_date,
             customer_po_file_url: poFileUrl,
             so_date: formData.so_date,
+            currency: formData.currency,
             expected_delivery_date: formData.expected_delivery_date || null,
             notes: formData.notes || null,
             status: newStatus,
@@ -482,6 +485,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
             customer_po_date: formData.customer_po_date,
             customer_po_file_url: poFileUrl,
             so_date: formData.so_date,
+            currency: formData.currency,
             expected_delivery_date: formData.expected_delivery_date || null,
             notes: formData.notes || null,
             status: submitForApproval ? 'pending_approval' : 'draft',
@@ -543,6 +547,11 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
   const totalTax = items.reduce((sum, item) => sum + item.tax_amount, 0);
   const grandTotal = items.reduce((sum, item) => sum + item.line_total, 0);
 
+  const formatCurrency = (amount: number) => {
+    const formatted = amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    return formData.currency === 'USD' ? `$ ${formatted}` : `Rp ${formatted}`;
+  };
+
   return (
     <form className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
@@ -593,6 +602,19 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
             onChange={(e) => setFormData({ ...formData, so_date: e.target.value })}
             className="w-full border rounded-lg px-3 py-2"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Currency *</label>
+          <select
+            value={formData.currency}
+            onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+            className="w-full border rounded-lg px-3 py-2"
+            required
+          >
+            <option value="IDR">IDR (Rp)</option>
+            <option value="USD">USD ($)</option>
+          </select>
         </div>
 
         <div>
@@ -824,7 +846,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
                 <div className="flex items-end justify-between">
                   <div>
                     <label className="text-xs text-gray-600">{t('salesOrders.lineTotal')}</label>
-                    <div className="text-sm font-medium">Rp {item.line_total.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</div>
+                    <div className="text-sm font-medium">{formatCurrency(item.line_total)}</div>
                   </div>
                   <button
                     type="button"
@@ -844,15 +866,15 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>{t('sales.subtotal')}:</span>
-            <span className="font-medium">Rp {subtotal.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+            <span className="font-medium">{formatCurrency(subtotal)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span>{t('sales.tax')}:</span>
-            <span className="font-medium">Rp {totalTax.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+            <span className="font-medium">{formatCurrency(totalTax)}</span>
           </div>
           <div className="flex justify-between text-lg font-bold border-t pt-2">
             <span>{t('salesOrders.grandTotal')}:</span>
-            <span>Rp {grandTotal.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+            <span>{formatCurrency(grandTotal)}</span>
           </div>
         </div>
       </div>

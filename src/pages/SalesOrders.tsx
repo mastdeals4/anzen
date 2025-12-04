@@ -42,6 +42,7 @@ interface SalesOrder {
   customer_po_date: string;
   customer_po_file_url?: string;
   so_date: string;
+  currency: string;
   expected_delivery_date?: string;
   notes?: string;
   status: string;
@@ -154,6 +155,11 @@ export default function SalesOrders() {
     } catch (error: any) {
       console.error('Error fetching customers:', error.message);
     }
+  };
+
+  const formatCurrency = (amount: number, currency: string) => {
+    const formatted = amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    return currency === 'USD' ? `$ ${formatted}` : `Rp ${formatted}`;
   };
 
   const filterOrders = () => {
@@ -565,7 +571,7 @@ export default function SalesOrders() {
                       {order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString() : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      Rp {order.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      {formatCurrency(order.total_amount, order.currency || 'IDR')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center justify-center">
@@ -798,15 +804,15 @@ export default function SalesOrders() {
                     <tr key={item.id} className="border-t">
                       <td className="px-4 py-2">{item.products?.product_name}</td>
                       <td className="px-4 py-2 text-right">{item.quantity}</td>
-                      <td className="px-4 py-2 text-right">Rp {item.unit_price.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
-                      <td className="px-4 py-2 text-right">Rp {item.line_total.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                      <td className="px-4 py-2 text-right">{formatCurrency(item.unit_price, selectedOrder.currency || 'IDR')}</td>
+                      <td className="px-4 py-2 text-right">{formatCurrency(item.line_total, selectedOrder.currency || 'IDR')}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-gray-50 font-medium">
                   <tr>
                     <td colSpan={3} className="px-4 py-2 text-right">Total:</td>
-                    <td className="px-4 py-2 text-right">Rp {selectedOrder.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                    <td className="px-4 py-2 text-right">{formatCurrency(selectedOrder.total_amount, selectedOrder.currency || 'IDR')}</td>
                   </tr>
                 </tfoot>
               </table>
