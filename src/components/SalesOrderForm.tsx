@@ -279,7 +279,10 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
       alert('At least one item is required');
       return;
     }
-    setItems(items.filter((_, i) => i !== index));
+    console.log('Removing item at index:', index, 'Current items count:', items.length);
+    const newItems = items.filter((_, i) => i !== index);
+    console.log('New items count after removal:', newItems.length);
+    setItems(newItems);
   };
 
   const uploadPoFile = async () => {
@@ -325,6 +328,22 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
       return;
     }
 
+    // Check if editing an approved/reserved order
+    const wasApproved = existingOrder && ['approved', 'stock_reserved', 'shortage', 'pending_approval'].includes(existingOrder.status);
+
+    if (wasApproved && existingOrder) {
+      const confirmed = confirm(
+        '⚠️ Warning: This order has been approved or is awaiting approval.\n\n' +
+        'Editing will:\n' +
+        '• Release existing stock reservations\n' +
+        '• Require re-approval from admin\n' +
+        '• Reset status to "Pending Approval"\n\n' +
+        'Do you want to continue?'
+      );
+
+      if (!confirmed) return;
+    }
+
     try {
       setLoading(true);
 
@@ -338,6 +357,30 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
       const total = items.reduce((sum, item) => sum + item.line_total, 0);
 
       if (existingOrder) {
+        // Release stock reservations if order was approved
+        if (wasApproved) {
+          console.log('Releasing stock reservations for order:', existingOrder.id);
+          const { error: releaseError } = await supabase.rpc('fn_release_reservation_by_so_id', {
+            p_so_id: existingOrder.id,
+            p_released_by: user?.id
+          });
+
+          if (releaseError) {
+            console.error('Error releasing reservations:', releaseError);
+            // Continue anyway - we'll show a warning but allow the update
+          }
+        }
+
+        // Determine new status
+        let newStatus: string;
+        if (wasApproved || submitForApproval) {
+          newStatus = 'pending_approval'; // Always require re-approval if it was approved before
+        } else {
+          newStatus = 'draft';
+        }
+
+        console.log('Updating order. Items count:', items.length);
+
         // Update existing order
         const { error: soError } = await supabase
           .from('sales_orders')
@@ -349,7 +392,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
             so_date: formData.so_date,
             expected_delivery_date: formData.expected_delivery_date || null,
             notes: formData.notes || null,
-            status: submitForApproval ? 'pending_approval' : 'draft',
+            status: newStatus,
             subtotal_amount: subtotal,
             tax_amount: tax,
             total_amount: total,
@@ -382,13 +425,33 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
           notes: item.notes || null,
         }));
 
-        const { error: itemsError } = await supabase
+        console.log('Inserting items. Count:', itemsToInsert.length);
+
+        const { data: insertedItems, error: itemsError } = await supabase
           .from('sales_order_items')
-          .insert(itemsToInsert);
+          .insert(itemsToInsert)
+          .select();
 
         if (itemsError) throw itemsError;
 
-        alert(`Sales order updated successfully${submitForApproval ? ' and submitted for approval' : ''}!`);
+        console.log('Items inserted successfully. Count:', insertedItems?.length || 0);
+
+        // Verify all items were inserted
+        if (insertedItems && insertedItems.length !== items.length) {
+          console.error('WARNING: Item count mismatch!', {
+            expected: items.length,
+            inserted: insertedItems.length
+          });
+          alert(`⚠️ Warning: Expected ${items.length} items but only ${insertedItems.length} were saved. Please verify the order.`);
+        }
+
+        const statusMessage = wasApproved
+          ? ' and submitted for re-approval. Stock reservations have been released.'
+          : submitForApproval
+            ? ' and submitted for approval'
+            : '';
+
+        alert(`Sales order updated successfully${statusMessage}!`);
       } else {
         // Create new order
         const { data: soData, error: soError } = await supabase
@@ -761,21 +824,28 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
         >
           {t('common.cancel')}
         </button>
-        <button
-          type="button"
-          onClick={(e) => handleSubmit(e, false)}
-          className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-          disabled={loading}
-        >
-          {loading ? t('common.loading') : t('salesOrders.saveAsDraft')}
-        </button>
+        {/* Hide Save as Draft button if editing an approved/pending order */}
+        {!(existingOrder && ['approved', 'stock_reserved', 'shortage', 'pending_approval'].includes(existingOrder.status)) && (
+          <button
+            type="button"
+            onClick={(e) => handleSubmit(e, false)}
+            className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            disabled={loading}
+          >
+            {loading ? t('common.loading') : t('salesOrders.saveAsDraft')}
+          </button>
+        )}
         <button
           type="button"
           onClick={(e) => handleSubmit(e, true)}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           disabled={loading}
         >
-          {loading ? `${t('common.submit')}...` : t('salesOrders.submitForApproval')}
+          {loading
+            ? `${t('common.submit')}...`
+            : existingOrder && ['approved', 'stock_reserved', 'shortage', 'pending_approval'].includes(existingOrder.status)
+              ? 'Submit for Re-Approval'
+              : t('salesOrders.submitForApproval')}
         </button>
       </div>
     </form>

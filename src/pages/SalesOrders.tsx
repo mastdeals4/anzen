@@ -620,7 +620,7 @@ export default function SalesOrders() {
                             <Paperclip className="w-4 h-4" />
                           </button>
                         )}
-                        {(order.status === 'draft' || order.status === 'rejected') && (
+                        {!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery'].includes(order.status) && (
                           <button
                             onClick={() => handleEditOrder(order)}
                             className="text-indigo-600 hover:text-indigo-800"
@@ -758,6 +758,22 @@ export default function SalesOrders() {
               </div>
             )}
 
+            {selectedOrder.customer_po_file_url && (
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">Customer PO Attachment</label>
+                <a
+                  href={selectedOrder.customer_po_file_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 hover:bg-blue-100 transition"
+                >
+                  <Paperclip className="w-4 h-4" />
+                  <span className="text-sm font-medium">View Customer PO</span>
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              </div>
+            )}
+
             <div>
               <label className="text-sm font-medium text-gray-700 mb-2 block">Items</label>
               <table className="w-full text-sm">
@@ -774,15 +790,15 @@ export default function SalesOrders() {
                     <tr key={item.id} className="border-t">
                       <td className="px-4 py-2">{item.products?.product_name}</td>
                       <td className="px-4 py-2 text-right">{item.quantity}</td>
-                      <td className="px-4 py-2 text-right">${item.unit_price.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right">${item.line_total.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">Rp {item.unit_price.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                      <td className="px-4 py-2 text-right">Rp {item.line_total.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-gray-50 font-medium">
                   <tr>
                     <td colSpan={3} className="px-4 py-2 text-right">Total:</td>
-                    <td className="px-4 py-2 text-right">${selectedOrder.total_amount.toFixed(2)}</td>
+                    <td className="px-4 py-2 text-right">Rp {selectedOrder.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
                   </tr>
                 </tfoot>
               </table>
