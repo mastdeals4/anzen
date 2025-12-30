@@ -46,7 +46,6 @@ Deno.serve(async (req: Request) => {
       throw new Error("Missing file or bankAccountId");
     }
 
-    // Get bank account details for currency
     const { data: bankAccount, error: bankError } = await supabase
       .from("bank_accounts")
       .select("currency, account_number, bank_name")
@@ -57,21 +56,16 @@ Deno.serve(async (req: Request) => {
       throw new Error("Bank account not found");
     }
 
-    // Read PDF file as array buffer
     const arrayBuffer = await file.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
     
-    // Extract text from PDF using basic text extraction
     const text = await extractTextFromPDF(uint8Array);
-    
-    // Parse BCA statement format
     const parsed = parseBCAStatement(text, bankAccount.currency);
     
     if (!parsed.transactions || parsed.transactions.length === 0) {
       throw new Error("No transactions found in PDF. Please check if this is a valid BCA statement.");
     }
 
-    // Upload PDF to storage
     const fileName = `${bankAccountId}/${Date.now()}_${file.name}`;
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from("bank-statements")
@@ -86,7 +80,6 @@ Deno.serve(async (req: Request) => {
       .from("bank-statements")
       .getPublicUrl(fileName);
 
-    // Create upload record
     const { data: upload, error: uploadInsertError } = await supabase
       .from("bank_statement_uploads")
       .insert({
@@ -112,7 +105,6 @@ Deno.serve(async (req: Request) => {
       throw new Error("Failed to create upload record");
     }
 
-    // Insert transaction lines
     const lines = parsed.transactions.map((txn) => ({
       upload_id: upload.id,
       bank_account_id: bankAccountId,
@@ -163,70 +155,82 @@ Deno.serve(async (req: Request) => {
 });
 
 async function extractTextFromPDF(pdfData: Uint8Array): Promise<string> {
-  // Simple PDF text extraction
-  // Convert bytes to string and extract text between content streams
   const decoder = new TextDecoder("latin1");
-  let text = decoder.decode(pdfData);
-  
-  // Extract text from PDF content streams
-  const contentRegex = /BT\s+(.+?)\s+ET/gs;
-  const matches = text.matchAll(contentRegex);
-  
+  let rawText = decoder.decode(pdfData);
+
   let extractedText = "";
-  for (const match of matches) {
-    // Extract text between parentheses
-    const textMatches = match[1].matchAll(/\(([^)]+)\)/g);
-    for (const textMatch of textMatches) {
-      extractedText += textMatch[1] + " ";
+
+  const textObjectRegex = /BT\s+([\s\S]+?)\s+ET/g;
+  const textMatches = rawText.matchAll(textObjectRegex);
+
+  for (const match of textMatches) {
+    const content = match[1];
+    const stringMatches = content.matchAll(/[\(\<]([^\)\>]+)[\)\>]/g);
+    for (const strMatch of stringMatches) {
+      let text = strMatch[1];
+      text = text.replace(/\\([\\()rnt])/g, (_, char) => {
+        switch (char) {
+          case 'n': return '\n';
+          case 'r': return '\r';
+          case 't': return '\t';
+          case '\\': return '\\';
+          case '(': return '(';
+          case ')': return ')';
+          default: return char;
+        }
+      });
+      extractedText += text + " ";
     }
-    extractedText += "\n";
   }
-  
+
+  const streamRegex = /stream\s+([\s\S]+?)\s+endstream/g;
+  const streamMatches = rawText.matchAll(streamRegex);
+
+  for (const match of streamMatches) {
+    const stream = match[1];
+    const textPattern = /[A-Za-z0-9\/\-\.\,\s]{5,}/g;
+    const texts = stream.match(textPattern);
+    if (texts) {
+      extractedText += " " + texts.join(" ");
+    }
+  }
+
   return extractedText;
 }
 
 function parseBCAStatement(text: string, currency: string) {
-  const lines = text.split("\n");
-  
-  // Extract metadata
+  text = text.replace(/\s+/g, " ");
+
   let period = "";
   let accountNumber = "";
   let openingBalance = 0;
   let closingBalance = 0;
-  
-  // Find period (e.g., "NOVEMBER 2025")
-  for (const line of lines) {
-    if (line.includes("PERIODE")) {
-      const periodMatch = line.match(/:\s*([A-Z]+\s+\d{4})/);
-      if (periodMatch) period = periodMatch[1];
-    }
-    if (line.includes("NO. REKENING") || line.includes("NO.REKENING")) {
-      const accMatch = line.match(/:\s*([\d]+)/);
-      if (accMatch) accountNumber = accMatch[1];
-    }
-    if (line.includes("SALDO AWAL")) {
-      const balMatch = line.match(/([\d,\.]+)/);
-      if (balMatch) {
-        openingBalance = parseFloat(balMatch[1].replace(/,/g, ""));
-      }
-    }
-    if (line.includes("SALDO AKHIR")) {
-      const balMatch = line.match(/([\d,\.]+)/);
-      if (balMatch) {
-        closingBalance = parseFloat(balMatch[1].replace(/,/g, ""));
-      }
-    }
+
+  const periodMatch = text.match(/PERIODE\s*:\s*([A-Z]+\s+\d{4})/i);
+  if (periodMatch) period = periodMatch[1];
+
+  const accMatch = text.match(/NO\.\s*REKENING\s*:\s*(\d+)/i);
+  if (accMatch) accountNumber = accMatch[1];
+
+  const openingMatch = text.match(/SALDO AWAL\s+([\d,\.]+)/i);
+  if (openingMatch) {
+    openingBalance = parseFloat(openingMatch[1].replace(/,/g, "").replace(/\./g, ""));
   }
 
-  // Parse period to dates
+  const closingMatch = text.match(/SALDO AKHIR\s*:?\s*([\d,\.]+)/i);
+  if (closingMatch) {
+    closingBalance = parseFloat(closingMatch[1].replace(/,/g, "").replace(/\./g, ""));
+  }
+
   let startDate = "";
   let endDate = "";
   if (period) {
     const [monthName, year] = period.split(" ");
     const monthMap: Record<string, string> = {
-      JANUARY: "01", FEBRUARY: "02", MARCH: "03", APRIL: "04",
-      MAY: "05", JUNE: "06", JULY: "07", AUGUST: "08",
-      SEPTEMBER: "09", OCTOBER: "10", NOVEMBER: "11", DECEMBER: "12",
+      JANUARY: "01", FEBRUARI: "02", FEBRUARY: "02", MARET: "03", MARCH: "03",
+      APRIL: "04", MEI: "05", MAY: "05", JUNI: "06", JUNE: "06",
+      JULI: "07", JULY: "07", AGUSTUS: "08", AUGUST: "08",
+      SEPTEMBER: "09", OKTOBER: "10", OCTOBER: "10", NOVEMBER: "11", DESEMBER: "12", DECEMBER: "12",
     };
     const month = monthMap[monthName.toUpperCase()] || "01";
     startDate = `${year}-${month}-01`;
@@ -234,69 +238,27 @@ function parseBCAStatement(text: string, currency: string) {
     endDate = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
   }
 
-  // Parse transactions
   const transactions: ParsedTransaction[] = [];
-  const txnRegex = /(\d{2}\/\d{2})\s+(.+?)\s+(\d{4})?\s+([\d,.]+)\s+(DB|CR)?\s*([\d,.]+)?/g;
-  
-  for (const line of lines) {
-    // Look for date pattern DD/MM
-    const dateMatch = line.match(/^(\d{2}\/\d{2})/);
-    if (!dateMatch) continue;
-    
-    const dateStr = dateMatch[1];
+  const txnPattern = /(\d{2}\/\d{2})\s+([A-Z\s\-]+?)\s+(\d{2}\/\d{2}\s+)?([A-Z0-9\/\-\s]+?)\s+([\d,\.]+)\s+(DB|CR)?\s*([\d,\.]+)?/gi;
+
+  let match;
+  const year = period.split(" ")[1] || new Date().getFullYear().toString();
+
+  while ((match = txnPattern.exec(text)) !== null) {
+    const [_, dateStr, type, _, desc, amountStr, indicator, balanceStr] = match;
+
     const [day, month] = dateStr.split("/");
-    const year = period.split(" ")[1] || new Date().getFullYear().toString();
-    const fullDate = `${year}-${month}-${day}`;
-    
-    // Extract components
-    let description = "";
-    let branchCode = "";
-    let amount = 0;
-    let isDebit = false;
-    let balance: number | null = null;
-    
-    // Parse the line
-    const parts = line.trim().split(/\s+/);
-    let i = 1; // Skip date
-    
-    // Collect description until we hit a number
-    const descParts: string[] = [];
-    while (i < parts.length) {
-      if (/^\d{4}$/.test(parts[i])) {
-        branchCode = parts[i];
-        i++;
-        break;
-      } else if (/^[\d,.]+$/.test(parts[i])) {
-        break;
-      } else {
-        descParts.push(parts[i]);
-        i++;
-      }
-    }
-    description = descParts.join(" ");
-    
-    // Next should be amount
-    if (i < parts.length && /^[\d,.]+$/.test(parts[i])) {
-      amount = parseFloat(parts[i].replace(/,/g, ""));
-      i++;
-    }
-    
-    // Check for DB indicator
-    if (i < parts.length && parts[i] === "DB") {
-      isDebit = true;
-      i++;
-    }
-    
-    // Last number is balance
-    if (i < parts.length && /^[\d,.]+$/.test(parts[i])) {
-      balance = parseFloat(parts[i].replace(/,/g, ""));
-    }
-    
-    if (amount > 0) {
+    const fullDate = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+
+    const amount = parseFloat(amountStr.replace(/,/g, "").replace(/\./g, ""));
+    const balance = balanceStr ? parseFloat(balanceStr.replace(/,/g, "").replace(/\./g, "")) : null;
+    const isDebit = !indicator || indicator === "DB";
+
+    if (amount > 0 && !isNaN(amount)) {
       transactions.push({
         date: fullDate,
-        description: description.trim(),
-        branchCode,
+        description: (type.trim() + " " + desc.trim()).trim().substring(0, 500),
+        branchCode: "",
         debitAmount: isDebit ? amount : 0,
         creditAmount: isDebit ? 0 : amount,
         balance,
@@ -304,8 +266,42 @@ function parseBCAStatement(text: string, currency: string) {
     }
   }
 
+  if (transactions.length === 0) {
+    const simplePattern = /(\d{2}\/\d{2})[^\d]+([\d,\.]+)\s+(DB|CR)?/gi;
+    let simpleMatch;
+
+    while ((simpleMatch = simplePattern.exec(text)) !== null) {
+      const [_, dateStr, amountStr, indicator] = simpleMatch;
+
+      const [day, month] = dateStr.split("/");
+      const fullDate = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+
+      const amount = parseFloat(amountStr.replace(/,/g, "").replace(/\./g, ""));
+      const isDebit = !indicator || indicator === "DB";
+
+      const contextStart = Math.max(0, simpleMatch.index - 100);
+      const contextEnd = Math.min(text.length, simpleMatch.index + 200);
+      const context = text.substring(contextStart, contextEnd);
+      const descMatch = context.match(/(\d{2}\/\d{2})\s+([A-Za-z\s\-\/]+)/);
+      const description = descMatch ? descMatch[2].trim().substring(0, 200) : "Transaction";
+
+      if (amount > 0 && !isNaN(amount)) {
+        transactions.push({
+          date: fullDate,
+          description,
+          branchCode: "",
+          debitAmount: isDebit ? amount : 0,
+          creditAmount: isDebit ? 0 : amount,
+          balance: null,
+        });
+      }
+    }
+  }
+
   const totalDebits = transactions.reduce((sum, t) => sum + t.debitAmount, 0);
   const totalCredits = transactions.reduce((sum, t) => sum + t.creditAmount, 0);
+
+  console.log(`Parsed: ${transactions.length} transactions, Opening: ${openingBalance}, Closing: ${closingBalance}`);
 
   return {
     period,
