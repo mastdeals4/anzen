@@ -25,32 +25,11 @@ This is a comprehensive internal web application for managing a Pharma Raw Mater
 3. **Customers**: Complete customer management with NPWP tracking, payment terms
 4. **CRM**: Lead pipeline and activity tracking
 5. **Sales**: Invoice generation with PDF export
-6. **Finance**: Full accounting system with:
-   - Expenses tracking
-   - Bank accounts management
-   - Accounts Receivable & Payable
-   - Ageing reports
-   - **Chart of Accounts** (Indonesian GAAP)
-   - **Suppliers** with NPWP/PKP status
-   - **Purchase Invoices** linked to import batches
-   - **Receipt Vouchers** (customer payments)
-   - **Payment Vouchers** (supplier payments with PPh)
-   - **Petty Cash** - Simple Dr/Cr system (withdraw from bank, record expenses)
-   - **Journal Entries** (double-entry ledger)
-   - **Financial Reports** (Trial Balance, P&L, Balance Sheet)
+6. **Finance**: P&L statements and expense tracking
 7. **Batches**: Import tracking with cost breakdown
 8. **Inventory**: Real-time stock tracking with alerts
 9. **Delivery Challan**: Delivery note management
 10. **Settings**: Company profile and system configuration
-
-### Indonesian Tax Compliance
-- **PPN (VAT)**: 11% on taxable supplies
-- **PPh 21**: Employee income tax
-- **PPh 22**: Import tax (2.5%)
-- **PPh 23**: Service withholding (2%, 15%)
-- **Faktur Pajak**: Tax invoice numbering support
-- **NPWP**: Tax ID tracking for customers and suppliers
-- **PKP Status**: VAT-registered status tracking
 
 ### User Roles
 - **Admin**: Full system access
@@ -128,35 +107,6 @@ Toggle between languages using the globe icon in the header.
 - Responsive design for all screen sizes
 
 ## Recent Changes
-- 2025-12-16: **Enhanced Petty Cash with Detailed Tracking**:
-  - Enhanced form with two modes: "Add Funds" (income) and "Add Expense"
-  - Add Funds: Amount, Date, Source dropdown, Received By (staff), Bank Account
-  - Add Expense: Amount, Date, Paid To, Paid By (staff), Description, Category
-  - File attachments: Proof, Bill/Invoice, Material Photo (stored in Supabase Storage)
-  - Receivables: Prominent "Record Payment" button with instructional banner
-  - Auto-refresh every 30 seconds on Finance modules
-- 2025-12-16: **Petty Cash Simplified & Real-time Updates**:
-  - Petty Cash redesigned as simple Dr/Cr system (withdraw from bank, record expenses)
-  - Receivables now has "Record Payment" button with invoice allocation
-  - Auto-refresh every 30 seconds on Finance modules
-  - Finance module sidebar auto-collapses like CRM/Command Center
-- 2025-12-16: **Professional Finance UI Restructured**:
-  - 4 grouped sections: Record Transaction, Track, Reports, Masters
-  - Compact sidebar navigation within each section
-  - **Bank Reconciliation** with Excel/CSV upload and auto-matching (Tally-style)
-  - Instructional empty states for all modules
-  - Cleaner, more professional layout
-- 2025-12-16: **Complete Indonesian Accounting System** implemented:
-  - Chart of Accounts (Indonesian GAAP structure)
-  - Tax codes: PPN 11%, PPh 21/22/23
-  - Suppliers management with NPWP/PKP tracking
-  - Purchase Invoices linked to batches
-  - Receipt Vouchers (customer payments) with invoice allocation
-  - Payment Vouchers (supplier payments) with PPh withholding
-  - Petty Cash - Simple Dr/Cr system
-  - Journal Entry viewer with double-entry bookkeeping
-  - Financial Reports: Trial Balance, P&L, Balance Sheet
-  - Auto-posting triggers for all transaction types
 - 2025-11-12: Complete database fixes applied - deletion permissions, batch save, stock page, security warnings
 - 2025-11-11: Initial Replit setup - configured Vite for port 5000 with proper HMR
 - 2025-11-11: Set up environment variables for Supabase connection
