@@ -63,21 +63,23 @@ Deno.serve(async (req: Request) => {
 
     const arrayBuffer = await file.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
-    
+
     const text = extractTextFromPDF(uint8Array);
     console.log('[INFO] Extracted', text.length, 'chars');
-    
+    console.log('[DEBUG] First 1000 chars:', text.substring(0, 1000));
+
     const parsed = parseBCAStatement(text, bankAccount.currency);
-    
+
     if (!parsed.transactions || parsed.transactions.length === 0) {
       const debugInfo = {
         textLength: text.length,
-        sample: text.substring(0, 500),
+        sample: text.substring(0, 1000),
         hasSaldo: text.includes('SALDO'),
         hasPeriode: text.includes('PERIODE'),
         hasDate: /\d{2}\/\d{2}/.test(text),
+        dateMatches: text.match(/\d{2}\/\d{2}/g)?.slice(0, 10),
       };
-      console.error('[ERROR] No transactions found:', debugInfo);
+      console.error('[ERROR] No transactions found:', JSON.stringify(debugInfo, null, 2));
       throw new Error('No transactions found in PDF. Please ensure this is a valid BCA bank statement.');
     }
 
@@ -216,10 +218,13 @@ function parseBCAStatement(text: string, currency: string) {
   const transactions: ParsedTransaction[] = [];
 
   const words = text.split(/\s+/);
-  
+  console.log(`[PARSE] Split into ${words.length} words`);
+
+  let datesFound = 0;
   for (let i = 0; i < words.length; i++) {
     const dateMatch = words[i].match(/^(\d{2})\/(\d{2})$/);
     if (!dateMatch) continue;
+    datesFound++;
 
     const day = parseInt(dateMatch[1]);
     const mon = parseInt(dateMatch[2]);
@@ -227,7 +232,7 @@ function parseBCAStatement(text: string, currency: string) {
 
     let j = i + 1;
     let endPos = Math.min(i + 50, words.length);
-    
+
     for (let k = i + 1; k < endPos; k++) {
       if (words[k].match(/^\d{2}\/\d{2}$/)) {
         const nextDay = parseInt(words[k].split('/')[0]);
@@ -242,8 +247,16 @@ function parseBCAStatement(text: string, currency: string) {
     const txnWords = words.slice(i + 1, endPos);
     const fullText = txnWords.join(' ');
 
-    if (fullText.match(/TANGGAL|KETERANGAN|CABANG|MUTASI|SALDO|Halaman/i)) continue;
-    if (fullText.trim().length < 3) continue;
+    if (datesFound <= 3) console.log(`[DATE ${day}/${mon}] Text: ${fullText.substring(0, 150)}`);
+
+    if (fullText.match(/TANGGAL|KETERANGAN|CABANG|MUTASI|SALDO|Halaman/i)) {
+      if (datesFound <= 3) console.log(`[SKIP] Header keyword found`);
+      continue;
+    }
+    if (fullText.trim().length < 3) {
+      if (datesFound <= 3) console.log(`[SKIP] Too short`);
+      continue;
+    }
 
     const amounts: number[] = [];
     const amountPattern = /([\d,\.]+)/g;
@@ -255,10 +268,15 @@ function parseBCAStatement(text: string, currency: string) {
       }
     }
 
-    if (amounts.length === 0) continue;
+    if (amounts.length === 0) {
+      if (datesFound <= 3) console.log(`[SKIP] No valid amounts found`);
+      continue;
+    }
+
+    if (datesFound <= 3) console.log(`[FOUND] ${amounts.length} amounts: ${amounts.join(', ')}`);
 
     const isCredit = /\bCR\b/i.test(fullText);
-    
+
     const amount = amounts[0];
     const balance = amounts.length > 1 ? amounts[amounts.length - 1] : null;
 
