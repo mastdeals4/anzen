@@ -66,10 +66,20 @@ Deno.serve(async (req: Request) => {
 
     const text = extractTextFromPDF(uint8Array);
     console.log('[INFO] Extracted', text.length, 'chars');
+    console.log('[DEBUG] First 500 chars:', text.substring(0, 500));
+    console.log('[DEBUG] Has PERIODE:', text.includes('PERIODE'));
+    console.log('[DEBUG] Has SALDO:', text.includes('SALDO'));
+    console.log('[DEBUG] Has date pattern:', /\d{2}\/\d{2}/.test(text));
+
+    if (text.length < 100) {
+      throw new Error(`PDF text extraction failed. Only extracted ${text.length} chars. This PDF may be image-based or encrypted. Please try: 1) Saving as text-enabled PDF, 2) Using Excel export, or 3) Contact support for OCR-based parsing.`);
+    }
 
     const parsed = parseBCAStatement(text, bankAccount.currency);
 
     if (!parsed.transactions || parsed.transactions.length === 0) {
+      console.error('[ERROR] Parser found no transactions. Text length:', text.length);
+      console.error('[ERROR] Text sample:', text.substring(0, 1000));
       throw new Error('No transactions found in PDF. Please ensure this is a valid BCA bank statement.');
     }
 
@@ -171,6 +181,9 @@ function extractTextFromPDF(pdfData: Uint8Array): string {
       .replace(/\\\)/g, ')');
     parts.push(text);
   }
+
+  console.log(`[EXTRACT] Found ${parts.length} text blocks in PDF`);
+  console.log(`[EXTRACT] Raw PDF size: ${raw.length} bytes`);
 
   return parts.join('\n');
 }
