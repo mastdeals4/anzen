@@ -67,7 +67,8 @@ const expenseCategories = [
     type: 'import',
     icon: Building2,
     description: 'Import duties and customs charges - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'ppn_import',
@@ -75,7 +76,8 @@ const expenseCategories = [
     type: 'import',
     icon: Building2,
     description: 'Import VAT - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'pph_import',
@@ -83,7 +85,8 @@ const expenseCategories = [
     type: 'import',
     icon: Building2,
     description: 'Import withholding tax - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'freight_import',
@@ -91,7 +94,8 @@ const expenseCategories = [
     type: 'import',
     icon: Package,
     description: 'International freight charges - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'clearing_forwarding',
@@ -99,7 +103,8 @@ const expenseCategories = [
     type: 'import',
     icon: Building2,
     description: 'Customs clearance - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'port_charges',
@@ -107,7 +112,8 @@ const expenseCategories = [
     type: 'import',
     icon: Building2,
     description: 'Port handling charges - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'container_handling',
@@ -115,7 +121,8 @@ const expenseCategories = [
     type: 'import',
     icon: Package,
     description: 'Container unloading - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'transport_import',
@@ -123,7 +130,8 @@ const expenseCategories = [
     type: 'import',
     icon: Truck,
     description: 'Port to godown transport - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'loading_import',
@@ -131,7 +139,8 @@ const expenseCategories = [
     type: 'import',
     icon: Truck,
     description: 'Import container loading/unloading - CAPITALIZED to inventory',
-    requiresContainer: true
+    requiresContainer: true,
+    group: 'Import Costs'
   },
   {
     value: 'delivery_sales',
@@ -139,7 +148,8 @@ const expenseCategories = [
     type: 'sales',
     icon: Truck,
     description: 'Customer delivery - EXPENSED to P&L',
-    requiresContainer: false
+    requiresContainer: false,
+    group: 'Sales & Distribution'
   },
   {
     value: 'loading_sales',
@@ -147,39 +157,71 @@ const expenseCategories = [
     type: 'sales',
     icon: Truck,
     description: 'Sales loading charges - EXPENSED to P&L',
-    requiresContainer: false
-  },
-  {
-    value: 'warehouse_rent',
-    label: 'Warehouse Rent',
-    type: 'admin',
-    icon: Building2,
-    description: 'Rent expense - EXPENSED to P&L',
-    requiresContainer: false
-  },
-  {
-    value: 'utilities',
-    label: 'Utilities',
-    type: 'admin',
-    icon: Building2,
-    description: 'Electricity, water, etc - EXPENSED to P&L',
-    requiresContainer: false
-  },
-  {
-    value: 'bank_charges',
-    label: 'Bank Charges',
-    type: 'admin',
-    icon: DollarSign,
-    description: 'Bank fees, charges, and transaction costs - EXPENSED to P&L',
-    requiresContainer: false
+    requiresContainer: false,
+    group: 'Sales & Distribution'
   },
   {
     value: 'salary',
     label: 'Salary',
-    type: 'admin',
+    type: 'staff',
     icon: DollarSign,
     description: 'Staff salaries - EXPENSED to P&L',
-    requiresContainer: false
+    requiresContainer: false,
+    group: 'Staff Costs'
+  },
+  {
+    value: 'staff_overtime',
+    label: 'Staff Overtime',
+    type: 'staff',
+    icon: DollarSign,
+    description: 'Overtime payments - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Staff Costs'
+  },
+  {
+    value: 'staff_welfare',
+    label: 'Staff Welfare / Allowances',
+    type: 'staff',
+    icon: DollarSign,
+    description: 'Driver food, snacks, overtime meals, welfare - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Staff Costs'
+  },
+  {
+    value: 'travel_conveyance',
+    label: 'Travel & Conveyance',
+    type: 'staff',
+    icon: Truck,
+    description: 'Local travel, taxi, fuel reimbursements, tolls - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Staff Costs'
+  },
+  {
+    value: 'warehouse_rent',
+    label: 'Warehouse Rent',
+    type: 'operations',
+    icon: Building2,
+    description: 'Rent expense - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Operations'
+  },
+  {
+    value: 'utilities',
+    label: 'Utilities',
+    type: 'operations',
+    icon: Building2,
+    description: 'Electricity, water, etc - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Operations'
+  },
+  {
+    value: 'bank_charges',
+    label: 'Bank Charges',
+    type: 'operations',
+    icon: DollarSign,
+    description: 'Bank fees, charges, and transaction costs - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Operations'
   },
   {
     value: 'office_admin',
@@ -187,7 +229,8 @@ const expenseCategories = [
     type: 'admin',
     icon: Building2,
     description: 'General admin expenses - EXPENSED to P&L',
-    requiresContainer: false
+    requiresContainer: false,
+    group: 'Administrative'
   },
   {
     value: 'other',
@@ -195,7 +238,8 @@ const expenseCategories = [
     type: 'admin',
     icon: DollarSign,
     description: 'Miscellaneous expenses - EXPENSED to P&L',
-    requiresContainer: false
+    requiresContainer: false,
+    group: 'Administrative'
   },
 ];
 
@@ -209,7 +253,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<FinanceExpense | null>(null);
-  const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'admin'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
   const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'not_reconciled'>('all');
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
   const [startDate, setStartDate] = useState('');
@@ -661,6 +705,8 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
     switch (type) {
       case 'import': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'sales': return 'bg-green-100 text-green-800 border-green-300';
+      case 'staff': return 'bg-purple-100 text-purple-800 border-purple-300';
+      case 'operations': return 'bg-orange-100 text-orange-800 border-orange-300';
       case 'admin': return 'bg-gray-100 text-gray-800 border-gray-300';
       default: return 'bg-gray-100 text-gray-800 border-gray-300';
     }
@@ -692,17 +738,19 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
       </div>
 
       <div className="space-y-3">
-        <div className="flex gap-2 border-b border-gray-200">
+        <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
           {[
             { value: 'all', label: 'All Expenses' },
             { value: 'import', label: 'Import Costs' },
             { value: 'sales', label: 'Sales/Delivery' },
-            { value: 'admin', label: 'Admin/Office' },
+            { value: 'staff', label: 'Staff Costs' },
+            { value: 'operations', label: 'Operations' },
+            { value: 'admin', label: 'Admin' },
           ].map((tab) => (
             <button
               key={tab.value}
               onClick={() => setFilterType(tab.value as any)}
-              className={`px-4 py-2 font-medium transition-colors ${
+              className={`px-4 py-2 font-medium transition-colors whitespace-nowrap ${
                 filterType === tab.value
                   ? 'text-blue-600 border-b-2 border-blue-600'
                   : 'text-gray-500 hover:text-gray-700'
@@ -999,18 +1047,55 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                     delivery_challan_id: cat?.type === 'sales' ? formData.delivery_challan_id : ''
                   });
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 required
               >
                 <option value="">Select Category</option>
-                {expenseCategories.map((cat) => {
-                  const contextLabel = cat.requiresContainer ? ' [Requires Container]' : '';
-                  return (
+
+                {/* Import Costs - Capitalized to Inventory */}
+                <optgroup label="═══ IMPORT COSTS (Capitalized to Inventory) ═══">
+                  {expenseCategories.filter(c => c.group === 'Import Costs').map((cat) => (
                     <option key={cat.value} value={cat.value}>
-                      {cat.label}{contextLabel}
+                      {cat.label} [Requires Container]
                     </option>
-                  );
-                })}
+                  ))}
+                </optgroup>
+
+                {/* Sales & Distribution - P&L Expense */}
+                <optgroup label="═══ SALES & DISTRIBUTION (P&L Expense) ═══">
+                  {expenseCategories.filter(c => c.group === 'Sales & Distribution').map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </optgroup>
+
+                {/* Staff Costs - P&L Expense */}
+                <optgroup label="═══ STAFF COSTS (P&L Expense) ═══">
+                  {expenseCategories.filter(c => c.group === 'Staff Costs').map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </optgroup>
+
+                {/* Operations - P&L Expense */}
+                <optgroup label="═══ OPERATIONS (P&L Expense) ═══">
+                  {expenseCategories.filter(c => c.group === 'Operations').map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </optgroup>
+
+                {/* Administrative - P&L Expense */}
+                <optgroup label="═══ ADMINISTRATIVE (P&L Expense) ═══">
+                  {expenseCategories.filter(c => c.group === 'Administrative').map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
               {selectedCategory && (
                 <div className={`mt-2 p-3 rounded-lg border ${getTypeColor(selectedCategory.type)}`}>
