@@ -14,12 +14,19 @@ interface Appointment {
   created_at: string;
   lead_id: string | null;
   customer_id: string | null;
+  participants: string[];
+  auto_create_followup_task: boolean;
   user_profiles?: {
     full_name: string;
   };
   crm_contacts?: {
     company_name: string;
   };
+}
+
+interface UserProfile {
+  id: string;
+  full_name: string;
 }
 
 interface Contact {
@@ -37,6 +44,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
   const { profile } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
@@ -47,10 +55,13 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
     follow_up_date: '',
     location: '',
     customer_id: customerId || '',
+    participants: [] as string[],
+    auto_create_followup_task: false,
   });
 
   useEffect(() => {
     loadAppointments();
+    loadUsers();
     if (!customerId && !leadId) {
       loadContacts();
     }
@@ -67,6 +78,20 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
       setContacts(data || []);
     } catch (error) {
       console.error('Error loading contacts:', error);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('id, full_name')
+        .order('full_name', { ascending: true });
+
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (error) {
+      console.error('Error loading users:', error);
     }
   };
 
@@ -110,6 +135,8 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
         follow_up_date: formData.follow_up_date,
         is_completed: false,
         created_by: user.id,
+        participants: formData.participants,
+        auto_create_followup_task: formData.auto_create_followup_task,
       };
 
       if (customerId) {
@@ -143,6 +170,9 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
         description: '',
         follow_up_date: '',
         location: '',
+        customer_id: customerId || '',
+        participants: [],
+        auto_create_followup_task: false,
       });
 
       loadAppointments();
@@ -162,6 +192,8 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
       follow_up_date: appointment.follow_up_date,
       location: '',
       customer_id: appointment.customer_id || customerId || '',
+      participants: appointment.participants || [],
+      auto_create_followup_task: appointment.auto_create_followup_task || false,
     });
     setShowForm(true);
   };
@@ -257,6 +289,8 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
               follow_up_date: '',
               location: '',
               customer_id: customerId || '',
+              participants: [],
+              auto_create_followup_task: false,
             });
             setShowForm(!showForm);
           }}
@@ -344,6 +378,53 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                   rows={3}
                   placeholder="Meeting agenda, discussion points, etc."
                 />
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Participants
+                </label>
+                <div className="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto">
+                  <div className="space-y-2">
+                    {users.map(user => (
+                      <label key={user.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                        <input
+                          type="checkbox"
+                          checked={formData.participants.includes(user.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFormData({ ...formData, participants: [...formData.participants, user.id] });
+                            } else {
+                              setFormData({ ...formData, participants: formData.participants.filter(id => id !== user.id) });
+                            }
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">{user.full_name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Tagged participants will receive notifications and can see this appointment
+                </p>
+              </div>
+
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.auto_create_followup_task}
+                    onChange={(e) => setFormData({ ...formData, auto_create_followup_task: e.target.checked })}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    Auto-create follow-up task after meeting
+                  </span>
+                </label>
+                <p className="text-xs text-gray-500 ml-6">
+                  A task will be created 2 days after the meeting for follow-up
+                </p>
               </div>
             </div>
 
@@ -435,6 +516,22 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                         <p className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
                           {appointment.description}
                         </p>
+                      )}
+
+                      {appointment.participants && appointment.participants.length > 0 && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <Users className="w-4 h-4 text-gray-500" />
+                          <div className="flex flex-wrap gap-1">
+                            {appointment.participants.map(participantId => {
+                              const user = users.find(u => u.id === participantId);
+                              return user ? (
+                                <span key={participantId} className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                                  {user.full_name}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        </div>
                       )}
 
                       <div className="mt-3 flex gap-2">

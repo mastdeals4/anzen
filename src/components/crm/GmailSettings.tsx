@@ -29,19 +29,28 @@ export function GmailSettings() {
 
   const loadConnection = async () => {
     try {
+      console.log('[GmailSettings] === LOADING CONNECTION ===');
       const { data: { user } } = await supabase.auth.getUser();
+      console.log('[GmailSettings] Current user:', user?.id);
       if (!user) return;
 
       const { data, error } = await supabase
         .from('gmail_connections')
         .select('*')
         .eq('user_id', user.id)
+        .eq('is_connected', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
+
+      console.log('[GmailSettings] Query result - data:', data);
+      console.log('[GmailSettings] Query result - error:', error);
 
       if (error && error.code !== 'PGRST116') throw error;
       setConnection(data);
+      console.log('[GmailSettings] Connection set:', data?.email_address);
     } catch (error) {
-      console.error('Error loading Gmail connection:', error);
+      console.error('[GmailSettings] Error loading Gmail connection:', error);
     } finally {
       setLoading(false);
     }
@@ -118,12 +127,7 @@ export function GmailSettings() {
 
       const { error } = await supabase
         .from('gmail_connections')
-        .update({
-          is_connected: false,
-          sync_enabled: false,
-          access_token: null,
-          refresh_token: null,
-        })
+        .delete()
         .eq('user_id', user.id);
 
       if (error) throw error;

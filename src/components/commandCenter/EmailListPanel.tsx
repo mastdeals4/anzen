@@ -109,6 +109,7 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
       if (pendingEmail) {
         console.log('[EmailListPanel] Found pending email in sessionStorage');
         sessionStorage.removeItem('pendingEmailForInquiry');
+        document.body.style.cursor = 'wait';
 
         try {
           const emailData = JSON.parse(pendingEmail);
@@ -120,8 +121,40 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
             throw new Error('Not authenticated');
           }
 
+          // Check if this email was already processed (optional, non-blocking)
+          try {
+            const { data: existingInquiry } = await supabase
+              .from('crm_inquiries')
+              .select('id, inquiry_number, product_name')
+              .eq('mail_subject', emailData.subject)
+              .maybeSingle();
+
+            if (existingInquiry) {
+              const shouldReprocess = confirm(
+                `This email has already been processed as Inquiry #${existingInquiry.inquiry_number} (${existingInquiry.product_name}).\n\nDo you want to reprocess it?`
+              );
+
+              if (!shouldReprocess) {
+                console.log('[EmailListPanel] User declined to reprocess existing inquiry');
+                sessionStorage.removeItem('pendingEmailForCommandCenter');
+                return;
+              }
+              console.log('[EmailListPanel] User confirmed reprocessing existing inquiry');
+            }
+          } catch (error) {
+            console.warn('[EmailListPanel] Could not check for duplicates (continuing anyway):', error);
+          }
+
           console.log('[EmailListPanel] Calling parse-pharma-email edge function');
           const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-pharma-email`;
+
+          console.log('[EmailListPanel] API URL:', apiUrl);
+          console.log('[EmailListPanel] Request body:', {
+            emailSubject: emailData.subject,
+            emailBody: emailData.body.substring(0, 100) + '...',
+            fromEmail: emailData.fromEmail,
+            fromName: emailData.fromName,
+          });
 
           const response = await fetch(apiUrl, {
             method: 'POST',
@@ -138,6 +171,13 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
           });
 
           console.log('[EmailListPanel] Response status:', response.status);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error('[EmailListPanel] Response error:', errorText);
+            throw new Error(`Edge function returned ${response.status}: ${errorText}`);
+          }
+
           const result = await response.json();
           console.log('[EmailListPanel] Parse result:', result);
 
@@ -164,6 +204,8 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
         } catch (error) {
           console.error('[EmailListPanel] Error processing pending email:', error);
           alert(`Failed to process email: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          document.body.style.cursor = 'default';
         }
       } else {
         console.log('[EmailListPanel] No pending email found in sessionStorage');
@@ -175,6 +217,7 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
 
   const handleEmailClick = async (email: Email) => {
     setParsingEmailId(email.id);
+    document.body.style.cursor = 'wait';
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -213,6 +256,7 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
       alert('Failed to parse email. Please try again.');
     } finally {
       setParsingEmailId(null);
+      document.body.style.cursor = 'default';
     }
   };
 

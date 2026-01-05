@@ -19,21 +19,41 @@ interface Reminder {
   } | null;
 }
 
+interface Appointment {
+  id: string;
+  activity_type: string;
+  subject: string;
+  description: string | null;
+  follow_up_date: string;
+  is_completed: boolean;
+  participants: string[];
+  customer_id: string | null;
+  crm_contacts?: {
+    company_name: string;
+  };
+  user_profiles?: {
+    full_name: string;
+  };
+}
+
 interface ReminderCalendarProps {
   onReminderCreated?: () => void;
 }
 
 export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [view, setView] = useState<'month' | 'week' | 'list'>('month');
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedReminder, setSelectedReminder] = useState<Reminder | null>(null);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
 
   useEffect(() => {
     loadReminders();
+    loadAppointments();
   }, [currentDate, view]);
 
   const loadReminders = async () => {
@@ -65,6 +85,35 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
       console.error('Error loading reminders:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAppointments = async () => {
+    try {
+      let query = supabase
+        .from('crm_activities')
+        .select(`
+          *,
+          user_profiles!crm_activities_created_by_fkey(full_name),
+          crm_contacts(company_name)
+        `)
+        .in('activity_type', ['meeting', 'video_call', 'phone_call'])
+        .not('follow_up_date', 'is', null);
+
+      if (view === 'month') {
+        const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+        query = query
+          .gte('follow_up_date', startOfMonth.toISOString())
+          .lte('follow_up_date', endOfMonth.toISOString());
+      }
+
+      const { data, error } = await query.order('follow_up_date', { ascending: true });
+
+      if (error) throw error;
+      setAppointments(data || []);
+    } catch (error) {
+      console.error('Error loading appointments:', error);
     }
   };
 
@@ -119,6 +168,15 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
       return reminderDate.getDate() === date.getDate() &&
              reminderDate.getMonth() === date.getMonth() &&
              reminderDate.getFullYear() === date.getFullYear();
+    });
+  };
+
+  const getAppointmentsForDate = (date: Date) => {
+    return appointments.filter(a => {
+      const appointmentDate = new Date(a.follow_up_date);
+      return appointmentDate.getDate() === date.getDate() &&
+             appointmentDate.getMonth() === date.getMonth() &&
+             appointmentDate.getFullYear() === date.getFullYear();
     });
   };
 
@@ -183,7 +241,9 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
       const dayReminders = getRemindersForDate(date);
+      const dayAppointments = getAppointmentsForDate(date);
       const isToday = date.toDateString() === new Date().toDateString();
+      const allItems = [...dayReminders, ...dayAppointments];
 
       days.push(
         <div
@@ -194,6 +254,9 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
             if (dayReminders.length > 0) {
               setSelectedReminder(dayReminders[0]);
               setModalOpen(true);
+            } else if (dayAppointments.length > 0) {
+              setSelectedAppointment(dayAppointments[0]);
+              setModalOpen(true);
             }
           }}
         >
@@ -201,7 +264,16 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
             {day}
           </div>
           <div className="space-y-1">
-            {dayReminders.slice(0, 3).map((reminder) => (
+            {dayAppointments.slice(0, 2).map((appointment) => (
+              <div
+                key={appointment.id}
+                className={`text-xs p-1 rounded border bg-purple-100 text-purple-800 border-purple-200 truncate ${appointment.is_completed ? 'opacity-50 line-through' : ''}`}
+                title={appointment.subject}
+              >
+                📅 {appointment.subject}
+              </div>
+            ))}
+            {dayReminders.slice(0, 3 - dayAppointments.length).map((reminder) => (
               <div
                 key={reminder.id}
                 className={`text-xs p-1 rounded border ${reminderTypeColors[reminder.reminder_type as keyof typeof reminderTypeColors]} truncate ${reminder.is_completed ? 'opacity-50 line-through' : ''}`}
@@ -210,9 +282,9 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
                 {reminder.title}
               </div>
             ))}
-            {dayReminders.length > 3 && (
+            {allItems.length > 3 && (
               <div className="text-xs text-gray-500 font-medium">
-                +{dayReminders.length - 3} more
+                +{allItems.length - 3} more
               </div>
             )}
           </div>
@@ -398,8 +470,9 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
         onClose={() => {
           setModalOpen(false);
           setSelectedReminder(null);
+          setSelectedAppointment(null);
         }}
-        title="Reminder Details"
+        title={selectedReminder ? "Reminder Details" : "Appointment Details"}
       >
         {selectedReminder && (
           <div className="space-y-4">
@@ -450,6 +523,62 @@ export function ReminderCalendar({ onReminderCreated }: ReminderCalendarProps) {
               >
                 <CheckCircle className="w-4 h-4" />
                 {selectedReminder.is_completed ? 'Mark Incomplete' : 'Mark Complete'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {selectedAppointment && (
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg border bg-purple-100 text-purple-800 border-purple-200">
+              <p className="font-semibold">{selectedAppointment.subject}</p>
+              <p className="text-sm mt-1">
+                {new Date(selectedAppointment.follow_up_date).toLocaleString('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </p>
+              <p className="text-xs mt-1 capitalize">{selectedAppointment.activity_type.replace('_', ' ')}</p>
+            </div>
+
+            {selectedAppointment.crm_contacts && (
+              <div>
+                <label className="text-sm font-medium text-gray-700">Customer</label>
+                <p className="text-sm text-gray-600 mt-1">{selectedAppointment.crm_contacts.company_name}</p>
+              </div>
+            )}
+
+            {selectedAppointment.description && (
+              <div>
+                <label className="text-sm font-medium text-gray-700">Description</label>
+                <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{selectedAppointment.description}</p>
+              </div>
+            )}
+
+            {selectedAppointment.user_profiles && (
+              <div>
+                <label className="text-sm font-medium text-gray-700">Organizer</label>
+                <p className="text-sm text-gray-600 mt-1">{selectedAppointment.user_profiles.full_name}</p>
+              </div>
+            )}
+
+            {selectedAppointment.participants && selectedAppointment.participants.length > 0 && (
+              <div className="border-t pt-4">
+                <label className="text-sm font-medium text-gray-700">Participants</label>
+                <p className="text-sm text-gray-600 mt-1">{selectedAppointment.participants.length} participant(s) tagged</p>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-4 border-t">
+              <button
+                onClick={() => setModalOpen(false)}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
+              >
+                Close
               </button>
             </div>
           </div>

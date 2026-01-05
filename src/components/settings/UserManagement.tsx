@@ -21,8 +21,11 @@ interface UserManagementProps {
 export function UserManagement({ users, onRefresh }: UserManagementProps) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [passwordUser, setPasswordUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -176,6 +179,60 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     }
   };
 
+  const openPasswordModal = (user: UserProfile) => {
+    setPasswordUser(user);
+    setNewPassword('');
+    setShowPasswordModal(true);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordUser) return;
+
+    if (newPassword.length < 6) {
+      alert('Password must be at least 6 characters long');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-update-password`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            user_id: passwordUser.id,
+            new_password: newPassword,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update password');
+      }
+
+      alert(`Password updated successfully for ${passwordUser.full_name}!`);
+      setShowPasswordModal(false);
+      setPasswordUser(null);
+      setNewPassword('');
+    } catch (error: any) {
+      console.error('Error changing password:', error);
+      alert(error.message || 'Failed to change password. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
       case 'admin':
@@ -263,6 +320,14 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
                   title="Edit user"
                 >
                   <Edit2 className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={() => openPasswordModal(user)}
+                  className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition"
+                  title="Change password"
+                >
+                  <Lock className="w-4 h-4" />
                 </button>
 
                 <button
@@ -580,6 +645,88 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
                 <>
                   <Edit2 className="w-4 h-4" />
                   Save Changes
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Change Password Modal */}
+      <Modal
+        isOpen={showPasswordModal}
+        onClose={() => {
+          setShowPasswordModal(false);
+          setPasswordUser(null);
+          setNewPassword('');
+        }}
+        title="Change User Password"
+      >
+        <form onSubmit={handleChangePassword} className="space-y-4">
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
+            <p className="text-sm text-orange-800 font-medium mb-2">
+              Admin Password Reset
+            </p>
+            <p className="text-sm text-orange-800">
+              You are about to change the password for <strong>{passwordUser?.full_name}</strong> ({passwordUser?.username}).
+              The user will be able to log in immediately with the new password.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
+              <Lock className="w-4 h-4" />
+              New Password <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              placeholder="Enter new password (minimum 6 characters)"
+              minLength={6}
+              required
+              autoFocus
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Minimum 6 characters. Make sure to communicate the new password to the user securely.
+            </p>
+          </div>
+
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="text-sm text-yellow-800">
+              <strong>Security Note:</strong> After changing the password, communicate it to the user through a secure channel.
+              Encourage them to change it after logging in.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button
+              type="button"
+              onClick={() => {
+                setShowPasswordModal(false);
+                setPasswordUser(null);
+                setNewPassword('');
+              }}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                <>
+                  <Lock className="w-4 h-4" />
+                  Change Password
                 </>
               )}
             </button>

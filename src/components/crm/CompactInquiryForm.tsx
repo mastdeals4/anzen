@@ -8,9 +8,9 @@ interface Customer {
   contact_person: string | null;
   email: string | null;
   phone: string | null;
-  mobile: string | null;
-  landline: string | null;
   country: string | null;
+  address: string | null;
+  city: string | null;
 }
 
 interface CompactInquiryFormProps {
@@ -58,6 +58,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
     pipeline_status: initialData?.pipeline_status || 'new',
     remarks: initialData?.remarks || '',
     internal_notes: initialData?.internal_notes || '',
+    is_multi_product: initialData?.is_multi_product || false,
+    products: initialData?.products || [],
   });
 
   const [newCustomer, setNewCustomer] = useState({
@@ -65,10 +67,13 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
     contact_person: '',
     email: '',
     phone: '',
-    mobile: '',
-    landline: '',
-    country: '',
+    country: 'Indonesia',
     address: '',
+    city: 'Jakarta Pusat',
+    npwp: '',
+    pbf_license: '',
+    gst_vat_type: '',
+    payment_terms: '',
   });
 
   useEffect(() => {
@@ -105,8 +110,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
   const loadCustomers = async () => {
     try {
       const { data, error } = await supabase
-        .from('crm_contacts')
-        .select('id, company_name, contact_person, email, phone, mobile, landline, country')
+        .from('customers')
+        .select('id, company_name, contact_person, email, phone, country, address, city')
         .eq('is_active', true)
         .order('company_name');
 
@@ -138,15 +143,11 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
     }
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
       const { data, error } = await supabase
-        .from('crm_contacts')
+        .from('customers')
         .insert({
           ...newCustomer,
           is_active: true,
-          created_by: user.id,
         })
         .select()
         .single();
@@ -161,10 +162,13 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
         contact_person: '',
         email: '',
         phone: '',
-        mobile: '',
-        landline: '',
-        country: '',
+        country: 'Indonesia',
         address: '',
+        city: 'Jakarta Pusat',
+        npwp: '',
+        pbf_license: '',
+        gst_vat_type: '',
+        payment_terms: '',
       });
     } catch (error) {
       console.error('Error adding customer:', error);
@@ -175,9 +179,17 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.product_name || !formData.quantity || !formData.company_name) {
-      alert('Please fill in all required fields: Product Name, Quantity, and Customer');
-      return;
+    // Skip product validation for multi-product inquiries
+    if (!formData.is_multi_product) {
+      if (!formData.product_name || !formData.quantity || !formData.company_name) {
+        alert('Please fill in all required fields: Product Name, Quantity, and Customer');
+        return;
+      }
+    } else {
+      if (!formData.company_name) {
+        alert('Please fill in Customer');
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -188,54 +200,120 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
     }
   };
 
+  const addProduct = () => {
+    setFormData({
+      ...formData,
+      products: [
+        ...formData.products,
+        {
+          productName: '',
+          specification: '',
+          quantity: '',
+          supplierName: '',
+          supplierCountry: '',
+          deliveryDate: '',
+          deliveryTerms: ''
+        }
+      ]
+    });
+  };
+
+  const removeProduct = (index: number) => {
+    setFormData({
+      ...formData,
+      products: formData.products.filter((_, i) => i !== index)
+    });
+  };
+
+  const updateProduct = (index: number, field: string, value: string) => {
+    const updatedProducts = [...formData.products];
+    updatedProducts[index] = { ...updatedProducts[index], [field]: value };
+    setFormData({ ...formData, products: updatedProducts });
+  };
+
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-3">
-        {/* Row: Product Name | Specification */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Product Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.product_name}
-              onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
-              className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="Enter product name"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Specification
-            </label>
-            <input
-              type="text"
-              value={formData.specification}
-              onChange={(e) => setFormData({ ...formData, specification: e.target.value })}
-              className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="BP / USP / EP"
-            />
-          </div>
+        {/* Multi-Product Toggle */}
+        <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+          <input
+            type="checkbox"
+            id="multiProductToggle"
+            checked={formData.is_multi_product}
+            onChange={(e) => {
+              const isMulti = e.target.checked;
+              setFormData({
+                ...formData,
+                is_multi_product: isMulti,
+                products: isMulti && formData.products.length === 0
+                  ? [{
+                      productName: '',
+                      specification: '',
+                      quantity: '',
+                      supplierName: '',
+                      supplierCountry: '',
+                      deliveryDate: '',
+                      deliveryTerms: ''
+                    }]
+                  : formData.products
+              });
+            }}
+            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+          />
+          <label htmlFor="multiProductToggle" className="text-sm font-medium text-gray-700 cursor-pointer">
+            Multi-Product Inquiry (Common data will be applied to all products)
+          </label>
         </div>
+
+        {/* Row: Product Name | Specification */}
+        {!formData.is_multi_product && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Product Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.product_name}
+                onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
+                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter product name"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Specification
+              </label>
+              <input
+                type="text"
+                value={formData.specification}
+                onChange={(e) => setFormData({ ...formData, specification: e.target.value })}
+                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="BP / USP / EP"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Row: Quantity | Priority | Inquiry Source */}
         <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Quantity <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.quantity}
-              onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-              className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="e.g., 500 KG"
-              required
-            />
-          </div>
-          <div>
+          {!formData.is_multi_product && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Quantity <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.quantity}
+                onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., 500 KG"
+                required
+              />
+            </div>
+          )}
+          <div className={!formData.is_multi_product ? '' : 'col-span-1'}>
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Priority <span className="text-red-500">*</span>
             </label>
@@ -250,7 +328,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <option value="urgent">Urgent</option>
             </select>
           </div>
-          <div>
+          <div className={!formData.is_multi_product ? '' : 'col-span-2'}>
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Inquiry Source
             </label>
@@ -363,12 +441,13 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               Email
             </label>
             <input
-              type="email"
+              type="text"
               value={formData.contact_email}
               onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
               className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="email@example.com"
+              placeholder="email@example.com or multiple: email1@example.com, email2@example.com"
             />
+            <p className="text-xs text-gray-500 mt-0.5">Use comma (,) or semicolon (;) to separate multiple emails</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
@@ -510,42 +589,42 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           </div>
         </div>
 
-        {/* Row: Delivery Date | Delivery Terms */}
+        {/* Delivery Date and Terms (always shown) */}
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Delivery Date
-            </label>
-            <input
-              type="date"
-              value={formData.delivery_date}
-              onChange={(e) => setFormData({ ...formData, delivery_date: e.target.value })}
-              className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Delivery Terms
-            </label>
-            <select
-              value={formData.delivery_terms}
-              onChange={(e) => setFormData({ ...formData, delivery_terms: e.target.value })}
-              className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select...</option>
-              <option value="FOB Jakarta">FOB Jakarta</option>
-              <option value="CIF Jakarta">CIF Jakarta</option>
-              <option value="FOB Surabaya">FOB Surabaya</option>
-              <option value="CIF Surabaya">CIF Surabaya</option>
-              <option value="FOB Semarang">FOB Semarang</option>
-              <option value="CIF Semarang">CIF Semarang</option>
-              <option value="EXW">EXW</option>
-              <option value="DDP">DDP</option>
-              <option value="DAP">DAP</option>
-              <option value="CFR">CFR</option>
-              <option value="FCA">FCA</option>
-            </select>
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Delivery Date
+              </label>
+              <input
+                type="date"
+                value={formData.delivery_date}
+                onChange={(e) => setFormData({ ...formData, delivery_date: e.target.value })}
+                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Delivery Terms
+              </label>
+              <select
+                value={formData.delivery_terms}
+                onChange={(e) => setFormData({ ...formData, delivery_terms: e.target.value })}
+                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select...</option>
+                <option value="FOB Jakarta">FOB Jakarta</option>
+                <option value="CIF Jakarta">CIF Jakarta</option>
+                <option value="FOB Surabaya">FOB Surabaya</option>
+                <option value="CIF Surabaya">CIF Surabaya</option>
+                <option value="FOB Semarang">FOB Semarang</option>
+                <option value="CIF Semarang">CIF Semarang</option>
+                <option value="EXW">EXW</option>
+                <option value="DDP">DDP</option>
+                <option value="DAP">DAP</option>
+                <option value="CFR">CFR</option>
+                <option value="FCA">FCA</option>
+              </select>
+            </div>
         </div>
 
         {/* Row: ACE ERP No | Pipeline Status */}
@@ -673,50 +752,24 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                   Email
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   value={newCustomer.email}
                   onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
                   className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   placeholder="email@example.com"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Mobile
-                  </label>
-                  <input
-                    type="tel"
-                    value={newCustomer.mobile}
-                    onChange={(e) => setNewCustomer({ ...newCustomer, mobile: e.target.value })}
-                    className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="+62 xxx"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Landline
-                  </label>
-                  <input
-                    type="tel"
-                    value={newCustomer.landline}
-                    onChange={(e) => setNewCustomer({ ...newCustomer, landline: e.target.value })}
-                    className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="021-xxx"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={newCustomer.phone}
-                    onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
-                    className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="Other"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  value={newCustomer.phone}
+                  onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
+                  className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="+62 xxx"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">

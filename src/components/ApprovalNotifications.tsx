@@ -200,15 +200,9 @@ export function ApprovalNotifications() {
 
       {/* Footer */}
       <div className="bg-gray-50 px-4 py-3 text-center">
-        <button
-          onClick={() => {
-            handleDismiss();
-            setCurrentPage('sales-orders');
-          }}
-          className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-        >
-          View All Pending Approvals
-        </button>
+        <p className="text-xs text-gray-500">
+          Click on an item above to review and approve
+        </p>
       </div>
 
       <style>{`

@@ -20,6 +20,10 @@ import { Setup } from './pages/Setup';
 import { GmailCallback } from './pages/GmailCallback';
 import SalesOrders from './pages/SalesOrders';
 import ImportRequirements from './pages/ImportRequirements';
+import ImportContainers from './pages/ImportContainers';
+import MaterialReturns from './pages/MaterialReturns';
+import { CreditNotes } from './pages/CreditNotes';
+import PurchaseOrders from './pages/PurchaseOrders';
 import { ApprovalNotifications } from './components/ApprovalNotifications';
 import { initializeNotificationChecks } from './utils/notifications';
 
@@ -72,8 +76,12 @@ function AppContent() {
         return <Customers />;
       case 'sales-orders':
         return <SalesOrders />;
+      case 'purchase-orders':
+        return <PurchaseOrders />;
       case 'import-requirements':
         return <ImportRequirements />;
+      case 'import-containers':
+        return <ImportContainers />;
       case 'crm':
         return <CRM />;
       case 'command-center':
@@ -84,6 +92,10 @@ function AppContent() {
         return <DeliveryChallan />;
       case 'sales':
         return <Sales />;
+      case 'credit-notes':
+        return <CreditNotes />;
+      case 'material-returns':
+        return <MaterialReturns />;
       case 'finance':
         return <Finance />;
       case 'settings':

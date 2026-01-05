@@ -23,6 +23,9 @@ import {
   FileText,
   ClipboardCheck,
   TrendingUp,
+  RotateCcw,
+  AlertTriangle,
+  ClipboardList,
 } from 'lucide-react';
 import logo from '../assets/Untitled-1.svg';
 
@@ -37,7 +40,7 @@ export function Layout({ children }: LayoutProps) {
   const { currentPage, setCurrentPage, sidebarCollapsed, setSidebarCollapsed } = useNavigation();
 
   // Auto-collapse sidebar for specific pages
-  const autoCollapsiblePages = ['crm', 'command-center'];
+  const autoCollapsiblePages = ['crm', 'command-center', 'finance'];
   const shouldAutoCollapse = autoCollapsiblePages.includes(currentPage);
 
   // Automatically collapse sidebar when entering CRM or Command Center
@@ -56,7 +59,9 @@ export function Layout({ children }: LayoutProps) {
     { id: 'sales-orders', label: 'Sales Orders', icon: FileText, roles: ['admin', 'accounts', 'sales'] },
     { id: 'delivery-challan', label: t('nav.deliveryChallan'), icon: Truck, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
     { id: 'sales', label: t('nav.sales'), icon: ShoppingCart, roles: ['admin', 'accounts', 'sales'] },
+    { id: 'purchase-orders', label: 'Purchase Orders', icon: ClipboardList, roles: ['admin', 'warehouse', 'accounts'] },
     { id: 'import-requirements', label: 'Import Requirements', icon: TrendingUp, roles: ['admin', 'warehouse', 'sales'] },
+    { id: 'import-containers', label: 'Import Containers', icon: Package, roles: ['admin', 'warehouse', 'accounts'] },
     { id: 'finance', label: t('nav.finance'), icon: DollarSign, roles: ['admin', 'accounts'] },
     { id: 'crm', label: t('nav.crm'), icon: UserCircle, roles: ['admin', 'sales'] },
     { id: 'command-center', label: 'Command Center', icon: Zap, roles: ['admin', 'sales'] },
@@ -110,9 +115,11 @@ export function Layout({ children }: LayoutProps) {
             const Icon = item.icon;
             const isActive = currentPage === item.id;
             return (
-              <button
+              <a
                 key={item.id}
-                onClick={() => {
+                href={`#${item.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
                   setCurrentPage(item.id);
                   setSidebarOpen(false);
                 }}
@@ -133,7 +140,7 @@ export function Layout({ children }: LayoutProps) {
                     {item.label}
                   </span>
                 )}
-              </button>
+              </a>
             );
           })}
         </nav>

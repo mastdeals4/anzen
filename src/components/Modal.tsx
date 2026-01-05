@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -7,10 +8,24 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  maxWidth?: string;
 }
 
-export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, size = 'md', maxWidth }: ModalProps) {
   const { t } = useLanguage();
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isOpen) {
+        onClose();
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('keydown', handleEscape);
+      return () => document.removeEventListener('keydown', handleEscape);
+    }
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -21,6 +36,8 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
     xl: 'max-w-6xl',
   };
 
+  const widthClass = maxWidth || sizeClasses[size];
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex min-h-screen items-center justify-center p-4">
@@ -30,7 +47,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
         />
 
         <div
-          className={`relative bg-white rounded-lg shadow-xl ${sizeClasses[size]} w-full max-h-[90vh] flex flex-col`}
+          className={`relative bg-white rounded-lg shadow-xl ${widthClass} w-full max-h-[90vh] flex flex-col`}
         >
           <div className="flex items-center justify-between p-6 border-b border-gray-200">
             <h3 className="text-xl font-semibold text-gray-900">{title}</h3>

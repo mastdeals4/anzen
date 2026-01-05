@@ -12,7 +12,8 @@ import { EmailBodyViewer } from './EmailBodyViewer';
 
 interface GmailConnection {
   id: string;
-  email: string;
+  user_id: string;
+  email_address: string;
   access_token: string;
   refresh_token: string;
   access_token_expires_at: string;
@@ -58,7 +59,7 @@ interface EmailListItem {
 type FolderType = 'INBOX' | 'SENT' | 'STARRED' | 'ALL' | 'TRASH' | 'DRAFT';
 
 export function GmailBrowserInbox() {
-  const { navigateTo } = useNavigation();
+  const { setCurrentPage } = useNavigation();
   const [connection, setConnection] = useState<GmailConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingEmails, setLoadingEmails] = useState(false);
@@ -103,31 +104,50 @@ export function GmailBrowserInbox() {
 
   const loadGmailConnection = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      console.log('[GmailBrowserInbox] === LOADING GMAIL CONNECTION ===');
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+      console.log('[GmailBrowserInbox] Auth user:', user?.id);
+      console.log('[GmailBrowserInbox] Auth error:', authError);
+
+      if (authError || !user) {
+        console.error('[GmailBrowserInbox] Auth error:', authError);
         setError('Not authenticated');
         setLoading(false);
         return;
       }
+
+      console.log('[GmailBrowserInbox] Querying gmail_connections for user:', user.id);
 
       const { data, error } = await supabase
         .from('gmail_connections')
         .select('*')
         .eq('user_id', user.id)
         .eq('is_connected', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (error) throw error;
+      console.log('[GmailBrowserInbox] Query result - data:', data);
+      console.log('[GmailBrowserInbox] Query result - error:', error);
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('[GmailBrowserInbox] Database error loading connection:', error);
+        throw error;
+      }
 
       if (!data) {
+        console.error('[GmailBrowserInbox] NO CONNECTION FOUND for user:', user.id);
         setError('No Gmail account connected. Please connect your Gmail account in Settings.');
         setLoading(false);
         return;
       }
 
+      console.log('[GmailBrowserInbox] Connection loaded successfully:', data.email_address);
       setConnection(data);
+      setError(null);
     } catch (err) {
-      console.error('Error loading Gmail connection:', err);
+      console.error('[GmailBrowserInbox] Error loading Gmail connection:', err);
       setError('Failed to load Gmail connection');
     } finally {
       setLoading(false);
@@ -662,7 +682,7 @@ export function GmailBrowserInbox() {
 
       sessionStorage.setItem('pendingEmailForInquiry', JSON.stringify(emailData));
 
-      navigateTo('command-center');
+      setCurrentPage('command-center');
     } catch (error) {
       console.error('Error preparing inquiry:', error);
       alert('Failed to prepare inquiry. Please try again.');
@@ -712,12 +732,24 @@ export function GmailBrowserInbox() {
               <li>Authorize access to your Gmail account</li>
             </ol>
           </div>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition"
-          >
-            Refresh Page
-          </button>
+          <div className="flex gap-2 justify-center">
+            <button
+              onClick={() => {
+                setLoading(true);
+                setError(null);
+                loadGmailConnection();
+              }}
+              className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition"
+            >
+              Retry Connection
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 transition"
+            >
+              Refresh Page
+            </button>
+          </div>
         </div>
       </div>
     );

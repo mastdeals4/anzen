@@ -16,6 +16,10 @@ interface Inquiry {
   supplier_name?: string | null;
   supplier_country?: string | null;
   email_subject?: string | null;
+  offered_price?: number | null;
+  offered_price_currency?: string;
+  purchase_price?: number | null;
+  purchase_price_currency?: string;
 }
 
 interface EmailTemplate {
@@ -67,6 +71,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
   useEffect(() => {
     loadTemplates();
     loadUserName();
+    loadExistingDocuments();
     if (replyTo) {
       // Add quoted reply
       const quotedBody = `
@@ -77,6 +82,9 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
         </div>
       `;
       setBody(quotedBody);
+    } else {
+      // Auto-populate with price info if available
+      generateDefaultEmailBody();
     }
   }, [replyTo]);
 
@@ -93,6 +101,73 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
     } catch (error) {
       console.error('Error loading templates:', error);
     }
+  };
+
+  const loadExistingDocuments = async () => {
+    try {
+      // Load documents from crm-documents bucket for this inquiry
+      const { data: files, error } = await supabase.storage
+        .from('crm-documents')
+        .list(`inquiry-${inquiry.id}`, {
+          limit: 100,
+          offset: 0,
+        });
+
+      if (error) throw error;
+
+      if (files && files.length > 0) {
+        // Convert storage files to attached files format
+        const existingFiles: AttachedFile[] = await Promise.all(
+          files.map(async (file) => {
+            const { data: fileData } = await supabase.storage
+              .from('crm-documents')
+              .download(`inquiry-${inquiry.id}/${file.name}`);
+
+            if (fileData) {
+              return {
+                file: new File([fileData], file.name, { type: fileData.type }),
+                name: file.name,
+                size: fileData.size
+              };
+            }
+            return null;
+          })
+        );
+
+        // Filter out nulls and add to attachments
+        const validFiles = existingFiles.filter(f => f !== null) as AttachedFile[];
+        setAttachments(validFiles);
+      }
+    } catch (error) {
+      console.error('Error loading existing documents:', error);
+    }
+  };
+
+  const generateDefaultEmailBody = () => {
+    let bodyContent = `<p>Dear ${inquiry.contact_person || 'Sir/Madam'},</p><br>`;
+    bodyContent += `<p>Thank you for your inquiry regarding <strong>${inquiry.product_name}</strong>.</p><br>`;
+
+    if (inquiry.specification) {
+      bodyContent += `<p><strong>Specification:</strong> ${inquiry.specification}</p>`;
+    }
+
+    bodyContent += `<p><strong>Quantity:</strong> ${inquiry.quantity}</p><br>`;
+
+    // Include price if available
+    if (inquiry.offered_price && inquiry.offered_price > 0) {
+      const currency = inquiry.offered_price_currency || 'USD';
+      bodyContent += `<p><strong>Our Price:</strong> ${currency} ${inquiry.offered_price.toLocaleString()}</p><br>`;
+    }
+
+    if (inquiry.supplier_name) {
+      bodyContent += `<p><strong>Origin:</strong> ${inquiry.supplier_name}${inquiry.supplier_country ? `, ${inquiry.supplier_country}` : ''}</p><br>`;
+    }
+
+    bodyContent += `<p>Please find the attached documents for your reference.</p><br>`;
+    bodyContent += `<p>Should you have any questions or require additional information, please feel free to contact us.</p><br>`;
+    bodyContent += `<p>Best regards,</p>`;
+
+    setBody(bodyContent);
   };
 
   const loadUserName = async () => {
@@ -123,6 +198,12 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
       '{{supplier_country}}': inquiry.supplier_country || '-',
       '{{inquiry_number}}': inquiry.inquiry_number,
       '{{user_name}}': currentUserName,
+      '{{offered_price}}': inquiry.offered_price
+        ? `${inquiry.offered_price_currency || 'USD'} ${inquiry.offered_price.toLocaleString()}`
+        : 'Please contact us for pricing',
+      '{{purchase_price}}': inquiry.purchase_price
+        ? `${inquiry.purchase_price_currency || 'USD'} ${inquiry.purchase_price.toLocaleString()}`
+        : '-',
     };
 
     let processedSubject = template.subject;
@@ -216,10 +297,9 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
         bcc_email: bccEmail ? bccEmail.split(',').map(e => e.trim()) : null,
         subject: subject,
         body: body,
-        attachments: uploadedFiles.length > 0 ? uploadedFiles : null,
+        attachment_urls: uploadedFiles.length > 0 ? uploadedFiles : null,
         sent_date: new Date().toISOString(),
         created_by: user.id,
-        reply_to_id: replyTo?.email_id || null,
       };
 
       const { error } = await supabase

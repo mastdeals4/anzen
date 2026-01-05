@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Sparkles, AlertTriangle, CheckCircle2, Calendar, Package, Building2, Mail, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, Sparkles, AlertTriangle, CheckCircle2, Calendar, Package, Building2, Mail, ChevronDown, ChevronUp, Layers } from 'lucide-react';
 import type { Email, ParsedEmailData } from '../../types/commandCenter';
 import { CompactInquiryForm } from '../crm/CompactInquiryForm';
 import { EmailBodyViewer } from '../crm/EmailBodyViewer';
@@ -9,6 +9,12 @@ interface InquiryFormPanelProps {
   parsedData: ParsedEmailData | null;
   onSave: (data: InquiryFormData) => Promise<void>;
   saving: boolean;
+}
+
+export interface ProductItem {
+  productName: string;
+  specification: string;
+  quantity: string;
 }
 
 export interface InquiryFormData {
@@ -38,30 +44,82 @@ export interface InquiryFormData {
   offeredPriceCurrency: string;
   deliveryDate: string;
   deliveryTerms: string;
+  isMultiProduct?: boolean;
+  products?: ProductItem[];
 }
 
 export function InquiryFormPanel({ email, parsedData, onSave, saving }: InquiryFormPanelProps) {
   const [showEmailBody, setShowEmailBody] = useState(false);
   const [initialData, setInitialData] = useState<any>(null);
+  const [showProductsPreview, setShowProductsPreview] = useState(false);
+
+  const isMultiProduct = parsedData?.products && parsedData.products.length > 1;
 
   useEffect(() => {
+    console.log('[InquiryFormPanel] useEffect triggered', { email, parsedData });
     if (parsedData) {
-      setInitialData({
+      // Extract contact person and email properly (handle arrays/objects)
+      let contactPerson = parsedData.contactPerson || '';
+      let contactEmail = parsedData.contactEmail || '';
+
+      if (typeof contactPerson === 'object' && !Array.isArray(contactPerson)) {
+        contactPerson = contactPerson.name || '';
+      } else if (Array.isArray(contactPerson)) {
+        contactPerson = contactPerson[0]?.name || contactPerson[0] || '';
+      }
+
+      if (typeof contactEmail === 'object' && !Array.isArray(contactEmail)) {
+        contactEmail = contactEmail.email || '';
+      } else if (Array.isArray(contactEmail)) {
+        contactEmail = contactEmail[0]?.email || contactEmail[0] || '';
+      }
+
+      // Strip HTML tags if present and extract all emails
+      if (typeof contactEmail === 'string') {
+        // Remove ALL HTML tags including those with attributes like <strong class="..." dir="...">
+        contactEmail = contactEmail.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+        // Extract all email addresses from text
+        const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+        const foundEmails: string[] = [];
+        let emailMatch;
+        while ((emailMatch = emailRegex.exec(contactEmail)) !== null) {
+          if (!foundEmails.includes(emailMatch[1])) {
+            foundEmails.push(emailMatch[1]);
+          }
+        }
+        // Join all found emails with comma separator
+        if (foundEmails.length > 0) {
+          contactEmail = foundEmails.join(', ');
+        }
+      }
+
+      if (typeof contactPerson === 'string') {
+        // Remove ALL HTML tags including those with attributes
+        contactPerson = contactPerson.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      }
+
+      // Also clean company name from HTML tags
+      let companyName = parsedData.companyName || '';
+      if (typeof companyName === 'string') {
+        companyName = companyName.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      }
+
+      const formData = {
         product_name: parsedData.productName || '',
         specification: parsedData.specification || '',
         quantity: parsedData.quantity || '',
         supplier_name: parsedData.supplierName || '',
         supplier_country: parsedData.supplierCountry || '',
-        company_name: parsedData.companyName || '',
-        contact_person: parsedData.contactPerson || '',
-        contact_email: parsedData.contactEmail || '',
+        company_name: companyName,
+        contact_person: contactPerson,
+        contact_email: contactEmail,
         contact_phone: parsedData.contactPhone || '',
         priority: parsedData.urgency || 'medium',
         delivery_date: parsedData.deliveryDateExpected || '',
         remarks: parsedData.remarks || '',
-        coa_required: parsedData.coaRequested || false,
+        coa_required: isMultiProduct ? true : (parsedData.coaRequested || false),
         sample_required: parsedData.sampleRequested || false,
-        price_required: parsedData.priceRequested || true,
+        price_required: isMultiProduct ? true : (parsedData.priceRequested || true),
         agency_letter_required: parsedData.agencyLetterRequested || false,
         aceerp_no: '',
         purchase_price: '',
@@ -71,9 +129,17 @@ export function InquiryFormPanel({ email, parsedData, onSave, saving }: InquiryF
         delivery_terms: '',
         inquiry_source: 'email',
         mail_subject: email?.subject || '',
-      });
+        is_multi_product: isMultiProduct,
+        products: parsedData.products || [],
+      };
+      console.log('[InquiryFormPanel] Setting initialData:', formData);
+      setInitialData(formData);
+
+      if (isMultiProduct) {
+        setShowProductsPreview(true);
+      }
     }
-  }, [parsedData, email]);
+  }, [parsedData, email, isMultiProduct]);
 
   const handleFormSubmit = async (formData: any) => {
     const convertedData: InquiryFormData = {
@@ -103,6 +169,8 @@ export function InquiryFormPanel({ email, parsedData, onSave, saving }: InquiryF
       offeredPriceCurrency: formData.offered_price_currency || 'USD',
       deliveryDate: formData.delivery_date || '',
       deliveryTerms: formData.delivery_terms || '',
+      isMultiProduct: formData.is_multi_product || false,
+      products: formData.products || [],
     };
 
     await onSave(convertedData);
@@ -229,6 +297,85 @@ export function InquiryFormPanel({ email, parsedData, onSave, saving }: InquiryF
               </div>
             </div>
           </div>
+
+          {isMultiProduct && parsedData?.products && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-blue-600" />
+                  <h3 className="text-sm font-semibold text-blue-900">
+                    Multi-Product Inquiry Detected ({parsedData.products.length} Products)
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowProductsPreview(!showProductsPreview)}
+                  className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center gap-1"
+                >
+                  {showProductsPreview ? (
+                    <>
+                      <ChevronUp className="w-4 h-4" />
+                      Hide Products
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4" />
+                      Show Products
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <p className="text-xs text-blue-700 mb-3">
+                This will create a parent inquiry and {parsedData.products.length} child inquiries with numbers like INQ-2025-001.1, INQ-2025-001.2, etc.
+              </p>
+
+              {showProductsPreview && (
+                <div className="bg-white rounded-lg border border-blue-200 overflow-hidden overflow-x-auto">
+                  <table className="min-w-full divide-y divide-blue-100">
+                    <thead className="bg-blue-100">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">#</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">Product Name</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">Specification</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">Quantity</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">Supplier / Origin</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">Delivery Date</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-blue-900">Delivery Terms</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-blue-100">
+                      {parsedData.products.map((product: any, index: number) => (
+                        <tr key={index} className="hover:bg-blue-50">
+                          <td className="px-3 py-2 text-xs text-gray-700">{index + 1}</td>
+                          <td className="px-3 py-2 text-xs font-medium text-gray-900">
+                            {product.productName || product.product_name}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-700">
+                            {product.specification || product.spec || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-700">
+                            {product.quantity || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-700">
+                            {product.supplierName || product.supplier_name || product.origin || '-'}
+                            {(product.supplierCountry || product.supplier_country) &&
+                              ` (${product.supplierCountry || product.supplier_country})`}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-700">
+                            {product.deliveryDate || product.delivery_date || product.tglDatang || product.tgl_datang || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-gray-700">
+                            {product.deliveryTerms || product.delivery_terms || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
 
           {initialData && (
             <CompactInquiryForm

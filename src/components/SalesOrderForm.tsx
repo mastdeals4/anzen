@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
-import { Plus, Trash2, Upload, X, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, X, FileText } from 'lucide-react';
 
 interface Customer {
   id: string;

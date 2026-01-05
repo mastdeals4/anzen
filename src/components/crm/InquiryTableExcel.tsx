@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import * as XLSX from 'xlsx';
 import {
   ChevronDown, X, Mail, Phone, FileText, Calendar,
   Flame, ArrowUp, Minus, Send, MessageSquare, CheckSquare,
-  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle, Plus
+  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle, Plus, ChevronRight, Layers
 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { GmailLikeComposer } from './GmailLikeComposer';
@@ -13,6 +13,36 @@ import { OurSideChips } from './OurSideChips';
 import { PipelineStatusBadge, pipelineStatusOptions } from './PipelineStatusBadge';
 import { LostReasonModal } from './LostReasonModal';
 import { useAuth } from '../../contexts/AuthContext';
+
+interface InquiryItem {
+  id: string;
+  parent_inquiry_id: string;
+  inquiry_number: string;
+  product_name: string;
+  specification?: string | null;
+  quantity: string;
+  make?: string | null;
+  supplier_name?: string | null;
+  supplier_country?: string | null;
+  delivery_date?: string | null;
+  delivery_terms?: string | null;
+  aceerp_no?: string | null;
+  purchase_price?: number | null;
+  purchase_price_currency?: string;
+  offered_price?: number | null;
+  offered_price_currency?: string;
+  our_side_status?: string[];
+  price_sent_at?: string | null;
+  coa_sent_at?: string | null;
+  sample_sent_at?: string | null;
+  agency_letter_sent_at?: string | null;
+  status: string;
+  pipeline_stage: string;
+  document_sent: boolean;
+  document_sent_at?: string | null;
+  remarks?: string | null;
+  notes?: string | null;
+}
 
 interface Inquiry {
   id: string;
@@ -53,6 +83,8 @@ interface Inquiry {
   delivery_date?: string | null;
   delivery_terms?: string | null;
   remarks: string | null;
+  is_multi_product?: boolean;
+  has_items?: boolean;
 }
 
 interface ColumnFilter {
@@ -98,6 +130,8 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     agency_letter_required: false,
     others_required: false,
   });
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [inquiryItems, setInquiryItems] = useState<Map<string, InquiryItem[]>>(new Map());
   const filterRef = useRef<HTMLDivElement>(null);
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
@@ -629,6 +663,36 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     } else {
       setSelectedRows(new Set(filteredData.map(i => i.id)));
     }
+  };
+
+  const toggleRowExpansion = async (inquiryId: string) => {
+    const newExpanded = new Set(expandedRows);
+
+    if (newExpanded.has(inquiryId)) {
+      newExpanded.delete(inquiryId);
+    } else {
+      newExpanded.add(inquiryId);
+
+      if (!inquiryItems.has(inquiryId)) {
+        try {
+          const { data, error } = await supabase
+            .from('crm_inquiry_items')
+            .select('*')
+            .eq('parent_inquiry_id', inquiryId)
+            .order('inquiry_number', { ascending: true });
+
+          if (error) throw error;
+
+          const newItems = new Map(inquiryItems);
+          newItems.set(inquiryId, data || []);
+          setInquiryItems(newItems);
+        } catch (error) {
+          console.error('Error fetching inquiry items:', error);
+        }
+      }
+    }
+
+    setExpandedRows(newExpanded);
   };
 
   const startEditing = (inquiry: Inquiry, field: keyof Inquiry) => {
@@ -1358,8 +1422,8 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                 </tr>
               ) : (
                 filteredData.map((inquiry) => (
+                  <React.Fragment key={inquiry.id}>
                   <tr
-                    key={inquiry.id}
                     className={`border-b border-gray-200 hover:bg-blue-50 transition ${
                       selectedRows.has(inquiry.id) ? 'bg-blue-100' : ''
                     }`}
@@ -1374,7 +1438,25 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     </td>
 
                     <td className="px-3 py-2 border-r border-gray-200 font-medium text-blue-600">
-                      {inquiry.inquiry_number}
+                      <div className="flex items-center gap-1">
+                        {inquiry.has_items && (
+                          <button
+                            onClick={() => toggleRowExpansion(inquiry.id)}
+                            className="hover:bg-blue-100 rounded p-0.5 transition"
+                            title={expandedRows.has(inquiry.id) ? "Collapse products" : "Expand products"}
+                          >
+                            {expandedRows.has(inquiry.id) ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
+                        {inquiry.is_multi_product && (
+                          <Layers className="w-3.5 h-3.5 text-blue-500" title="Multi-product inquiry" />
+                        )}
+                        <span>{inquiry.inquiry_number}</span>
+                      </div>
                     </td>
 
                     <td className="px-3 py-2 border-r border-gray-200 text-gray-600 whitespace-nowrap">
@@ -1699,6 +1781,54 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                       )}
                     </td>
                   </tr>
+                  {inquiry.has_items && expandedRows.has(inquiry.id) && inquiryItems.get(inquiry.id)?.map((item) => (
+                    <tr key={item.id} className="bg-blue-50 border-b border-blue-100">
+                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-sm text-blue-700 pl-8">
+                        {item.inquiry_number}
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">
+                        -
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-sm">
+                        {item.product_name}
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">
+                        {item.specification || '-'}
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-sm">
+                        {item.quantity}
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
+                      <td className="px-3 py-2 border-r border-gray-200">
+                        <PipelineStatusBadge status={item.pipeline_stage} />
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-center">
+                        {item.document_sent ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <Check className="w-4 h-4 text-green-600" />
+                            <span className="text-xs text-gray-500">
+                              {item.document_sent_at ? new Date(item.document_sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
+                            </span>
+                          </div>
+                        ) : (
+                          <XCircle className="w-4 h-4 text-gray-400 mx-auto" />
+                        )}
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">
+                        {item.notes || '-'}
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                    </tr>
+                  ))}
+                </React.Fragment>
                 ))
               )}
             </tbody>

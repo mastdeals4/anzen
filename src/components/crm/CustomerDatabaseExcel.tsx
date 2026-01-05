@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Download, Upload, Trash2, Save, Send, Search, Filter } from 'lucide-react';
+import { Plus, Download, Upload, Trash2, Send, Search } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
 

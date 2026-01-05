@@ -261,46 +261,46 @@ export function DeliveryChallanView({ challan, items, onClose }: DeliveryChallan
             </div>
 
             {/* Items Table */}
-            <div className="mb-3 border-2 border-black print:mb-2">
-              <table className="w-full border-collapse text-xs print:text-[10px]">
+            <div className="mb-2 border-2 border-black print:mb-1.5">
+              <table className="w-full border-collapse text-[9px] print:text-[8px]">
                 <thead>
                   <tr className="border-b-2 border-black">
-                    <th className="border-r border-black p-2 text-center font-bold print:p-1" style={{ width: '5%' }}>No</th>
-                    <th className="border-r border-black p-2 text-left font-bold print:p-1" style={{ width: '30%' }}>Nama Produk<br/>Product Name</th>
-                    <th className="border-r border-black p-2 text-center font-bold print:p-1" style={{ width: '12%' }}>No Batch<br/>Batch No</th>
-                    <th className="border-r border-black p-2 text-center font-bold print:p-1" style={{ width: '12%' }}>Exp. Date</th>
-                    <th className="border-r border-black p-2 text-center font-bold print:p-1" style={{ width: '18%' }}>Kemasan<br/>Packaging</th>
-                    <th className="border-r border-black p-2 text-center font-bold print:p-1" style={{ width: '8%' }}>Jumlah<br/>Packs</th>
-                    <th className="p-2 text-center font-bold print:p-1" style={{ width: '15%' }}>Kuantitas<br/>Quantity</th>
+                    <th className="border-r border-black px-1 py-1.5 text-center font-bold print:px-0.5 print:py-1" style={{ width: '3%' }}>No</th>
+                    <th className="border-r border-black px-1 py-1.5 text-left font-bold print:px-0.5 print:py-1" style={{ width: '27%' }}>Nama Produk<br/>Product Name</th>
+                    <th className="border-r border-black px-1 py-1.5 text-center font-bold print:px-0.5 print:py-1" style={{ width: '13%' }}>No Batch<br/>Batch No</th>
+                    <th className="border-r border-black px-1 py-1.5 text-center font-bold print:px-0.5 print:py-1" style={{ width: '8%' }}>Exp.<br/>Date</th>
+                    <th className="border-r border-black px-1 py-1.5 text-center font-bold print:px-0.5 print:py-1" style={{ width: '15%' }}>Kemasan<br/>Packaging</th>
+                    <th className="border-r border-black px-1 py-1.5 text-center font-bold print:px-0.5 print:py-1" style={{ width: '6%' }}>Jml<br/>Packs</th>
+                    <th className="px-1 py-1.5 text-center font-bold print:px-0.5 print:py-1" style={{ width: '10%' }}>Kuantitas<br/>Quantity</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item, index) => (
                     <tr key={item.id} className="border-b border-black">
-                      <td className="border-r border-black p-2 text-center print:p-1">{index + 1}</td>
-                      <td className="border-r border-black p-2 print:p-1">{item.products?.product_name}</td>
-                      <td className="border-r border-black p-2 text-center print:p-1">{item.batches?.batch_number}</td>
-                      <td className="border-r border-black p-2 text-center print:p-1">
+                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{index + 1}</td>
+                      <td className="border-r border-black px-1 py-1 print:px-0.5 print:py-0.5">{item.products?.product_name}</td>
+                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.batches?.batch_number}</td>
+                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.batches?.expiry_date ? formatExpiryDate(item.batches.expiry_date) : '-'}
                       </td>
-                      <td className="border-r border-black p-2 text-center print:p-1">
+                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.pack_type && item.pack_size && item.number_of_packs
                           ? `${item.pack_size} ${item.products?.unit || 'kg'}/${item.pack_type}`
                           : item.pack_type && item.pack_size
                           ? `${item.pack_size} ${item.pack_type}`
                           : '-'}
                       </td>
-                      <td className="border-r border-black p-2 text-center print:p-1">
+                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.number_of_packs || '-'}
                       </td>
-                      <td className="p-2 text-center print:p-1">{item.quantity.toLocaleString()} {item.products?.unit || firstItemUnit}</td>
+                      <td className="px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.quantity.toLocaleString()} {item.products?.unit || firstItemUnit}</td>
                     </tr>
                   ))}
                   <tr className="border-t-2 border-black bg-gray-50 font-bold">
-                    <td colSpan={6} className="border-r border-black p-2 text-right print:p-1">
+                    <td colSpan={6} className="border-r border-black px-1 py-1 text-right print:px-0.5 print:py-0.5">
                       Total Kuantitas / Total Quantity:
                     </td>
-                    <td className="p-2 text-center print:p-1">
+                    <td className="px-1 py-1 text-center print:px-0.5 print:py-0.5">
                       {totalQuantity.toLocaleString()} {firstItemUnit}
                     </td>
                   </tr>
@@ -309,67 +309,67 @@ export function DeliveryChallanView({ challan, items, onClose }: DeliveryChallan
             </div>
 
             {/* Notes Section */}
-            <div className="mb-3 p-2 print:mb-2 print:p-1.5">
-              <p className="text-xs font-semibold print:text-[10px]">Catatan / Notes:</p>
+            <div className="mb-2 p-1.5 print:mb-1.5 print:p-1">
+              <p className="text-[9px] font-semibold print:text-[8px]">Catatan / Notes:</p>
               {challan.notes ? (
-                <p className="text-xs print:text-[10px] mt-1">{challan.notes}</p>
+                <p className="text-[9px] print:text-[8px] mt-0.5">{challan.notes}</p>
               ) : (
-                <p className="text-xs print:text-[10px] mt-1">Produk dikirim dalam kondisi sesuai persyaratan penyimpanan / Goods are delivered under controlled storage conditions.</p>
+                <p className="text-[9px] print:text-[8px] mt-0.5">Produk dikirim dalam kondisi sesuai persyaratan penyimpanan / Goods are delivered under controlled storage conditions.</p>
               )}
             </div>
 
             {/* Signature Section */}
-            <div className="grid grid-cols-4 gap-3 print:gap-2">
-              <div className="border-2 border-black p-2 text-center print:p-1.5">
-                <div className="mb-2 text-xs font-semibold print:mb-1 print:text-[10px]">
+            <div className="grid grid-cols-4 gap-2 print:gap-1.5">
+              <div className="border-2 border-black p-1.5 text-center print:p-1">
+                <div className="mb-1.5 text-[9px] font-semibold print:mb-1 print:text-[8px]">
                   Disiapkan Oleh<br/>Prepared By
                 </div>
-                <div className="mb-10 print:mb-8">
-                  <div className="h-12 print:h-10"></div>
+                <div className="mb-8 print:mb-6">
+                  <div className="h-10 print:h-8"></div>
                 </div>
-                <div className="border-t-2 border-black pt-2 print:pt-1">
-                  <p className="text-xs print:text-[10px]">Tanda Tangan & Tanggal</p>
-                  <p className="text-xs print:text-[10px]">Signature & Date</p>
-                  <p className="text-[10px] font-semibold mt-1 print:text-[8px] print:mt-0.5">PT. SHUBHAM ANZEN PHARMA JAYA</p>
+                <div className="border-t-2 border-black pt-1.5 print:pt-1">
+                  <p className="text-[9px] print:text-[8px]">Tanda Tangan & Tanggal</p>
+                  <p className="text-[9px] print:text-[8px]">Signature & Date</p>
+                  <p className="text-[8px] font-semibold mt-0.5 print:text-[7px] print:mt-0">PT. SHUBHAM ANZEN PHARMA JAYA</p>
                 </div>
               </div>
-              <div className="border-2 border-black p-2 text-center print:p-1.5">
-                <div className="mb-2 text-xs font-semibold print:mb-1 print:text-[10px]">
+              <div className="border-2 border-black p-1.5 text-center print:p-1">
+                <div className="mb-1.5 text-[9px] font-semibold print:mb-1 print:text-[8px]">
                   Dikirim Oleh<br/>Delivered By
                 </div>
-                <div className="mb-10 print:mb-8">
-                  <div className="h-12 print:h-10"></div>
+                <div className="mb-8 print:mb-6">
+                  <div className="h-10 print:h-8"></div>
                 </div>
-                <div className="border-t-2 border-black pt-2 print:pt-1">
-                  <p className="text-xs print:text-[10px]">Tanda Tangan & Tanggal</p>
-                  <p className="text-xs print:text-[10px]">Signature & Date</p>
-                  <p className="text-[10px] font-semibold mt-1 print:text-[8px] print:mt-0.5">PT. SHUBHAM ANZEN PHARMA JAYA</p>
+                <div className="border-t-2 border-black pt-1.5 print:pt-1">
+                  <p className="text-[9px] print:text-[8px]">Tanda Tangan & Tanggal</p>
+                  <p className="text-[9px] print:text-[8px]">Signature & Date</p>
+                  <p className="text-[8px] font-semibold mt-0.5 print:text-[7px] print:mt-0">PT. SHUBHAM ANZEN PHARMA JAYA</p>
                 </div>
               </div>
-              <div className="border-2 border-black p-2 text-center print:p-1.5">
-                <div className="mb-2 text-xs font-semibold print:mb-1 print:text-[10px]">
+              <div className="border-2 border-black p-1.5 text-center print:p-1">
+                <div className="mb-1.5 text-[9px] font-semibold print:mb-1 print:text-[8px]">
                   Farmasi<br/>Pharmacist
                 </div>
-                <div className="mb-10 print:mb-8">
-                  <div className="h-12 print:h-10"></div>
+                <div className="mb-8 print:mb-6">
+                  <div className="h-10 print:h-8"></div>
                 </div>
-                <div className="border-t-2 border-black pt-2 print:pt-1">
-                  <p className="text-xs print:text-[10px]">Tanda Tangan & Tanggal</p>
-                  <p className="text-xs print:text-[10px]">Signature & Date</p>
-                  <p className="text-[10px] font-semibold mt-1 print:text-[8px] print:mt-0.5">PT. SHUBHAM ANZEN PHARMA JAYA</p>
+                <div className="border-t-2 border-black pt-1.5 print:pt-1">
+                  <p className="text-[9px] print:text-[8px]">Tanda Tangan & Tanggal</p>
+                  <p className="text-[9px] print:text-[8px]">Signature & Date</p>
+                  <p className="text-[8px] font-semibold mt-0.5 print:text-[7px] print:mt-0">PT. SHUBHAM ANZEN PHARMA JAYA</p>
                 </div>
               </div>
-              <div className="border-2 border-black p-2 text-center print:p-1.5">
-                <div className="mb-2 text-xs font-semibold print:mb-1 print:text-[10px]">
+              <div className="border-2 border-black p-1.5 text-center print:p-1">
+                <div className="mb-1.5 text-[9px] font-semibold print:mb-1 print:text-[8px]">
                   Diterima Oleh<br/>Received By
                 </div>
-                <div className="mb-10 print:mb-8">
-                  <div className="h-12 print:h-10"></div>
+                <div className="mb-8 print:mb-6">
+                  <div className="h-10 print:h-8"></div>
                 </div>
-                <div className="border-t-2 border-black pt-2 print:pt-1">
-                  <p className="text-xs print:text-[10px]">Tanda Tangan & Tanggal</p>
-                  <p className="text-xs print:text-[10px]">Signature & Date</p>
-                  <p className="text-[10px] font-semibold mt-1 print:text-[8px] print:mt-0.5">{challan.customers?.company_name || ''}</p>
+                <div className="border-t-2 border-black pt-1.5 print:pt-1">
+                  <p className="text-[9px] print:text-[8px]">Tanda Tangan & Tanggal</p>
+                  <p className="text-[9px] print:text-[8px]">Signature & Date</p>
+                  <p className="text-[8px] font-semibold mt-0.5 print:text-[7px] print:mt-0">{challan.customers?.company_name || ''}</p>
                 </div>
               </div>
             </div>
