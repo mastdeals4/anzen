@@ -240,22 +240,48 @@ export function GmailBrowserInbox() {
       const messageList = data.messages || [];
       setNextPageToken(data.nextPageToken || null);
 
-      const emailPromises = messageList.map(async (msg: { id: string }) => {
-        const msgResponse = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`,
-          {
-            headers: { 'Authorization': `Bearer ${accessToken}` },
+      // Fetch messages in small batches to avoid rate limits
+      const validEmails: EmailListItem[] = [];
+      const batchSize = 5; // Process 5 messages at a time
+      const delayBetweenBatches = 100; // 100ms delay between batches
+
+      for (let i = 0; i < messageList.length; i += batchSize) {
+        const batch = messageList.slice(i, i + batchSize);
+
+        const batchPromises = batch.map(async (msg: { id: string }) => {
+          try {
+            const msgResponse = await fetch(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`,
+              {
+                headers: { 'Authorization': `Bearer ${accessToken}` },
+              }
+            );
+
+            if (!msgResponse.ok) {
+              if (msgResponse.status === 429) {
+                console.warn('Rate limit hit, slowing down...');
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+              return null;
+            }
+
+            const msgData: GmailMessage = await msgResponse.json();
+            return parseEmailFromGmail(msgData);
+          } catch (error) {
+            console.error('Error fetching message:', error);
+            return null;
           }
-        );
+        });
 
-        if (!msgResponse.ok) return null;
+        const batchResults = await Promise.all(batchPromises);
+        const batchValidEmails = batchResults.filter((e): e is EmailListItem => e !== null);
+        validEmails.push(...batchValidEmails);
 
-        const msgData: GmailMessage = await msgResponse.json();
-        return parseEmailFromGmail(msgData);
-      });
-
-      const parsedEmails = await Promise.all(emailPromises);
-      const validEmails = parsedEmails.filter((e): e is EmailListItem => e !== null);
+        // Add delay between batches (except for the last batch)
+        if (i + batchSize < messageList.length) {
+          await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+        }
+      }
 
       setEmails(pageToken ? [...emails, ...validEmails] : validEmails);
     } catch (err) {

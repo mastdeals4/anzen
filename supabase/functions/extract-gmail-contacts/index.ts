@@ -142,8 +142,55 @@ Return JSON:
   }
 }
 
+async function refreshAccessToken(
+  refreshToken: string,
+  supabase: any,
+  connectionId: string
+): Promise<string> {
+  try {
+    console.log('Refreshing access token...');
+
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: Deno.env.get('GMAIL_CLIENT_ID')!,
+        client_secret: Deno.env.get('GMAIL_CLIENT_SECRET')!,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Token refresh failed:', error);
+      throw new Error('Failed to refresh token. Please reconnect Gmail.');
+    }
+
+    const data = await response.json();
+    const newAccessToken = data.access_token;
+
+    await supabase
+      .from('gmail_connections')
+      .update({
+        access_token: newAccessToken,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', connectionId);
+
+    console.log('Access token refreshed successfully');
+    return newAccessToken;
+  } catch (error) {
+    console.error('Error refreshing token:', error);
+    throw new Error('Failed to refresh Gmail token. Please reconnect Gmail in Settings.');
+  }
+}
+
 async function fetchGmailMessages(
   accessToken: string,
+  refreshToken: string,
   maxResults: number,
   supabase: any,
   connectionId: string,
@@ -151,6 +198,7 @@ async function fetchGmailMessages(
 ): Promise<any[]> {
   const messages: any[] = [];
   let pageToken = '';
+  let currentAccessToken = accessToken;
 
   try {
     const { data: processedMessages } = await supabase
@@ -165,11 +213,21 @@ async function fetchGmailMessages(
     while (messages.length < maxResults) {
       const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
 
-      const listResponse = await fetch(listUrl, {
+      let listResponse = await fetch(listUrl, {
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${currentAccessToken}`,
         },
       });
+
+      if (listResponse.status === 401) {
+        console.log('Token expired, refreshing...');
+        currentAccessToken = await refreshAccessToken(refreshToken, supabase, connectionId);
+        listResponse = await fetch(listUrl, {
+          headers: {
+            'Authorization': `Bearer ${currentAccessToken}`,
+          },
+        });
+      }
 
       if (!listResponse.ok) {
         throw new Error(`Gmail API error: ${listResponse.status}`);
@@ -188,11 +246,21 @@ async function fetchGmailMessages(
 
         const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`;
 
-        const detailResponse = await fetch(detailUrl, {
+        let detailResponse = await fetch(detailUrl, {
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
+            'Authorization': `Bearer ${currentAccessToken}`,
           },
         });
+
+        if (detailResponse.status === 401) {
+          console.log('Token expired during detail fetch, refreshing...');
+          currentAccessToken = await refreshAccessToken(refreshToken, supabase, connectionId);
+          detailResponse = await fetch(detailUrl, {
+            headers: {
+              'Authorization': `Bearer ${currentAccessToken}`,
+            },
+          });
+        }
 
         if (detailResponse.ok) {
           const detailData = await detailResponse.json();
@@ -382,11 +450,11 @@ Deno.serve(async (req: Request) => {
   try {
     console.log('Extract Gmail Contacts function called');
 
-    const { access_token, max_emails = 100, user_id, connection_id } = await req.json();
+    const { access_token, refresh_token, max_emails = 100, user_id, connection_id } = await req.json();
 
-    if (!access_token || !user_id || !connection_id) {
+    if (!access_token || !refresh_token || !user_id || !connection_id) {
       return new Response(
-        JSON.stringify({ error: 'access_token, user_id, and connection_id are required', success: false }),
+        JSON.stringify({ error: 'access_token, refresh_token, user_id, and connection_id are required', success: false }),
         {
           status: 400,
           headers: {
@@ -419,6 +487,7 @@ Deno.serve(async (req: Request) => {
 
     const messages = await fetchGmailMessages(
       access_token,
+      refresh_token,
       Math.min(max_emails, 500),
       supabase,
       connection_id,

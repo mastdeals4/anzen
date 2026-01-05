@@ -45,8 +45,8 @@ export function ExtractData() {
         return;
       }
 
-      if (!connection || !connection.access_token) {
-        alert('Gmail is not connected. Please connect Gmail first in Settings → Gmail tab.');
+      if (!connection || !connection.access_token || !connection.refresh_token) {
+        alert('Gmail is not connected properly. Please reconnect Gmail in Settings → Gmail tab.');
         return;
       }
 
@@ -62,6 +62,7 @@ export function ExtractData() {
         },
         body: JSON.stringify({
           access_token: connection.access_token,
+          refresh_token: connection.refresh_token,
           max_emails: maxEmails,
           user_id: user.id,
           connection_id: connection.id,
