@@ -177,17 +177,17 @@ export function Stock() {
       key: 'reserved',
       label: 'Reserved',
       render: (item: StockSummary) => {
-        if (item.reserved_quantity === 0) return <span className="text-gray-400">-</span>;
-        if (item.reserved_quantity < 0) {
+        if (item.reserved_stock === 0) return <span className="text-gray-400">-</span>;
+        if (item.reserved_stock < 0) {
           return (
             <span className="text-red-600 font-semibold">
-              {item.reserved_quantity.toLocaleString()} {item.unit}
+              {item.reserved_stock.toLocaleString()} {item.unit}
             </span>
           );
         }
         return (
           <span className="text-orange-600 font-medium">
-            {item.reserved_quantity.toLocaleString()} {item.unit}
+            {item.reserved_stock.toLocaleString()} {item.unit}
           </span>
         );
       }
@@ -255,7 +255,7 @@ export function Stock() {
       label: 'Reserved',
       render: (batch: DetailedBatch) => (
         <span className="text-orange-600 font-medium text-sm">
-          {batch.reserved_quantity > 0 ? `${batch.reserved_quantity.toLocaleString()} ${selectedProduct?.unit}` : '-'}
+          {batch.reserved_stock > 0 ? `${batch.reserved_stock.toLocaleString()} ${selectedProduct?.unit}` : '-'}
         </span>
       )
     },
