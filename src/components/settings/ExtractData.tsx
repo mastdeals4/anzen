@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Mail, Download, Upload, RefreshCw, CheckCircle, AlertCircle, Users } from 'lucide-react';
+import { Mail, Download, Upload, RefreshCw, CheckCircle, AlertCircle, Users, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface ExtractedContact {
+  id?: string;
   companyName: string;
   customerName: string;
   emailIds: string;
@@ -12,15 +13,61 @@ interface ExtractedContact {
   website: string;
   address: string;
   source: string;
+  confidence?: number;
+  extracted_at?: string;
 }
 
 export function ExtractData() {
   const [extracting, setExtracting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState<ExtractedContact[]>([]);
   const [stats, setStats] = useState<{ total_emails: number; total_contacts: number } | null>(null);
   const [selectedContacts, setSelectedContacts] = useState<Set<number>>(new Set());
   const [maxEmails, setMaxEmails] = useState(100);
+
+  useEffect(() => {
+    loadSavedContacts();
+  }, []);
+
+  const loadSavedContacts = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('extracted_contacts')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (data) {
+        const formattedContacts = data.map((row: any) => ({
+          id: row.id,
+          companyName: row.company_name,
+          customerName: row.customer_name,
+          emailIds: row.email_ids,
+          phone: row.phone,
+          mobile: row.mobile,
+          website: row.website,
+          address: row.address,
+          source: row.source,
+          confidence: row.confidence,
+          extracted_at: row.extracted_at,
+        }));
+        setContacts(formattedContacts);
+        setSelectedContacts(new Set(formattedContacts.map((_, i) => i)));
+      }
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const extractContactsFromGmail = async () => {
     setExtracting(true);
@@ -79,15 +126,43 @@ export function ExtractData() {
       }
 
       if (result.success) {
-        setContacts(result.contacts);
+        // Save new contacts to database
+        if (result.contacts && result.contacts.length > 0) {
+          const contactsToInsert = result.contacts.map((contact: any) => ({
+            user_id: user.id,
+            company_name: contact.companyName || '',
+            customer_name: contact.customerName || '',
+            email_ids: contact.emailIds || '',
+            phone: contact.phone || '',
+            mobile: contact.mobile || '',
+            website: contact.website || '',
+            address: contact.address || '',
+            source: contact.source || 'Gmail',
+            confidence: contact.confidence || 0.5,
+            extracted_at: new Date().toISOString(),
+          }));
+
+          const { error: insertError } = await supabase
+            .from('extracted_contacts')
+            .insert(contactsToInsert);
+
+          if (insertError) {
+            console.error('Error saving contacts:', insertError);
+            alert('Contacts extracted but failed to save to database. Please try again.');
+            return;
+          }
+
+          // Reload all contacts from database
+          await loadSavedContacts();
+        }
+
         setStats({
           total_emails: result.total_emails_scanned || result.total_emails,
           total_contacts: result.total_contacts,
         });
-        setSelectedContacts(new Set(result.contacts.map((_: any, i: number) => i)));
 
         if (result.message) {
-          alert(`Success! ${result.message}`);
+          alert(`Success! ${result.message}\n\nContacts saved to database and will persist across refreshes.`);
         }
       } else {
         throw new Error(result.error || 'Failed to extract contacts');
@@ -179,14 +254,47 @@ export function ExtractData() {
       if (error) throw error;
 
       alert(`Successfully imported ${data?.length || selectedContacts.size} customer(s)!`);
-      setContacts([]);
-      setStats(null);
-      setSelectedContacts(new Set());
     } catch (error) {
       console.error('Error importing customers:', error);
       alert('Failed to import some customers. They may already exist in the database.');
     } finally {
       setImporting(false);
+    }
+  };
+
+  const clearAllData = async () => {
+    if (contacts.length === 0) {
+      alert('No contacts to clear');
+      return;
+    }
+
+    const confirmed = confirm(
+      `Are you sure you want to PERMANENTLY DELETE all ${contacts.length} extracted contact(s)?\n\nThis action cannot be undone!`
+    );
+
+    if (!confirmed) return;
+
+    setClearing(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase
+        .from('extracted_contacts')
+        .delete()
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      setContacts([]);
+      setSelectedContacts(new Set());
+      setStats(null);
+      alert('All extracted contacts have been cleared successfully!');
+    } catch (error) {
+      console.error('Error clearing contacts:', error);
+      alert('Failed to clear contacts. Please try again.');
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -208,12 +316,29 @@ export function ExtractData() {
     setSelectedContacts(newSelected);
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+        <span className="ml-3 text-gray-600">Loading extracted contacts...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-2">Extract Data from Gmail</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold text-gray-900">Extract Data from Gmail</h2>
+          <div className="flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-200 rounded-lg">
+            <Users className="h-5 w-5 text-green-600" />
+            <span className="text-sm font-medium text-green-900">
+              {contacts.length} Total Contacts Saved
+            </span>
+          </div>
+        </div>
         <p className="text-sm text-gray-600">
-          AI-powered extraction of contact information from Gmail using OpenAI. The system intelligently extracts company names, contacts, phone numbers, and websites from email signatures. It filters out email body content and enriches company data automatically.
+          AI-powered extraction of contact information from Gmail using OpenAI. The system intelligently extracts company names, contacts, phone numbers, and websites from email signatures. All extracted data is saved to database and persists across page refreshes.
         </p>
         <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3">
           <p className="text-xs text-blue-900 font-medium">
@@ -223,6 +348,7 @@ export function ExtractData() {
             <li>AI extracts REAL company names from signatures (e.g., "PT Genero Pharmaceuticals")</li>
             <li>Filters out email greetings, body text, and system emails</li>
             <li>Tracks processed emails - click again to get NEXT batch of NEW emails</li>
+            <li>All extracted contacts are saved permanently in database</li>
             <li>High-quality extraction - processes 100-500 emails (takes time for AI quality)</li>
           </ul>
         </div>
@@ -327,6 +453,24 @@ export function ExtractData() {
                     <>
                       <Upload className="h-4 w-4" />
                       Import to Customers
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={clearAllData}
+                  disabled={clearing || contacts.length === 0}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {clearing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Clearing...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Clear All Data
                     </>
                   )}
                 </button>
