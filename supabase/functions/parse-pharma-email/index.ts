@@ -19,8 +19,13 @@ interface ProductLine {
   productName: string;
   specification?: string;
   quantity: string;
+  make?: string;
   itemNumber?: string;
   etdPo?: string;
+  supplierName?: string;
+  supplierCountry?: string;
+  deliveryDate?: string;
+  deliveryTerms?: string;
 }
 
 interface ParsedInquiry {
@@ -153,6 +158,26 @@ CRITICAL: Only extract data from emails that are legitimate pharmaceutical/chemi
 
 IMPORTANT: Many inquiries contain MULTIPLE PRODUCTS. You must extract ALL products as an array.
 
+**CRITICAL: EACH TABLE ROW = ONE PRODUCT ENTRY**
+- If you see the SAME product name with DIFFERENT quantities (e.g., Sodium Diclofenac 1000kg, 2000kg, 5000kg), create SEPARATE product objects for EACH quantity
+- DO NOT combine multiple quantities into one product
+- Each quantity variation is a distinct inquiry that requires separate quotation
+- Example: "Sodium Diclofenac" appearing with [1000 kg, 2000 kg, 5000 kg] = 3 SEPARATE products in the array
+- Even if product name repeats, treat each row as a unique product entry
+- Customer wants pricing for each quantity tier separately
+
+**LANGUAGE DETECTION & TRANSLATION:**
+- Detect if email is in Indonesian (Bahasa Indonesia) or other languages
+- If Indonesian: Translate ALL content to English before processing
+- Common Indonesian columns to recognize and translate:
+  * "NAMA" = Product Name
+  * "ORIGIN" = Supplier/Origin/Manufacturer
+  * "QTY" = Quantity
+  * "SATUAN" = Unit (KG, gram, etc.)
+  * "TGL DATANG" = Delivery Date / Expected Arrival Date
+  * "Permintaan Penawaran Harga" = Price Quotation Request
+- Preserve technical terms (API names, specifications like BP/USP/EP)
+
 REJECT these email types (set isInquiry: false):
 - Marketing emails (Amazon, Google, YouTube, Instagram, StackBlitz, etc.)
 - Social media notifications
@@ -168,33 +193,53 @@ ACCEPT only these:
 - Inquiry emails with product names like APIs, excipients, raw materials
 - Emails with pharmaceutical technical terms (API, USP, EP, BP, GMP, COA, MSDS, etc.)
 - Business inquiries from pharmaceutical companies, distributors, or manufacturers
-- Keywords: "Permintaan Penawaran Harga" (Indonesian for price quotation request), "quotation", "inquiry", "penawaran", "bahan baku"
+- Keywords: "Permintaan Penawaran Harga", "quotation", "inquiry", "penawaran", "bahan baku"
 
 Extract information for VALID inquiries:
 
-**MULTIPLE PRODUCTS:** Extract ALL products from the email. Many emails contain 2-5 products in a table or list.
+**MULTIPLE PRODUCTS:** Extract ALL products from the email. Many emails contain tables with columns like:
+- NO. / # (row number)
+- NAMA / Product Name
+- ORIGIN / Supplier / Manufacturer (PER PRODUCT)
+- QTY / Quantity
+- SATUAN / Unit
+- TGL DATANG / Delivery Date (PER PRODUCT)
 
-For EACH product extract:
+**CRITICAL: ONE ROW = ONE PRODUCT (EVEN IF NAME REPEATS):**
+- Parse table ROW BY ROW
+- Each row becomes ONE product object in the array
+- If product name is blank in a row but quantity exists, use the product name from above (merged cells)
+- Example table:
+  | Product Name         | Quantity  |
+  | Sodium Diclofenac   | 1000 kg   | ← Product 1
+  |                     | 2000 kg   | ← Product 2 (same name, different qty)
+  |                     | 5000 kg   | ← Product 3 (same name, different qty)
+  | Ranitidine HCI      | 300 kg    | ← Product 4
+
+  Result: 4 separate products in the array, NOT 1 product with combined quantities
+
+**CRITICAL: Extract PER-PRODUCT data:**
+For EACH ROW extract:
 1. Product name (e.g., "ESCITALOPRAM OXALATE", "ATRACURIUM BESYLATE (EXPORT)")
 2. Specification/Grade (e.g., "BP, Powder", "USP", "EP")
 3. Quantity with units (e.g., "25 KG", "6 KG")
-4. Item number if in table (e.g., "153109", "117535")
-5. ETD/PO date if in table (e.g., "25/01/2026", "15/12/2025")
+4. Make/Manufacturer preference if mentioned (e.g., "ANY MAKE", "SPECIFIC BRAND")
+5. **Supplier/Origin/Manufacturer for THIS product** (from ORIGIN column)
+6. **Delivery date for THIS product** (from TGL DATANG / delivery date column)
+7. Item number if in table (e.g., "153109", "117535")
+8. Delivery terms if mentioned (FOB, CIF, EXW, etc.)
 
 General inquiry info:
-6. Supplier/Manufacturer name if mentioned
-7. Country of origin if mentioned
-8. Company name from signature
-9. Contact person name
-10. Whether COA (Certificate of Analysis) is requested
-11. Whether MSDS (Material Safety Data Sheet) is requested
-12. Whether sample is requested
-13. Whether price quotation is requested
-14. Expected delivery date (parse formats like "03.04.26", "DD.MM.YY", "DD/MM/YYYY" and convert to YYYY-MM-DD)
+8. Company name from signature or header
+9. Contact person name (extract from HTML if needed - look for actual names, not HTML tags)
+10. Contact email (extract from proper email format, ignore HTML class names)
+11. Whether COA (Certificate of Analysis) is requested
+12. Whether MSDS (Material Safety Data Sheet) is requested
+13. Whether sample is requested
+14. Whether price quotation is requested
 15. Urgency level
 16. Phone/WhatsApp number
-17. Detect language (Indonesian/English)
-18. Confidence score (0.0 to 1.0) - Set BELOW 0.4 for non-pharma emails
+17. Confidence score (0.0 to 1.0) - Set BELOW 0.4 for non-pharma emails
 
 Common pharmaceutical specifications to extract:
 - Pharmacopeia standards: BP (British), USP (US), EP (European), IP (Indian), JP (Japanese)
@@ -210,6 +255,11 @@ Return a JSON object:
       "productName": string,
       "specification": string | null,
       "quantity": string,
+      "make": string | null (e.g., "ANY MAKE", "SPECIFIC BRAND"),
+      "supplierName": string | null (extract from ORIGIN column for THIS product),
+      "supplierCountry": string | null (extract country from origin),
+      "deliveryDate": "YYYY-MM-DD" | null (from TGL DATANG column for THIS product),
+      "deliveryTerms": string | null (FOB, CIF, etc.),
       "itemNumber": string | null,
       "etdPo": "YYYY-MM-DD" | null
     }
@@ -219,8 +269,9 @@ Return a JSON object:
   "quantity": string,
   "supplierName": string | null,
   "supplierCountry": string | null,
-  "companyName": string,
-  "contactPerson": string | null,
+  "companyName": string (CUSTOMER company name from signature, NOT supplier),
+  "contactPerson": string | null (actual person name, NOT HTML tags),
+  "contactEmail": string (actual email like "name@company.com", NOT HTML),
   "contactPhone": string | null,
   "coaRequested": boolean,
   "msdsRequested": boolean,
@@ -232,16 +283,21 @@ Return a JSON object:
   "remarks": string | null,
   "confidence": "high" | "medium" | "low",
   "confidenceScore": number,
-  "detectedLanguage": string,
+  "detectedLanguage": string (e.g., "Indonesian", "English"),
   "rejectionReason": string | null
 }
 
-NOTE:
-- "products" array contains ALL products found
-- "productName", "specification", "quantity" are for backward compatibility (use first product or summary)
-- Parse ALL date formats to YYYY-MM-DD
+**CRITICAL EXTRACTION RULES:**
+- Extract PER-PRODUCT supplier/origin and delivery dates from table columns
+- For contact person: Extract actual name (e.g., "John Smith"), NOT HTML like "strong class=..."
+- For contact email: Extract actual email (e.g., "john@company.com"), NOT HTML tags
+- Parse Indonesian dates: "04/12/2025" or "04-12-2025" → "2025-12-04"
+- Parse DD.MM.YY format: "04.12.25" → "2025-12-04"
+- If email is in Indonesian, translate product names and remarks to English
+- "products" array contains ALL products with their individual supplier/origin and delivery dates
+- "productName", "specification", "quantity" are for backward compatibility (use first product)
 
-IMPORTANT: deliveryDateExpected must be in YYYY-MM-DD format. Parse dates like "03.04.26" as "2026-04-03".`;
+IMPORTANT: All dates must be in YYYY-MM-DD format.`;
 
     const allEmailAddresses: string[] = [];
     const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
@@ -260,7 +316,7 @@ IMPORTANT: deliveryDateExpected must be in YYYY-MM-DD format. Parse dates like "
 
 SUBJECT: ${emailSubject}
 FROM: ${actualFromName || ''} <${actualFromEmail}>
-${isForwarded ? `\nNOTE: This email was FORWARDED from internal team. Extract the ORIGINAL sender's details from the forwarded email body.` : ''}
+${isForwarded ? `\nNOTE: This email was FORWARDED from internal team. Extract the ORIGINAL sender's details from the forwarded email body (look for "From:", "Date:", lines).` : ''}
 ${companyFromDomain ? `\nKNOWN COMPANY (from domain): ${companyFromDomain}` : ''}
 ${receivedDate ? `\nRECEIVED DATE: ${receivedDate}` : ''}
 ${allEmailAddresses.length > 1 ? `\nALL EMAIL ADDRESSES FOUND: ${allEmailAddresses.join(', ')}` : ''}
@@ -268,8 +324,14 @@ ${allEmailAddresses.length > 1 ? `\nALL EMAIL ADDRESSES FOUND: ${allEmailAddress
 BODY:
 ${emailBody}
 
+**CRITICAL EXTRACTION INSTRUCTIONS:**
+1. IGNORE ALL HTML TAGS - Extract only actual text content
+2. For contact email: Look for email format like "name@company.com" in the forwarded "From:" line
+3. For contact person: Extract actual name from "From:" line, NOT HTML tags
+4. If you see HTML like "strong class=..." - IGNORE IT and find the actual email/name nearby
+5. Example: If you see "From: purchasing <purchasing@trifa.co.id>" → contactPerson: "purchasing", contactEmail: "purchasing@trifa.co.id"
+
 EXTRACT ALL PRODUCTS. If email contains a table with multiple products, extract each row as a separate product in the products array.
-${allEmailAddresses.length > 1 ? `\nIMPORTANT: Multiple email addresses found. Extract ALL contact persons from the email. Return an array of contacts with their names and email addresses.` : ''}
 
 Respond with a JSON object containing the extracted information.`;
 
@@ -335,6 +397,11 @@ Respond with a JSON object containing the extracted information.`;
         productName: p.productName || p.product_name || '',
         specification: p.specification || p.spec || p.grade || null,
         quantity: p.quantity || '',
+        make: p.make || p.manufacturer || null,
+        supplierName: p.supplierName || p.supplier_name || p.supplier || p.origin || null,
+        supplierCountry: p.supplierCountry || p.supplier_country || p.country || null,
+        deliveryDate: p.deliveryDate || p.delivery_date || p.tglDatang || p.tgl_datang || null,
+        deliveryTerms: p.deliveryTerms || p.delivery_terms || null,
         itemNumber: p.itemNumber || p.item_number || null,
         etdPo: p.etdPo || p.etd_po || p.etd || null,
       })),

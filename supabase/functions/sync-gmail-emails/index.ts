@@ -26,7 +26,17 @@ interface GmailMessage {
 function decodeBase64Url(str: string): string {
   try {
     const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    return atob(base64);
+    const binaryString = atob(base64);
+
+    // Convert binary string to Uint8Array
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Decode as UTF-8
+    const decoder = new TextDecoder('utf-8');
+    return decoder.decode(bytes);
   } catch {
     return '';
   }
