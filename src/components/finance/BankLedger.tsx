@@ -106,6 +106,8 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const opening = selectedBankData?.opening_balance || 0;
       setOpeningBalance(opening);
 
+      console.log('📊 Loading ledger for bank:', selectedBankData?.bank_name, selectedBankData?.account_number, 'ID:', selectedBank);
+
       const entries: any[] = [];
 
       // Get bank statement lines FIRST (actual bank transactions)
@@ -137,9 +139,12 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const { data: receipts } = await supabase
         .from('receipt_vouchers')
         .select('id, voucher_date, voucher_number, amount, description, customers(company_name)')
+        .eq('bank_account_id', selectedBank)
         .gte('voucher_date', dateRange.start)
         .lte('voucher_date', dateRange.end)
         .order('voucher_date');
+
+      console.log('✅ Receipt Vouchers found for bank:', receipts?.length || 0);
 
       if (receipts) {
         receipts.forEach(r => {
@@ -161,9 +166,12 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const { data: payments } = await supabase
         .from('payment_vouchers')
         .select('id, voucher_date, voucher_number, amount, description, suppliers(company_name)')
+        .eq('bank_account_id', selectedBank)
         .gte('voucher_date', dateRange.start)
         .lte('voucher_date', dateRange.end)
         .order('voucher_date');
+
+      console.log('✅ Payment Vouchers found for bank:', payments?.length || 0);
 
       if (payments) {
         payments.forEach(p => {
@@ -185,9 +193,12 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const { data: expenses } = await supabase
         .from('finance_expenses')
         .select('id, expense_date, voucher_number, amount, description, expense_category, context_type, context_id')
+        .eq('bank_account_id', selectedBank)
         .gte('expense_date', dateRange.start)
         .lte('expense_date', dateRange.end)
         .order('expense_date');
+
+      console.log('✅ Bank Expenses found for bank:', expenses?.length || 0);
 
       if (expenses) {
         expenses.forEach(e => {
