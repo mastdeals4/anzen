@@ -233,6 +233,15 @@ const expenseCategories = [
     group: 'Administrative'
   },
   {
+    value: 'office_shifting_renovation',
+    label: 'Office Shifting & Renovation',
+    type: 'admin',
+    icon: Building2,
+    description: 'Office shifting, partition work, electrical, cabling, interior renovation - EXPENSED to P&L',
+    requiresContainer: false,
+    group: 'Administrative'
+  },
+  {
     value: 'other',
     label: 'Other',
     type: 'admin',
