@@ -15,6 +15,10 @@ import { ActivityLogger } from '../components/crm/ActivityLogger';
 import { AppointmentScheduler } from '../components/crm/AppointmentScheduler';
 import { ArchiveView } from '../components/crm/ArchiveView';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
+import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
+import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
+import { CustomerUpdateDialog } from '../components/crm/CustomerUpdateDialog';
+import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
 
 interface Inquiry {
   id: string;
@@ -73,11 +77,20 @@ export function CRM() {
   const { profile } = useAuth();
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'appointments' | 'archive'>('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [selectedInquiryForEmail, setSelectedInquiryForEmail] = useState<any>(null);
+
+  const [pendingFormData, setPendingFormData] = useState<any>(null);
+  const [customerMatches, setCustomerMatches] = useState<any[]>([]);
+  const [showCustomerSelectionDialog, setShowCustomerSelectionDialog] = useState(false);
+  const [showCustomerConfirmationDialog, setShowCustomerConfirmationDialog] = useState(false);
+  const [showCustomerUpdateDialog, setShowCustomerUpdateDialog] = useState(false);
+  const [customerChanges, setCustomerChanges] = useState<any>(null);
+  const [inquiryCounts, setInquiryCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     loadInquiries();
@@ -85,20 +98,133 @@ export function CRM() {
 
   const loadInquiries = async () => {
     try {
+      setError(null);
       // Exclude 'lost' status inquiries from default view (they appear in Archive)
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('crm_inquiries')
-        .select('*, user_profiles!crm_inquiries_assigned_to_fkey(full_name)')
+        .select('*, user_profiles!assigned_to(full_name)')
         .neq('pipeline_status', 'lost')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (fetchError) throw fetchError;
       setInquiries(data || []);
-    } catch (error) {
-      console.error('Error loading inquiries:', error);
+    } catch (err) {
+      setError('Failed to load inquiries. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadCustomers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('id, company_name, contact_person, email, phone, country, address, city')
+        .eq('is_active', true);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error loading customers:', error);
+      return [];
+    }
+  };
+
+  const loadInquiryCounts = async (customerIds: string[]) => {
+    try {
+      const { data, error } = await supabase
+        .from('crm_inquiries')
+        .select('customer_id')
+        .in('customer_id', customerIds);
+
+      if (error) throw error;
+
+      const counts: Record<string, number> = {};
+      data?.forEach(inquiry => {
+        if (inquiry.customer_id) {
+          counts[inquiry.customer_id] = (counts[inquiry.customer_id] || 0) + 1;
+        }
+      });
+
+      setInquiryCounts(counts);
+    } catch (error) {
+      console.error('Error loading inquiry counts:', error);
+    }
+  };
+
+  const processCustomerMatching = async (formData: any) => {
+    if (formData.customer_id) {
+      const customers = await loadCustomers();
+      const selectedCustomer = customers.find(c => c.id === formData.customer_id);
+
+      if (selectedCustomer) {
+        const changes = detectCustomerChanges(
+          {
+            contact_email: formData.contact_email,
+            contact_phone: formData.contact_phone,
+            contact_person: formData.contact_person,
+          },
+          selectedCustomer
+        );
+
+        if (changes.hasChanges) {
+          setCustomerChanges({
+            ...changes,
+            customer: selectedCustomer,
+          });
+          setPendingFormData(formData);
+          setShowCustomerUpdateDialog(true);
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    const customers = await loadCustomers();
+    const matches = fuzzyMatchCompanyName(formData.company_name, customers);
+
+    if (matches.length > 0) {
+      const bestMatch = findBestMatch(formData.company_name, customers);
+
+      if (bestMatch && bestMatch.score >= 95) {
+        formData.customer_id = bestMatch.customer.id;
+        return processCustomerMatching(formData);
+      } else {
+        setCustomerMatches(matches);
+        setPendingFormData(formData);
+        await loadInquiryCounts(matches.map(m => m.customer.id));
+        setShowCustomerSelectionDialog(true);
+        return false;
+      }
+    } else {
+      setPendingFormData(formData);
+      setShowCustomerConfirmationDialog(true);
+      return false;
+    }
+  };
+
+  const sanitizeFormData = (data: any) => {
+    const sanitized = { ...data };
+    // Convert empty strings to null for date and numeric fields
+    const dateFields = ['delivery_date', 'inquiry_date'];
+    const numericFields = ['purchase_price', 'offered_price'];
+
+    dateFields.forEach(field => {
+      if (sanitized[field] === '' || sanitized[field] === undefined) {
+        sanitized[field] = null;
+      }
+    });
+
+    numericFields.forEach(field => {
+      if (sanitized[field] === '' || sanitized[field] === undefined) {
+        sanitized[field] = null;
+      } else if (sanitized[field] !== null) {
+        sanitized[field] = parseFloat(sanitized[field]);
+      }
+    });
+
+    return sanitized;
   };
 
   const handleFormSubmit = async (formData: any) => {
@@ -106,13 +232,28 @@ export function CRM() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      if (!editingInquiry) {
+        const canProceed = await processCustomerMatching(formData);
+        if (!canProceed) {
+          return;
+        }
+
+        if (!formData.customer_id) {
+          alert('Customer selection is required. Please select or create a customer.');
+          return;
+        }
+      }
+
       if (editingInquiry) {
-        const updateData: any = {
-          ...formData,
+        // Extract products and is_multi_product from formData before update
+        const { products, is_multi_product, ...restFormData } = formData;
+
+        const updateData: any = sanitizeFormData({
+          ...restFormData,
           specification: formData.specification || null,
           purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
           offered_price: formData.offered_price ? parseFloat(formData.offered_price) : null,
-        };
+        });
 
         const { error } = await supabase
           .from('crm_inquiries')
@@ -121,21 +262,69 @@ export function CRM() {
 
         if (error) throw error;
       } else {
-        const insertData: any = {
-          ...formData,
-          specification: formData.specification || null,
-          inquiry_date: new Date().toISOString().split('T')[0],
-          assigned_to: user.id,
-          created_by: user.id,
-          purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
-          offered_price: formData.offered_price ? parseFloat(formData.offered_price) : null,
-        };
+        // Extract products and is_multi_product from formData before insert
+        const { products, is_multi_product, ...restFormData } = formData;
 
-        const { error } = await supabase
-          .from('crm_inquiries')
-          .insert([insertData]);
+        // If multi-product, create N separate inquiries in crm_inquiries with .1, .2, .3 suffixes
+        // All common fields are copied to each inquiry
+        if (is_multi_product && products && products.length > 0) {
+          // Create inquiries for each product
+          const inquiriesToInsert = products.map((product: any) => sanitizeFormData({
+            ...restFormData,
+            product_name: product.productName || product.product_name,
+            specification: product.specification || null,
+            quantity: product.quantity,
+            supplier_name: product.supplierName || restFormData.supplier_name || null,
+            supplier_country: product.supplierCountry || restFormData.supplier_country || null,
+            delivery_date: product.deliveryDate || null,
+            delivery_terms: product.deliveryTerms || null,
+            inquiry_date: new Date().toISOString().split('T')[0],
+            assigned_to: user.id,
+            created_by: user.id,
+            purchase_price: null,
+            offered_price: null,
+            is_multi_product: false,
+            has_items: false,
+          }));
 
-        if (error) throw error;
+          const { data: insertedInquiries, error } = await supabase
+            .from('crm_inquiries')
+            .insert(inquiriesToInsert)
+            .select();
+
+          if (error) throw error;
+
+          // Update inquiry numbers to add .1, .2, .3 suffixes
+          if (insertedInquiries && insertedInquiries.length > 0) {
+            const baseInquiryNumber = insertedInquiries[0].inquiry_number;
+
+            for (let i = 0; i < insertedInquiries.length; i++) {
+              await supabase
+                .from('crm_inquiries')
+                .update({ inquiry_number: `${baseInquiryNumber}.${i + 1}` })
+                .eq('id', insertedInquiries[i].id);
+            }
+          }
+        } else {
+          // Single product inquiry
+          const insertData: any = sanitizeFormData({
+            ...restFormData,
+            specification: formData.specification || null,
+            inquiry_date: new Date().toISOString().split('T')[0],
+            assigned_to: user.id,
+            created_by: user.id,
+            purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
+            offered_price: formData.offered_price ? parseFloat(formData.offered_price) : null,
+            is_multi_product: false,
+            has_items: false,
+          });
+
+          const { error } = await supabase
+            .from('crm_inquiries')
+            .insert([insertData]);
+
+          if (error) throw error;
+        }
       }
 
       setModalOpen(false);
@@ -167,6 +356,71 @@ export function CRM() {
     } catch (error) {
       console.error('Error deleting inquiry:', error);
       alert('Failed to delete inquiry. Please try again.');
+    }
+  };
+
+  const handleCustomerSelect = (customer: any) => {
+    if (pendingFormData) {
+      pendingFormData.customer_id = customer.id;
+      setShowCustomerSelectionDialog(false);
+      handleFormSubmit(pendingFormData);
+    }
+  };
+
+  const handleCreateNewCustomer = async (customerData: any) => {
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .insert({
+          ...customerData,
+          is_active: true,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (pendingFormData) {
+        pendingFormData.customer_id = data.id;
+        setShowCustomerConfirmationDialog(false);
+        handleFormSubmit(pendingFormData);
+      }
+    } catch (error) {
+      console.error('Error creating customer:', error);
+      throw error;
+    }
+  };
+
+  const handleUpdateCustomer = async () => {
+    if (!customerChanges || !customerChanges.customer) return;
+
+    try {
+      const updateData: any = {};
+      customerChanges.changedFields.forEach((field: string) => {
+        updateData[field] = customerChanges.newValues[field];
+      });
+
+      const { error } = await supabase
+        .from('customers')
+        .update(updateData)
+        .eq('id', customerChanges.customer.id);
+
+      if (error) throw error;
+
+      setShowCustomerUpdateDialog(false);
+      if (pendingFormData) {
+        handleFormSubmit(pendingFormData);
+      }
+    } catch (error) {
+      console.error('Error updating customer:', error);
+      alert('Failed to update customer. Please try again.');
+    }
+  };
+
+  const handleKeepExistingCustomer = () => {
+    setShowCustomerUpdateDialog(false);
+    if (pendingFormData) {
+      handleFormSubmit(pendingFormData);
     }
   };
 
@@ -288,6 +542,18 @@ export function CRM() {
           </div>
 
           <div className="p-6">
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 flex items-center justify-between">
+                <p className="text-red-700">{error}</p>
+                <button
+                  onClick={loadInquiries}
+                  className="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            
             {activeTab === 'email' && (
               <GmailBrowserInbox />
             )}
@@ -371,6 +637,52 @@ export function CRM() {
             }}
           />
         </Modal>
+
+        <CustomerSelectionDialog
+          isOpen={showCustomerSelectionDialog}
+          matches={customerMatches}
+          searchTerm={pendingFormData?.company_name || ''}
+          onSelect={handleCustomerSelect}
+          onCreateNew={() => {
+            setShowCustomerSelectionDialog(false);
+            setShowCustomerConfirmationDialog(true);
+          }}
+          onCancel={() => {
+            setShowCustomerSelectionDialog(false);
+            setPendingFormData(null);
+          }}
+          inquiryCounts={inquiryCounts}
+        />
+
+        <CustomerConfirmationDialog
+          isOpen={showCustomerConfirmationDialog}
+          initialData={{
+            company_name: pendingFormData?.company_name || '',
+            contact_person: pendingFormData?.contact_person || '',
+            email: pendingFormData?.contact_email || '',
+            phone: pendingFormData?.contact_phone || '',
+            country: pendingFormData?.supplier_country || 'Indonesia',
+          }}
+          onConfirm={handleCreateNewCustomer}
+          onCancel={() => {
+            setShowCustomerConfirmationDialog(false);
+            setPendingFormData(null);
+          }}
+        />
+
+        <CustomerUpdateDialog
+          isOpen={showCustomerUpdateDialog}
+          customerName={customerChanges?.customer?.company_name || ''}
+          changedFields={customerChanges?.changedFields || []}
+          oldValues={customerChanges?.oldValues || {}}
+          newValues={customerChanges?.newValues || {}}
+          onUpdateCustomer={handleUpdateCustomer}
+          onKeepExisting={handleKeepExistingCustomer}
+          onCancel={() => {
+            setShowCustomerUpdateDialog(false);
+            setPendingFormData(null);
+          }}
+        />
       </div>
     </Layout>
   );

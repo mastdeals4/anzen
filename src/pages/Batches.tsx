@@ -21,14 +21,22 @@ interface Batch {
   import_price_usd: number | null;
   exchange_rate_usd_to_idr: number | null;
   duty_charges: number;
+  duty_percent: number | null;
   freight_charges: number;
   other_charges: number;
   expiry_date: string;
   is_active: boolean;
+  import_cost_allocated: number | null;
+  final_landed_cost: number | null;
+  import_container_id: string | null;
+  cost_locked: boolean | null;
   products?: {
     product_name: string;
     product_code: string;
     unit: string;
+  };
+  import_containers?: {
+    container_ref: string;
   };
   document_count?: number;
 }
@@ -38,8 +46,14 @@ interface Product {
   product_name: string;
   product_code: string;
   unit: string;
+  duty_percent: number;
 }
 
+interface ImportContainer {
+  id: string;
+  container_ref: string;
+  status: string;
+}
 
 interface BatchDocument {
   id: string;
@@ -55,6 +69,7 @@ export function Batches() {
   const { profile } = useAuth();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [importContainers, setImportContainers] = useState<ImportContainer[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
@@ -65,12 +80,14 @@ export function Batches() {
   const [formData, setFormData] = useState({
     batch_number: '',
     product_id: '',
+    import_container_id: '',
     import_date: '',
     import_quantity: 0,
     packaging_details: '',
     import_price_usd: 0,
     exchange_rate_usd_to_idr: 0,
     duty_charges: 0,
+    duty_percent: 0,
     duty_charge_type: 'fixed' as 'percentage' | 'fixed',
     freight_charges: 0,
     freight_charge_type: 'fixed' as 'percentage' | 'fixed',
@@ -84,6 +101,7 @@ export function Batches() {
   useEffect(() => {
     loadBatches();
     loadProducts();
+    loadImportContainers();
   }, []);
 
   const loadBatches = async () => {
@@ -92,7 +110,8 @@ export function Batches() {
         .from('batches')
         .select(`
           *,
-          products(product_name, product_code, unit)
+          products(product_name, product_code, unit),
+          import_containers(container_ref)
         `)
         .order('import_date', { ascending: false });
 
@@ -121,7 +140,7 @@ export function Batches() {
     try {
       const { data, error } = await supabase
         .from('products')
-        .select('id, product_name, product_code, unit')
+        .select('id, product_name, product_code, unit, duty_percent')
         .eq('is_active', true)
         .order('product_name');
 
@@ -129,6 +148,20 @@ export function Batches() {
       setProducts(data || []);
     } catch (error) {
       console.error('Error loading products:', error);
+    }
+  };
+
+  const loadImportContainers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('import_containers')
+        .select('id, container_ref, status')
+        .order('container_ref', { ascending: false });
+
+      if (error) throw error;
+      setImportContainers(data || []);
+    } catch (error) {
+      console.error('Error loading import containers:', error);
     }
   };
 
@@ -189,27 +222,25 @@ export function Batches() {
         return amount;
       };
 
-      const dutyAmount = calculateCharge(formData.duty_charges, formData.duty_charge_type, importPriceIDR);
+      // Calculate duty from duty_percent (Form A1)
+      const dutyAmount = (importPriceIDR * formData.duty_percent) / 100;
       const freightAmount = calculateCharge(formData.freight_charges, formData.freight_charge_type, importPriceIDR);
       const otherAmount = calculateCharge(formData.other_charges, formData.other_charge_type, importPriceIDR);
-
-      // Calculate correct current stock
-      // For new batches: current_stock = import_quantity (nothing sold yet)
-      // For existing batches: current_stock = import_quantity - actual_sold_quantity
-      const finalCurrentStock = formData.import_quantity - soldQuantity;
 
       const batchData = {
         batch_number: formData.batch_number,
         product_id: formData.product_id,
+        import_container_id: formData.import_container_id || null,
         import_date: formData.import_date,
         import_quantity: formData.import_quantity,
-        current_stock: finalCurrentStock,
+        current_stock: formData.import_quantity,
         packaging_details: formData.packaging_details,
         import_price: importPriceIDR,
         import_price_usd: formData.import_price_usd || null,
         exchange_rate_usd_to_idr: formData.exchange_rate_usd_to_idr || null,
+        duty_percent: formData.duty_percent || 0,
         duty_charges: dutyAmount,
-        duty_charge_type: formData.duty_charge_type,
+        duty_charge_type: 'percentage',
         freight_charges: freightAmount,
         freight_charge_type: formData.freight_charge_type,
         other_charges: otherAmount,
@@ -227,6 +258,21 @@ export function Batches() {
 
         if (error) throw error;
         batchId = editingBatch.id;
+
+        if (formData.import_quantity !== editingBatch.import_quantity) {
+          const { error: transError } = await supabase
+            .from('inventory_transactions')
+            .update({
+              quantity: formData.import_quantity,
+              notes: `Updated import quantity from ${editingBatch.import_quantity} to ${formData.import_quantity}`
+            })
+            .eq('batch_id', editingBatch.id)
+            .eq('transaction_type', 'purchase');
+
+          if (transError) {
+            console.error('Error updating purchase transaction:', transError);
+          }
+        }
       } else {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('Not authenticated');
@@ -288,21 +334,7 @@ export function Batches() {
   };
 
   const handleEdit = async (batch: Batch) => {
-    // Calculate actual sold quantity from sales records
-    const { data: salesData } = await supabase
-      .from('sales_invoice_items')
-      .select('quantity')
-      .eq('batch_id', batch.id);
-
-    const actualSoldQuantity = salesData?.reduce((sum, item) => sum + parseFloat(item.quantity || 0), 0) || 0;
-
-    // Update the batch object with correct current_stock based on actual sales
-    const correctedBatch = {
-      ...batch,
-      current_stock: batch.import_quantity - actualSoldQuantity
-    };
-
-    setEditingBatch(correctedBatch);
+    setEditingBatch(batch);
 
     // Parse packaging details to extract per_pack_weight and pack_type
     let perPackWeight = '';
@@ -315,14 +347,20 @@ export function Batches() {
       }
     }
 
+    // Get duty_percent from the product (Form A1) as the default
+    const selectedProduct = products.find(p => p.id === batch.product_id);
+    const productDutyPercent = selectedProduct?.duty_percent || 0;
+
     setFormData({
       batch_number: batch.batch_number,
       product_id: batch.product_id,
+      import_container_id: batch.import_container_id || '',
       import_date: batch.import_date,
       import_quantity: batch.import_quantity,
       packaging_details: batch.packaging_details,
       import_price_usd: batch.import_price_usd || 0,
       exchange_rate_usd_to_idr: batch.exchange_rate_usd_to_idr || 0,
+      duty_percent: productDutyPercent,
       duty_charges: batch.duty_charges,
       duty_charge_type: 'fixed',
       freight_charges: batch.freight_charges,
@@ -412,11 +450,13 @@ export function Batches() {
     setFormData({
       batch_number: '',
       product_id: '',
+      import_container_id: '',
       import_date: '',
       import_quantity: 0,
       packaging_details: '',
       import_price_usd: 0,
       exchange_rate_usd_to_idr: 0,
+      duty_percent: 0,
       duty_charges: 0,
       duty_charge_type: 'fixed',
       freight_charges: 0,
@@ -451,7 +491,7 @@ export function Batches() {
       return amount;
     };
 
-    const dutyAmount = calculateCharge(formData.duty_charges, formData.duty_charge_type);
+    const dutyAmount = (importPriceIDR * formData.duty_percent) / 100;
     const freightAmount = calculateCharge(formData.freight_charges, formData.freight_charge_type);
     const otherAmount = calculateCharge(formData.other_charges, formData.other_charge_type);
 
@@ -481,7 +521,9 @@ export function Batches() {
       render: (batch: Batch) => (
         <div>
           <div className="font-medium">{batch.products?.product_name}</div>
-          <div className="text-xs text-gray-500">{batch.products?.product_code}</div>
+          {batch.products?.product_code && (
+            <div className="text-xs text-gray-500">{batch.products.product_code}</div>
+          )}
         </div>
       )
     },
@@ -538,6 +580,37 @@ export function Batches() {
             </>
           ) : (
             <div className="text-gray-500">{formatCurrency(batch.import_price)}</div>
+          )}
+        </div>
+      )
+    },
+    {
+      key: 'landed_cost',
+      label: 'Landed Cost',
+      render: (batch: Batch) => (
+        <div className="text-sm">
+          {batch.import_cost_allocated && batch.import_cost_allocated > 0 ? (
+            <>
+              <div className="font-medium text-blue-700">
+                {formatCurrency(batch.final_landed_cost || 0)}
+              </div>
+              <div className="text-xs text-gray-500">
+                Base: {formatCurrency(batch.import_price)}
+              </div>
+              <div className="text-xs text-green-600">
+                +Import: {formatCurrency(batch.import_cost_allocated)}
+              </div>
+              {batch.import_containers?.container_ref && (
+                <div className="text-xs text-gray-400">
+                  {batch.import_containers.container_ref}
+                </div>
+              )}
+              {batch.cost_locked && (
+                <div className="text-xs text-amber-600 font-medium">🔒 Locked</div>
+              )}
+            </>
+          ) : (
+            <div className="text-gray-400 text-xs">Not allocated</div>
           )}
         </div>
       )
@@ -690,14 +763,21 @@ export function Batches() {
                   </label>
                   <select
                     value={formData.product_id}
-                    onChange={(e) => setFormData({ ...formData, product_id: e.target.value })}
+                    onChange={(e) => {
+                      const selectedProduct = products.find(p => p.id === e.target.value);
+                      setFormData({
+                        ...formData,
+                        product_id: e.target.value,
+                        duty_percent: selectedProduct?.duty_percent || 0
+                      });
+                    }}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     required
                   >
                     <option value="">Select Product</option>
                     {products.map((product) => (
                       <option key={product.id} value={product.id}>
-                        {product.product_name} ({product.product_code})
+                        {product.product_name}{product.product_code ? ` (${product.product_code})` : ''}
                       </option>
                     ))}
                   </select>
@@ -726,6 +806,25 @@ export function Batches() {
                     onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Import Container (Optional)
+                  </label>
+                  <select
+                    value={formData.import_container_id}
+                    onChange={(e) => setFormData({ ...formData, import_container_id: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">Select Container (Optional)</option>
+                    {importContainers.map((container) => (
+                      <option key={container.id} value={container.id}>
+                        {container.container_ref} ({container.status})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-0.5">Link batch to import container for cost allocation</p>
                 </div>
               </div>
             </div>
@@ -910,30 +1009,26 @@ export function Batches() {
                 <div className="grid grid-cols-[1fr_1fr_1fr] gap-2">
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">
-                      Duty
+                      Duty (Form A1 %)
                     </label>
                     <div className="flex gap-0.5">
                       <input
                         type="number"
-                        value={formData.duty_charges === 0 ? '' : formData.duty_charges}
-                        onChange={(e) => setFormData({ ...formData, duty_charges: e.target.value === '' ? 0 : Number(e.target.value) })}
+                        value={formData.duty_percent === 0 ? '' : formData.duty_percent}
+                        onChange={(e) => setFormData({ ...formData, duty_percent: e.target.value === '' ? 0 : Number(e.target.value) })}
                         className="flex-1 px-1.5 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                         min="0"
+                        max="100"
                         step="0.01"
-                        placeholder="0"
+                        placeholder="Auto from product"
                       />
-                      <select
-                        value={formData.duty_charge_type}
-                        onChange={(e) => setFormData({ ...formData, duty_charge_type: e.target.value as 'percentage' | 'fixed' })}
-                        className="w-12 px-0.5 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
-                      >
-                        <option value="percentage">%</option>
-                        <option value="fixed">Rp</option>
-                      </select>
+                      <div className="w-12 px-0.5 py-1 text-xs border border-gray-300 rounded bg-gray-50 flex items-center justify-center">
+                        %
+                      </div>
                     </div>
-                    {formData.duty_charges > 0 && (
+                    {formData.duty_percent > 0 && formData.import_price_usd > 0 && formData.exchange_rate_usd_to_idr > 0 && (
                       <p className="text-xs text-gray-600 mt-0.5">
-                        = {formatCurrency(getChargeAmount(formData.duty_charges, formData.duty_charge_type))}
+                        = {formatCurrency((formData.import_price_usd * formData.exchange_rate_usd_to_idr * formData.duty_percent) / 100)}
                       </p>
                     )}
                   </div>
@@ -1011,11 +1106,11 @@ export function Batches() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Duty Charges:</span>
+                  <span>Duty (Form A1):</span>
                   <span className="font-medium">
-                    {formatCurrency(getChargeAmount(formData.duty_charges, formData.duty_charge_type))}
-                    {formData.duty_charge_type === 'percentage' && formData.duty_charges > 0 && (
-                      <span className="text-xs ml-1">({formData.duty_charges}%)</span>
+                    {formatCurrency((formData.import_price_usd * formData.exchange_rate_usd_to_idr * formData.duty_percent) / 100)}
+                    {formData.duty_percent > 0 && (
+                      <span className="text-xs ml-1">({formData.duty_percent}%)</span>
                     )}
                   </span>
                 </div>

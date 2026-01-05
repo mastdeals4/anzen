@@ -51,6 +51,7 @@ export function Dashboard() {
     overdueInvoicesAmount: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -58,6 +59,7 @@ export function Dashboard() {
 
   const loadDashboardData = async () => {
     try {
+      setError(null);
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
@@ -74,7 +76,7 @@ export function Dashboard() {
         overdueInvoicesResult,
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('batches').select('*').eq('is_active', true),
+        supabase.from('batches').select('current_stock, expiry_date').eq('is_active', true),
         supabase.from('customers').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase
           .from('sales_invoices')
@@ -145,8 +147,8 @@ export function Dashboard() {
         overdueInvoicesCount: overdueInvoicesResult.data?.length || 0,
         overdueInvoicesAmount: overdueAmount,
       });
-    } catch (error) {
-      console.error('Error loading dashboard:', error);
+    } catch (err) {
+      setError('Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -224,7 +226,18 @@ export function Dashboard() {
           <p className="text-gray-600 mt-1">Welcome to your pharma trading management system</p>
         </div>
 
-        {loading ? (
+        {error ? (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+            <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-3" />
+            <p className="text-red-700 font-medium">{error}</p>
+            <button
+              onClick={loadDashboardData}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+            >
+              Try Again
+            </button>
+          </div>
+        ) : loading ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="bg-white rounded-lg shadow p-4 animate-pulse">

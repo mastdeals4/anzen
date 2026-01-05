@@ -5,7 +5,7 @@ import { Modal } from '../components/Modal';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Edit, Trash2 } from 'lucide-react';
+import { Plus, Edit, Trash2, FileText, ExternalLink, Upload, X } from 'lucide-react';
 
 interface Product {
   id: string;
@@ -18,12 +18,23 @@ interface Product {
   default_supplier: string;
   description: string;
   min_stock_level: number | null;
+  duty_a1: string | null;
   total_quantity: number | null;
   per_pack_weight: number | null;
   pack_type: string | null;
   calculated_packs: number | null;
   is_active: boolean;
   created_at: string;
+  document_count?: number;
+}
+
+interface ProductDocument {
+  id: string;
+  file_url: string;
+  file_name: string;
+  document_type: string;
+  file_size: number;
+  uploaded_at: string;
 }
 
 export function Products() {
@@ -32,7 +43,14 @@ export function Products() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [selectedProductDocs, setSelectedProductDocs] = useState<ProductDocument[]>([]);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [selectedProductName, setSelectedProductName] = useState<string>('');
+  const [uploadingFiles, setUploadingFiles] = useState<any[]>([]);
+  const [formUploadingFiles, setFormUploadingFiles] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     product_name: '',
     hsn_code: '',
@@ -42,6 +60,7 @@ export function Products() {
     default_supplier: '',
     description: '',
     min_stock_level: '',
+    duty_a1: '',
   });
 
   useEffect(() => {
@@ -58,11 +77,135 @@ export function Products() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setProducts(data || []);
+
+      const productsWithDocCount = await Promise.all(
+        (data || []).map(async (product) => {
+          const { count } = await supabase
+            .from('product_documents')
+            .select('*', { count: 'exact', head: true })
+            .eq('product_id', product.id);
+
+          return { ...product, document_count: count || 0 };
+        })
+      );
+
+      setProducts(productsWithDocCount);
     } catch (error) {
       console.error('Error loading products:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadProductDocuments = async (productId: string, productName: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('product_documents')
+        .select('*')
+        .eq('product_id', productId)
+        .order('uploaded_at', { ascending: false });
+
+      if (error) throw error;
+      setSelectedProductDocs(data || []);
+      setSelectedProductId(productId);
+      setSelectedProductName(productName);
+      setDocumentsModalOpen(true);
+    } catch (error) {
+      console.error('Error loading documents:', error);
+      alert('Failed to load documents');
+    }
+  };
+
+  const handleUploadFiles = async () => {
+    if (!selectedProductId || uploadingFiles.length === 0) {
+      alert('Please select files to upload');
+      return;
+    }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      let successCount = 0;
+
+      for (const fileData of uploadingFiles) {
+        try {
+          const fileName = `${Date.now()}_${fileData.file.name}`;
+          const filePath = `${selectedProductId}/${fileName}`;
+
+          console.log('Uploading file:', fileName, 'Type:', fileData.document_type);
+
+          const { error: uploadError } = await supabase.storage
+            .from('product-documents')
+            .upload(filePath, fileData.file);
+
+          if (uploadError) {
+            console.error('Storage upload error:', uploadError);
+            throw uploadError;
+          }
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('product-documents')
+            .getPublicUrl(filePath);
+
+          console.log('File uploaded, inserting DB record...');
+
+          const { error: dbError } = await supabase
+            .from('product_documents')
+            .insert([{
+              product_id: selectedProductId,
+              file_url: publicUrl,
+              file_name: fileData.file.name,
+              document_type: fileData.document_type || 'other',
+              file_size: fileData.file.size,
+              uploaded_by: user.id,
+            }]);
+
+          if (dbError) {
+            console.error('Database insert error:', dbError);
+            throw dbError;
+          }
+
+          successCount++;
+        } catch (fileError: any) {
+          console.error(`Failed to upload ${fileData.file.name}:`, fileError);
+          alert(`Failed to upload ${fileData.file.name}: ${fileError.message}`);
+        }
+      }
+
+      setUploadModalOpen(false);
+      setUploadingFiles([]);
+
+      if (successCount > 0) {
+        await loadProductDocuments(selectedProductId, selectedProductName);
+        await loadProducts();
+        alert(`Successfully uploaded ${successCount} document(s)`);
+      }
+    } catch (error: any) {
+      console.error('Error uploading files:', error);
+      alert('Failed to upload documents: ' + error.message);
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!confirm('Are you sure you want to delete this document?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('product_documents')
+        .delete()
+        .eq('id', docId);
+
+      if (error) throw error;
+
+      alert('Document deleted successfully');
+      if (selectedProductId) {
+        loadProductDocuments(selectedProductId, selectedProductName);
+        loadProducts();
+      }
+    } catch (error: any) {
+      console.error('Error deleting document:', error);
+      alert('Failed to delete document: ' + error.message);
     }
   };
 
@@ -82,7 +225,10 @@ export function Products() {
         default_supplier: formData.default_supplier,
         description: formData.description,
         min_stock_level: minStock,
+        duty_a1: formData.duty_a1 || null,
       };
+
+      let productId: string;
 
       if (editingProduct) {
         const { error } = await supabase
@@ -91,17 +237,79 @@ export function Products() {
           .eq('id', editingProduct.id);
 
         if (error) throw error;
+        productId = editingProduct.id;
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('products')
-          .insert([{ ...dataToSave, created_by: profile?.id }]);
+          .insert([{ ...dataToSave, created_by: profile?.id }])
+          .select()
+          .single();
 
         if (error) throw error;
+        productId = data.id;
+      }
+
+      // Upload documents if any
+      if (formUploadingFiles.length > 0) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error('Not authenticated');
+
+        for (const fileData of formUploadingFiles) {
+          try {
+            const fileName = `${Date.now()}_${fileData.file.name}`;
+            const filePath = `${productId}/${fileName}`;
+
+            console.log('Uploading document:', fileName, 'Type:', fileData.document_type);
+
+            const { error: uploadError } = await supabase.storage
+              .from('product-documents')
+              .upload(filePath, fileData.file);
+
+            if (uploadError) {
+              console.error('Storage error:', uploadError);
+              throw uploadError;
+            }
+
+            const { data: { publicUrl } } = supabase.storage
+              .from('product-documents')
+              .getPublicUrl(filePath);
+
+            console.log('Inserting DB record for:', fileData.file.name);
+
+            const { error: dbError } = await supabase
+              .from('product_documents')
+              .insert([{
+                product_id: productId,
+                file_url: publicUrl,
+                file_name: fileData.file.name,
+                document_type: fileData.document_type || 'other',
+                file_size: fileData.file.size,
+                uploaded_by: user.id,
+              }]);
+
+            if (dbError) {
+              console.error('DB error:', dbError);
+              throw dbError;
+            }
+
+            console.log('Successfully uploaded:', fileData.file.name);
+          } catch (docError: any) {
+            console.error(`Failed to upload document ${fileData.file.name}:`, docError);
+            alert(`Warning: Failed to upload ${fileData.file.name}: ${docError.message}`);
+          }
+        }
       }
 
       setModalOpen(false);
       resetForm();
       loadProducts();
+
+      const successMessage = editingProduct
+        ? 'Product updated successfully'
+        : formUploadingFiles.length > 0
+          ? `Product created successfully with ${formUploadingFiles.length} document(s)`
+          : 'Product created successfully';
+      alert(successMessage);
     } catch (error) {
       console.error('Error saving product:', error);
       alert('Failed to save product');
@@ -119,6 +327,7 @@ export function Products() {
       default_supplier: product.default_supplier,
       description: product.description,
       min_stock_level: product.min_stock_level?.toString() || '',
+      duty_a1: product.duty_a1 || '',
     });
     setModalOpen(true);
   };
@@ -197,6 +406,7 @@ export function Products() {
 
   const resetForm = () => {
     setEditingProduct(null);
+    setFormUploadingFiles([]);
     setFormData({
       product_name: '',
       hsn_code: '',
@@ -206,6 +416,7 @@ export function Products() {
       default_supplier: '',
       description: '',
       min_stock_level: '',
+      duty_a1: '',
     });
   };
 
@@ -227,11 +438,31 @@ export function Products() {
       ),
     },
     {
+      key: 'duty_a1',
+      label: 'Duty - A1',
+      render: (product: Product) => (
+        <span className="text-sm text-gray-700">{product.duty_a1 || '-'}</span>
+      ),
+    },
+    {
       key: 'min_stock',
       label: 'Min Stock Level',
       render: (product: Product) => (
         <span>{product.min_stock_level ? `${product.min_stock_level} ${product.unit}` : '-'}</span>
       ),
+    },
+    {
+      key: 'documents',
+      label: 'Docs',
+      render: (product: Product) => (
+        <button
+          onClick={() => loadProductDocuments(product.id, product.product_name)}
+          className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition"
+        >
+          <FileText className="w-4 h-4" />
+          <span className="text-sm font-medium">{product.document_count || 0}</span>
+        </button>
+      )
     },
   ];
 
@@ -319,6 +550,22 @@ export function Products() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
+                Duty - A1
+              </label>
+              <input
+                type="text"
+                value={formData.duty_a1}
+                onChange={(e) =>
+                  setFormData({ ...formData, duty_a1: e.target.value })
+                }
+                placeholder="e.g., 10% + Social Welfare Surcharge"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              />
+              <p className="text-xs text-gray-500 mt-1">Import duty rate or information</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
                 Category *
               </label>
               <select
@@ -348,10 +595,22 @@ export function Products() {
                 }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
               >
-                <option value="kg">Kilogram</option>
-                <option value="litre">Litre</option>
-                <option value="ton">Ton</option>
-                <option value="piece">Piece</option>
+                <optgroup label="Weight">
+                  <option value="mg">Milligram (mg)</option>
+                  <option value="g">Gram (g)</option>
+                  <option value="kg">Kilogram (kg)</option>
+                  <option value="ton">Ton</option>
+                </optgroup>
+                <optgroup label="Volume">
+                  <option value="ml">Millilitre (ml)</option>
+                  <option value="litre">Litre</option>
+                </optgroup>
+                <optgroup label="Count/Package">
+                  <option value="piece">Piece</option>
+                  <option value="bottle">Bottle</option>
+                  <option value="box">Box</option>
+                  <option value="pack">Pack</option>
+                </optgroup>
               </select>
             </div>
 
@@ -401,6 +660,97 @@ export function Products() {
             />
           </div>
 
+          <div className="border-t pt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <FileText className="w-4 h-4 inline mr-1" />
+              Product Documents (COA, MSDS, Specifications)
+            </label>
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg mb-3">
+              <p className="text-xs text-blue-800">
+                Upload reference documents for this product (applies to all batches):
+              </p>
+              <ul className="mt-1 text-xs text-blue-700 space-y-0.5 ml-4 list-disc">
+                <li><strong>COA:</strong> Certificate of Analysis template</li>
+                <li><strong>MSDS:</strong> Material Safety Data Sheet</li>
+                <li><strong>TDS:</strong> Technical Data Sheet</li>
+                <li><strong>Specification:</strong> Product specifications</li>
+              </ul>
+            </div>
+
+            {formUploadingFiles.length > 0 && (
+              <div className="mb-3 space-y-2">
+                <p className="text-xs text-gray-600 font-medium">Files to Upload:</p>
+                {formUploadingFiles.map((file, index) => (
+                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                    <FileText className="w-5 h-5 text-gray-600 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{file.file.name}</p>
+                      <p className="text-xs text-gray-500">{(file.file.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                    <select
+                      value={file.document_type}
+                      onChange={(e) => {
+                        const newFiles = [...formUploadingFiles];
+                        newFiles[index].document_type = e.target.value;
+                        setFormUploadingFiles(newFiles);
+                      }}
+                      className="px-2 py-1 text-sm border border-gray-300 rounded"
+                    >
+                      <option value="coa">COA (Certificate of Analysis)</option>
+                      <option value="msds">MSDS (Material Safety Data Sheet)</option>
+                      <option value="tds">TDS (Technical Data Sheet)</option>
+                      <option value="specification">Product Specification</option>
+                      <option value="regulatory">Regulatory Documents</option>
+                      <option value="test_certificate">Test Certificate</option>
+                      <option value="stability_study">Stability Study</option>
+                      <option value="gmp_certificate">GMP Certificate</option>
+                      <option value="dmf">DMF (Drug Master File)</option>
+                      <option value="other">Other</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setFormUploadingFiles(formUploadingFiles.filter((_, i) => i !== index))}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div
+              onClick={() => document.getElementById('product-file-input')?.click()}
+              className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-400 transition"
+            >
+              <Upload className="w-10 h-10 mx-auto mb-2 text-gray-400" />
+              <p className="text-sm text-gray-600">
+                <span className="font-medium text-blue-600">Click to upload</span> or drag files
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                PDF, DOCX, XLSX, PNG, JPG (max 10MB per file)
+              </p>
+              <input
+                id="product-file-input"
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (!files) return;
+
+                  const newFiles = Array.from(files).map((file) => ({
+                    file,
+                    document_type: 'coa',
+                  }));
+                  setFormUploadingFiles([...formUploadingFiles, ...newFiles]);
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button
               type="button"
@@ -420,6 +770,192 @@ export function Products() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={documentsModalOpen}
+        onClose={() => {
+          setDocumentsModalOpen(false);
+          setSelectedProductDocs([]);
+          setSelectedProductId(null);
+          setSelectedProductName('');
+        }}
+        title={`Product Documents - ${selectedProductName}`}
+      >
+        <div className="space-y-3">
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-gray-600">
+              Product-level documents (COA, MSDS, Specifications, etc.)
+            </p>
+            <button
+              onClick={() => {
+                setUploadingFiles([]);
+                setUploadModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+            >
+              <Upload className="w-4 h-4" />
+              Upload
+            </button>
+          </div>
+
+          {selectedProductDocs.length > 0 ? (
+            selectedProductDocs.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition"
+              >
+                <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{doc.file_name}</p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                    <span className="capitalize">{doc.document_type.replace('_', ' ')}</span>
+                    <span>•</span>
+                    <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
+                    <span>•</span>
+                    <span>{new Date(doc.uploaded_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={doc.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 text-blue-600 hover:bg-blue-100 rounded"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                  <button
+                    onClick={() => handleDeleteDocument(doc.id)}
+                    className="p-1.5 text-red-600 hover:bg-red-100 rounded"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+              <p>No documents uploaded for this product</p>
+              <p className="text-xs mt-1">Click "Upload" to add COA, MSDS, or other documents</p>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={uploadModalOpen}
+        onClose={() => {
+          setUploadModalOpen(false);
+          setUploadingFiles([]);
+        }}
+        title="Upload Product Documents"
+        maxWidth="max-w-2xl"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-900">
+              <strong>Product-level documents</strong> are reference documents needed to sell APIs:
+            </p>
+            <ul className="mt-2 text-xs text-blue-800 space-y-1 ml-4 list-disc">
+              <li><strong>COA:</strong> Certificate of Analysis (template/reference)</li>
+              <li><strong>MSDS:</strong> Material Safety Data Sheet</li>
+              <li><strong>TDS:</strong> Technical Data Sheet</li>
+              <li><strong>Specification:</strong> Product specifications</li>
+              <li><strong>Regulatory:</strong> Regulatory documents (DMF, CEP, etc.)</li>
+              <li><strong>Test Certificate:</strong> Testing and quality certificates</li>
+              <li><strong>GMP Certificate:</strong> Good Manufacturing Practice certificate</li>
+              <li><strong>Stability Study:</strong> Stability study reports</li>
+            </ul>
+          </div>
+
+          {uploadingFiles.map((file, index) => (
+            <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              <FileText className="w-5 h-5 text-gray-600 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{file.file.name}</p>
+                <p className="text-xs text-gray-500">{(file.file.size / 1024).toFixed(1)} KB</p>
+              </div>
+              <select
+                value={file.document_type}
+                onChange={(e) => {
+                  const newFiles = [...uploadingFiles];
+                  newFiles[index].document_type = e.target.value;
+                  setUploadingFiles(newFiles);
+                }}
+                className="px-2 py-1 text-sm border border-gray-300 rounded"
+              >
+                <option value="coa">COA (Certificate of Analysis)</option>
+                <option value="msds">MSDS (Material Safety Data Sheet)</option>
+                <option value="tds">TDS (Technical Data Sheet)</option>
+                <option value="specification">Product Specification</option>
+                <option value="regulatory">Regulatory Documents</option>
+                <option value="test_certificate">Test Certificate</option>
+                <option value="stability_study">Stability Study</option>
+                <option value="gmp_certificate">GMP Certificate</option>
+                <option value="dmf">DMF (Drug Master File)</option>
+                <option value="other">Other</option>
+              </select>
+              <button
+                onClick={() => setUploadingFiles(uploadingFiles.filter((_, i) => i !== index))}
+                className="p-1 text-red-600 hover:bg-red-50 rounded"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+
+          <div
+            onClick={() => document.getElementById('product-upload-input')?.click()}
+            className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-400 transition"
+          >
+            <Upload className="w-10 h-10 mx-auto mb-2 text-gray-400" />
+            <p className="text-sm text-gray-600">
+              <span className="font-medium text-blue-600">Click to upload</span> documents
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              PDF, DOCX, XLSX, PNG, JPG (max 10MB per file)
+            </p>
+            <input
+              id="product-upload-input"
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+              onChange={(e) => {
+                const files = e.target.files;
+                if (!files) return;
+
+                const newFiles = Array.from(files).map((file) => ({
+                  file,
+                  document_type: 'coa',
+                }));
+                setUploadingFiles([...uploadingFiles, ...newFiles]);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button
+              onClick={() => {
+                setUploadModalOpen(false);
+                setUploadingFiles([]);
+              }}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleUploadFiles}
+              disabled={uploadingFiles.length === 0}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Upload {uploadingFiles.length} {uploadingFiles.length === 1 ? 'Document' : 'Documents'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </Layout>
   );

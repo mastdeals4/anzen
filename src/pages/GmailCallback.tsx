@@ -33,8 +33,11 @@ export function GmailCallback() {
         return;
       }
 
+      console.log('[GmailCallback] === CHECKING AUTH ===');
       const { data: { user } } = await supabase.auth.getUser();
+      console.log('[GmailCallback] Current user:', user?.id);
       if (!user) {
+        console.error('[GmailCallback] No user found!');
         setStatus('error');
         setMessage('User not authenticated');
         setTimeout(() => window.close(), 3000);
@@ -102,7 +105,12 @@ export function GmailCallback() {
       const expiresAt = new Date();
       expiresAt.setSeconds(expiresAt.getSeconds() + tokenData.expires_in);
 
-      const { error: dbError } = await supabase
+      console.log('[GmailCallback] === SAVING TO DATABASE ===');
+      console.log('[GmailCallback] Saving for user_id:', user.id);
+      console.log('[GmailCallback] Email:', profileData.email);
+      console.log('[GmailCallback] Expires at:', expiresAt.toISOString());
+
+      const { data: insertedData, error: dbError } = await supabase
         .from('gmail_connections')
         .upsert({
           user_id: user.id,
@@ -115,14 +123,18 @@ export function GmailCallback() {
           last_sync: null,
         }, {
           onConflict: 'user_id,email_address'
-        });
+        })
+        .select();
+
+      console.log('[GmailCallback] Insert result:', insertedData);
+      console.log('[GmailCallback] Insert error:', dbError);
 
       if (dbError) {
-        console.error('Database error:', dbError);
+        console.error('[GmailCallback] Database error:', dbError);
         throw dbError;
       }
 
-      console.log('Gmail connection saved to database');
+      console.log('[GmailCallback] Gmail connection saved to database successfully');
 
       setStatus('success');
       setMessage('Gmail connected successfully! You can close this window.');

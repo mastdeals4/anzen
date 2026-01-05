@@ -13,7 +13,7 @@ interface StockSummary {
   unit: string;
   category: string;
   total_current_stock: number;
-  reserved_quantity: number;
+  reserved_stock: number; // HARDENING FIX #4: Standardized to match DB column name
   available_quantity: number;
   active_batch_count: number;
   expired_batch_count: number;
@@ -24,7 +24,7 @@ interface DetailedBatch {
   id: string;
   batch_number: string;
   current_stock: number;
-  reserved_quantity: number;
+  reserved_stock: number; // HARDENING FIX #4: Standardized to match DB column name
   available_quantity: number;
   expiry_date: string | null;
   import_date: string;
@@ -72,7 +72,7 @@ export function Stock() {
             .from('stock_reservations')
             .select('reserved_quantity')
             .eq('product_id', product.product_id)
-            .eq('is_released', false);
+            .eq('status', 'active');
 
           const reserved_quantity = reservedData?.reduce((sum, r) => sum + Number(r.reserved_quantity), 0) || 0;
           const shortage_quantity = shortageMap.get(product.product_id) || 0;
@@ -83,7 +83,7 @@ export function Stock() {
 
           return {
             ...product,
-            reserved_quantity: displayed_reserved,
+            reserved_stock: displayed_reserved, // HARDENING FIX #4: Standardized field name
             available_quantity
           };
         })
@@ -91,7 +91,7 @@ export function Stock() {
 
       // Filter: show products with stock > 0 OR reserved != 0 (including negative) OR has shortage
       const filteredProducts = productsWithReserved.filter(
-        p => p.total_current_stock > 0 || p.reserved_quantity !== 0 || shortageMap.has(p.product_id)
+        p => p.total_current_stock > 0 || p.reserved_stock !== 0 || shortageMap.has(p.product_id)
       );
 
       setStockSummary(filteredProducts);
@@ -114,9 +114,9 @@ export function Stock() {
 
       if (error) throw error;
 
+      // HARDENING FIX #4: No need to map - use DB column name directly
       const batchesWithReserved = (data || []).map(batch => ({
         ...batch,
-        reserved_quantity: batch.reserved_stock || 0,
         available_quantity: batch.current_stock - (batch.reserved_stock || 0)
       }));
 

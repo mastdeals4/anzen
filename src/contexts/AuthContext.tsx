@@ -63,23 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // If input doesn't contain @, treat it as username and look up email
     if (!usernameOrEmail.includes('@')) {
-      console.log('Looking up username:', usernameOrEmail.toLowerCase());
-
       const { data, error } = await supabase
         .from('user_profiles')
         .select('email, username, is_active')
         .eq('username', usernameOrEmail.toLowerCase())
         .maybeSingle();
 
-      console.log('Username lookup result:', { data, error });
-
       if (error) {
-        console.error('Error looking up username:', error);
         throw new Error('Invalid username or password');
       }
 
       if (!data) {
-        console.error('Username not found:', usernameOrEmail);
         throw new Error('Invalid username or password');
       }
 
@@ -88,16 +82,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       email = data.email;
-      console.log('Resolved email:', email);
     }
 
-    console.log('Attempting sign in with email:', email);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      console.error('Sign in error:', error);
       throw error;
     }
-    console.log('Sign in successful');
   };
 
   const signUp = async (email: string, password: string, fullName: string, role: string) => {

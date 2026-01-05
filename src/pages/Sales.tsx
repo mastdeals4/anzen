@@ -3,11 +3,12 @@ import { Layout } from '../components/Layout';
 import { DataTable } from '../components/DataTable';
 import { Modal } from '../components/Modal';
 import { InvoiceView } from '../components/InvoiceView';
+import { DCMultiSelect } from '../components/DCMultiSelect';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Edit, Trash2, FileText, Eye } from 'lucide-react';
+import { Plus, Edit, Trash2, FileText, Eye, FileX } from 'lucide-react';
 
 interface SalesInvoice {
   id: string;
@@ -41,6 +42,9 @@ interface InvoiceItem {
   unit_price: number;
   tax_rate: number;
   total: number;
+  delivery_challan_item_id?: string | null;
+  dc_number?: string;
+  max_quantity?: number;
   products?: {
     product_name: string;
     product_code: string;
@@ -48,6 +52,39 @@ interface InvoiceItem {
   batches?: {
     batch_number: string;
   } | null;
+}
+
+interface DCItem {
+  dc_item_id: string;
+  product_id: string;
+  product_name: string;
+  batch_id: string;
+  batch_number: string;
+  unit: string;
+  pack_size: number;
+  pack_type: string;
+  number_of_packs: number;
+  original_quantity: number;
+  remaining_quantity: number;
+  purchase_price: number;
+  selling_price: number;
+  mrp: number;
+  is_from_editing: boolean;
+}
+
+interface DCWithItems {
+  challan_id: string;
+  challan_number: string;
+  challan_date: string;
+  dc_status: string;
+  items: DCItem[];
+}
+
+interface SelectedDCItem {
+  dcItemId: string;
+  dcNumber: string;
+  selected: boolean;
+  quantity: number;
 }
 
 interface Customer {
@@ -98,13 +135,18 @@ interface ChallanItem {
 export function Sales() {
   const { t } = useLanguage();
   const { profile } = useAuth();
-  const { navigationData, clearNavigationData } = useNavigation();
+  const { navigationData, clearNavigationData, setCurrentPage } = useNavigation();
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [pendingChallans, setPendingChallans] = useState<DeliveryChallan[]>([]);
+  const [pendingDCOptions, setPendingDCOptions] = useState<Array<{ challan_id: string; challan_number: string; challan_date: string; item_count: number }>>([]);
+  const [selectedDCIds, setSelectedDCIds] = useState<string[]>([]);
   const [selectedChallanId, setSelectedChallanId] = useState<string>('');
+  const [pendingDCsWithItems, setPendingDCsWithItems] = useState<DCWithItems[]>([]);
+  const [selectedDCItems, setSelectedDCItems] = useState<Map<string, SelectedDCItem>>(new Map());
+  const [expandedDCs, setExpandedDCs] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
@@ -143,6 +185,58 @@ export function Sales() {
       clearNavigationData();
     }
   }, [navigationData]);
+
+  useEffect(() => {
+    if (selectedDCIds.length > 0 && formData.customer_id && !editingInvoice) {
+      loadItemsFromSelectedDCs();
+    }
+  }, [selectedDCIds]);
+
+  const loadItemsFromSelectedDCs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('pending_dc_items_by_customer')
+        .select('*')
+        .eq('customer_id', formData.customer_id)
+        .in('challan_id', selectedDCIds);
+
+      if (error) throw error;
+
+      const dcItems = await Promise.all((data || []).map(async (item: any) => {
+        const unitPrice = item.selling_price || item.unit_price || 0;
+
+        return {
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          quantity: item.remaining_quantity,
+          unit_price: unitPrice,
+          tax_rate: 11,
+          total: 0,
+          delivery_challan_item_id: item.dc_item_id,
+          dc_number: item.challan_number,
+          max_quantity: item.remaining_quantity,
+        };
+      }));
+
+      if (dcItems.length > 0) {
+        setItems(dcItems.map(item => ({
+          ...item,
+          total: calculateItemTotal(item)
+        })));
+      } else {
+        setItems([{
+          product_id: '',
+          batch_id: null,
+          quantity: 1,
+          unit_price: 0,
+          tax_rate: 11,
+          total: 0,
+        }]);
+      }
+    } catch (error) {
+      console.error('Error loading DC items:', error);
+    }
+  };
 
   const loadInvoices = async () => {
     try {
@@ -295,6 +389,169 @@ export function Sales() {
     }
   };
 
+  const loadPendingDCOptions = async (customerId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('dc_invoicing_summary')
+        .select('challan_id, challan_number, challan_date, total_quantity, total_remaining_quantity')
+        .eq('customer_id', customerId)
+        .gt('total_remaining_quantity', 0)
+        .order('challan_date', { ascending: false });
+
+      if (error) throw error;
+
+      const options = (data || []).map(dc => ({
+        challan_id: dc.challan_id,
+        challan_number: dc.challan_number,
+        challan_date: dc.challan_date,
+        item_count: dc.total_remaining_quantity
+      }));
+
+      setPendingDCOptions(options);
+    } catch (error) {
+      console.error('Error loading pending DC options:', error);
+      setPendingDCOptions([]);
+    }
+  };
+
+  const loadPendingDCItems = async (customerId: string, excludeInvoiceId?: string) => {
+    try {
+      const { data, error } = await supabase
+        .rpc('get_pending_dc_items_for_customer', {
+          p_customer_id: customerId,
+          p_exclude_invoice_id: excludeInvoiceId || null
+        });
+
+      if (error) throw error;
+
+      const dcsWithItems: DCWithItems[] = (data || []).map((dc: any) => ({
+        challan_id: dc.challan_id,
+        challan_number: dc.challan_number,
+        challan_date: dc.challan_date,
+        dc_status: dc.dc_status,
+        items: dc.items || []
+      }));
+
+      setPendingDCsWithItems(dcsWithItems);
+
+      if (excludeInvoiceId && dcsWithItems.length > 0) {
+        const newSelectedItems = new Map<string, SelectedDCItem>();
+        const newExpandedDCs = new Set<string>();
+
+        dcsWithItems.forEach(dc => {
+          dc.items.forEach(item => {
+            if (item.is_from_editing) {
+              newSelectedItems.set(item.dc_item_id, {
+                dcItemId: item.dc_item_id,
+                dcNumber: dc.challan_number,
+                selected: true,
+                quantity: item.remaining_quantity
+              });
+              newExpandedDCs.add(dc.challan_id);
+            }
+          });
+        });
+
+        setSelectedDCItems(newSelectedItems);
+        setExpandedDCs(newExpandedDCs);
+      }
+    } catch (error) {
+      console.error('Error loading pending DC items:', error);
+      setPendingDCsWithItems([]);
+    }
+  };
+
+  const handleDCItemToggle = (dcItem: DCItem, dcNumber: string, checked: boolean) => {
+    const newSelectedItems = new Map(selectedDCItems);
+
+    if (checked) {
+      newSelectedItems.set(dcItem.dc_item_id, {
+        dcItemId: dcItem.dc_item_id,
+        dcNumber: dcNumber,
+        selected: true,
+        quantity: dcItem.remaining_quantity
+      });
+    } else {
+      newSelectedItems.delete(dcItem.dc_item_id);
+    }
+
+    setSelectedDCItems(newSelectedItems);
+    syncItemsFromDCSelection(newSelectedItems);
+  };
+
+  const handleDCExpandToggle = (dcId: string) => {
+    const newExpanded = new Set(expandedDCs);
+    if (newExpanded.has(dcId)) {
+      newExpanded.delete(dcId);
+    } else {
+      newExpanded.add(dcId);
+    }
+    setExpandedDCs(newExpanded);
+  };
+
+  const handleDCSelectAll = (dcId: string, dcItems: DCItem[], dcNumber: string, checked: boolean) => {
+    const newSelectedItems = new Map(selectedDCItems);
+
+    if (checked) {
+      dcItems.forEach(item => {
+        newSelectedItems.set(item.dc_item_id, {
+          dcItemId: item.dc_item_id,
+          dcNumber: dcNumber,
+          selected: true,
+          quantity: item.remaining_quantity
+        });
+      });
+      const newExpanded = new Set(expandedDCs);
+      newExpanded.add(dcId);
+      setExpandedDCs(newExpanded);
+    } else {
+      dcItems.forEach(item => {
+        newSelectedItems.delete(item.dc_item_id);
+      });
+    }
+
+    setSelectedDCItems(newSelectedItems);
+    syncItemsFromDCSelection(newSelectedItems);
+  };
+
+  const syncItemsFromDCSelection = (selectedDCMap: Map<string, SelectedDCItem>) => {
+    const dcItems: InvoiceItem[] = [];
+
+    pendingDCsWithItems.forEach(dc => {
+      dc.items.forEach(dcItem => {
+        const selected = selectedDCMap.get(dcItem.dc_item_id);
+        if (selected) {
+          dcItems.push({
+            product_id: dcItem.product_id,
+            batch_id: dcItem.batch_id,
+            quantity: dcItem.remaining_quantity,
+            unit_price: dcItem.selling_price,
+            tax_rate: 11,
+            total: dcItem.remaining_quantity * dcItem.selling_price * 1.11,
+            delivery_challan_item_id: dcItem.dc_item_id,
+            dc_number: dc.challan_number,
+            max_quantity: dcItem.remaining_quantity
+          });
+        }
+      });
+    });
+
+    const manualItems = items.filter(item => !item.delivery_challan_item_id);
+    setItems([...dcItems, ...manualItems]);
+  };
+
+  const addManualItem = () => {
+    setItems([...items, {
+      product_id: '',
+      batch_id: null,
+      quantity: 1,
+      unit_price: 0,
+      tax_rate: 11,
+      total: 0,
+      delivery_challan_item_id: null
+    }]);
+  };
+
   const handleChallanSelect = async (challanId: string) => {
     if (!challanId) {
       setSelectedChallanId('');
@@ -428,6 +685,7 @@ export function Sales() {
         unit_price: Math.round(suggestedPrice),
         tax_rate: 11,
         total: 0,
+        delivery_challan_item_id: item.id || null, // Link to DC item
       };
     });
 
@@ -443,12 +701,34 @@ export function Sales() {
     try {
       const { data, error } = await supabase
         .from('sales_invoice_items')
-        .select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date)')
+        .select(`
+          *,
+          products(product_name, product_code, unit),
+          batches(batch_number, expiry_date),
+          delivery_challan_item_id
+        `)
         .eq('invoice_id', invoiceId);
 
       if (error) throw error;
-      setInvoiceItems(data || []);
-      return data || [];
+
+      const itemsWithDCInfo = await Promise.all((data || []).map(async (item) => {
+        if (item.delivery_challan_item_id) {
+          const { data: dcItemData } = await supabase
+            .from('delivery_challan_items')
+            .select('challan_id, delivery_challans(challan_number)')
+            .eq('id', item.delivery_challan_item_id)
+            .maybeSingle();
+
+          return {
+            ...item,
+            dc_number: (dcItemData?.delivery_challans as any)?.challan_number,
+          };
+        }
+        return item;
+      }));
+
+      setInvoiceItems(itemsWithDCInfo || []);
+      return itemsWithDCInfo || [];
     } catch (error) {
       console.error('Error loading invoice items:', error);
       return [];
@@ -520,6 +800,13 @@ export function Sales() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      // Validate that invoice has at least one item with a product selected
+      const validItems = items.filter(item => item.product_id && item.product_id.trim() !== '');
+      if (validItems.length === 0) {
+        alert('Please add at least one product to the invoice before saving.');
+        return;
+      }
+
       const totals = calculateTotals();
 
       // Calculate due date based on payment terms
@@ -539,47 +826,72 @@ export function Sales() {
       let invoice;
 
       if (editingInvoice) {
-        // Delete old items - the database trigger will automatically restore stock
-        const { error: deleteItemsError } = await supabase
-          .from('sales_invoice_items')
-          .delete()
-          .eq('invoice_id', editingInvoice.id);
+        // HARDENING FIX #1: Use atomic RPC to prevent race conditions
+        // All operations (delete + update + insert) happen in single transaction
+        const validItems = items
+          .filter(item => item.product_id && item.product_id.trim() !== '')
+          .map(item => ({
+            product_id: item.product_id,
+            batch_id: item.batch_id,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            tax_rate: item.tax_rate,
+            total_amount: item.total,
+            delivery_challan_item_id: item.delivery_challan_item_id || null,
+            max_quantity: item.max_quantity || null,
+          }));
 
-        if (deleteItemsError) throw deleteItemsError;
+        const { data: invoiceId, error: rpcError } = await supabase
+          .rpc('update_sales_invoice_atomic', {
+            p_invoice_id: editingInvoice.id,
+            p_invoice_updates: {
+              invoice_date: formData.invoice_date,
+              due_date: dueDate.toISOString().split('T')[0],
+              customer_id: formData.customer_id,
+              subtotal: totals.subtotal,
+              tax_amount: totals.taxAmount,
+              total_amount: totals.total,
+              notes: formData.notes || null,
+              payment_terms: formData.payment_terms || null,
+            },
+            p_new_items: validItems,
+          });
 
-        const { data: updatedInvoice, error: updateError } = await supabase
+        if (rpcError) throw rpcError;
+
+        // Fetch updated invoice for return
+        const { data: updatedInvoice, error: fetchError } = await supabase
           .from('sales_invoices')
-          .update({
-            invoice_number: formData.invoice_number,
-            customer_id: formData.customer_id,
-            invoice_date: formData.invoice_date,
-            due_date: dueDate.toISOString().split('T')[0],
-            discount_amount: formData.discount,
-            delivery_challan_number: formData.delivery_challan_number || null,
-            po_number: formData.po_number || null,
-            payment_terms_days: paymentTermsDays,
-            notes: formData.notes || null,
-            subtotal: totals.subtotal,
-            tax_amount: totals.taxAmount,
-            total_amount: totals.total,
-            linked_challan_ids: selectedChallanId ? [selectedChallanId] : null,
-          })
-          .eq('id', editingInvoice.id)
           .select()
+          .eq('id', editingInvoice.id)
           .single();
 
-        if (updateError) throw updateError;
+        if (fetchError) throw fetchError;
         invoice = updatedInvoice;
       } else {
+        // Check if invoice number already exists and regenerate if needed
+        let invoiceNumber = formData.invoice_number;
+        const { data: existingInvoice } = await supabase
+          .from('sales_invoices')
+          .select('invoice_number')
+          .eq('invoice_number', invoiceNumber)
+          .maybeSingle();
+
+        if (existingInvoice) {
+          // Invoice number already exists, generate a new one
+          invoiceNumber = await generateNextInvoiceNumber();
+          setFormData(prev => ({ ...prev, invoice_number: invoiceNumber }));
+        }
+
         const { data: newInvoice, error: invoiceError } = await supabase
           .from('sales_invoices')
           .insert([{
-            invoice_number: formData.invoice_number,
+            invoice_number: invoiceNumber,
             customer_id: formData.customer_id,
             invoice_date: formData.invoice_date,
             due_date: dueDate.toISOString().split('T')[0],
             discount_amount: formData.discount,
-            delivery_challan_number: formData.delivery_challan_number || null,
+            delivery_challan_number: null,
             po_number: formData.po_number || null,
             payment_terms_days: paymentTermsDays,
             notes: formData.notes || null,
@@ -588,7 +900,7 @@ export function Sales() {
             total_amount: totals.total,
             payment_status: 'pending',
             created_by: user.id,
-            linked_challan_ids: selectedChallanId ? [selectedChallanId] : null,
+            linked_challan_ids: selectedDCIds.length > 0 ? selectedDCIds : null,
           }])
           .select()
           .single();
@@ -597,20 +909,40 @@ export function Sales() {
         invoice = newInvoice;
       }
 
-      const invoiceItemsData = items.map(item => ({
-        invoice_id: invoice.id,
-        product_id: item.product_id,
-        batch_id: item.batch_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        tax_rate: item.tax_rate,
-      }));
+      // Filter and map only valid items (with product_id)
+      const invoiceItemsData = items
+        .filter(item => item.product_id && item.product_id.trim() !== '')
+        .map(item => ({
+          invoice_id: invoice.id,
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          tax_rate: item.tax_rate,
+          delivery_challan_item_id: item.delivery_challan_item_id || null,
+        }));
 
       const { error: itemsError } = await supabase
         .from('sales_invoice_items')
         .insert(invoiceItemsData);
 
-      if (itemsError) throw itemsError;
+      if (itemsError) {
+        console.error('Error inserting invoice items:', itemsError);
+        console.error('Invoice items data:', invoiceItemsData);
+        throw new Error(`Failed to save invoice items: ${itemsError.message}`);
+      }
+
+      // Verify items were actually inserted
+      const { data: insertedItems, error: verifyError } = await supabase
+        .from('sales_invoice_items')
+        .select('id')
+        .eq('invoice_id', invoice.id);
+
+      if (verifyError) {
+        console.error('Error verifying items:', verifyError);
+      } else if (!insertedItems || insertedItems.length === 0) {
+        throw new Error('Invoice items were not saved. Please try again.');
+      }
 
       // Stock deduction and inventory transactions are handled automatically by database trigger
 
@@ -646,14 +978,28 @@ export function Sales() {
     const loadedItems = await loadInvoiceItems(invoice.id);
 
     if (loadedItems.length > 0) {
-      setItems(loadedItems.map(item => ({
-        product_id: item.product_id,
-        batch_id: item.batch_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        tax_rate: item.tax_rate,
-        total: item.total,
-      })));
+      setItems(loadedItems.map(item => {
+        const mappedItem = {
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          tax_rate: item.tax_rate,
+          total: 0,
+          delivery_challan_item_id: item.delivery_challan_item_id,
+          dc_number: item.dc_number,
+        };
+        return {
+          ...mappedItem,
+          total: calculateItemTotal(mappedItem)
+        };
+      }));
+    }
+
+    await loadPendingDCOptions(invoice.customer_id);
+
+    if (invoice.linked_challan_ids && invoice.linked_challan_ids.length > 0) {
+      setSelectedDCIds(invoice.linked_challan_ids);
     }
 
     setModalOpen(true);
@@ -695,6 +1041,8 @@ export function Sales() {
     setEditingInvoice(null);
     setSelectedChallanId('');
     setPendingChallans([]);
+    setPendingDCOptions([]);
+    setSelectedDCIds([]);
     setFormData({
       invoice_number: '',
       customer_id: '',
@@ -790,18 +1138,29 @@ export function Sales() {
             <p className="text-gray-600 mt-1">Manage sales invoices and track payments</p>
           </div>
           {canManage && (
-            <button
-              onClick={async () => {
-                resetForm();
-                const nextInvoiceNumber = await generateNextInvoiceNumber();
-                setFormData(prev => ({ ...prev, invoice_number: nextInvoiceNumber }));
-                setModalOpen(true);
-              }}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-            >
-              <Plus className="w-5 h-5" />
-              Create Invoice
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  resetForm();
+                  const nextInvoiceNumber = await generateNextInvoiceNumber();
+                  setFormData(prev => ({ ...prev, invoice_number: nextInvoiceNumber }));
+                  setModalOpen(true);
+                }}
+                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+              >
+                <Plus className="w-5 h-5" />
+                Create Invoice
+              </button>
+              <button
+                onClick={() => {
+                  setCurrentPage('credit-notes');
+                }}
+                className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+              >
+                <FileX className="w-5 h-5" />
+                Credit Notes
+              </button>
+            </div>
           )}
         </div>
 
@@ -864,182 +1223,181 @@ export function Sales() {
           title={editingInvoice ? "Edit Sales Invoice" : "Create Sales Invoice"}
           size="xl"
         >
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <h4 className="text-sm font-semibold text-gray-900 mb-4">Invoice Details</h4>
-              <div className="grid grid-cols-2 gap-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Invoice Number *
-                  </label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Invoice No *</label>
                   <input
                     type="text"
                     value={formData.invoice_number}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"
                     required
-                    placeholder="INV-001"
                     readOnly
                     disabled
                   />
                 </div>
-
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Invoice Date *
-                  </label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Invoice Date *</label>
                   <input
                     type="date"
                     value={formData.invoice_date}
                     onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Payment Terms *</label>
+                  <select
+                    value={formData.payment_terms}
+                    onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="0">Immediate</option>
+                    <option value="15">15 Days</option>
+                    <option value="30">30 Days</option>
+                    <option value="45">45 Days</option>
+                    <option value="60">60 Days</option>
+                    <option value="advance">Advance</option>
+                    <option value="50-50">50% Adv & 50% on Delivery</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Customer *</label>
+                  <select
+                    value={formData.customer_id}
+                    onChange={(e) => {
+                      const customerId = e.target.value;
+                      setFormData({ ...formData, customer_id: customerId });
+                      setSelectedChallanId('');
+                      setPendingChallans([]);
+                      setSelectedDCIds([]);
+                      setItems([{
+                        product_id: '',
+                        batch_id: null,
+                        quantity: 1,
+                        unit_price: 0,
+                        tax_rate: 11,
+                        total: 0,
+                      }]);
+                      if (customerId) {
+                        loadPendingDCOptions(customerId);
+                      } else {
+                        setPendingDCOptions([]);
+                      }
+                    }}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">Select Customer</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.company_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Delivery Challans</label>
+                  <DCMultiSelect
+                    options={pendingDCOptions}
+                    selectedDCIds={selectedDCIds}
+                    onChange={setSelectedDCIds}
+                    placeholder="Select DCs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">PO Number</label>
+                  <input
+                    type="text"
+                    value={formData.po_number}
+                    onChange={(e) => setFormData({ ...formData, po_number: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    placeholder="Customer PO Number"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+                  <input
+                    type="text"
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    placeholder="Additional notes"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Discount (Rp)</label>
+                  <input
+                    type="number"
+                    value={formData.discount === 0 ? '' : formData.discount}
+                    onChange={(e) => setFormData({ ...formData, discount: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    min="0"
+                    placeholder="0"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-6">
-              <div className="border-r border-gray-200 pr-6">
-                <h4 className="text-sm font-semibold text-gray-900 mb-4">Customer Information</h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Customer *
-                    </label>
-                    <select
-                      value={formData.customer_id}
-                      onChange={(e) => {
-                        const customerId = e.target.value;
-                        setFormData({ ...formData, customer_id: customerId });
-                        setSelectedChallanId('');
-                        setPendingChallans([]);
-                        if (customerId) {
-                          loadPendingChallans(customerId);
-                        }
-                      }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      required
-                    >
-                      <option value="">Select Customer</option>
-                      {customers.map((customer) => (
-                        <option key={customer.id} value={customer.id}>
-                          {customer.company_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Select Delivery Challan (Optional)
-                    </label>
-                    <select
-                      value={selectedChallanId}
-                      onChange={(e) => handleChallanSelect(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      disabled={!formData.customer_id}
-                    >
-                      <option value="">No Delivery Challan / Manual Entry</option>
-                      {pendingChallans.map((challan) => (
-                        <option key={challan.id} value={challan.id}>
-                          {challan.challan_number} - {new Date(challan.challan_date).toLocaleDateString()}
-                        </option>
-                      ))}
-                    </select>
-                    {formData.customer_id && pendingChallans.length === 0 && (
-                      <p className="text-xs text-gray-500 mt-1">No pending delivery challans for this customer</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Notes
-                    </label>
-                    <textarea
-                      value={formData.notes}
-                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      rows={3}
-                      placeholder="Additional notes for invoice"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="pl-6">
-                <h4 className="text-sm font-semibold text-gray-900 mb-4">Payment Terms</h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Payment Terms *
-                    </label>
-                    <select
-                      value={formData.payment_terms}
-                      onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      required
-                    >
-                      <option value="0">Immediate</option>
-                      <option value="15">15 Days</option>
-                      <option value="30">30 Days</option>
-                      <option value="45">45 Days</option>
-                      <option value="60">60 Days</option>
-                      <option value="advance">Advance</option>
-                      <option value="50-50">50% Adv & 50% on Delivery</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      PO Number
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.po_number}
-                      onChange={(e) => setFormData({ ...formData, po_number: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="Customer PO Number"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Discount (Rp)
-                    </label>
-                    <input
-                      type="number"
-                      value={formData.discount === 0 ? '' : formData.discount}
-                      onChange={(e) => setFormData({ ...formData, discount: e.target.value === '' ? 0 : Number(e.target.value) })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      min="0"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t pt-6">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="text-sm font-semibold text-gray-900">Line Items</h4>
+            <div className="border-t pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-gray-900">Line Items</h4>
                 <button
                   type="button"
-                  onClick={addItem}
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  onClick={addManualItem}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
                 >
-                  + Add Item
+                  + Add Manual Item
                 </button>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-1.5">
                 {items.map((item, index) => {
                   const availableBatches = batches.filter(b => b.product_id === item.product_id);
                   const costPerUnit = getBatchCostPerUnit(item.batch_id);
                   const margin = calculateMargin(item.unit_price, costPerUnit);
                   const suggestedPrice = getSuggestedPrice(item.batch_id);
 
+                  const isFromDC = !!item.delivery_challan_item_id;
+
                   return (
-                    <div key={index} className="p-3 bg-gray-50 rounded-lg space-y-2">
+                    <div key={index} className="p-2 bg-gray-50 rounded space-y-1 border-l-2" style={{ borderLeftColor: isFromDC ? '#3b82f6' : '#10b981' }}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          {isFromDC ? (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded">
+                              From DC: {item.dc_number}
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-700 rounded">
+                              Manual Item
+                            </span>
+                          )}
+                          {isFromDC && item.max_quantity && (
+                            <span className="text-[10px] text-gray-500">
+                              Max: {item.max_quantity} units
+                            </span>
+                          )}
+                        </div>
+                        {!isFromDC && items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeItem(index)}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                       <div className="grid grid-cols-12 gap-2 items-end">
                         <div className="col-span-3">
                           <label className="block text-xs text-gray-600 mb-1">Product *</label>
@@ -1047,6 +1405,7 @@ export function Sales() {
                             value={item.product_id}
                             onChange={(e) => updateItemTotal(index, { ...item, product_id: e.target.value, batch_id: null })}
                             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                            disabled={isFromDC}
                             required
                           >
                             <option value="">Select Product</option>
@@ -1066,7 +1425,7 @@ export function Sales() {
                               updateItemTotal(index, { ...item, batch_id: batchId, unit_price: suggested });
                             }}
                             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                            disabled={!item.product_id || selectedChallanId !== ''}
+                            disabled={!item.product_id || selectedChallanId !== '' || isFromDC}
                           >
                             <option value="">Select Batch</option>
                             {/* Show only batches with stock > 0 for manual selection */}
@@ -1090,8 +1449,9 @@ export function Sales() {
                           onChange={(e) => updateItemTotal(index, { ...item, quantity: e.target.value === '' ? 1 : Number(e.target.value) })}
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                           required
-                          min="1"
-                          placeholder="1"
+                          min="0.001"
+                          step="0.001"
+                          placeholder="0.25"
                         />
                       </div>
 
@@ -1099,8 +1459,9 @@ export function Sales() {
                         <label className="block text-xs text-gray-600 mb-1">Unit Price *</label>
                         <input
                           type="number"
+                          step="0.01"
                           value={item.unit_price === 0 ? '' : item.unit_price}
-                          onChange={(e) => updateItemTotal(index, { ...item, unit_price: e.target.value === '' ? 0 : Number(e.target.value) })}
+                          onChange={(e) => updateItemTotal(index, { ...item, unit_price: e.target.value === '' ? 0 : parseFloat(e.target.value) || 0 })}
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                           required
                           min="0"
@@ -1144,19 +1505,19 @@ export function Sales() {
                       </div>
 
                       {item.batch_id && costPerUnit > 0 && (
-                        <div className="flex items-center gap-4 text-xs p-2 bg-white rounded border border-gray-200">
-                          <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 text-[10px] px-2 py-1 bg-white rounded border border-gray-200">
+                          <div className="flex items-center gap-1">
                             <span className="text-gray-600">Cost/Unit:</span>
                             <span className="font-semibold text-gray-900">Rp {costPerUnit.toLocaleString('id-ID', { maximumFractionDigits: 0 })}</span>
                           </div>
-                          <div className="h-4 w-px bg-gray-300" />
-                          <div className="flex items-center gap-2">
+                          <div className="h-3 w-px bg-gray-300" />
+                          <div className="flex items-center gap-1">
                             <span className="text-gray-600">Suggested Price (25%):</span>
                             <span className="font-semibold text-blue-600">Rp {suggestedPrice.toLocaleString('id-ID')}</span>
                           </div>
-                          <div className="h-4 w-px bg-gray-300" />
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-600">Current Margin:</span>
+                          <div className="h-3 w-px bg-gray-300" />
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-600">Margin <span className="text-xs italic">(Provisional)</span>:</span>
                             <span className={`font-semibold ${
                               margin >= 20 ? 'text-green-600' :
                               margin >= 10 ? 'text-yellow-600' :
@@ -1165,9 +1526,9 @@ export function Sales() {
                               {margin.toFixed(1)}%
                             </span>
                           </div>
-                          <div className="h-4 w-px bg-gray-300" />
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-600">Profit/Unit:</span>
+                          <div className="h-3 w-px bg-gray-300" />
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-600">Profit/Unit <span className="text-xs italic">(Provisional)</span>:</span>
                             <span className={`font-semibold ${
                               item.unit_price > costPerUnit ? 'text-green-600' : 'text-red-600'
                             }`}>
@@ -1181,8 +1542,8 @@ export function Sales() {
                 })}
               </div>
 
-              <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                <div className="space-y-2 text-sm">
+              <div className="mt-2 p-2 bg-blue-50 rounded">
+                <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
                     <span>Subtotal:</span>
                     <span className="font-medium">Rp {calculateTotals().subtotal.toLocaleString('id-ID')}</span>
@@ -1195,7 +1556,7 @@ export function Sales() {
                     <span>Discount:</span>
                     <span className="font-medium">-Rp {formData.discount.toLocaleString('id-ID')}</span>
                   </div>
-                  <div className="flex justify-between text-base font-bold border-t pt-2">
+                  <div className="flex justify-between text-sm font-bold border-t pt-1">
                     <span>Total:</span>
                     <span className="text-blue-600">Rp {calculateTotals().total.toLocaleString('id-ID')}</span>
                   </div>
@@ -1203,22 +1564,22 @@ export function Sales() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 pt-6 border-t">
+            <div className="flex justify-end gap-2 pt-3 border-t">
               <button
                 type="button"
                 onClick={() => {
                   setModalOpen(false);
                   resetForm();
                 }}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 transition"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition"
               >
-                Create Invoice
+                {editingInvoice ? 'Update Invoice' : 'Create Invoice'}
               </button>
             </div>
           </form>

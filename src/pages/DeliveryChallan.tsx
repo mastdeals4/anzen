@@ -19,6 +19,10 @@ interface DeliveryChallan {
   driver_name: string | null;
   notes: string | null;
   approval_status: 'pending_approval' | 'approved' | 'rejected';
+  invoicing_status?: 'not_invoiced' | 'partially_invoiced' | 'fully_invoiced';
+  total_items?: number;
+  invoiced_items?: number;
+  linked_invoices?: string[];
   customers?: {
     company_name: string;
     address: string;
@@ -68,6 +72,7 @@ interface Batch {
   batch_number: string;
   product_id: string;
   current_stock: number;
+  reserved_stock: number;
   expiry_date: string | null;
   packaging_details: string | null;
   import_date: string | null;
@@ -175,7 +180,39 @@ export function DeliveryChallan() {
         .order('challan_date', { ascending: false });
 
       if (error) throw error;
-      setChallans(data || []);
+
+      const { data: invoicingData, error: invError } = await supabase
+        .from('dc_invoicing_summary')
+        .select('*');
+
+      if (invError) {
+        console.error('Error loading invoicing status:', invError);
+      }
+
+      const invStatusMap = new Map();
+      (invoicingData || []).forEach((inv: any) => {
+        invStatusMap.set(inv.challan_id, {
+          status: inv.dc_status,
+          total_items: inv.total_items,
+          not_invoiced_items: inv.not_invoiced_items,
+          partially_invoiced_items: inv.partially_invoiced_items,
+          fully_invoiced_items: inv.fully_invoiced_items,
+          linked_invoices: inv.linked_invoice_numbers || []
+        });
+      });
+
+      const challansWithStatus = (data || []).map(challan => {
+        const invStatus = invStatusMap.get(challan.id);
+        return {
+          ...challan,
+          invoicing_status: invStatus?.status || 'not_invoiced',
+          total_items: invStatus?.total_items || 0,
+          invoiced_items: invStatus?.fully_invoiced_items + invStatus?.partially_invoiced_items || 0,
+          linked_invoices: invStatus?.linked_invoices || []
+        };
+      });
+
+      setChallans(challansWithStatus);
     } catch (error) {
       console.error('Error loading challans:', error);
     } finally {
@@ -267,7 +304,7 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, product_id, current_stock, expiry_date, packaging_details, import_date')
+        .select('id, batch_number, product_id, current_stock, reserved_stock, expiry_date, packaging_details, import_date')
         .eq('is_active', true)
         .gt('current_stock', 0)
         .order('import_date', { ascending: true });
@@ -341,7 +378,7 @@ export function DeliveryChallan() {
 
           if (soItems && soItems.length > 0) {
             const newItems = soItems.map(item => {
-              const productBatches = batches.filter(b => b.product_id === item.product_id && b.current_stock > 0);
+              const productBatches = batches.filter(b => b.product_id === item.product_id && (b.current_stock - (b.reserved_stock || 0)) > 0);
               const fifoBatch = productBatches.length > 0 ? productBatches[0] : null;
 
               if (!fifoBatch) {
@@ -405,14 +442,29 @@ export function DeliveryChallan() {
       let packType = null;
       let numberOfPacks = null;
 
+      // Extract packaging details from batch
       if (batch.packaging_details) {
         const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)kg/i);
         if (match) {
-          numberOfPacks = parseInt(match[1], 10);
           packType = match[2].toLowerCase();
           packSize = parseFloat(match[3]);
+
+          // SMART DEFAULTS: Calculate number of packs based on AVAILABLE stock
+          const availableStock = batch.current_stock - (batch.reserved_stock || 0);
+
+          if (packSize && packSize > 0) {
+            // Calculate how many full packs can fit in available stock
+            const maxPacks = Math.floor(availableStock / packSize);
+
+            // Default to 1 pack if available, otherwise 0 (will trigger validation)
+            numberOfPacks = maxPacks >= 1 ? 1 : 0;
+          } else {
+            numberOfPacks = 1;
+          }
         }
       }
+
+      const quantity = packSize && numberOfPacks ? packSize * numberOfPacks : 0;
 
       newItems[index] = {
         ...newItems[index],
@@ -420,7 +472,7 @@ export function DeliveryChallan() {
         pack_size: packSize,
         pack_type: packType,
         number_of_packs: numberOfPacks || 1,
-        quantity: packSize && numberOfPacks ? packSize * numberOfPacks : 0,
+        quantity: quantity,
       };
       setItems(newItems);
     }
@@ -494,10 +546,43 @@ export function DeliveryChallan() {
       return;
     }
 
-    const emptyBatches = items.filter(item => item.batch_id === '');
+    const emptyBatches = items.filter(item => !item.batch_id || item.batch_id === '');
     if (emptyBatches.length > 0) {
       alert('Some items do not have a batch selected. Please select a batch for all items.');
       return;
+    }
+
+    const emptyProducts = items.filter(item => !item.product_id || item.product_id === '');
+    if (emptyProducts.length > 0) {
+      alert('Some items do not have a product selected. Please select a product for all items.');
+      return;
+    }
+
+    const batchUsage = new Map<string, number>();
+    for (const item of items) {
+      const currentUsage = batchUsage.get(item.batch_id) || 0;
+      batchUsage.set(item.batch_id, currentUsage + item.quantity);
+    }
+
+    for (const [batchId, totalQuantity] of batchUsage.entries()) {
+      const batch = batches.find(b => b.id === batchId);
+      if (batch) {
+        let availableStock = batch.current_stock - (batch.reserved_stock || 0);
+
+        if (editingChallan) {
+          const originalQtyInThisBatch = originalItems
+            .filter(oi => oi.batch_id === batchId)
+            .reduce((sum, oi) => sum + oi.quantity, 0);
+          availableStock += originalQtyInThisBatch;
+        }
+
+        if (totalQuantity > availableStock) {
+          const product = products.find(p => p.id === items.find(i => i.batch_id === batchId)?.product_id);
+          const unit = product?.unit || 'kg';
+          alert(`Insufficient available stock for batch ${batch.batch_number}!\n\nProduct: ${product?.product_name || 'Unknown'}\nBatch: ${batch.batch_number}\nAvailable: ${availableStock} ${unit}\nTotal Requested (across all items): ${totalQuantity} ${unit}\n\nYou are using this batch in multiple items. Please reduce quantities or select different batches.`);
+          return;
+        }
+      }
     }
 
     try {
@@ -520,52 +605,6 @@ export function DeliveryChallan() {
       let challanId: string;
 
       if (editingChallan) {
-        const stockAdjustments: { batch_id: string; adjustment: number }[] = [];
-
-        for (const originalItem of originalItems) {
-          stockAdjustments.push({
-            batch_id: originalItem.batch_id,
-            adjustment: originalItem.quantity,
-          });
-        }
-
-        for (const newItem of items) {
-          const existingAdjustment = stockAdjustments.find(adj => adj.batch_id === newItem.batch_id);
-          if (existingAdjustment) {
-            existingAdjustment.adjustment -= newItem.quantity;
-          } else {
-            stockAdjustments.push({
-              batch_id: newItem.batch_id,
-              adjustment: -newItem.quantity,
-            });
-          }
-        }
-
-        for (const adjustment of stockAdjustments) {
-          if (adjustment.adjustment !== 0) {
-            const { error: batchError } = await supabase.rpc('update_batch_stock', {
-              p_batch_id: adjustment.batch_id,
-              p_adjustment: adjustment.adjustment,
-            });
-
-            if (batchError) {
-              const { data: batchData } = await supabase
-                .from('batches')
-                .select('current_stock')
-                .eq('id', adjustment.batch_id)
-                .single();
-
-              if (batchData) {
-                const newStock = batchData.current_stock + adjustment.adjustment;
-                await supabase
-                  .from('batches')
-                  .update({ current_stock: newStock })
-                  .eq('id', adjustment.batch_id);
-              }
-            }
-          }
-        }
-
         const { data: updatedChallan, error: updateError } = await supabase
           .from('delivery_challans')
           .update(challanData)
@@ -575,12 +614,28 @@ export function DeliveryChallan() {
 
         if (updateError) throw updateError;
 
-        const { error: deleteItemsError } = await supabase
-          .from('delivery_challan_items')
-          .delete()
-          .eq('challan_id', editingChallan.id);
+        const itemsForRpc = items.map(item => ({
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          quantity: item.quantity,
+          pack_size: item.pack_size,
+          pack_type: item.pack_type,
+          number_of_packs: item.number_of_packs,
+        }));
 
-        if (deleteItemsError) throw deleteItemsError;
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('edit_delivery_challan', {
+          p_challan_id: editingChallan.id,
+          p_new_items: itemsForRpc
+        });
+
+        if (rpcError) {
+          console.error('RPC Error:', rpcError);
+          throw new Error(`Failed to update DC: ${rpcError.message}`);
+        }
+        if (!rpcResult?.success) {
+          console.error('RPC Result Error:', rpcResult?.error);
+          throw new Error(rpcResult?.error || 'Failed to update DC items');
+        }
 
         challanId = updatedChallan.id;
       } else {
@@ -592,75 +647,64 @@ export function DeliveryChallan() {
 
         if (challanError) throw challanError;
         challanId = newChallan.id;
+      }
 
-        for (const item of items) {
-          if (formData.sales_order_id) {
-            const { error: releaseError } = await supabase.rpc('fn_deduct_stock_and_release_reservation', {
-              p_so_id: formData.sales_order_id,
-              p_batch_id: item.batch_id,
-              p_product_id: item.product_id,
-              p_quantity: item.quantity,
-              p_user_id: user.id
-            });
+      if (!editingChallan) {
+        const challanItemsData = items.map(item => ({
+          challan_id: challanId,
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          quantity: item.quantity,
+          pack_size: item.pack_size,
+          pack_type: item.pack_type,
+          number_of_packs: item.number_of_packs,
+        }));
 
-            if (releaseError) {
-              console.error('Error releasing reservation:', releaseError);
-            }
-          }
-        }
+        const { error: itemsError } = await supabase
+          .from('delivery_challan_items')
+          .insert(challanItemsData);
 
-        if (formData.sales_order_id) {
-          const { data: soItems } = await supabase
-            .from('sales_order_items')
-            .select('id, product_id, quantity, delivered_quantity')
-            .eq('sales_order_id', formData.sales_order_id);
-
-          if (soItems) {
-            let allDelivered = true;
-            for (const soItem of soItems) {
-              const dcItem = items.find(i => i.product_id === soItem.product_id);
-              const newDeliveredQty = (soItem.delivered_quantity || 0) + (dcItem?.quantity || 0);
-
-              await supabase
-                .from('sales_order_items')
-                .update({ delivered_quantity: newDeliveredQty })
-                .eq('id', soItem.id);
-
-              if (newDeliveredQty < soItem.quantity) {
-                allDelivered = false;
-              }
-            }
-
-            const newStatus = allDelivered ? 'delivered' : 'partially_delivered';
-            await supabase
-              .from('sales_orders')
-              .update({
-                status: newStatus,
-                is_archived: allDelivered,
-                archived_at: allDelivered ? new Date().toISOString() : null,
-                archived_by: allDelivered ? user.id : null,
-                archive_reason: allDelivered ? 'Delivery Challan created and all items delivered' : null
-              })
-              .eq('id', formData.sales_order_id);
-          }
+        if (itemsError) {
+          await supabase.from('delivery_challans').delete().eq('id', challanId);
+          throw itemsError;
         }
       }
 
-      const challanItemsData = items.map(item => ({
-        challan_id: challanId,
-        product_id: item.product_id,
-        batch_id: item.batch_id,
-        quantity: item.quantity,
-        pack_size: item.pack_size,
-        pack_type: item.pack_type,
-        number_of_packs: item.number_of_packs,
-      }));
+      // HARDENING FIX #3: Atomic delivered_quantity update
+      // Prevents race conditions from concurrent DC creation
+      if (!editingChallan && formData.sales_order_id) {
+        const dcItemsForRpc = items.map(item => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+        }));
 
-      const { error: itemsError } = await supabase
-        .from('delivery_challan_items')
-        .insert(challanItemsData);
+        const { error: soUpdateError } = await supabase
+          .rpc('update_so_delivered_quantity_atomic', {
+            p_sales_order_id: formData.sales_order_id,
+            p_dc_items: dcItemsForRpc,
+          });
 
-      if (itemsError) throw itemsError;
+        if (soUpdateError) throw soUpdateError;
+
+        // Archive SO if fully delivered (status was updated by RPC)
+        const { data: updatedSO } = await supabase
+          .from('sales_orders')
+          .select('status')
+          .eq('id', formData.sales_order_id)
+          .single();
+
+        if (updatedSO?.status === 'delivered') {
+          await supabase
+            .from('sales_orders')
+            .update({
+              is_archived: true,
+              archived_at: new Date().toISOString(),
+              archived_by: user.id,
+              archive_reason: 'Delivery Challan created and all items delivered'
+            })
+            .eq('id', formData.sales_order_id);
+        }
+      }
 
       setModalOpen(false);
       resetForm();
@@ -669,13 +713,17 @@ export function DeliveryChallan() {
       alert(`Delivery Challan ${editingChallan ? 'updated' : 'created'} successfully!`);
     } catch (error: any) {
       console.error('Error saving challan:', error);
-      const errorMessage = error?.message || 'Unknown error occurred';
-      if (errorMessage.includes('batch_id')) {
-        alert('Error: Invalid batch selection. Please ensure all items have a valid batch selected.');
+      console.error('Full error object:', JSON.stringify(error, null, 2));
+      const errorMessage = error?.message || error?.error_description || error?.msg || 'Unknown error occurred';
+
+      if (errorMessage.toLowerCase().includes('insufficient stock')) {
+        alert(`Cannot save: ${errorMessage}\n\nPlease reduce quantities or select different batches with more stock.`);
+      } else if (errorMessage.includes('batch_id')) {
+        alert(`Error: Invalid batch selection.\n\n${errorMessage}\n\nPlease ensure all items have a valid batch selected.`);
       } else if (errorMessage.includes('foreign key')) {
-        alert('Error: Invalid product or batch selection. Please check your selections.');
+        alert(`Error: Invalid product or batch selection.\n\n${errorMessage}\n\nPlease check your selections.`);
       } else {
-        alert(`Failed to save challan: ${errorMessage}`);
+        alert(`Failed to save challan:\n\n${errorMessage}`);
       }
     }
   };
@@ -719,7 +767,7 @@ export function DeliveryChallan() {
   };
 
   const handleApproveChallan = async (challanId: string) => {
-    if (!confirm('Approve this Delivery Challan? It will be available for invoice creation.')) return;
+    if (!confirm('Approve this Delivery Challan? Stock will be deducted and it will be available for invoice creation.')) return;
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -734,13 +782,23 @@ export function DeliveryChallan() {
         })
         .eq('id', challanId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Approval error:', error);
+        const errorMsg = error.message || error.hint || 'Unknown error';
+        throw new Error(errorMsg);
+      }
 
       alert('Delivery Challan approved successfully!');
       loadChallans();
     } catch (error: any) {
-      console.error('Error approving challan:', error.message);
-      alert('Failed to approve challan');
+      console.error('Error approving challan:', error);
+      const errorMessage = error?.message || 'Unknown error';
+
+      if (errorMessage.toLowerCase().includes('insufficient stock')) {
+        alert(`Cannot approve - Insufficient Stock!\n\n${errorMessage}\n\nPlease edit the DC and reduce quantities or select different batches.`);
+      } else {
+        alert(`Failed to approve challan:\n\n${errorMessage}`);
+      }
     }
   };
 
@@ -863,6 +921,40 @@ export function DeliveryChallan() {
             )}
             {challan.approval_status === 'rejected' && (
               <XCircle className="w-5 h-5 text-red-600 ml-2" title="Rejected" />
+            )}
+          </div>
+        );
+      }
+    },
+    {
+      key: 'invoicing_status',
+      label: 'Invoicing Status',
+      render: (challan: DeliveryChallan) => {
+        const statusColors = {
+          not_invoiced: 'bg-gray-100 text-gray-700',
+          partially_invoiced: 'bg-yellow-100 text-yellow-700',
+          fully_invoiced: 'bg-blue-100 text-blue-700'
+        };
+        const statusLabels = {
+          not_invoiced: 'Not Invoiced',
+          partially_invoiced: 'Partially Invoiced',
+          fully_invoiced: 'Fully Invoiced'
+        };
+        const status = challan.invoicing_status || 'not_invoiced';
+        return (
+          <div className="space-y-1">
+            <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${statusColors[status]}`}>
+              {statusLabels[status]}
+            </span>
+            {challan.total_items > 0 && (
+              <div className="text-xs text-gray-500">
+                {challan.invoiced_items || 0}/{challan.total_items} items invoiced
+              </div>
+            )}
+            {challan.linked_invoices && challan.linked_invoices.length > 0 && (
+              <div className="text-xs text-blue-600 font-medium">
+                {challan.linked_invoices.join(', ')}
+              </div>
             )}
           </div>
         );
@@ -1101,14 +1193,26 @@ export function DeliveryChallan() {
 
               <div className="space-y-2">
                 {items.map((item, index) => {
-                  const availableBatches = batches.filter(b => b.product_id === item.product_id);
+                  const batchUsageInForm = new Map<string, number>();
+                  items.forEach((formItem, formIndex) => {
+                    if (formIndex !== index && formItem.batch_id) {
+                      const currentUsage = batchUsageInForm.get(formItem.batch_id) || 0;
+                      batchUsageInForm.set(formItem.batch_id, currentUsage + formItem.quantity);
+                    }
+                  });
+
+                  const availableBatches = batches.filter(b => {
+                    const baseAvailable = b.current_stock - (b.reserved_stock || 0);
+                    const usedInOtherItems = batchUsageInForm.get(b.id) || 0;
+                    return b.product_id === item.product_id && (baseAvailable - usedInOtherItems) > 0;
+                  });
                   const selectedBatch = batches.find(b => b.id === item.batch_id);
 
                   return (
-                    <div key={index} className="p-3 bg-gray-50 rounded-lg space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
+                    <div key={index} className="relative p-2 bg-gray-50 rounded border border-gray-200">
+                      <div className="grid grid-cols-2 gap-2 mb-2">
                         <div>
-                          <label className="block text-xs text-gray-600 mb-1">Product *</label>
+                          <label className="block text-xs text-gray-600 mb-0.5">Product *</label>
                           <select
                             value={item.product_id}
                             onChange={(e) => {
@@ -1116,7 +1220,7 @@ export function DeliveryChallan() {
                               newItems[index] = { ...newItems[index], product_id: e.target.value, batch_id: '' };
                               setItems(newItems);
                             }}
-                            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                             required
                           >
                             <option value="">Select Product</option>
@@ -1126,117 +1230,119 @@ export function DeliveryChallan() {
                           </select>
                         </div>
 
-                        {item.product_id && (
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <label className="block text-xs text-gray-600">Batch *</label>
-                              {availableBatches.length > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const fifoBatch = getFIFOBatch(item.product_id);
-                                    if (fifoBatch) {
-                                      handleBatchChange(index, fifoBatch.id);
-                                    }
-                                  }}
-                                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                                  title="Select oldest batch (FIFO)"
-                                >
-                                  Use FIFO
-                                </button>
-                              )}
-                            </div>
-                            {availableBatches.length > 0 ? (
-                              <select
-                                value={item.batch_id}
-                                onChange={(e) => handleBatchChange(index, e.target.value)}
-                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                                required
+                        <div>
+                          <div className="flex items-center justify-between mb-0.5">
+                            <label className="block text-xs text-gray-600">Batch *</label>
+                            {item.product_id && availableBatches.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const fifoBatch = getFIFOBatch(item.product_id);
+                                  if (fifoBatch) {
+                                    handleBatchChange(index, fifoBatch.id);
+                                  }
+                                }}
+                                className="text-[10px] text-blue-600 hover:text-blue-700 font-medium"
+                                title="Select oldest batch (FIFO)"
                               >
-                                <option value="">Select Batch</option>
-                                {availableBatches.map((b, idx) => {
-                                  const fifoIndicator = idx === 0 ? ' 🔄 FIFO' : '';
-                                  const availableStock = b.current_stock - (b.reserved_stock || 0);
-                                  return (
-                                    <option key={b.id} value={b.id}>
-                                      {b.batch_number} (Total: {b.current_stock}kg, Available: {availableStock}kg){fifoIndicator}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            ) : (
-                              <div className="w-full px-2 py-1.5 text-sm border border-red-300 rounded bg-red-50 text-red-700 flex items-center gap-2">
-                                <span>⚠</span>
-                                <span>No batches available for this product</span>
-                              </div>
+                                Use FIFO
+                              </button>
                             )}
                           </div>
-                        )}
+                          {!item.product_id ? (
+                            <div className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100 text-gray-400">
+                              Select product first
+                            </div>
+                          ) : availableBatches.length > 0 ? (
+                            <select
+                              value={item.batch_id}
+                              onChange={(e) => handleBatchChange(index, e.target.value)}
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                              required
+                            >
+                              <option value="">Select Batch</option>
+                              {availableBatches.map((b, idx) => {
+                                const fifoIndicator = idx === 0 ? ' 🔄' : '';
+                                const baseAvailable = b.current_stock - (b.reserved_stock || 0);
+                                const usedInOtherItems = batchUsageInForm.get(b.id) || 0;
+                                const actualAvailable = baseAvailable - usedInOtherItems;
+                                return (
+                                  <option key={b.id} value={b.id}>
+                                    {b.batch_number} (Avl: {actualAvailable}kg){fifoIndicator}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          ) : (
+                            <div className="w-full px-2 py-1 text-xs border border-red-300 rounded bg-red-50 text-red-700 flex items-center gap-1">
+                              <span>⚠</span>
+                              <span>No stock available</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {selectedBatch && (
-                        <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs space-y-1">
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Batch:</span>
-                            <span className="font-medium">{selectedBatch.batch_number}</span>
-                          </div>
-                          {selectedBatch.expiry_date && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Expiry:</span>
-                              <span className="font-medium">{new Date(selectedBatch.expiry_date).toLocaleDateString()}</span>
-                            </div>
-                          )}
-                          {selectedBatch.packaging_details && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Packaging:</span>
-                              <span className="font-medium">{selectedBatch.packaging_details}</span>
-                            </div>
-                          )}
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Total Stock:</span>
-                            <span className="font-medium">{selectedBatch.current_stock} kg</span>
-                          </div>
-                          {selectedBatch.reserved_stock > 0 && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Reserved:</span>
-                              <span className="font-medium text-orange-600">{selectedBatch.reserved_stock} kg</span>
-                            </div>
-                          )}
-                          <div className="flex justify-between border-t pt-1">
-                            <span className="text-gray-600 font-semibold">Available:</span>
-                            <span className="font-bold text-green-600">{selectedBatch.current_stock - (selectedBatch.reserved_stock || 0)} kg</span>
-                          </div>
+                        <div className="mb-2">
+                          <table className="w-full text-[10px] border border-gray-300">
+                            <thead className="bg-gray-200">
+                              <tr>
+                                <th className="px-1 py-0.5 text-left border-r border-gray-300">Batch</th>
+                                <th className="px-1 py-0.5 text-left border-r border-gray-300">Expiry</th>
+                                <th className="px-1 py-0.5 text-left border-r border-gray-300">Packaging</th>
+                                <th className="px-1 py-0.5 text-right border-r border-gray-300">Total</th>
+                                <th className="px-1 py-0.5 text-right font-semibold">Available</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr className="bg-white">
+                                <td className="px-1 py-0.5 border-r border-gray-300">{selectedBatch.batch_number}</td>
+                                <td className="px-1 py-0.5 border-r border-gray-300">
+                                  {selectedBatch.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', {day: '2-digit', month: '2-digit', year: '2-digit'}) : '-'}
+                                </td>
+                                <td className="px-1 py-0.5 border-r border-gray-300">{selectedBatch.packaging_details || '-'}</td>
+                                <td className="px-1 py-0.5 text-right border-r border-gray-300">{selectedBatch.current_stock}kg</td>
+                                <td className="px-1 py-0.5 text-right font-bold text-green-600">
+                                  {(() => {
+                                    const baseAvailable = selectedBatch.current_stock - (selectedBatch.reserved_stock || 0);
+                                    const usedInOtherItems = batchUsageInForm.get(selectedBatch.id) || 0;
+                                    return baseAvailable - usedInOtherItems;
+                                  })()}kg
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
                         </div>
                       )}
 
                       {item.pack_size && (
                         <div className="grid grid-cols-3 gap-2">
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">No. of Packs *</label>
+                            <label className="block text-xs text-gray-600 mb-0.5">No. of Packs *</label>
                             <input
                               type="number"
                               value={item.number_of_packs || ''}
                               onChange={(e) => updatePackQuantity(index, Number(e.target.value))}
-                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                               required
                               min="1"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Pack Size</label>
+                            <label className="block text-xs text-gray-600 mb-0.5">Pack Size</label>
                             <input
                               type="text"
                               value={`${item.pack_size} kg`}
-                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100"
                               disabled
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Total Qty</label>
+                            <label className="block text-xs text-gray-600 mb-0.5">Total Qty (Kg)</label>
                             <input
                               type="text"
                               value={`${item.quantity} kg`}
-                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100"
                               disabled
                             />
                           </div>
@@ -1244,15 +1350,13 @@ export function DeliveryChallan() {
                       )}
 
                       {items.length > 1 && (
-                        <div className="flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => removeItem(index)}
-                            className="text-xs text-red-600 hover:text-red-700"
-                          >
-                            Remove Item
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeItem(index)}
+                          className="absolute top-1 right-1 text-xs text-red-600 hover:text-red-800 bg-white px-2 py-0.5 rounded border border-red-300 shadow-sm"
+                        >
+                          Remove
+                        </button>
                       )}
                     </div>
                   );
