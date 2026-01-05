@@ -34,6 +34,7 @@ interface BankAccount {
   id: string;
   account_name: string;
   bank_name: string;
+  alias: string | null;
 }
 
 export function ReceivablesManager({ canManage }: { canManage: boolean }) {
@@ -73,7 +74,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
           .limit(50),
         supabase
           .from('bank_accounts')
-          .select('id, account_name, bank_name')
+          .select('id, account_name, bank_name, alias')
           .eq('is_active', true)
           .order('account_name'),
       ]);
@@ -202,29 +203,29 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
       if (voucherError) throw voucherError;
 
-      // 3. Insert voucher allocations and update invoices
+      // 3. Insert invoice payment allocations and update payment status
       for (const [invoiceId, amount] of Object.entries(selectedAllocations)) {
         if (amount <= 0) continue;
 
-        // Create allocation
-        await supabase.from('voucher_allocations').insert({
-          voucher_type: 'receipt',
-          receipt_voucher_id: voucher.id,
-          sales_invoice_id: invoiceId,
+        // Create allocation in invoice_payment_allocations table
+        await supabase.from('invoice_payment_allocations').insert({
+          invoice_id: invoiceId,
+          payment_id: voucher.id,
           allocated_amount: amount,
+          created_by: user.id,
         });
 
-        // Update invoice payment status
+        // Update invoice payment status based on total paid
         const invoice = customerInvoices.find(inv => inv.id === invoiceId);
         if (invoice) {
           const newPaidAmount = (invoice.paid_amount || 0) + amount;
           const newBalance = invoice.total_amount - newPaidAmount;
+          const newStatus = newBalance <= 0.01 ? 'paid' : (newPaidAmount > 0 ? 'partial' : 'pending');
+
           await supabase
             .from('sales_invoices')
             .update({
-              paid_amount: newPaidAmount,
-              balance_amount: newBalance,
-              payment_status: newBalance <= 0 ? 'paid' : 'partial',
+              payment_status: newStatus,
             })
             .eq('id', invoiceId);
         }
@@ -542,7 +543,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
                   <option value="">Select Bank Account</option>
                   {bankAccounts.map((bank) => (
                     <option key={bank.id} value={bank.id}>
-                      {bank.account_name} - {bank.bank_name}
+                      {bank.alias || `${bank.account_name} - ${bank.bank_name}`}
                     </option>
                   ))}
                 </select>
