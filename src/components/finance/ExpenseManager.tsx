@@ -264,9 +264,19 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   const [editingExpense, setEditingExpense] = useState<FinanceExpense | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
   const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'not_reconciled'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+
+  // Default to 1 month date range
+  const getDefaultStartDate = () => {
+    const date = new Date();
+    date.setMonth(date.getMonth() - 1);
+    return date.toISOString().split('T')[0];
+  };
+  const getDefaultEndDate = () => new Date().toISOString().split('T')[0];
+
+  const [startDate, setStartDate] = useState(getDefaultStartDate());
+  const [endDate, setEndDate] = useState(getDefaultEndDate());
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
   const [formData, setFormData] = useState({
@@ -621,6 +631,11 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
       if (cat?.type !== filterType) return false;
     }
 
+    // Filter by specific category
+    if (categoryFilter !== 'all' && exp.expense_category !== categoryFilter) {
+      return false;
+    }
+
     // Filter by reconciliation status
     if (reconFilter === 'reconciled') {
       if (!reconciledExpenseIds.has(exp.id)) return false;
@@ -725,6 +740,14 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
     return `Rp ${amount?.toLocaleString('id-ID')}`;
   };
 
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -791,7 +814,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
           ))}
         </div>
 
-        <div className="flex gap-3 items-center bg-gray-50 p-3 rounded-lg">
+        <div className="flex gap-3 items-center bg-gray-50 p-3 rounded-lg flex-wrap">
           <span className="text-sm font-medium text-gray-700">Date Filter:</span>
           <input
             type="date"
@@ -811,14 +834,45 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
           {(startDate || endDate) && (
             <button
               onClick={() => {
-                setStartDate('');
-                setEndDate('');
+                setStartDate(getDefaultStartDate());
+                setEndDate(getDefaultEndDate());
               }}
               className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
             >
-              Clear
+              Reset to 1 Month
             </button>
           )}
+
+          <span className="text-sm font-medium text-gray-700 ml-4">Category:</span>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm min-w-[200px]"
+          >
+            <option value="all">All Categories</option>
+            {expenseCategories
+              .sort((a, b) => {
+                const groupOrder = { 'Import': 1, 'Sales/Delivery': 2, 'Staff': 3, 'Operations': 4, 'Administrative': 5 };
+                const aOrder = groupOrder[a.group as keyof typeof groupOrder] || 999;
+                const bOrder = groupOrder[b.group as keyof typeof groupOrder] || 999;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return a.label.localeCompare(b.label);
+              })
+              .map((category) => (
+                <option key={category.value} value={category.value}>
+                  {category.label} ({category.group})
+                </option>
+              ))}
+          </select>
+          {categoryFilter !== 'all' && (
+            <button
+              onClick={() => setCategoryFilter('all')}
+              className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
+            >
+              Clear Category
+            </button>
+          )}
+
           <button
             onClick={exportToCSV}
             disabled={filteredExpenses.length === 0}
@@ -912,7 +966,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                   <tr key={expense.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        {new Date(expense.expense_date).toLocaleDateString()}
+                        {formatDate(expense.expense_date)}
                       </div>
                     </td>
                     <td className="px-6 py-4">
