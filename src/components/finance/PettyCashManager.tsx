@@ -1,7 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Wallet, ArrowDownCircle, ArrowUpCircle, RefreshCw, Upload, X, FileText, Image, ArrowRightLeft } from 'lucide-react';
+import { Plus, Wallet, ArrowDownCircle, ArrowUpCircle, RefreshCw, Upload, X, FileText, Image, ArrowRightLeft, Eye, Edit2, Trash2, ExternalLink, Download } from 'lucide-react';
 import { Modal } from '../Modal';
+
+interface PettyCashDocument {
+  id: string;
+  file_type: string;
+  file_name: string;
+  file_url: string;
+  file_size: number | null;
+  uploaded_at?: string;
+  created_at?: string;
+}
 
 interface PettyCashTransaction {
   id: string;
@@ -22,6 +32,7 @@ interface PettyCashTransaction {
   bank_accounts?: { account_name: string; bank_name: string } | null;
   finance_expenses?: { expense_category: string } | null;
   created_at: string;
+  petty_cash_documents?: PettyCashDocument[];
 }
 
 interface BankAccount {
@@ -85,6 +96,9 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
   const [bankStatementLines, setBankStatementLines] = useState<BankStatementLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [viewingTransaction, setViewingTransaction] = useState<PettyCashTransaction | null>(null);
+  const [editingTransaction, setEditingTransaction] = useState<PettyCashTransaction | null>(null);
   const [cashBalance, setCashBalance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{file: File, type: string}[]>([]);
@@ -113,7 +127,8 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
           .select(`
             *,
             bank_accounts(account_name, bank_name),
-            finance_expenses!finance_expense_id(expense_category)
+            finance_expenses!finance_expense_id(expense_category),
+            petty_cash_documents(id, file_type, file_name, file_url, file_size, created_at)
           `)
           .order('transaction_date', { ascending: false })
           .order('created_at', { ascending: false })
@@ -261,36 +276,70 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
         return;
       }
 
-      // Otherwise, create petty cash transaction as normal
-      const transactionNumber = await generateTransactionNumber(formData.transaction_type);
+      // Otherwise, create or update petty cash transaction
+      let transaction;
 
-      const payload: any = {
-        transaction_number: transactionNumber,
-        transaction_date: formData.transaction_date,
-        transaction_type: formData.transaction_type,
-        amount: formData.amount,
-        description: formData.description,
-        paid_by: formData.paid_by,
-        created_by: user.id,
-      };
+      if (editingTransaction) {
+        // Update existing transaction
+        const payload: any = {
+          transaction_date: formData.transaction_date,
+          amount: formData.amount,
+          description: formData.description,
+          paid_by: formData.paid_by,
+        };
 
-      if (formData.transaction_type === 'expense') {
-        payload.expense_category = formData.expense_category || null;
-        payload.paid_to = formData.paid_to || null;
-        payload.paid_by_staff_name = formData.paid_by_staff_name || null;
+        if (formData.transaction_type === 'expense') {
+          payload.expense_category = formData.expense_category || null;
+          payload.paid_to = formData.paid_to || null;
+          payload.paid_by_staff_name = formData.paid_by_staff_name || null;
+        } else {
+          payload.bank_account_id = formData.bank_account_id || null;
+          payload.source = formData.source || null;
+          payload.received_by_staff_name = formData.received_by_staff_name || null;
+        }
+
+        const { data, error } = await supabase
+          .from('petty_cash_transactions')
+          .update(payload)
+          .eq('id', editingTransaction.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        transaction = data;
       } else {
-        payload.bank_account_id = formData.bank_account_id || null;
-        payload.source = formData.source || null;
-        payload.received_by_staff_name = formData.received_by_staff_name || null;
+        // Create new transaction
+        const transactionNumber = await generateTransactionNumber(formData.transaction_type);
+
+        const payload: any = {
+          transaction_number: transactionNumber,
+          transaction_date: formData.transaction_date,
+          transaction_type: formData.transaction_type,
+          amount: formData.amount,
+          description: formData.description,
+          paid_by: formData.paid_by,
+          created_by: user.id,
+        };
+
+        if (formData.transaction_type === 'expense') {
+          payload.expense_category = formData.expense_category || null;
+          payload.paid_to = formData.paid_to || null;
+          payload.paid_by_staff_name = formData.paid_by_staff_name || null;
+        } else {
+          payload.bank_account_id = formData.bank_account_id || null;
+          payload.source = formData.source || null;
+          payload.received_by_staff_name = formData.received_by_staff_name || null;
+        }
+
+        const { data, error } = await supabase
+          .from('petty_cash_transactions')
+          .insert([payload])
+          .select()
+          .single();
+
+        if (error) throw error;
+        transaction = data;
       }
-
-      const { data: transaction, error } = await supabase
-        .from('petty_cash_transactions')
-        .insert([payload])
-        .select()
-        .single();
-
-      if (error) throw error;
 
       // Link to bank statement line if selected (for withdrawals)
       if (formData.transaction_type === 'withdraw' && formData.bank_statement_line_id && transaction) {
@@ -394,6 +443,50 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
     });
     setUploadingFiles([]);
     setBankStatementLines([]);
+    setEditingTransaction(null);
+  };
+
+  const handleView = (transaction: PettyCashTransaction) => {
+    setViewingTransaction(transaction);
+    setViewModalOpen(true);
+  };
+
+  const handleEdit = (transaction: PettyCashTransaction) => {
+    setEditingTransaction(transaction);
+    setFormData({
+      transaction_type: transaction.transaction_type,
+      transaction_date: transaction.transaction_date,
+      amount: transaction.amount,
+      description: transaction.description,
+      expense_category: transaction.expense_category || '',
+      bank_account_id: transaction.bank_account_id || '',
+      bank_statement_line_id: '',
+      paid_to: transaction.paid_to || '',
+      paid_by_staff_name: transaction.paid_by_staff_name || '',
+      paid_by: transaction.bank_account_id ? 'bank' : 'cash',
+      source: transaction.source || '',
+      received_by_staff_name: transaction.received_by_staff_name || '',
+    });
+    setModalOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) return;
+
+    try {
+      const { error } = await supabase
+        .from('petty_cash_transactions')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      alert('Transaction deleted successfully');
+      loadData();
+    } catch (error: any) {
+      console.error('Error deleting transaction:', error);
+      alert('Failed to delete transaction: ' + error.message);
+    }
   };
 
   if (loading) {
@@ -548,25 +641,48 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
                     {tx.transaction_type === 'expense' ? `Rp ${tx.amount.toLocaleString('id-ID')}` : '-'}
                   </td>
                   {canManage && (
-                    <td className="px-4 py-3 text-center">
-                      {tx.transaction_type === 'expense' && !tx.finance_expense_id && (
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-center gap-2">
                         <button
-                          onClick={() => {
-                            const bankId = prompt('Enter Bank Account ID for reconciliation (select from dropdown in production):\n\nNote: In a real scenario, this would be a modal with a dropdown of bank accounts.');
-                            if (bankId) {
-                              handleMoveToTracker(tx.id, bankId);
-                            }
-                          }}
-                          className="text-blue-600 hover:text-blue-800 inline-flex items-center gap-1 text-sm"
-                          title="Move to Expense Tracker"
+                          onClick={() => handleView(tx)}
+                          className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                          title="View Details"
                         >
-                          <ArrowRightLeft className="w-4 h-4" />
-                          <span>Move</span>
+                          <Eye className="w-4 h-4" />
                         </button>
-                      )}
-                      {tx.finance_expense_id && (
-                        <span className="text-xs text-gray-400">Linked</span>
-                      )}
+                        {!tx.finance_expense_id && (
+                          <>
+                            <button
+                              onClick={() => handleEdit(tx)}
+                              className="p-1 text-green-600 hover:bg-green-50 rounded"
+                              title="Edit"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(tx.id)}
+                              className="p-1 text-red-600 hover:bg-red-50 rounded"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                        {tx.transaction_type === 'expense' && !tx.finance_expense_id && (
+                          <button
+                            onClick={() => {
+                              const bankId = prompt('Enter Bank Account ID for reconciliation (select from dropdown in production):\n\nNote: In a real scenario, this would be a modal with a dropdown of bank accounts.');
+                              if (bankId) {
+                                handleMoveToTracker(tx.id, bankId);
+                              }
+                            }}
+                            className="p-1 text-purple-600 hover:bg-purple-50 rounded"
+                            title="Move to Expense Tracker"
+                          >
+                            <ArrowRightLeft className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -586,13 +702,14 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
       </div>
 
       {/* Add Transaction Modal */}
-      <Modal isOpen={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title="Petty Cash Entry" size="lg">
+      <Modal isOpen={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title={editingTransaction ? 'Edit Petty Cash Entry' : 'Petty Cash Entry'} size="lg">
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Transaction Type Tabs */}
           <div className="flex gap-2 p-1 bg-gray-100 rounded-lg">
             <button
               type="button"
               onClick={() => setFormData({ ...formData, transaction_type: 'withdraw' })}
+              disabled={!!editingTransaction}
               className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-md transition ${
                 formData.transaction_type === 'withdraw'
                   ? 'bg-green-600 text-white shadow'
@@ -605,11 +722,12 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
             <button
               type="button"
               onClick={() => setFormData({ ...formData, transaction_type: 'expense' })}
+              disabled={!!editingTransaction}
               className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-md transition ${
                 formData.transaction_type === 'expense'
                   ? 'bg-orange-600 text-white shadow'
                   : 'text-gray-600 hover:bg-gray-200'
-              }`}
+              } ${editingTransaction ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <ArrowUpCircle className="w-5 h-5" />
               Add Expense
@@ -919,11 +1037,224 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
                   : 'bg-orange-600 hover:bg-orange-700'
               }`}
             >
-              {formData.transaction_type === 'withdraw' ? 'Add Funds' : 'Add Expense'}
+              {editingTransaction
+                ? 'Update Transaction'
+                : formData.transaction_type === 'withdraw'
+                ? 'Add Funds'
+                : 'Add Expense'}
             </button>
           </div>
         </form>
       </Modal>
+
+      {/* View Transaction Modal */}
+      {viewingTransaction && (
+        <Modal
+          isOpen={viewModalOpen}
+          onClose={() => {
+            setViewModalOpen(false);
+            setViewingTransaction(null);
+          }}
+          title="Transaction Details"
+          size="lg"
+        >
+          <div className="space-y-6">
+            {/* Transaction Header */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="font-semibold text-gray-900 text-lg">
+                    {viewingTransaction.transaction_number}
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    {new Date(viewingTransaction.transaction_date).toLocaleDateString('en-GB')}
+                  </p>
+                </div>
+                <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
+                  viewingTransaction.transaction_type === 'withdraw'
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  {viewingTransaction.transaction_type === 'withdraw' ? (
+                    <>
+                      <ArrowDownCircle className="w-4 h-4" />
+                      Add Funds
+                    </>
+                  ) : (
+                    <>
+                      <ArrowUpCircle className="w-4 h-4" />
+                      Expense
+                    </>
+                  )}
+                </span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                Rp {viewingTransaction.amount.toLocaleString('id-ID')}
+              </div>
+            </div>
+
+            {/* Transaction Details */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-gray-500 font-medium uppercase">Description</label>
+                  <p className="text-sm text-gray-900 mt-1">{viewingTransaction.description}</p>
+                </div>
+                {viewingTransaction.expense_category && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Category</label>
+                    <p className="text-sm text-gray-900 mt-1">{viewingTransaction.expense_category}</p>
+                  </div>
+                )}
+                {viewingTransaction.transaction_type === 'expense' && viewingTransaction.paid_to && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Paid To</label>
+                    <p className="text-sm text-gray-900 mt-1">{viewingTransaction.paid_to}</p>
+                  </div>
+                )}
+                {viewingTransaction.transaction_type === 'withdraw' && viewingTransaction.source && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Source</label>
+                    <p className="text-sm text-gray-900 mt-1">{viewingTransaction.source}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {viewingTransaction.bank_accounts && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Bank Account</label>
+                    <p className="text-sm text-gray-900 mt-1">
+                      {viewingTransaction.bank_accounts.bank_name} - {viewingTransaction.bank_accounts.account_name}
+                    </p>
+                  </div>
+                )}
+                {viewingTransaction.transaction_type === 'expense' && viewingTransaction.paid_by_staff_name && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Paid By (Staff)</label>
+                    <p className="text-sm text-gray-900 mt-1">{viewingTransaction.paid_by_staff_name}</p>
+                  </div>
+                )}
+                {viewingTransaction.transaction_type === 'withdraw' && viewingTransaction.received_by_staff_name && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Received By (Staff)</label>
+                    <p className="text-sm text-gray-900 mt-1">{viewingTransaction.received_by_staff_name}</p>
+                  </div>
+                )}
+                {viewingTransaction.finance_expense_id && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium uppercase">Status</label>
+                    <div className="mt-1">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
+                        🔗 Linked to Expense Tracker
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Attached Documents */}
+            {viewingTransaction.petty_cash_documents && viewingTransaction.petty_cash_documents.length > 0 && (
+              <div className="border-t pt-4">
+                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  Attached Documents ({viewingTransaction.petty_cash_documents.length})
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {viewingTransaction.petty_cash_documents.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition"
+                    >
+                      <div className="flex-shrink-0">
+                        {doc.file_name.match(/\.(jpg|jpeg|png|gif)$/i) ? (
+                          <Image className="w-8 h-8 text-blue-600" />
+                        ) : (
+                          <FileText className="w-8 h-8 text-gray-600" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {doc.file_name}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {doc.file_type} • {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : 'Unknown size'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <a
+                          href={doc.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
+                          title="View"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                        <a
+                          href={doc.file_url}
+                          download={doc.file_name}
+                          className="p-1.5 text-green-600 hover:bg-green-50 rounded"
+                          title="Download"
+                        >
+                          <Download className="w-4 h-4" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(!viewingTransaction.petty_cash_documents || viewingTransaction.petty_cash_documents.length === 0) && (
+              <div className="border-t pt-4">
+                <div className="text-center py-6 text-gray-400">
+                  <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No documents attached</p>
+                </div>
+              </div>
+            )}
+
+            {/* Footer Actions */}
+            <div className="flex items-center justify-end gap-3 pt-4 border-t">
+              {canManage && !viewingTransaction.finance_expense_id && (
+                <>
+                  <button
+                    onClick={() => {
+                      setViewModalOpen(false);
+                      handleEdit(viewingTransaction);
+                    }}
+                    className="px-4 py-2 text-green-600 border border-green-300 rounded-lg hover:bg-green-50 transition flex items-center gap-2"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      setViewModalOpen(false);
+                      handleDelete(viewingTransaction.id);
+                    }}
+                    className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition flex items-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => {
+                  setViewModalOpen(false);
+                  setViewingTransaction(null);
+                }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
