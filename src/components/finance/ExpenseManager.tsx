@@ -26,6 +26,11 @@ interface FinanceExpense {
   bank_accounts?: { bank_name: string; account_number: string } | null;
   petty_cash_transactions?: { transaction_number: string } | null;
   bank_statement_lines?: Array<{
+    id: string;
+    transaction_date: string;
+    description: string | null;
+    debit_amount: number;
+    credit_amount: number;
     bank_account_id: string;
     bank_accounts?: { bank_name: string; account_number: string } | null;
   }> | null;
@@ -311,6 +316,11 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
             bank_accounts(bank_name, account_number),
             petty_cash_transactions!petty_cash_transaction_id(transaction_number),
             bank_statement_lines(
+              id,
+              transaction_date,
+              description,
+              debit_amount,
+              credit_amount,
               bank_account_id,
               bank_accounts(bank_name, account_number)
             )
@@ -1350,7 +1360,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <FileText className="w-5 h-5 text-blue-600" />
-                    <h4 className="font-semibold text-blue-900">Linked to Bank Statement</h4>
+                    <h4 className="font-semibold text-blue-900">Linked Transaction</h4>
                   </div>
                   {canManage && (
                     <button
@@ -1364,16 +1374,33 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 </div>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-gray-600">Bank Account:</span>
+                    <span className="text-gray-600">Type:</span>
+                    <span className="font-medium text-gray-900">Expense</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Category:</span>
                     <span className="font-medium text-gray-900">
-                      {editingExpense.bank_statement_lines[0]?.bank_accounts?.bank_name || 'Unknown'} - {editingExpense.bank_statement_lines[0]?.bank_accounts?.account_number || ''}
+                      {expenseCategories.find(c => c.value === editingExpense.expense_category)?.label || editingExpense.expense_category}
                     </span>
                   </div>
-                  <div className="pt-2 border-t border-blue-200">
-                    <p className="text-xs text-gray-600">
-                      This expense is linked to a bank statement line. If incorrectly linked, click "Unlink" to remove the connection.
-                    </p>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Amount:</span>
+                    <span className="font-medium text-gray-900">
+                      Rp {editingExpense.amount.toLocaleString('id-ID')}
+                    </span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Date:</span>
+                    <span className="font-medium text-gray-900">
+                      {new Date(editingExpense.expense_date).toLocaleDateString('id-ID')}
+                    </span>
+                  </div>
+                  {editingExpense.description && (
+                    <div className="pt-2 border-t border-blue-200">
+                      <div className="text-gray-600 mb-1">Description:</div>
+                      <div className="text-gray-900">{editingExpense.description}</div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
