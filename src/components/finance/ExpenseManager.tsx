@@ -591,6 +591,35 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
     }
   };
 
+  const handleUnlinkFromBankStatement = async (expenseId: string) => {
+    if (!confirm(
+      'Are you sure you want to unlink this expense from the bank statement?\n\n' +
+      'The bank statement line will be set back to "Unmatched" status.'
+    )) return;
+
+    try {
+      const { error } = await supabase
+        .from('bank_statement_lines')
+        .update({
+          expense_id: null,
+          status: 'unmatched',
+          matched_date: null
+        })
+        .eq('expense_id', expenseId);
+
+      if (error) throw error;
+
+      alert('Expense unlinked from bank statement successfully');
+      setModalOpen(false);
+      setEditingExpense(null);
+      resetForm();
+      loadData();
+    } catch (error: any) {
+      console.error('Error unlinking expense:', error.message);
+      alert('Failed to unlink expense: ' + error.message);
+    }
+  };
+
   const handleRemoveDocument = (urlToRemove: string) => {
     setFormData({
       ...formData,
@@ -1314,6 +1343,40 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 )}
               </div>
             </div>
+
+            {/* Linked Bank Statement Section */}
+            {editingExpense && editingExpense.bank_statement_lines && editingExpense.bank_statement_lines.length > 0 && (
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <h4 className="font-semibold text-blue-900">Linked to Bank Statement</h4>
+                  </div>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={() => handleUnlinkFromBankStatement(editingExpense.id)}
+                      className="text-sm text-red-600 hover:text-red-700 font-medium"
+                    >
+                      Unlink
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Bank Account:</span>
+                    <span className="font-medium text-gray-900">
+                      {editingExpense.bank_statement_lines[0]?.bank_accounts?.bank_name || 'Unknown'} - {editingExpense.bank_statement_lines[0]?.bank_accounts?.account_number || ''}
+                    </span>
+                  </div>
+                  <div className="pt-2 border-t border-blue-200">
+                    <p className="text-xs text-gray-600">
+                      This expense is linked to a bank statement line. If incorrectly linked, click "Unlink" to remove the connection.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
