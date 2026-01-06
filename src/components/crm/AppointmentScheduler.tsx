@@ -19,7 +19,7 @@ interface Appointment {
   user_profiles?: {
     full_name: string;
   };
-  crm_contacts?: {
+  customers?: {
     company_name: string;
   };
 }
@@ -70,7 +70,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
   const loadContacts = async () => {
     try {
       const { data, error } = await supabase
-        .from('crm_contacts')
+        .from('customers')
         .select('id, company_name')
         .order('company_name', { ascending: true });
 
@@ -99,7 +99,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
     try {
       let query = supabase
         .from('crm_activities')
-        .select('*, user_profiles!crm_activities_created_by_fkey(full_name), crm_contacts(company_name)')
+        .select('*, user_profiles!crm_activities_created_by_fkey(full_name), customers(company_name)')
         .in('activity_type', ['meeting', 'video_call', 'phone_call'])
         .not('follow_up_date', 'is', null)
         .order('follow_up_date', { ascending: true });
@@ -473,9 +473,9 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <h4 className="font-medium text-gray-900">{appointment.subject}</h4>
-                          {appointment.crm_contacts && (
+                          {appointment.customers && (
                             <p className="text-sm font-medium text-blue-600 mt-1">
-                              {appointment.crm_contacts.company_name}
+                              {appointment.customers.company_name}
                             </p>
                           )}
                           <p className="text-sm text-gray-600 mt-1">
