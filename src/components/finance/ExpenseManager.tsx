@@ -463,6 +463,8 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
           if (deleteError) throw deleteError;
 
+          // Remove from local state
+          setExpenses(prev => prev.filter(exp => exp.id !== editingExpense.id));
           alert('Expense moved to Petty Cash successfully');
         } else {
           // Regular update
@@ -472,6 +474,37 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
             .eq('id', editingExpense.id);
 
           if (error) throw error;
+
+          // Fetch the updated expense with relations
+          const { data: updatedExpense, error: fetchError } = await supabase
+            .from('finance_expenses')
+            .select(`
+              *,
+              batches (batch_number),
+              import_containers (container_ref),
+              delivery_challans (challan_number),
+              bank_accounts (bank_name, account_number),
+              petty_cash_transactions (transaction_number),
+              bank_statement_lines (
+                id,
+                transaction_date,
+                description,
+                debit_amount,
+                credit_amount,
+                bank_account_id,
+                bank_accounts (bank_name, account_number)
+              )
+            `)
+            .eq('id', editingExpense.id)
+            .single();
+
+          if (fetchError) throw fetchError;
+
+          // Update in local state
+          setExpenses(prev => prev.map(exp =>
+            exp.id === editingExpense.id ? updatedExpense : exp
+          ));
+
           alert('Expense updated successfully');
         }
       } else {
@@ -507,18 +540,38 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
           if (pettyCashError) throw pettyCashError;
           alert('Expense recorded in Petty Cash successfully');
         } else {
-          const { error } = await supabase
+          const { data: newExpense, error } = await supabase
             .from('finance_expenses')
-            .insert([{ ...expenseData, created_by: user.id }]);
+            .insert([{ ...expenseData, created_by: user.id }])
+            .select(`
+              *,
+              batches (batch_number),
+              import_containers (container_ref),
+              delivery_challans (challan_number),
+              bank_accounts (bank_name, account_number),
+              petty_cash_transactions (transaction_number),
+              bank_statement_lines (
+                id,
+                transaction_date,
+                description,
+                debit_amount,
+                credit_amount,
+                bank_account_id,
+                bank_accounts (bank_name, account_number)
+              )
+            `)
+            .single();
 
           if (error) throw error;
+
+          // Add to local state
+          setExpenses(prev => [newExpense, ...prev]);
           alert('Expense recorded successfully');
         }
       }
 
       setModalOpen(false);
       resetForm();
-      loadData();
     } catch (error: any) {
       console.error('Error saving expense:', error.message);
       // Show clear error message from backend validation
@@ -571,8 +624,10 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
         .eq('id', id);
 
       if (error) throw error;
+
+      // Remove from local state
+      setExpenses(prev => prev.filter(exp => exp.id !== id));
       alert('Expense deleted successfully');
-      loadData();
     } catch (error: any) {
       console.error('Error deleting expense:', error.message);
       alert('Failed to delete expense: ' + error.message);
@@ -593,8 +648,9 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
       if (error) throw error;
 
+      // Remove from local state
+      setExpenses(prev => prev.filter(exp => exp.id !== id));
       alert('Expense moved to Petty Cash successfully!');
-      loadData();
     } catch (error: any) {
       console.error('Error moving expense:', error.message);
       alert('Failed to move expense: ' + error.message);
@@ -619,11 +675,40 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
       if (error) throw error;
 
+      // Fetch the updated expense with relations
+      const { data: updatedExpense, error: fetchError } = await supabase
+        .from('finance_expenses')
+        .select(`
+          *,
+          batches (batch_number),
+          import_containers (container_ref),
+          delivery_challans (challan_number),
+          bank_accounts (bank_name, account_number),
+          petty_cash_transactions (transaction_number),
+          bank_statement_lines (
+            id,
+            transaction_date,
+            description,
+            debit_amount,
+            credit_amount,
+            bank_account_id,
+            bank_accounts (bank_name, account_number)
+          )
+        `)
+        .eq('id', expenseId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // Update in local state
+      setExpenses(prev => prev.map(exp =>
+        exp.id === expenseId ? updatedExpense : exp
+      ));
+
       alert('Expense unlinked from bank statement successfully');
       setModalOpen(false);
       setEditingExpense(null);
       resetForm();
-      loadData();
     } catch (error: any) {
       console.error('Error unlinking expense:', error.message);
       alert('Failed to unlink expense: ' + error.message);

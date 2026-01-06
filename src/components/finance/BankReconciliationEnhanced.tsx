@@ -1197,7 +1197,11 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
         .from('bank_statement_lines')
         .update({ reconciliation_status: 'matched' })
         .eq('id', lineId);
-      loadStatementLines();
+
+      // Update in local state
+      setStatementLines(prev => prev.map(line =>
+        line.id === lineId ? { ...line, status: 'matched' } : line
+      ));
     } catch (err) {
       console.error('Error confirming match:', err);
     }
@@ -1212,7 +1216,11 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
           matched_entry_id: null
         })
         .eq('id', lineId);
-      loadStatementLines();
+
+      // Update in local state
+      setStatementLines(prev => prev.map(line =>
+        line.id === lineId ? { ...line, status: 'unmatched', matchedEntry: undefined, matched_entry_id: undefined } : line
+      ));
     } catch (err) {
       console.error('Error rejecting match:', err);
     }
@@ -1449,9 +1457,18 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
       if (error) throw error;
 
+      // Update in local state
+      setStatementLines(prev => prev.map(line =>
+        line.id === editingLine.id ? {
+          ...line,
+          debit: editFormData.debit,
+          credit: editFormData.credit,
+          description: editFormData.description
+        } : line
+      ));
+
       setEditModal(false);
       setEditingLine(null);
-      await loadStatementLines();
       alert('✅ Bank statement line updated successfully');
     } catch (error: any) {
       console.error('Error updating line:', error);
@@ -1486,9 +1503,23 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
       if (error) throw error;
 
+      // Update in local state
+      setStatementLines(prev => prev.map(line =>
+        line.id === editingLine.id ? {
+          ...line,
+          status: 'unmatched',
+          matchedExpenseId: undefined,
+          matchedReceiptId: undefined,
+          matchedPettyCashId: undefined,
+          matchedExpense: null,
+          matchedReceipt: null,
+          matchedPettyCash: null,
+          notes: undefined
+        } : line
+      ));
+
       setEditModal(false);
       setEditingLine(null);
-      await loadStatementLines();
       alert('✅ Transaction unlinked successfully');
     } catch (error: any) {
       console.error('Error unlinking transaction:', error);

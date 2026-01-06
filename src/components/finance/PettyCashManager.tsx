@@ -388,9 +388,47 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
         }
       }
 
+      // Fetch the complete transaction with relations
+      const { data: completeTransaction, error: fetchError } = await supabase
+        .from('petty_cash_transactions')
+        .select(`
+          *,
+          bank_accounts(account_name, bank_name),
+          finance_expenses!finance_expense_id(expense_category),
+          petty_cash_documents(id, file_type, file_name, file_url, file_size, created_at)
+        `)
+        .eq('id', transaction.id)
+        .single();
+
+      if (fetchError) {
+        console.error('Error fetching complete transaction:', fetchError);
+      } else {
+        // Update state in-place
+        if (editingTransaction) {
+          setTransactions(prev => prev.map(t =>
+            t.id === transaction.id ? completeTransaction : t
+          ));
+          // Recalculate balance
+          const balanceRes = await supabase
+            .from('petty_cash_transactions')
+            .select('transaction_type, amount');
+          if (balanceRes.data) {
+            const balance = balanceRes.data.reduce((acc, t) =>
+              t.transaction_type === 'withdraw' ? acc + t.amount : acc - t.amount, 0
+            );
+            setCashBalance(balance);
+          }
+        } else {
+          setTransactions(prev => [completeTransaction, ...prev]);
+          // Update balance
+          setCashBalance(prev =>
+            formData.transaction_type === 'withdraw' ? prev + formData.amount : prev - formData.amount
+          );
+        }
+      }
+
       setModalOpen(false);
       resetForm();
-      loadData();
     } catch (error: any) {
       console.error('Error saving transaction:', error);
       alert('Failed to save: ' + error.message);
@@ -418,8 +456,19 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
 
       if (error) throw error;
 
+      // Remove from local state
+      setTransactions(prev => prev.filter(t => t.id !== pettyCashId));
+      // Recalculate balance
+      const { data: balanceData } = await supabase
+        .from('petty_cash_transactions')
+        .select('transaction_type, amount');
+      if (balanceData) {
+        const balance = balanceData.reduce((acc, t) =>
+          t.transaction_type === 'withdraw' ? acc + t.amount : acc - t.amount, 0
+        );
+        setCashBalance(balance);
+      }
       alert('Expense moved to Expense Tracker successfully!');
-      loadData();
     } catch (error: any) {
       console.error('Error moving expense:', error.message);
       alert('Failed to move expense: ' + error.message);
@@ -481,8 +530,22 @@ export function PettyCashManager({ canManage }: PettyCashManagerProps) {
 
       if (error) throw error;
 
+      // Get the transaction amount before deleting from state
+      const deletedTransaction = transactions.find(t => t.id === id);
+
+      // Remove from local state
+      setTransactions(prev => prev.filter(t => t.id !== id));
+
+      // Update balance
+      if (deletedTransaction) {
+        setCashBalance(prev =>
+          deletedTransaction.transaction_type === 'withdraw'
+            ? prev - deletedTransaction.amount
+            : prev + deletedTransaction.amount
+        );
+      }
+
       alert('Transaction deleted successfully');
-      loadData();
     } catch (error: any) {
       console.error('Error deleting transaction:', error);
       alert('Failed to delete transaction: ' + error.message);
