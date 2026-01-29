@@ -79,6 +79,10 @@ export function Settings() {
     if (profile?.role === 'admin') {
       loadSettings();
       loadUsers();
+    } else if (profile?.role === 'accounts') {
+      loadSettings();
+    } else {
+      setLoading(false);
     }
   }, [profile]);
 
