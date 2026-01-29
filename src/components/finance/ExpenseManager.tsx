@@ -1763,38 +1763,58 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 Supporting Documents (Invoices, Receipts, Bills)
               </label>
 
-              {/* Existing documents */}
+              {/* Existing documents with thumbnails */}
               {formData.document_urls.length > 0 && (
-                <div className="mb-3 space-y-2">
-                  <p className="text-xs text-gray-600 font-medium">Uploaded Documents:</p>
-                  {formData.document_urls.map((url, index) => (
-                    <div key={index} className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded">
-                      <FileText className="w-4 h-4 text-green-600 flex-shrink-0" />
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 text-sm text-green-700 hover:text-green-900 truncate"
-                      >
-                        Document {index + 1}
-                      </a>
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1 text-green-600 hover:bg-green-100 rounded"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveDocument(url)}
-                        className="p-1 text-red-600 hover:bg-red-100 rounded"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+                <div className="mb-3">
+                  <p className="text-xs text-gray-600 font-medium mb-2">Existing Documents ({formData.document_urls.length}):</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {formData.document_urls.map((url, index) => {
+                      const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(url);
+                      const fileName = url.split('/').pop() || `Document ${index + 1}`;
+                      return (
+                        <div
+                          key={index}
+                          className="group relative border border-gray-200 rounded-lg overflow-hidden hover:border-red-500 transition-colors"
+                        >
+                          {isImage ? (
+                            <div className="aspect-square bg-gray-100 relative">
+                              <img
+                                src={url}
+                                alt={fileName}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          ) : (
+                            <div className="aspect-square bg-red-50 flex flex-col items-center justify-center p-3">
+                              <FileText className="h-10 w-10 text-red-600 mb-2" />
+                              <p className="text-xs text-center text-gray-700 line-clamp-2 px-2">{fileName}</p>
+                            </div>
+                          )}
+                          <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs px-2 py-1.5 flex items-center justify-between">
+                            <span>Doc {index + 1}</span>
+                            <div className="flex gap-1">
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1 hover:bg-white hover:bg-opacity-20 rounded"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveDocument(url)}
+                                className="p-1 hover:bg-red-500 rounded"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
@@ -1843,7 +1863,11 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                   className="cursor-pointer flex flex-col items-center"
                 >
                   <Upload className="w-8 h-8 text-gray-400 mb-2" />
-                  <span className="text-sm text-blue-600 font-medium">Click to upload files</span>
+                  <span className="text-sm text-blue-600 font-medium">
+                    {editingExpense && formData.document_urls.length > 0
+                      ? 'Click to upload additional files'
+                      : 'Click to upload files'}
+                  </span>
                   <span className="text-xs text-gray-500 mt-1">
                     PDF, images, or documents (max 10MB each)
                   </span>
@@ -1887,146 +1911,170 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
             setViewModalOpen(false);
             setViewingExpense(null);
           }}
-          title="Expense Details"
-          maxWidth="max-w-3xl"
+          title="Expense Receipt"
+          maxWidth="max-w-lg"
         >
-          <div className="space-y-6">
-            {/* Basic Information */}
-            <div className="grid grid-cols-2 gap-6 pb-4 border-b">
-              <div>
-                <label className="text-xs text-gray-500 font-medium uppercase">Date</label>
-                <p className="text-sm text-gray-900 mt-1 font-medium">
-                  {new Date(viewingExpense.expense_date).toLocaleDateString()}
-                </p>
+          <div className="space-y-3 text-sm">
+            {/* Compact Header Bar */}
+            <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded -mt-1 -mx-1">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs opacity-90">Category</p>
+                  <p className="text-base font-bold">
+                    {expenseCategories.find(c => c.value === viewingExpense.expense_category)?.label || viewingExpense.expense_category}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs opacity-90">Date</p>
+                  <p className="text-base font-semibold">
+                    {new Date(viewingExpense.expense_date).toLocaleDateString('id-ID', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric'
+                    })}
+                  </p>
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-gray-500 font-medium uppercase">Amount</label>
-                <p className="text-lg text-gray-900 mt-1 font-bold">
-                  Rp {viewingExpense.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 font-medium uppercase">Category</label>
-                <p className="text-sm text-gray-900 mt-1">
-                  {expenseCategories.find(c => c.value === viewingExpense.expense_category)?.label || viewingExpense.expense_category}
-                </p>
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 font-medium uppercase">Type</label>
-                <p className="text-sm text-gray-900 mt-1 capitalize">
-                  {viewingExpense.expense_type || '-'}
-                </p>
+            </div>
+
+            {/* Type, Expense Type, Amount - All in one line */}
+            <div className="py-2 border-b border-gray-200">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-4">
+                  {viewingExpense.expense_type && (
+                    <div>
+                      <p className="text-xs text-gray-500 mb-0.5">Type</p>
+                      <p className="text-sm font-medium text-gray-900 capitalize">
+                        {viewingExpense.expense_type}
+                      </p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-xs text-gray-500 mb-0.5">Category</p>
+                    <div className="flex items-center gap-1.5">
+                      {(() => {
+                        const categoryInfo = expenseCategories.find(c => c.value === viewingExpense.expense_category);
+                        const Icon = categoryInfo?.icon;
+                        return (
+                          <>
+                            {Icon && <Icon className="h-4 w-4 text-amber-600" />}
+                            <span className="text-sm font-medium text-gray-900">{categoryInfo?.label}</span>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-500 mb-0.5">Amount</p>
+                  <p className="text-lg font-bold text-gray-900">
+                    Rp {viewingExpense.amount.toLocaleString('id-ID')}
+                  </p>
+                </div>
               </div>
             </div>
 
             {/* Description */}
-            <div>
-              <label className="text-xs text-gray-500 font-medium uppercase">Description</label>
-              <p className="text-sm text-gray-900 mt-1">
-                {viewingExpense.description || '-'}
-              </p>
-            </div>
+            {viewingExpense.description && (
+              <div className="py-2 border-b border-gray-200">
+                <p className="text-xs text-gray-500 mb-1">Description</p>
+                <p className="text-sm font-semibold text-gray-900">{viewingExpense.description}</p>
+              </div>
+            )}
 
-            {/* Payment Information */}
-            <div className="grid grid-cols-2 gap-6 pb-4 border-b">
-              <div>
-                <label className="text-xs text-gray-500 font-medium uppercase">Payment Method</label>
-                <p className="text-sm text-gray-900 mt-1 capitalize">
-                  {viewingExpense.payment_method?.replace('_', ' ') || '-'}
-                </p>
+            {/* Payment Details - Compact */}
+            <div className="py-2 border-b border-gray-200 space-y-1.5">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs text-gray-500">Payment Method:</p>
+                  <p className="text-sm font-medium text-gray-900 capitalize">
+                    {viewingExpense.payment_method?.replace('_', ' ')}
+                  </p>
+                </div>
+                {viewingExpense.payment_reference && (
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs text-gray-500">Reference:</p>
+                    <p className="text-sm font-medium text-gray-900">{viewingExpense.payment_reference}</p>
+                  </div>
+                )}
               </div>
               {viewingExpense.bank_accounts && (
-                <div>
-                  <label className="text-xs text-gray-500 font-medium uppercase">Bank Account</label>
-                  <p className="text-sm text-gray-900 mt-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs text-gray-500">Bank Account:</p>
+                  <p className="text-sm font-medium text-gray-900">
                     {viewingExpense.bank_accounts.alias || viewingExpense.bank_accounts.bank_name} - {viewingExpense.bank_accounts.account_number}
                   </p>
                 </div>
               )}
-              {viewingExpense.payment_reference && (
-                <div>
-                  <label className="text-xs text-gray-500 font-medium uppercase">Payment Reference</label>
-                  <p className="text-sm text-gray-900 mt-1">
-                    {viewingExpense.payment_reference}
-                  </p>
-                </div>
-              )}
             </div>
 
-            {/* Context Links */}
+            {/* Linked References - Compact */}
             {(viewingExpense.batches || viewingExpense.import_containers || viewingExpense.delivery_challans) && (
-              <div className="space-y-3 pb-4 border-b">
-                <label className="text-xs text-gray-500 font-medium uppercase">Linked To</label>
-                {viewingExpense.batches && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <Package className="w-4 h-4 text-blue-600" />
-                    <span className="text-blue-700 font-medium">Batch: {viewingExpense.batches.batch_number}</span>
-                  </div>
-                )}
-                {viewingExpense.import_containers && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <Package className="w-4 h-4 text-green-600" />
-                    <span className="text-green-700 font-medium">Container: {viewingExpense.import_containers.container_ref}</span>
-                  </div>
-                )}
-                {viewingExpense.delivery_challans && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <Truck className="w-4 h-4 text-green-600" />
-                    <span className="text-green-700 font-medium">Delivery Challan: {viewingExpense.delivery_challans.challan_number}</span>
-                  </div>
-                )}
+              <div className="py-2 border-b border-gray-200">
+                <p className="text-xs text-gray-500 mb-1.5">Linked To</p>
+                <div className="space-y-1">
+                  {viewingExpense.batches && (
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <Package className="h-3.5 w-3.5 text-blue-600" />
+                      <span className="text-gray-600">Batch:</span>
+                      <span className="font-medium text-gray-900">{viewingExpense.batches.batch_number}</span>
+                    </div>
+                  )}
+                  {viewingExpense.import_containers && (
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <Package className="h-3.5 w-3.5 text-purple-600" />
+                      <span className="text-gray-600">Container:</span>
+                      <span className="font-medium text-gray-900">{viewingExpense.import_containers.container_ref}</span>
+                    </div>
+                  )}
+                  {viewingExpense.delivery_challans && (
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <Truck className="h-3.5 w-3.5 text-green-600" />
+                      <span className="text-gray-600">Challan:</span>
+                      <span className="font-medium text-gray-900">{viewingExpense.delivery_challans.challan_number}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* Bank Reconciliation Status - Enhanced Details */}
+            {/* Bank Reconciliation Status - Compact */}
             {viewingExpense.bank_statement_lines && viewingExpense.bank_statement_lines.length > 0 && (
-              <div className="pb-4 border-b">
-                <label className="text-xs text-gray-500 font-medium uppercase mb-3 block">
-                  <FileText className="w-4 h-4 inline mr-1" />
+              <div className="py-2 border-b border-gray-200">
+                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                  <FileText className="h-3.5 w-3.5" />
                   Bank Reconciliation
-                </label>
-                <div className="space-y-3">
+                </p>
+                <div className="space-y-2">
                   {viewingExpense.bank_statement_lines.map((line) => (
-                    <div key={line.id} className="p-4 bg-green-50 border border-green-300 rounded-lg">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-bold text-green-700 bg-green-200 rounded">
-                          ✓ LINKED TO BANK
+                    <div key={line.id} className="p-3 bg-green-50 border border-green-200 rounded">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold text-green-700 bg-green-200 rounded">
+                          ✓ LINKED
+                        </span>
+                        <span className="text-xs text-gray-700 font-medium">
+                          {line.bank_accounts?.alias || line.bank_accounts?.bank_name}
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
                         <div>
-                          <div className="text-xs text-gray-600 font-medium mb-1">Bank Account</div>
-                          <div className="text-gray-900 font-semibold">
-                            {line.bank_accounts?.alias || line.bank_accounts?.bank_name}
-                          </div>
-                          <div className="text-xs text-gray-600">{line.bank_accounts?.account_number}</div>
+                          <span className="text-gray-600">Bank Amount:</span>
+                          <span className="font-bold text-green-700 ml-1">
+                            Rp {(line.debit_amount || line.credit_amount || 0).toLocaleString('id-ID')}
+                          </span>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-600 font-medium mb-1">Transaction Date</div>
-                          <div className="text-gray-900 font-semibold">
+                          <span className="text-gray-600">Date:</span>
+                          <span className="font-medium text-gray-900 ml-1">
                             {new Date(line.transaction_date).toLocaleDateString('id-ID')}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-600 font-medium mb-1">Bank Transaction Amount</div>
-                          <div className="text-lg text-green-700 font-bold">
-                            Rp {(line.debit_amount || line.credit_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-600 font-medium mb-1">Expense Amount</div>
-                          <div className="text-lg text-gray-900 font-bold">
-                            Rp {viewingExpense.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
+                          </span>
                         </div>
                       </div>
                       {line.description && (
-                        <div className="mt-3 pt-3 border-t border-green-200">
-                          <div className="text-xs text-gray-600 font-medium mb-1">Bank Statement Description</div>
-                          <div className="text-sm text-gray-900 font-medium bg-white p-2 rounded border border-green-200">
-                            {line.description}
-                          </div>
-                        </div>
+                        <p className="text-xs text-gray-700 mt-2 pt-2 border-t border-green-200 font-medium">
+                          {line.description}
+                        </p>
                       )}
                     </div>
                   ))}
@@ -2034,80 +2082,48 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
               </div>
             )}
 
-            {/* Documents */}
+            {/* Attached Documents with Thumbnails */}
             {viewingExpense.document_urls && viewingExpense.document_urls.length > 0 && (
-              <div>
-                <label className="text-xs text-gray-500 font-medium uppercase mb-3 block">
-                  <FileText className="w-4 h-4 inline mr-1" />
-                  Supporting Documents ({viewingExpense.document_urls.length})
-                </label>
-                <div className="grid grid-cols-1 gap-3">
+              <div className="pt-2">
+                <p className="text-xs text-gray-500 mb-2">Attachments ({viewingExpense.document_urls.length})</p>
+                <div className="grid grid-cols-2 gap-2">
                   {viewingExpense.document_urls.map((url, index) => {
                     const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(url);
+                    const fileName = url.split('/').pop() || `Document ${index + 1}`;
                     return (
-                      <div key={index} className="p-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center gap-3">
-                            <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                            <span className="text-sm text-blue-900 font-medium">Document {index + 1}</span>
+                      <a
+                        key={index}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group relative border border-gray-200 rounded overflow-hidden hover:border-blue-500 transition-colors"
+                      >
+                        {isImage ? (
+                          <div className="aspect-square bg-gray-100 relative">
+                            <img
+                              src={url}
+                              alt={fileName}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-opacity flex items-center justify-center">
+                              <ExternalLink className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-300 rounded hover:bg-blue-50"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              View
-                            </a>
-                            <a
-                              href={url}
-                              download
-                              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-white border border-green-300 rounded hover:bg-green-50"
-                            >
-                              <Download className="w-3 h-3" />
-                              Download
-                            </a>
-                          </div>
-                        </div>
-                        {isImage && (
-                          <div className="mt-2">
-                            <a href={url} target="_blank" rel="noopener noreferrer">
-                              <img
-                                src={url}
-                                alt={`Document ${index + 1}`}
-                                className="w-full max-w-md rounded-lg border-2 border-gray-300 hover:border-blue-400 cursor-pointer shadow-sm hover:shadow-md transition-all"
-                                style={{ maxHeight: '300px', objectFit: 'contain' }}
-                              />
-                            </a>
+                        ) : (
+                          <div className="aspect-square bg-red-50 flex flex-col items-center justify-center p-3">
+                            <FileText className="h-8 w-8 text-red-600 mb-2" />
+                            <p className="text-xs text-center text-gray-700 line-clamp-2">{fileName}</p>
                           </div>
                         )}
-                      </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs px-2 py-0.5">
+                          Doc {index + 1}
+                        </div>
+                      </a>
                     );
                   })}
                 </div>
               </div>
             )}
-
-            {(!viewingExpense.document_urls || viewingExpense.document_urls.length === 0) && (
-              <div className="text-center py-4 text-gray-500 text-sm italic">
-                No supporting documents attached
-              </div>
-            )}
-
-            {/* Close Button */}
-            <div className="flex justify-end pt-4 border-t">
-              <button
-                onClick={() => {
-                  setViewModalOpen(false);
-                  setViewingExpense(null);
-                }}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </Modal>
       )}
