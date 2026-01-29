@@ -486,17 +486,27 @@ export function CAReports() {
     })) || [];
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     if (!reportData || reportData.length === 0) {
       alert('No data to export');
       return;
     }
 
+    const { data: settings } = await supabase
+      .from('app_settings')
+      .select('company_name')
+      .single();
+
+    const companyName = settings?.company_name || 'Your Company Name';
+
     let worksheetData: any[] = [];
     let filename = '';
+    let reportTitle = '';
+    let hasDateRange = false;
 
     switch (selectedReport) {
       case 'coa':
+        reportTitle = 'CHART OF ACCOUNTS';
         worksheetData = reportData.map((row: any) => ({
           'Account Code': row.code,
           'Account Name': row.name,
@@ -506,6 +516,8 @@ export function CAReports() {
         break;
 
       case 'inventory_movement':
+        reportTitle = 'INVENTORY MOVEMENT REPORT';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Product Code': row.product_code,
           'Product Name': row.product_name,
@@ -519,6 +531,8 @@ export function CAReports() {
         break;
 
       case 'sales_register':
+        reportTitle = 'SALES REGISTER';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Date': row.invoice_date,
           'Invoice No': row.invoice_number,
@@ -532,6 +546,8 @@ export function CAReports() {
         break;
 
       case 'purchase_register':
+        reportTitle = 'PURCHASE REGISTER';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Date': row.po_date,
           'PO Number': row.po_number,
@@ -545,6 +561,8 @@ export function CAReports() {
         break;
 
       case 'journal_register':
+        reportTitle = 'JOURNAL REGISTER';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Date': row.entry_date,
           'Entry No': row.entry_number,
@@ -559,6 +577,8 @@ export function CAReports() {
         break;
 
       case 'general_ledger':
+        reportTitle = 'GENERAL LEDGER';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Account Code': row.account_code,
           'Account Name': row.account_name,
@@ -572,6 +592,8 @@ export function CAReports() {
         break;
 
       case 'trial_balance':
+        reportTitle = 'TRIAL BALANCE';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Account Code': row.code,
           'Account Name': row.name,
@@ -582,6 +604,8 @@ export function CAReports() {
         break;
 
       case 'cash_ledger':
+        reportTitle = 'CASH LEDGER';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Date': row.date,
           'Voucher No': row.voucher_no,
@@ -594,6 +618,8 @@ export function CAReports() {
         break;
 
       case 'bank_ledger':
+        reportTitle = 'BANK LEDGER';
+        hasDateRange = true;
         worksheetData = reportData.map((row: any) => ({
           'Date': row.date,
           'Voucher No': row.voucher_no,
@@ -606,6 +632,7 @@ export function CAReports() {
         break;
 
       case 'fixed_assets':
+        reportTitle = 'FIXED ASSET REGISTER';
         worksheetData = reportData.map((row: any) => ({
           'Asset Code': row.asset_code,
           'Asset Name': row.asset_name,
@@ -618,7 +645,32 @@ export function CAReports() {
         break;
     }
 
-    const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+    const headerRows: any[][] = [
+      [companyName],
+      [reportTitle]
+    ];
+
+    if (hasDateRange) {
+      const formattedFromDate = new Date(dateRange.from).toLocaleDateString('en-GB');
+      const formattedToDate = new Date(dateRange.to).toLocaleDateString('en-GB');
+      headerRows.push([`Period: ${formattedFromDate} to ${formattedToDate}`]);
+    }
+
+    headerRows.push([]);
+
+    const dataKeys = Object.keys(worksheetData[0] || {});
+    const dataRows = worksheetData.map(row => dataKeys.map(key => row[key]));
+
+    const finalData = [
+      ...headerRows,
+      dataKeys,
+      ...dataRows
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(finalData);
+
+    worksheet['!cols'] = dataKeys.map(() => ({ wch: 15 }));
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Report');
     XLSX.writeFile(workbook, filename);

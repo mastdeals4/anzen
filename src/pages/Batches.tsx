@@ -236,9 +236,7 @@ export function Batches() {
       let batchId: string;
 
       if (editingBatch) {
-        // For updates, calculate delta and adjust current_stock
         const quantityDelta = formData.import_quantity - editingBatch.import_quantity;
-        const newCurrentStock = editingBatch.current_stock + quantityDelta;
 
         const batchUpdateData = {
           batch_number: formData.batch_number,
@@ -246,7 +244,6 @@ export function Batches() {
           import_container_id: formData.import_container_id && formData.import_container_id.trim() !== '' ? formData.import_container_id : null,
           import_date: formData.import_date,
           import_quantity: formData.import_quantity,
-          current_stock: newCurrentStock,
           packaging_details: formData.packaging_details,
           import_price: importPriceIDR,
           import_price_usd: formData.import_price_usd || null,
@@ -282,6 +279,18 @@ export function Batches() {
           if (transError) {
             console.error('Error updating purchase transaction:', transError);
           }
+
+          const { data: allTransactions } = await supabase
+            .from('inventory_transactions')
+            .select('quantity')
+            .eq('batch_id', editingBatch.id);
+
+          const recalculatedStock = allTransactions?.reduce((sum, t) => sum + parseFloat(t.quantity || '0'), 0) || 0;
+
+          await supabase
+            .from('batches')
+            .update({ current_stock: recalculatedStock })
+            .eq('id', editingBatch.id);
         }
       } else {
         // For new batches, current_stock = import_quantity
