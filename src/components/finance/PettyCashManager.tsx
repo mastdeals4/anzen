@@ -570,12 +570,20 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
             .from('petty-cash-receipts')
             .getPublicUrl(filePath);
 
+          // Map MIME type to database-allowed file types
+          let fileType = 'proof'; // default
+          if (file.type.startsWith('image/')) {
+            fileType = 'photo';
+          } else if (file.type === 'application/pdf') {
+            fileType = 'invoice';
+          }
+
           // Save document record
           const { error: docError } = await supabase
             .from('petty_cash_documents')
             .insert([{
               petty_cash_transaction_id: transactionId,
-              file_type: file.type,
+              file_type: fileType,
               file_name: file.name,
               file_url: publicUrl,
               file_size: file.size,
@@ -601,6 +609,13 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
     if (!confirm('Are you sure you want to delete this transaction?')) return;
 
     try {
+      // Get associated documents to delete from storage
+      const { data: docs } = await supabase
+        .from('petty_cash_documents')
+        .select('file_url')
+        .eq('petty_cash_transaction_id', id);
+
+      // Delete transaction (CASCADE will delete documents from DB)
       const { error } = await supabase
         .from('petty_cash_transactions')
         .delete()
@@ -608,8 +623,23 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
 
       if (error) throw error;
 
-      setTransactions(prev => prev.filter(t => t.id !== id));
+      // Delete files from storage
+      if (docs && docs.length > 0) {
+        const filePaths = docs.map(doc => {
+          const url = doc.file_url;
+          const fileName = url.split('/').pop();
+          return fileName || '';
+        }).filter(Boolean);
+
+        if (filePaths.length > 0) {
+          await supabase.storage
+            .from('petty-cash-receipts')
+            .remove(filePaths);
+        }
+      }
+
       alert('Transaction deleted successfully!');
+      await loadData();
     } catch (error: any) {
       console.error('Error deleting transaction:', error);
       alert('Failed to delete transaction: ' + error.message);
