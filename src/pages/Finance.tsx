@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
 import { FinanceProvider, useFinance } from '../contexts/FinanceContext';
 import { Calendar, ChevronDown, ChevronRight, Menu, X } from 'lucide-react';
 
@@ -45,61 +46,63 @@ interface MenuGroup {
   collapsible?: boolean;
 }
 
-const financeMenu: MenuGroup[] = [
+const getFinanceMenu = (t: any): MenuGroup[] => [
   {
-    label: 'VOUCHERS',
+    label: t.finance.vouchers,
     items: [
-      { id: 'purchase', label: 'Purchase', shortcut: 'F9' },
-      { id: 'receipt', label: 'Receipt', shortcut: 'F6' },
-      { id: 'payment', label: 'Payment', shortcut: 'F5' },
-      { id: 'journal', label: 'Journal', shortcut: 'F7' },
-      { id: 'contra', label: 'Contra', shortcut: 'F4' },
-      { id: 'expenses', label: 'Expenses', shortcut: 'F8' },
-      { id: 'petty_cash', label: 'Petty Cash' },
+      { id: 'purchase', label: t.finance.purchase, shortcut: 'F9' },
+      { id: 'receipt', label: t.finance.receipt, shortcut: 'F6' },
+      { id: 'payment', label: t.finance.payment, shortcut: 'F5' },
+      { id: 'journal', label: t.finance.journal, shortcut: 'F7' },
+      { id: 'contra', label: t.finance.contra, shortcut: 'F4' },
+      { id: 'expenses', label: t.finance.expenses, shortcut: 'F8' },
+      { id: 'petty_cash', label: t.finance.pettyCash },
     ]
   },
   {
-    label: 'BOOKS',
+    label: t.finance.books,
     items: [
-      { id: 'ledger', label: 'Ledger', shortcut: 'Ctrl+L' },
-      { id: 'journal_register', label: 'Journal Register', shortcut: 'Ctrl+J' },
-      { id: 'bank_ledger', label: 'Bank Ledger' },
-      { id: 'party_ledger', label: 'Party Ledger' },
-      { id: 'bank_recon', label: 'Bank Reconciliation' },
+      { id: 'ledger', label: t.finance.ledger, shortcut: 'Ctrl+L' },
+      { id: 'journal_register', label: t.finance.journalRegister, shortcut: 'Ctrl+J' },
+      { id: 'bank_ledger', label: t.finance.bankLedger },
+      { id: 'party_ledger', label: t.finance.partyLedger },
+      { id: 'bank_recon', label: t.finance.bankReconciliation },
     ]
   },
   {
-    label: 'REPORTS',
+    label: t.finance.reports,
     collapsible: true,
     items: [
-      { id: 'ca_reports', label: '📊 CA Reports (Excel)', shortcut: 'Ctrl+R' },
-      { id: 'trial_balance', label: 'Trial Balance' },
-      { id: 'pnl', label: 'Profit & Loss' },
-      { id: 'balance_sheet', label: 'Balance Sheet' },
-      { id: 'receivables', label: 'Receivables' },
-      { id: 'payables', label: 'Payables' },
-      { id: 'ageing', label: 'Ageing' },
-      { id: 'tax', label: 'Tax Reports' },
+      { id: 'ca_reports', label: '📊 ' + t.finance.caReports, shortcut: 'Ctrl+R' },
+      { id: 'trial_balance', label: t.finance.trialBalance },
+      { id: 'pnl', label: t.finance.profitLoss },
+      { id: 'balance_sheet', label: t.finance.balanceSheet },
+      { id: 'receivables', label: t.finance.receivables },
+      { id: 'payables', label: t.finance.payables },
+      { id: 'ageing', label: t.finance.ageing },
+      { id: 'tax', label: t.finance.taxReports },
     ]
   },
   {
-    label: 'MASTERS',
+    label: t.finance.masters,
     collapsible: true,
     items: [
-      { id: 'coa', label: 'Chart of Accounts' },
-      { id: 'suppliers', label: 'Suppliers' },
-      { id: 'banks', label: 'Banks' },
+      { id: 'coa', label: t.finance.chartOfAccounts },
+      { id: 'suppliers', label: t.finance.suppliers },
+      { id: 'banks', label: t.finance.banks },
     ]
   }
 ];
 
 function FinanceContent() {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const { dateRange, setDateRange } = useFinance();
   const [activeTab, setActiveTab] = useState<FinanceTab>('purchase');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const canManage = profile?.role === 'admin' || profile?.role === 'accounts';
+  const financeMenu = getFinanceMenu(t);
 
   const toggleGroup = (groupLabel: string) => {
     setCollapsedGroups(prev => {
@@ -168,7 +171,7 @@ function FinanceContent() {
       case 'payment':
         return <PaymentVoucherManager canManage={canManage} />;
       case 'journal':
-        return <div className="text-center p-8">Manual Journal Entry form coming soon</div>;
+        return <div className="text-center p-8 text-gray-500">{t.finance.journal} - {t.common.loading}</div>;
       case 'contra':
         return <FundTransferManager canManage={canManage} />;
       case 'expenses':
@@ -208,7 +211,7 @@ function FinanceContent() {
       case 'banks':
         return <BankAccountsManager canManage={canManage} />;
       default:
-        return <div className="text-center p-8 text-gray-500">Select a module from the menu</div>;
+        return <div className="text-center p-8 text-gray-500">{t.common.noData}</div>;
     }
   };
 
@@ -285,21 +288,21 @@ function FinanceContent() {
               >
                 {sidebarCollapsed ? <Menu className="w-5 h-5 text-gray-600" /> : <X className="w-5 h-5 text-gray-600" />}
               </button>
-              <h1 className="text-lg font-semibold text-gray-900">Finance & Accounting</h1>
+              <h1 className="text-lg font-semibold text-gray-900">{t.finance.title}</h1>
             </div>
 
             {/* SINGLE GLOBAL DATE RANGE */}
             <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded border border-gray-300">
               <Calendar className="w-4 h-4 text-gray-500" />
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-600">Period:</span>
+                <span className="text-xs text-gray-600">{t.finance.dateRange}:</span>
                 <input
                   type="date"
                   value={dateRange.startDate}
                   onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
                   className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
-                <span className="text-gray-500">to</span>
+                <span className="text-gray-500">{t.finance.to}</span>
                 <input
                   type="date"
                   value={dateRange.endDate}
