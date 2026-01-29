@@ -6,10 +6,11 @@ import {
   Plus, Search, Filter, Clock, CheckCircle2, AlertCircle,
   Calendar, User, Tag, Flame, ArrowUp, Minus, Circle,
   MessageSquare, Paperclip, ExternalLink, MoreVertical,
-  Eye, Edit, Trash2
+  Eye, Edit, Trash2, Zap, Bot
 } from 'lucide-react';
 import { TaskDetailModal } from '../components/tasks/TaskDetailModal';
 import { TaskFormModal } from '../components/tasks/TaskFormModal';
+import { SystemTaskService } from '../services/SystemTaskService';
 
 interface Task {
   id: string;
@@ -34,6 +35,15 @@ interface Task {
   inquiry_number?: string;
   customer_name?: string;
   product_name?: string;
+
+  // System task fields
+  task_type?: 'manual' | 'system';
+  task_mode?: 'advisory' | 'enforced';
+  task_origin?: string | null;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  auto_assigned_role?: string | null;
+  auto_priority?: string | null;
 }
 
 interface FilterState {
@@ -41,6 +51,7 @@ interface FilterState {
   priority: string[];
   assignedTo: string[];
   view: 'all' | 'my-tasks' | 'pending' | 'completed' | 'overdue';
+  taskType: 'all' | 'manual' | 'system';
 }
 
 export function Tasks() {
@@ -59,7 +70,8 @@ export function Tasks() {
     status: [],
     priority: [],
     assignedTo: [],
-    view: 'my-tasks'
+    view: 'my-tasks',
+    taskType: 'all'
   });
 
   const [stats, setStats] = useState({
@@ -147,6 +159,13 @@ export function Tasks() {
   const applyFilters = () => {
     let filtered = [...tasks];
 
+    // Apply task type filter
+    if (filters.taskType === 'system') {
+      filtered = filtered.filter(t => t.task_type === 'system');
+    } else if (filters.taskType === 'manual') {
+      filtered = filtered.filter(t => t.task_type !== 'system');
+    }
+
     // Apply view filter
     if (filters.view === 'my-tasks') {
       filtered = filtered.filter(t =>
@@ -189,7 +208,8 @@ export function Tasks() {
         t.description?.toLowerCase().includes(query) ||
         t.customer_name?.toLowerCase().includes(query) ||
         t.product_name?.toLowerCase().includes(query) ||
-        t.inquiry_number?.toLowerCase().includes(query)
+        t.inquiry_number?.toLowerCase().includes(query) ||
+        SystemTaskService.getOriginLabel(t.task_origin || '').toLowerCase().includes(query)
       );
     }
 
@@ -348,6 +368,43 @@ export function Tasks() {
         {/* View Tabs and Search */}
         <div className="bg-white rounded-lg border border-gray-200">
           <div className="p-4 border-b border-gray-200">
+            {/* Task Type Filter */}
+            <div className="flex gap-2 mb-4 pb-4 border-b border-gray-200">
+              <button
+                onClick={() => setFilters({ ...filters, taskType: 'all' })}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  filters.taskType === 'all'
+                    ? 'bg-gray-700 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Circle className="w-4 h-4" />
+                All Tasks
+              </button>
+              <button
+                onClick={() => setFilters({ ...filters, taskType: 'system' })}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  filters.taskType === 'system'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                }`}
+              >
+                <Bot className="w-4 h-4" />
+                System Tasks
+              </button>
+              <button
+                onClick={() => setFilters({ ...filters, taskType: 'manual' })}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  filters.taskType === 'manual'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-green-50 text-green-700 hover:bg-green-100'
+                }`}
+              >
+                <User className="w-4 h-4" />
+                Manual Tasks
+              </button>
+            </div>
+
             <div className="flex flex-col sm:flex-row gap-4 justify-between">
               {/* View Tabs */}
               <div className="flex gap-2 flex-wrap">
@@ -496,15 +553,32 @@ export function Tasks() {
 
                       {/* Task Info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-start gap-2">
+                        <div className="flex items-start gap-2 flex-wrap">
                           <h3 className="font-medium text-gray-900 truncate">{task.title}</h3>
                           {task.attachment_urls.length > 0 && (
                             <Paperclip className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          )}
+                          {task.task_type === 'system' && (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded ${
+                              task.task_mode === 'enforced'
+                                ? 'bg-red-600 text-white'
+                                : 'bg-blue-600 text-white'
+                            }`}>
+                              <Bot className="w-3 h-3" />
+                              SYSTEM
+                            </span>
                           )}
                         </div>
 
                         {task.description && (
                           <p className="text-sm text-gray-600 mt-1 line-clamp-2">{task.description}</p>
+                        )}
+
+                        {task.task_origin && task.task_type === 'system' && (
+                          <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                            <Zap className="w-3 h-3" />
+                            {SystemTaskService.getOriginLabel(task.task_origin)}
+                          </p>
                         )}
 
                         <div className="flex flex-wrap items-center gap-3 mt-2">
