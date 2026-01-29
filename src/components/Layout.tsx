@@ -67,7 +67,7 @@ export function Layout({ children }: LayoutProps) {
     { id: 'command-center', label: 'Command Center', icon: Zap, roles: ['admin', 'sales'] },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
     { id: 'inventory', label: t('nav.inventory'), icon: Warehouse, roles: ['admin', 'warehouse'] },
-    { id: 'settings', label: t('nav.settings'), icon: Settings, roles: ['admin'] },
+    { id: 'settings', label: t('nav.settings'), icon: Settings, roles: ['admin', 'accounts', 'sales'] },
   ];
 
   const visibleMenuItems = menuItems.filter(item =>
