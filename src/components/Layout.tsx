@@ -246,21 +246,17 @@ export function Layout({ children }: LayoutProps) {
             </div>
 
             <div className="flex-1 hidden md:flex items-center justify-center px-4">
-              <div className="text-center max-w-2xl">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <span className="text-sm font-medium text-gray-700">
-                    Welcome, <span className="text-blue-600">{profile?.full_name || profile?.username || 'User'}</span>
-                  </span>
-                </div>
-                <div className="flex items-center justify-center gap-2 text-xs text-gray-500 italic">
+              <div className="flex items-center justify-center gap-2 text-sm">
+                <span className="font-medium text-gray-700">
+                  Welcome, <span className="text-blue-600">{profile?.full_name || profile?.username || 'User'}</span>
+                </span>
+                <span className="text-gray-400">•</span>
+                <div className="flex items-center gap-2 text-gray-500 italic">
                   <Sparkles className="w-3 h-3 text-yellow-500 flex-shrink-0" />
                   <p className="line-clamp-1">
                     {isLoadingQuote ? 'Loading inspiration...' : `"${quote.content}"`}
                   </p>
                 </div>
-                {quote.author && !isLoadingQuote && (
-                  <p className="text-xs text-gray-400 mt-0.5">- {quote.author}</p>
-                )}
               </div>
             </div>
 

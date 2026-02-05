@@ -8,7 +8,7 @@ interface UserProfile {
   username: string;
   email: string;
   full_name: string;
-  role: 'admin' | 'sales' | 'accounts' | 'warehouse';
+  role: 'admin' | 'sales' | 'accounts' | 'warehouse' | 'auditor_ca';
   is_active: boolean;
   created_at: string;
 }
@@ -31,7 +31,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     email: '',
     password: '',
     full_name: '',
-    role: 'sales' as 'admin' | 'sales' | 'accounts' | 'warehouse',
+    role: 'sales' as 'admin' | 'sales' | 'accounts' | 'warehouse' | 'auditor_ca',
   });
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -243,9 +243,16 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         return 'bg-green-100 text-green-800 border-green-300';
       case 'warehouse':
         return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'auditor_ca':
+        return 'bg-gray-100 text-gray-800 border-gray-300';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-300';
     }
+  };
+
+  const formatRoleDisplay = (role: string) => {
+    if (role === 'auditor_ca') return 'Auditor CA';
+    return role.charAt(0).toUpperCase() + role.slice(1);
   };
 
   return (
@@ -309,9 +316,9 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               </div>
 
               <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 border rounded-full text-xs font-medium capitalize flex items-center gap-1.5 ${getRoleBadgeColor(user.role)}`}>
+                <span className={`px-3 py-1 border rounded-full text-xs font-medium flex items-center gap-1.5 ${getRoleBadgeColor(user.role)}`}>
                   <Briefcase className="w-3 h-3" />
-                  {user.role}
+                  {formatRoleDisplay(user.role)}
                 </span>
 
                 <button
@@ -472,6 +479,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               <option value="sales">Sales - CRM, customers, and sales invoices</option>
               <option value="accounts">Accounts - Finance and invoicing</option>
               <option value="warehouse">Warehouse - Inventory management</option>
+              <option value="auditor_ca">Auditor CA - Read-only financial access</option>
               <option value="admin">Admin - Full system access</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
@@ -605,6 +613,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               <option value="sales">Sales - CRM, customers, and sales invoices</option>
               <option value="accounts">Accounts - Finance and invoicing</option>
               <option value="warehouse">Warehouse - Inventory management</option>
+              <option value="auditor_ca">Auditor CA - Read-only financial access</option>
               <option value="admin">Admin - Full system access</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
