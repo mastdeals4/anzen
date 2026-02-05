@@ -337,7 +337,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'invoice_number',
       label: 'Invoice #',
-      render: (inv: SalesInvoice) => (
+      render: (_val: any, inv: SalesInvoice) => (
         <button
           onClick={() => setCurrentPage('sales')}
           className="text-blue-600 hover:underline font-medium"
@@ -349,17 +349,17 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'customer',
       label: 'Customer',
-      render: (inv: SalesInvoice) => inv.customers?.company_name || 'N/A'
+      render: (_val: any, inv: SalesInvoice) => inv.customers?.company_name || 'N/A'
     },
     {
       key: 'invoice_date',
       label: 'Date',
-      render: (inv: SalesInvoice) => new Date(inv.invoice_date).toLocaleDateString()
+      render: (_val: any, inv: SalesInvoice) => new Date(inv.invoice_date).toLocaleDateString()
     },
     {
       key: 'due_date',
       label: 'Due Date',
-      render: (inv: SalesInvoice) => {
+      render: (_val: any, inv: SalesInvoice) => {
         const dueDate = new Date(inv.due_date);
         const today = new Date();
         const isOverdue = dueDate < today && inv.payment_status !== 'paid';
@@ -373,12 +373,12 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'total_amount',
       label: 'Amount',
-      render: (inv: SalesInvoice) => `Rp ${inv.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      render: (_val: any, inv: SalesInvoice) => `Rp ${inv.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     },
     {
       key: 'paid',
       label: 'Paid',
-      render: (inv: SalesInvoice) => (
+      render: (_val: any, inv: SalesInvoice) => (
         <span className="text-green-600">
           Rp {(inv.paid_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
@@ -387,7 +387,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'balance',
       label: 'Balance',
-      render: (inv: SalesInvoice) => (
+      render: (_val: any, inv: SalesInvoice) => (
         <span className="font-semibold text-red-600">
           Rp {(inv.total_amount - (inv.paid_amount || 0)).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
@@ -396,7 +396,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'status',
       label: 'Status',
-      render: (inv: SalesInvoice) => (
+      render: (_val: any, inv: SalesInvoice) => (
         <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
           inv.payment_status === 'partial' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
         }`}>
@@ -410,22 +410,22 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'voucher_number',
       label: 'Voucher #',
-      render: (pay: ReceiptVoucher) => pay.voucher_number
+      render: (_val: any, pay: ReceiptVoucher) => pay.voucher_number
     },
     {
       key: 'voucher_date',
       label: 'Date',
-      render: (pay: ReceiptVoucher) => new Date(pay.voucher_date).toLocaleDateString()
+      render: (_val: any, pay: ReceiptVoucher) => new Date(pay.voucher_date).toLocaleDateString()
     },
     {
       key: 'customer',
       label: 'Customer',
-      render: (pay: ReceiptVoucher) => pay.customers?.company_name || 'N/A'
+      render: (_val: any, pay: ReceiptVoucher) => pay.customers?.company_name || 'N/A'
     },
     {
       key: 'invoices',
       label: 'Invoices',
-      render: (pay: ReceiptVoucher) => {
+      render: (_val: any, pay: ReceiptVoucher) => {
         if (!pay.allocations || pay.allocations.length === 0) return 'Unallocated';
         return pay.allocations.map(a => a.sales_invoices?.invoice_number || 'N/A').join(', ');
       }
@@ -433,7 +433,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'amount',
       label: 'Amount',
-      render: (pay: ReceiptVoucher) => (
+      render: (_val: any, pay: ReceiptVoucher) => (
         <span className="font-semibold text-green-600">
           Rp {pay.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
@@ -442,14 +442,14 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     {
       key: 'method',
       label: 'Method',
-      render: (pay: ReceiptVoucher) => (
+      render: (_val: any, pay: ReceiptVoucher) => (
         <span className="capitalize">{pay.payment_method.replace('_', ' ')}</span>
       )
     },
     {
       key: 'bank',
       label: 'Bank Account',
-      render: (pay: ReceiptVoucher) => {
+      render: (_val: any, pay: ReceiptVoucher) => {
         if (pay.bank_accounts) {
           return pay.bank_accounts.alias || pay.bank_accounts.account_name;
         }

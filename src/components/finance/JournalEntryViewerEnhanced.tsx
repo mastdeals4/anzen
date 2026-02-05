@@ -233,15 +233,13 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    {voucher.is_multi_line && (
-                      <button
-                        onClick={() => handleViewVoucher(voucher)}
-                        className="text-blue-600 hover:text-blue-800"
-                        title="View detailed breakdown"
-                      >
-                        <FileText className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleViewVoucher(voucher)}
+                      className="text-blue-600 hover:text-blue-800"
+                      title="View detailed breakdown"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               ))}

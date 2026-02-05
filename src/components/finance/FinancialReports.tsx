@@ -33,6 +33,11 @@ export function FinancialReports({ initialReport = 'trial_balance' }: FinancialR
     loadReport();
   }, [reportType, dateRange]);
 
+  // Watch for initialReport prop changes to switch reports
+  useEffect(() => {
+    setReportType(initialReport);
+  }, [initialReport]);
+
   const loadReport = async () => {
     setLoading(true);
     try {
@@ -75,39 +80,8 @@ export function FinancialReports({ initialReport = 'trial_balance' }: FinancialR
   const liabilities = trialBalance.filter(r => r.account_type === 'liability').reduce((sum, r) => sum + Math.abs(r.balance), 0);
   const equity = trialBalance.filter(r => r.account_type === 'equity').reduce((sum, r) => sum + Math.abs(r.balance), 0);
 
-  const reportTabs = [
-    { id: 'trial_balance', label: t('trial_balance', 'Trial Balance'), label_id: 'Neraca Saldo' },
-    { id: 'pnl', label: t('pnl', 'Profit & Loss'), label_id: 'Laba Rugi' },
-    { id: 'balance_sheet', label: t('balance_sheet', 'Balance Sheet'), label_id: 'Neraca' },
-  ];
-
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3 bg-white rounded-lg shadow-sm border border-gray-200 p-2">
-        <div className="flex gap-1.5">
-          {reportTabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setReportType(tab.id as ReportType)}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition ${
-                reportType === tab.id
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={loadReport}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-50 text-gray-700 rounded text-xs hover:bg-gray-100"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          {t('refresh', 'Refresh')}
-        </button>
-      </div>
+    <div>
 
       {loading ? (
         <div className="flex justify-center py-8">
@@ -117,9 +91,9 @@ export function FinancialReports({ initialReport = 'trial_balance' }: FinancialR
         <>
           {reportType === 'trial_balance' && (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-3 py-2 border-b bg-gray-50">
-                <h3 className="font-semibold text-sm">{t('trial_balance', 'Trial Balance')}</h3>
-                <p className="text-xs text-gray-500">{t('as_of', 'As of')} {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</p>
+              <div className="px-4 py-3 border-b bg-gray-50">
+                <h3 className="font-bold text-base">Trial Balance as of {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</h3>
+                <p className="text-xs text-gray-600 italic">Neraca Saldo per {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</p>
               </div>
               <table className="w-full">
                 <thead className="bg-gray-50">
@@ -167,12 +141,10 @@ export function FinancialReports({ initialReport = 'trial_balance' }: FinancialR
 
           {reportType === 'pnl' && (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-3 py-2 border-b bg-gray-50">
-                <h3 className="font-semibold text-sm">{t('pnl', 'Profit & Loss Statement')}</h3>
-                <p className="text-xs text-gray-500">
-                  {t('period', 'Period')}: {new Date(dateRange.startDate).toLocaleDateString('id-ID')} - {new Date(dateRange.endDate).toLocaleDateString('id-ID')}
-                </p>
-                <p className="text-[10px] text-amber-600 mt-0.5 italic">
+              <div className="px-4 py-3 border-b bg-gray-50">
+                <h3 className="font-bold text-base">Profit & Loss Statement for period {new Date(dateRange.startDate).toLocaleDateString('id-ID')} - {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</h3>
+                <p className="text-xs text-gray-600 italic">Laporan Laba Rugi periode {new Date(dateRange.startDate).toLocaleDateString('id-ID')} - {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</p>
+                <p className="text-[10px] text-amber-600 mt-1 italic">
                   {t('pnl_note', 'Note: Costs may change as import expenses are updated')}
                 </p>
               </div>
@@ -230,9 +202,9 @@ export function FinancialReports({ initialReport = 'trial_balance' }: FinancialR
 
           {reportType === 'balance_sheet' && (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-3 py-2 border-b bg-gray-50">
-                <h3 className="font-semibold text-sm">{t('balance_sheet', 'Balance Sheet')} (Neraca)</h3>
-                <p className="text-xs text-gray-500">{t('as_of', 'As of')} {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</p>
+              <div className="px-4 py-3 border-b bg-gray-50">
+                <h3 className="font-bold text-base">Balance Sheet as of {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</h3>
+                <p className="text-xs text-gray-600 italic">Neraca per {new Date(dateRange.endDate).toLocaleDateString('id-ID')}</p>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
