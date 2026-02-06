@@ -8,7 +8,7 @@ interface UserProfile {
   username: string;
   email: string;
   full_name: string;
-  role: 'admin' | 'sales' | 'accounts' | 'warehouse';
+  role: 'admin' | 'sales' | 'accounts' | 'warehouse' | 'auditor_ca';
   is_active: boolean;
   created_at: string;
 }
@@ -31,7 +31,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     email: '',
     password: '',
     full_name: '',
-    role: 'sales' as 'admin' | 'sales' | 'accounts' | 'warehouse',
+    role: 'sales' as 'admin' | 'sales' | 'accounts' | 'warehouse' | 'auditor_ca',
   });
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -93,16 +93,30 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     setLoading(true);
 
     try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({
-          username: formData.username.toLowerCase(),
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const response = await fetch(`${supabaseUrl}/functions/v1/admin-update-user`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: editingUser.id,
+          email: formData.email,
+          username: formData.username,
           full_name: formData.full_name,
           role: formData.role,
-        })
-        .eq('id', editingUser.id);
+        }),
+      });
 
-      if (error) throw error;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update user');
+      }
 
       alert(`User ${formData.full_name} updated successfully!`);
       setShowEditModal(false);
@@ -243,9 +257,16 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         return 'bg-green-100 text-green-800 border-green-300';
       case 'warehouse':
         return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'auditor_ca':
+        return 'bg-gray-100 text-gray-800 border-gray-300';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-300';
     }
+  };
+
+  const formatRoleDisplay = (role: string) => {
+    if (role === 'auditor_ca') return 'Auditor CA';
+    return role.charAt(0).toUpperCase() + role.slice(1);
   };
 
   return (
@@ -309,9 +330,9 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               </div>
 
               <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 border rounded-full text-xs font-medium capitalize flex items-center gap-1.5 ${getRoleBadgeColor(user.role)}`}>
+                <span className={`px-3 py-1 border rounded-full text-xs font-medium flex items-center gap-1.5 ${getRoleBadgeColor(user.role)}`}>
                   <Briefcase className="w-3 h-3" />
-                  {user.role}
+                  {formatRoleDisplay(user.role)}
                 </span>
 
                 <button
@@ -472,6 +493,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               <option value="sales">Sales - CRM, customers, and sales invoices</option>
               <option value="accounts">Accounts - Finance and invoicing</option>
               <option value="warehouse">Warehouse - Inventory management</option>
+              <option value="auditor_ca">Auditor CA - Read-only financial access</option>
               <option value="admin">Admin - Full system access</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
@@ -535,9 +557,9 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         title="Edit User"
       >
         <form onSubmit={handleEditUser} className="space-y-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-            <p className="text-sm text-amber-800">
-              Editing user profile. Email cannot be changed. To reset password, user must use password reset feature.
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+            <p className="text-sm text-blue-800">
+              You can edit all user details including email. To reset password, use the password reset button from the user list.
             </p>
           </div>
 
@@ -578,16 +600,18 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
               <Mail className="w-4 h-4" />
-              Email Address
+              Email Address <span className="text-red-500">*</span>
             </label>
             <input
               type="email"
               value={formData.email}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-              disabled
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="john@example.com"
+              required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Email cannot be changed
+              Email address can now be updated
             </p>
           </div>
 
@@ -605,6 +629,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               <option value="sales">Sales - CRM, customers, and sales invoices</option>
               <option value="accounts">Accounts - Finance and invoicing</option>
               <option value="warehouse">Warehouse - Inventory management</option>
+              <option value="auditor_ca">Auditor CA - Read-only financial access</option>
               <option value="admin">Admin - Full system access</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
