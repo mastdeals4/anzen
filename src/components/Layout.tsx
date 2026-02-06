@@ -26,52 +26,8 @@ import {
   RotateCcw,
   AlertTriangle,
   ClipboardList,
-  Sparkles,
 } from 'lucide-react';
 import logo from '../assets/Untitled-1.svg';
-
-interface Quote {
-  content: string;
-  author: string;
-}
-
-const fallbackQuotes: Quote[] = [
-  { content: "Success is not final, failure is not fatal: it is the courage to continue that counts.", author: "Winston Churchill" },
-  { content: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
-  { content: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
-  { content: "Excellence is not a skill, it's an attitude.", author: "Ralph Marston" },
-  { content: "Quality is not an act, it is a habit.", author: "Aristotle" },
-  { content: "The best time to plant a tree was 20 years ago. The second best time is now.", author: "Chinese Proverb" },
-  { content: "Success is the sum of small efforts repeated day in and day out.", author: "Robert Collier" },
-  { content: "Don't watch the clock; do what it does. Keep going.", author: "Sam Levenson" },
-  { content: "The future depends on what you do today.", author: "Mahatma Gandhi" },
-  { content: "Strive not to be a success, but rather to be of value.", author: "Albert Einstein" },
-  { content: "The harder you work for something, the greater you'll feel when you achieve it.", author: "Unknown" },
-  { content: "Dream bigger. Do bigger.", author: "Unknown" },
-  { content: "Don't stop when you're tired. Stop when you're done.", author: "Unknown" },
-  { content: "Wake up with determination. Go to bed with satisfaction.", author: "Unknown" },
-  { content: "Do something today that your future self will thank you for.", author: "Sean Patrick Flanery" },
-  { content: "Little things make big days.", author: "Unknown" },
-  { content: "It's going to be hard, but hard does not mean impossible.", author: "Unknown" },
-  { content: "Don't wait for opportunity. Create it.", author: "Unknown" },
-  { content: "Sometimes we're tested not to show our weaknesses, but to discover our strengths.", author: "Unknown" },
-  { content: "The key to success is to focus on goals, not obstacles.", author: "Unknown" },
-  { content: "Dream it. Believe it. Build it.", author: "Unknown" },
-  { content: "Success doesn't just find you. You have to go out and get it.", author: "Unknown" },
-  { content: "Great things never come from comfort zones.", author: "Unknown" },
-  { content: "Opportunities don't happen. You create them.", author: "Chris Grosser" },
-  { content: "The secret of getting ahead is getting started.", author: "Mark Twain" },
-  { content: "Focus on being productive instead of busy.", author: "Tim Ferriss" },
-  { content: "Action is the foundational key to all success.", author: "Pablo Picasso" },
-  { content: "Your limitation—it's only your imagination.", author: "Unknown" },
-  { content: "Push yourself, because no one else is going to do it for you.", author: "Unknown" },
-  { content: "Sometimes later becomes never. Do it now.", author: "Unknown" }
-];
-
-const getRandomFallbackQuote = (): Quote => {
-  const randomIndex = Math.floor(Math.random() * fallbackQuotes.length);
-  return fallbackQuotes[randomIndex];
-};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -82,23 +38,10 @@ export function Layout({ children }: LayoutProps) {
   const { profile, signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { currentPage, setCurrentPage, sidebarCollapsed, setSidebarCollapsed } = useNavigation();
-  const [quote, setQuote] = useState<Quote>({ content: 'Welcome back!', author: '' });
 
   // Auto-collapse sidebar for specific pages
   const autoCollapsiblePages = ['crm', 'command-center', 'finance'];
   const shouldAutoCollapse = autoCollapsiblePages.includes(currentPage);
-
-  // Use fallback quotes only (removed external API to clean console)
-  const fetchQuote = () => {
-    setQuote(getRandomFallbackQuote());
-  };
-
-  // Fetch quote on mount and rotate every 5 minutes
-  useEffect(() => {
-    fetchQuote();
-    const interval = setInterval(fetchQuote, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Automatically collapse sidebar when entering CRM or Command Center
   useEffect(() => {
@@ -224,22 +167,7 @@ export function Layout({ children }: LayoutProps) {
               )}
             </div>
 
-            <div className="flex-1 hidden md:flex items-center justify-center px-4">
-              <div className="flex items-center justify-center gap-2 text-sm">
-                <span className="font-medium text-gray-700">
-                  Welcome, <span className="text-blue-600">{profile?.full_name || profile?.username || 'User'}</span>
-                </span>
-                <span className="text-gray-400">•</span>
-                <div className="flex items-center gap-2 text-gray-500 italic">
-                  <Sparkles className="w-3 h-3 text-yellow-500 flex-shrink-0" />
-                  <p className="line-clamp-1">
-                    {isLoadingQuote ? 'Loading inspiration...' : `"${quote.content}"`}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 md:hidden" />
+            <div className="flex-1" />
 
             <div className="flex items-center gap-3">
               <NotificationDropdown />

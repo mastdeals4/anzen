@@ -98,8 +98,7 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
     const { data } = await supabase
       .from('app_settings')
       .select('company_name, company_address')
-      .limit(1)
-      .maybeSingle();
+      .single();
 
     if (data) {
       setCompanyName(data.company_name || '');
