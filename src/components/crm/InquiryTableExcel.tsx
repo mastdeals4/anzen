@@ -13,6 +13,8 @@ import { OurSideChips } from './OurSideChips';
 import { PipelineStatusBadge, pipelineStatusOptions } from './PipelineStatusBadge';
 import { LostReasonModal } from './LostReasonModal';
 import { useAuth } from '../../contexts/AuthContext';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface InquiryItem {
   id: string;
@@ -391,10 +393,10 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       const fileName = `CRM-Inquiries-${new Date().toISOString().split('T')[0]}.xlsx`;
       XLSX.writeFile(wb, fileName);
 
-      alert(`Exported ${exportData.length} inquiries to ${fileName}`);
+      showToast({ type: 'success', title: 'Success', message: `Exported ${exportData.length} inquiries to ${fileName}` });
     } catch (error) {
       console.error('Export error:', error);
-      alert('Failed to export data. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to export data. Please try again.' });
     } finally {
       setExporting(false);
     }
@@ -452,10 +454,10 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       link.click();
       document.body.removeChild(link);
 
-      alert(`Exported ${exportData.length} inquiries to CSV. You can import this file to Google Sheets.`);
+      showToast({ type: 'success', title: 'Success', message: `Exported ${exportData.length} inquiries to CSV. You can import this file to Google Sheets.` });
     } catch (error) {
       console.error('Export error:', error);
-      alert('Failed to export data. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to export data. Please try again.' });
     } finally {
       setExporting(false);
     }
@@ -492,7 +494,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     XLSX.utils.book_append_sheet(wb, ws, 'Import Template');
 
     XLSX.writeFile(wb, 'CRM-Import-Template.xlsx');
-    alert('Template downloaded! Fill in your data and use the Import button to upload.');
+    showToast({ type: 'info', title: 'Notice', message: 'Template downloaded! Fill in your data and use the Import button to upload.' });
   };
 
   const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -508,7 +510,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
         if (jsonData.length === 0) {
-          alert('No data found in the file');
+          showToast({ type: 'error', title: 'Error', message: 'No data found in the file' });
           return;
         }
 
@@ -601,13 +603,13 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
         if (error) throw error;
 
-        alert(`Successfully imported ${inquiriesToInsert.length} inquiries!`);
+        showToast({ type: 'success', title: 'Success', message: `Successfully imported ${inquiriesToInsert.length} inquiries!` });
         onRefresh();
 
         event.target.value = '';
       } catch (error) {
         console.error('Import error:', error);
-        alert('Failed to import data. Please check the file format and try again.');
+        showToast({ type: 'error', title: 'Error', message: 'Failed to import data. Please check the file format and try again.' });
         event.target.value = '';
       }
     };
@@ -715,7 +717,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       onRefresh();
     } catch (error) {
       console.error('Error updating field:', error);
-      alert('Failed to update. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update. Please try again.' });
     }
   };
 
@@ -772,7 +774,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     const isSent = inquiry[sentAtField];
 
     if (isSent) {
-      if (!confirm(`Are you sure you want to unmark ${requirementType.toUpperCase()} as sent?`)) {
+      if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to unmark ${requirementType.toUpperCase()} as sent?`, variant: 'warning' })) {
         return;
       }
 
@@ -785,10 +787,10 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
         if (error) throw error;
         onRefresh();
-        alert(`${requirementType.toUpperCase()} unmarked!`);
+        showToast({ type: 'success', title: 'Success', message: `${requirementType.toUpperCase()} unmarked!` });
       } catch (error) {
         console.error('Error unmarking requirement:', error);
-        alert('Failed to unmark. Please try again.');
+        showToast({ type: 'error', title: 'Error', message: 'Failed to unmark. Please try again.' });
       }
       return;
     }
@@ -808,10 +810,10 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
       if (error) throw error;
       onRefresh();
-      alert(`${requirementType.toUpperCase()} marked as sent!`);
+      showToast({ type: 'success', title: 'Success', message: `${requirementType.toUpperCase()} marked as sent!` });
     } catch (error) {
       console.error('Error marking requirement as sent:', error);
-      alert('Failed to mark as sent. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to mark as sent. Please try again.' });
     }
   };
 
@@ -839,10 +841,10 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       setInquiryForOfferedPrice(null);
       setOfferedPriceInput('');
       onRefresh();
-      alert('Price marked as sent with offered price updated!');
+      showToast({ type: 'success', title: 'Success', message: 'Price marked as sent with offered price updated!' });
     } catch (error) {
       console.error('Error saving offered price and marking sent:', error);
-      alert('Failed to save. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save. Please try again.' });
     }
   };
 
@@ -885,11 +887,11 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
       setLogCallModalOpen(false);
       setCallNotes('');
-      alert('Call logged successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Call logged successfully!' });
       onRefresh();
     } catch (error) {
       console.error('Error logging call:', error);
-      alert('Failed to log call. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to log call. Please try again.' });
     }
   };
 
@@ -897,7 +899,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     if (selectedRows.size === 0) return;
 
     const count = selectedRows.size;
-    if (!confirm(`Are you sure you want to delete ${count} selected ${count === 1 ? 'inquiry' : 'inquiries'}? This action cannot be undone.`)) {
+    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to delete ${count} selected ${count === 1 ? 'inquiry' : 'inquiries'}? This action cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -911,11 +913,11 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       if (error) throw error;
 
       setSelectedRows(new Set());
-      alert(`Successfully deleted ${count} ${count === 1 ? 'inquiry' : 'inquiries'}`);
+      showToast({ type: 'success', title: 'Success', message: `Successfully deleted ${count} ${count === 1 ? 'inquiry' : 'inquiries'}` });
       onRefresh();
     } catch (error) {
       console.error('Error deleting inquiries:', error);
-      alert('Failed to delete inquiries. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete inquiries. Please try again.' });
     }
   };
 
@@ -944,11 +946,11 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       setFollowUpModalOpen(false);
       setFollowUpDate('');
       setFollowUpNotes('');
-      alert('Follow-up scheduled successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Follow-up scheduled successfully!' });
       onRefresh();
     } catch (error) {
       console.error('Error scheduling follow-up:', error);
-      alert('Failed to schedule follow-up. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to schedule follow-up. Please try again.' });
     }
   };
 
@@ -979,11 +981,11 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       if (error) throw error;
 
       setEditRequirementsModalOpen(false);
-      alert('Customer requirements updated successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Customer requirements updated successfully!' });
       onRefresh();
     } catch (error) {
       console.error('Error updating requirements:', error);
-      alert('Failed to update requirements. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update requirements. Please try again.' });
     }
   };
 

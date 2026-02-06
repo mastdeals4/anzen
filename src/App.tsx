@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
+import { BrowserRouter, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LanguageProvider } from './contexts/LanguageContext';
 import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
 import { Login } from './components/Login';
 import { ToastContainer } from './components/ToastNotification';
+import { ConfirmDialogContainer } from './components/ConfirmDialog';
 import { Dashboard } from './pages/Dashboard';
 import { Products } from './pages/Products';
 import { Customers } from './pages/Customers';
@@ -31,6 +33,7 @@ import { initializeNotificationChecks } from './utils/notifications';
 function AppContent() {
   const { user, profile, loading } = useAuth();
   const { currentPage } = useNavigation();
+  const location = useLocation();
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -46,11 +49,11 @@ function AppContent() {
     return cleanup;
   }, [user, profile]);
 
-  if (window.location.pathname === '/setup') {
+  if (location.pathname === '/setup') {
     return <Setup />;
   }
 
-  if (window.location.pathname === '/auth/gmail/callback') {
+  if (location.pathname === '/auth/gmail/callback') {
     return <GmailCallback />;
   }
 
@@ -67,6 +70,10 @@ function AppContent() {
 
   if (!user || !profile) {
     return <Login />;
+  }
+
+  if (location.pathname === '/') {
+    return <Navigate to="/dashboard" replace />;
   }
 
   const renderPage = () => {
@@ -119,19 +126,22 @@ function AppContent() {
       {renderPage()}
       <ApprovalNotifications />
       <ToastContainer />
+      <ConfirmDialogContainer />
     </>
   );
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <LanguageProvider>
-        <NavigationProvider>
-          <AppContent />
-        </NavigationProvider>
-      </LanguageProvider>
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <LanguageProvider>
+          <NavigationProvider>
+            <AppContent />
+          </NavigationProvider>
+        </LanguageProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

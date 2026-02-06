@@ -9,6 +9,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Trash2, Eye, Edit, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface DeliveryChallan {
   id: string;
@@ -415,7 +417,7 @@ export function DeliveryChallan() {
           }
         } catch (error) {
           console.error('Error loading SO items:', error);
-          alert('Failed to load Sales Order items. Please try again.');
+          showToast({ type: 'error', title: 'Error', message: 'Failed to load Sales Order items. Please try again.' });
         }
       }
     } else {
@@ -547,19 +549,19 @@ export function DeliveryChallan() {
 
     const invalidItems = items.filter(item => !item.product_id || !item.batch_id || item.quantity <= 0);
     if (invalidItems.length > 0) {
-      alert('Please select product, batch, and enter quantity for all items before saving.');
+      showToast({ type: 'error', title: 'Error', message: 'Please select product, batch, and enter quantity for all items before saving.' });
       return;
     }
 
     const emptyBatches = items.filter(item => !item.batch_id || item.batch_id === '');
     if (emptyBatches.length > 0) {
-      alert('Some items do not have a batch selected. Please select a batch for all items.');
+      showToast({ type: 'error', title: 'Error', message: 'Some items do not have a batch selected. Please select a batch for all items.' });
       return;
     }
 
     const emptyProducts = items.filter(item => !item.product_id || item.product_id === '');
     if (emptyProducts.length > 0) {
-      alert('Some items do not have a product selected. Please select a product for all items.');
+      showToast({ type: 'error', title: 'Error', message: 'Some items do not have a product selected. Please select a product for all items.' });
       return;
     }
 
@@ -584,7 +586,7 @@ export function DeliveryChallan() {
         if (totalQuantity > availableStock) {
           const product = products.find(p => p.id === items.find(i => i.batch_id === batchId)?.product_id);
           const unit = product?.unit || 'kg';
-          alert(`Insufficient available stock for batch ${batch.batch_number}!\n\nProduct: ${product?.product_name || 'Unknown'}\nBatch: ${batch.batch_number}\nAvailable: ${availableStock} ${unit}\nTotal Requested (across all items): ${totalQuantity} ${unit}\n\nYou are using this batch in multiple items. Please reduce quantities or select different batches.`);
+          showToast({ type: 'error', title: 'Error', message: `Insufficient available stock for batch ${batch.batch_number}!\n\nProduct: ${product?.product_name || 'Unknown'}\nBatch: ${batch.batch_number}\nAvailable: ${availableStock} ${unit}\nTotal Requested (across all items): ${totalQuantity} ${unit}\n\nYou are using this batch in multiple items. Please reduce quantities or select different batches.` });
           return;
         }
       }
@@ -729,26 +731,26 @@ export function DeliveryChallan() {
       resetForm();
       loadChallans();
       loadBatches();
-      alert(`Delivery Challan ${editingChallan ? 'updated' : 'created'} successfully!`);
+      showToast({ type: 'success', title: 'Success', message: `Delivery Challan ${editingChallan ? 'updated' : 'created'} successfully!` });
     } catch (error: any) {
       console.error('Error saving challan:', error);
       console.error('Full error object:', JSON.stringify(error, null, 2));
       const errorMessage = error?.message || error?.error_description || error?.msg || 'Unknown error occurred';
 
       if (errorMessage.toLowerCase().includes('insufficient stock')) {
-        alert(`Cannot save: ${errorMessage}\n\nPlease reduce quantities or select different batches with more stock.`);
+        showToast({ type: 'error', title: 'Error', message: `Cannot save: ${errorMessage}\n\nPlease reduce quantities or select different batches with more stock.` });
       } else if (errorMessage.includes('batch_id')) {
-        alert(`Error: Invalid batch selection.\n\n${errorMessage}\n\nPlease ensure all items have a valid batch selected.`);
+        showToast({ type: 'error', title: 'Error', message: `Error: Invalid batch selection.\n\n${errorMessage}\n\nPlease ensure all items have a valid batch selected.` });
       } else if (errorMessage.includes('foreign key')) {
-        alert(`Error: Invalid product or batch selection.\n\n${errorMessage}\n\nPlease check your selections.`);
+        showToast({ type: 'error', title: 'Error', message: `Error: Invalid product or batch selection.\n\n${errorMessage}\n\nPlease check your selections.` });
       } else {
-        alert(`Failed to save challan:\n\n${errorMessage}`);
+        showToast({ type: 'error', title: 'Error', message: `Failed to save challan:\n\n${errorMessage}` });
       }
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this delivery challan? This will revert the linked Sales Order status.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this delivery challan? This will revert the linked Sales Order status.', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { data: dcData } = await supabase
@@ -778,15 +780,15 @@ export function DeliveryChallan() {
       }
 
       loadChallans();
-      alert('Delivery Challan deleted successfully. Sales Order status has been reverted.');
+      showToast({ type: 'success', title: 'Success', message: 'Delivery Challan deleted successfully. Sales Order status has been reverted.' });
     } catch (error) {
       console.error('Error deleting challan:', error);
-      alert('Failed to delete challan. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete challan. Please try again.' });
     }
   };
 
   const handleApproveChallan = async (challanId: string) => {
-    if (!confirm('Approve this Delivery Challan? Stock will be deducted and it will be available for invoice creation.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this Delivery Challan? Stock will be deducted and it will be available for invoice creation.', variant: 'warning' })) return;
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -807,23 +809,23 @@ export function DeliveryChallan() {
         throw new Error(errorMsg);
       }
 
-      alert('Delivery Challan approved successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Delivery Challan approved successfully!' });
       loadChallans();
     } catch (error: any) {
       console.error('Error approving challan:', error);
       const errorMessage = error?.message || 'Unknown error';
 
       if (errorMessage.toLowerCase().includes('insufficient stock')) {
-        alert(`Cannot approve - Insufficient Stock!\n\n${errorMessage}\n\nPlease edit the DC and reduce quantities or select different batches.`);
+        showToast({ type: 'error', title: 'Error', message: `Cannot approve - Insufficient Stock!\n\n${errorMessage}\n\nPlease edit the DC and reduce quantities or select different batches.` });
       } else {
-        alert(`Failed to approve challan:\n\n${errorMessage}`);
+        showToast({ type: 'error', title: 'Error', message: `Failed to approve challan:\n\n${errorMessage}` });
       }
     }
   };
 
   const handleRejectChallan = async () => {
     if (!challanToReject || !rejectionReason.trim()) {
-      alert('Please enter a rejection reason');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a rejection reason' });
       return;
     }
 
@@ -843,14 +845,14 @@ export function DeliveryChallan() {
 
       if (error) throw error;
 
-      alert('Delivery Challan rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Delivery Challan rejected' });
       setShowRejectModal(false);
       setRejectionReason('');
       setChallanToReject(null);
       loadChallans();
     } catch (error: any) {
       console.error('Error rejecting challan:', error.message);
-      alert('Failed to reject challan');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to reject challan' });
     }
   };
 

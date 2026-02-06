@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
 import { Package, Plus, Eye, Edit, Lock, CheckCircle, AlertCircle } from 'lucide-react';
 import { Modal } from '../components/Modal';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface Supplier {
   id: string;
@@ -145,7 +147,7 @@ export default function ImportContainers() {
       setContainers(containersWithExpenses);
     } catch (error: any) {
       console.error('Error fetching containers:', error.message);
-      alert('Failed to load import containers');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load import containers' });
     } finally {
       setLoading(false);
     }
@@ -182,14 +184,14 @@ export default function ImportContainers() {
           .eq('id', editingContainer.id);
 
         if (error) throw error;
-        alert('Container updated successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Container updated successfully' });
       } else {
         const { error } = await supabase
           .from('import_containers')
           .insert([containerData]);
 
         if (error) throw error;
-        alert('Container created successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Container created successfully' });
       }
 
       setShowModal(false);
@@ -198,12 +200,12 @@ export default function ImportContainers() {
       fetchContainers();
     } catch (error: any) {
       console.error('Error saving container:', error.message);
-      alert('Failed to save container: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save container: ' + error.message });
     }
   };
 
   const handleAllocate = async (containerId: string) => {
-    if (!confirm('Are you sure you want to allocate import costs to batches? This cannot be undone.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to allocate import costs to batches? This cannot be undone.', variant: 'warning', confirmLabel: 'Allocate' })) {
       return;
     }
 
@@ -217,14 +219,14 @@ export default function ImportContainers() {
 
       const result = data as any;
       if (result.success) {
-        alert(`Success! Allocated costs to ${result.batches_allocated} batches.\nTotal cost: Rp ${result.total_cost?.toLocaleString()}`);
+        showToast({ type: 'success', title: 'Success', message: `Allocated costs to ${result.batches_allocated} batches. Total cost: Rp ${result.total_cost?.toLocaleString()}` });
         fetchContainers();
       } else {
-        alert('Error: ' + result.error);
+        showToast({ type: 'error', title: 'Error', message: result.error });
       }
     } catch (error: any) {
       console.error('Error allocating costs:', error.message);
-      alert('Failed to allocate costs: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to allocate costs: ' + error.message });
     }
   };
 

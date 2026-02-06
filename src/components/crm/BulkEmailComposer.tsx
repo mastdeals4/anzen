@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Mail, Send, FileText, Clock, Users, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
 import { Modal } from '../Modal';
+import { showToast } from '../ToastNotification';
 
 interface EmailTemplate {
   id: string;
@@ -88,12 +89,12 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
 
   const sendBulkEmails = async () => {
     if (!subject || !body) {
-      alert('Please fill in subject and message');
+      showToast({ type: 'error', title: 'Error', message: 'Please fill in subject and message' });
       return;
     }
 
     if (intervalSeconds < 10) {
-      alert('Please set interval to at least 10 seconds to avoid blocking');
+      showToast({ type: 'warning', title: 'Warning', message: 'Please set interval to at least 10 seconds to avoid blocking' });
       return;
     }
 
@@ -112,7 +113,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
         .maybeSingle();
 
       if (!gmailConnection) {
-        alert('Gmail not connected. Please connect Gmail in Settings first.');
+        showToast({ type: 'error', title: 'Error', message: 'Gmail not connected. Please connect Gmail in Settings first.' });
         setSending(false);
         return;
       }

@@ -8,6 +8,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Edit, Trash2, AlertTriangle, Package, DollarSign, FileText, ExternalLink } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface Batch {
   id: string;
@@ -186,7 +188,7 @@ export function Batches() {
       setDocumentsModalOpen(true);
     } catch (error) {
       console.error('Error loading documents:', error);
-      alert('Failed to load documents');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load documents' });
     }
   };
 
@@ -194,7 +196,7 @@ export function Batches() {
     e.preventDefault();
 
     if (formData.import_price_usd > 0 && formData.exchange_rate_usd_to_idr <= 0) {
-      alert('Please enter a valid exchange rate');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a valid exchange rate' });
       return;
     }
 
@@ -213,7 +215,7 @@ export function Batches() {
 
         // Validate that new import quantity is not less than sold quantity
         if (formData.import_quantity < soldQuantity) {
-          alert(`Cannot reduce import quantity to ${formData.import_quantity}. You have already sold ${soldQuantity} units from this batch.`);
+          showToast({ type: 'error', title: 'Error', message: `Cannot reduce import quantity to ${formData.import_quantity}. You have already sold ${soldQuantity} units from this batch.` });
           return;
         }
       }
@@ -335,7 +337,7 @@ export function Batches() {
       loadBatches();
     } catch (error) {
       console.error('Error saving batch:', error);
-      alert('Failed to save batch. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save batch. Please try again.' });
     }
   };
 
@@ -431,7 +433,7 @@ export function Batches() {
         .limit(1);
 
       if (salesItems && salesItems.length > 0) {
-        alert('Cannot delete this batch. It has been used in sales invoices. Please delete the related invoices first or contact your administrator.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this batch. It has been used in sales invoices. Please delete the related invoices first or contact your administrator.' });
         return;
       }
 
@@ -442,11 +444,11 @@ export function Batches() {
         .limit(1);
 
       if (challanItems && challanItems.length > 0) {
-        alert('Cannot delete this batch. It has been used in delivery challans. Please delete the related delivery challans first.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this batch. It has been used in delivery challans. Please delete the related delivery challans first.' });
         return;
       }
 
-      if (!confirm('Are you sure you want to delete this batch? This will permanently remove all related data.')) return;
+      if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this batch? This will permanently remove all related data.', variant: 'danger', confirmLabel: 'Delete' })) return;
 
       const { error: docsError } = await supabase
         .from('batch_documents')
@@ -476,12 +478,12 @@ export function Batches() {
 
       if (error) throw error;
 
-      alert('Batch deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Batch deleted successfully' });
       await loadBatches();
     } catch (error: any) {
       console.error('Error deleting batch:', error);
       const errorMessage = error?.message || 'Unknown error occurred';
-      alert(`Failed to delete batch: ${errorMessage}`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to delete batch: ${errorMessage}` });
     }
   };
 
@@ -524,7 +526,7 @@ export function Batches() {
 
     if (error) {
       console.error('Error loading transaction history:', error);
-      alert('Error loading transaction history: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Error loading transaction history: ' + error.message });
       return;
     }
 

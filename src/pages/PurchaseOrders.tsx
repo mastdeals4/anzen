@@ -7,6 +7,8 @@ import { FileText, Plus, Search, Eye, Edit, Trash2, CheckCircle, XCircle, Downlo
 import { Modal } from '../components/Modal';
 import { PurchaseOrderView } from '../components/PurchaseOrderView';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface Supplier {
   id: string;
@@ -154,7 +156,7 @@ export default function PurchaseOrders() {
       setPurchaseOrders(data || []);
     } catch (error: any) {
       console.error('Error fetching purchase orders:', error.message);
-      alert(t('errors.failedToLoadPurchaseOrders'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToLoadPurchaseOrders') });
     } finally {
       setLoading(false);
     }
@@ -342,32 +344,32 @@ export default function PurchaseOrders() {
     e.preventDefault();
 
     if (!formData.supplier_id) {
-      alert(t('validation.selectSupplier'));
+      showToast({ type: 'error', title: 'Error', message: t('validation.selectSupplier') });
       return;
     }
 
     if (!formData.po_date) {
-      alert(t('validation.selectDate'));
+      showToast({ type: 'error', title: 'Error', message: t('validation.selectDate') });
       return;
     }
 
     if (poItems.length === 0 || !poItems[0].product_id) {
-      alert(t('validation.addAtLeastOneProduct'));
+      showToast({ type: 'error', title: 'Error', message: t('validation.addAtLeastOneProduct') });
       return;
     }
 
     for (let i = 0; i < poItems.length; i++) {
       const item = poItems[i];
       if (!item.product_id) {
-        alert(t('validation.selectProductForLine') + ` ${i + 1}`);
+        showToast({ type: 'error', title: 'Error', message: t('validation.selectProductForLine') + ` ${i + 1}` });
         return;
       }
       if (item.quantity <= 0) {
-        alert(t('validation.enterValidQuantityForLine') + ` ${i + 1}`);
+        showToast({ type: 'error', title: 'Error', message: t('validation.enterValidQuantityForLine') + ` ${i + 1}` });
         return;
       }
       if (item.unit_price <= 0) {
-        alert(t('validation.enterValidPriceForLine') + ` ${i + 1}`);
+        showToast({ type: 'error', title: 'Error', message: t('validation.enterValidPriceForLine') + ` ${i + 1}` });
         return;
       }
     }
@@ -423,7 +425,7 @@ export default function PurchaseOrders() {
 
         if (itemsError) throw itemsError;
 
-        alert(t('success.saved'));
+        showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       } else {
         // Create new PO
         const { data: newPO, error: poError } = await supabase
@@ -458,19 +460,19 @@ export default function PurchaseOrders() {
 
         if (itemsError) throw itemsError;
 
-        alert(t('success.saved'));
+        showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       }
 
       setShowCreateModal(false);
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error saving purchase order:', error);
-      alert(t('errors.failedToSave') + ': ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSave') + ': ' + error.message });
     }
   };
 
   const handleApprove = async (poId: string) => {
-    if (!confirm('Approve this Purchase Order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this Purchase Order?', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -484,16 +486,16 @@ export default function PurchaseOrders() {
 
       if (error) throw error;
 
-      alert(t('success.saved'));
+      showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error approving PO:', error);
-      alert(t('errors.failedToSave') + ': ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSave') + ': ' + error.message });
     }
   };
 
   const handleDelete = async (poId: string) => {
-    if (!confirm('Are you sure you want to delete this Purchase Order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this Purchase Order?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -503,11 +505,11 @@ export default function PurchaseOrders() {
 
       if (error) throw error;
 
-      alert(t('success.deleted'));
+      showToast({ type: 'success', title: 'Success', message: t('success.deleted') });
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error deleting PO:', error);
-      alert(t('errors.failedToDelete') + ': ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToDelete') + ': ' + error.message });
     }
   };
 

@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase';
 import { Plus, Download, Upload, Trash2, Send, Search } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface Customer {
   id: string;
@@ -153,7 +155,7 @@ export function CustomerDatabaseExcel() {
       );
     } catch (error) {
       console.error('Error updating customer:', error);
-      alert('Failed to update customer');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update customer' });
     } finally {
       setEditingCell(null);
       setEditValue('');
@@ -189,13 +191,13 @@ export function CustomerDatabaseExcel() {
       setCustomers(prev => [data, ...prev]);
     } catch (error) {
       console.error('Error adding customer:', error);
-      alert('Failed to add customer');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to add customer' });
     }
   };
 
   const handleDeleteSelected = async () => {
     if (selectedRows.size === 0) return;
-    if (!confirm(`Delete ${selectedRows.size} customer(s)?`)) return;
+    if (!await showConfirm({ title: 'Confirm', message: `Delete ${selectedRows.size} customer(s)?`, variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -208,7 +210,7 @@ export function CustomerDatabaseExcel() {
       setSelectedRows(new Set());
     } catch (error) {
       console.error('Error deleting customers:', error);
-      alert('Failed to delete customers');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete customers' });
     }
   };
 
@@ -280,7 +282,7 @@ export function CustomerDatabaseExcel() {
       const lines = text.split('\n').filter(line => line.trim());
 
       if (lines.length < 2) {
-        alert('CSV file is empty or invalid');
+        showToast({ type: 'error', title: 'Error', message: 'CSV file is empty or invalid' });
         return;
       }
 
@@ -303,7 +305,7 @@ export function CustomerDatabaseExcel() {
       const notesIndex = headers.findIndex(h => h.toLowerCase() === 'notes');
 
       if (companyNameIndex === -1) {
-        alert('CSV must have a "Company Name" column');
+        showToast({ type: 'error', title: 'Error', message: 'CSV must have a "Company Name" column' });
         return;
       }
 
@@ -381,7 +383,7 @@ export function CustomerDatabaseExcel() {
       }).filter(Boolean);
 
       if (customersToInsert.length === 0) {
-        alert('No valid customer data found in CSV');
+        showToast({ type: 'error', title: 'Error', message: 'No valid customer data found in CSV' });
         return;
       }
 
@@ -392,11 +394,11 @@ export function CustomerDatabaseExcel() {
 
       if (error) throw error;
 
-      alert(`Successfully imported ${customersToInsert.length} customer(s)`);
+      showToast({ type: 'success', title: 'Success', message: `Successfully imported ${customersToInsert.length} customer(s)` });
       loadCustomers();
     } catch (error) {
       console.error('Error importing CSV:', error);
-      alert('Failed to import CSV. Please check the file format.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to import CSV. Please check the file format.' });
     }
 
     e.target.value = '';
@@ -468,7 +470,7 @@ export function CustomerDatabaseExcel() {
       .filter((c): c is Customer => !!c && !!c.email);
 
     if (contactsWithEmail.length === 0) {
-      alert('Please select customers with email addresses');
+      showToast({ type: 'warning', title: 'Warning', message: 'Please select customers with email addresses' });
       return;
     }
 

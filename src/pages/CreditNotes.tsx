@@ -7,6 +7,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Eye, Trash2, FileX, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface CreditNote {
   id: string;
@@ -305,13 +307,13 @@ export function CreditNotes() {
     e.preventDefault();
 
     if (!formData.customer_id || !formData.reason || items.length === 0) {
-      alert('Please complete all required fields');
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all required fields' });
       return;
     }
 
     const hasInvalidItems = items.some(item => !item.product_id || !item.batch_id || item.quantity <= 0 || item.unit_price <= 0);
     if (hasInvalidItems) {
-      alert('Please complete all item details');
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all item details' });
       return;
     }
 
@@ -341,18 +343,18 @@ export function CreditNotes() {
 
       if (itemsError) throw itemsError;
 
-      alert('Credit note created successfully. Stock has been added back to inventory.');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note created successfully. Stock has been added back to inventory.' });
       setModalOpen(false);
       resetForm();
       loadData();
     } catch (error: any) {
       console.error('Error creating credit note:', error);
-      alert(error.message || 'Failed to create credit note. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to create credit note. Please try again.' });
     }
   };
 
   const handleApprove = async (id: string) => {
-    if (!confirm('Approve this credit note? Stock will be adjusted accordingly.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this credit note? Stock will be adjusted accordingly.', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -364,11 +366,11 @@ export function CreditNotes() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Credit note approved successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note approved successfully' });
       loadData();
     } catch (error: any) {
       console.error('Error approving credit note:', error);
-      alert(error.message || 'Failed to approve credit note');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to approve credit note' });
     }
   };
 
@@ -387,16 +389,16 @@ export function CreditNotes() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Credit note rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note rejected' });
       loadData();
     } catch (error: any) {
       console.error('Error rejecting credit note:', error);
-      alert(error.message || 'Failed to reject credit note');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to reject credit note' });
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this credit note? This will reverse the stock adjustment.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this credit note? This will reverse the stock adjustment.', variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -408,11 +410,11 @@ export function CreditNotes() {
 
       if (error) throw error;
 
-      alert('Credit note deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note deleted successfully' });
       loadData();
     } catch (error: any) {
       console.error('Error deleting credit note:', error);
-      alert(error.message || 'Failed to delete credit note');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to delete credit note' });
     }
   };
 

@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase';
 import { Plus, DollarSign, Package, Truck, Building2, CreditCard as Edit, Trash2, FileText, Upload, X, ExternalLink, Download, Eye, Clipboard } from 'lucide-react';
 import { Modal } from '../Modal';
 import { useFinance } from '../../contexts/FinanceContext';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface FinanceExpense {
   id: string;
@@ -455,7 +457,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
       setReconciledExpenseIds(reconciledIds);
     } catch (error: any) {
       console.error('Error loading data:', error.message);
-      alert('Failed to load expenses');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load expenses' });
     } finally {
       setLoading(false);
     }
@@ -643,7 +645,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
           if (linkError) {
             console.error('Error linking to bank transaction:', linkError);
-            alert('Expense updated but failed to link to bank transaction. Please link manually from Bank Reconciliation.');
+            showToast({ type: 'warning', title: 'Warning', message: 'Expense updated but failed to link to bank transaction. Please link manually from Bank Reconciliation.' });
           } else {
             // Fetch the expense again to get updated bank_statement_lines
             const { data: refreshedExpense, error: refreshError } = await supabase
@@ -684,7 +686,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
           }
         }
 
-        alert('Expense updated successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Expense updated successfully' });
       } else {
         // Create new bank expense - cash expenses should be recorded in Petty Cash Manager
         const { data: { user } } = await supabase.auth.getUser();
@@ -739,7 +741,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
           if (linkError) {
             console.error('Error linking to bank transaction:', linkError);
-            alert('Expense created but failed to link to bank transaction. Please link manually from Bank Reconciliation.');
+            showToast({ type: 'warning', title: 'Warning', message: 'Expense created but failed to link to bank transaction. Please link manually from Bank Reconciliation.' });
           } else {
             // Fetch the expense again to get updated bank_statement_lines
             const { data: refreshedExpense, error: refreshError } = await supabase
@@ -780,7 +782,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
         // Add to local state (with bank link if applicable)
         setExpenses(prev => [finalExpense, ...prev]);
-        alert('Expense recorded successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Expense recorded successfully' });
       }
 
       setModalOpen(false);
@@ -790,9 +792,9 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
       // Show clear error message from backend validation
       const errorMessage = error.message || 'Unknown error occurred';
       if (errorMessage.includes('Import expenses must be linked')) {
-        alert('❌ Context Required\n\nImport expenses must be linked to an Import Container.\nPlease select a container before saving.');
+        showToast({ type: 'error', title: 'Error', message: 'Context Required: Import expenses must be linked to an Import Container. Please select a container before saving.' });
       } else {
-        alert('Failed to save expense:\n\n' + errorMessage);
+        showToast({ type: 'error', title: 'Error', message: 'Failed to save expense: ' + errorMessage });
       }
     }
   };
@@ -837,7 +839,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this expense?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this expense?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -849,19 +851,16 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
       // Remove from local state
       setExpenses(prev => prev.filter(exp => exp.id !== id));
-      alert('Expense deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Expense deleted successfully' });
     } catch (error: any) {
       console.error('Error deleting expense:', error.message);
-      alert('Failed to delete expense: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete expense: ' + error.message });
     }
   };
 
 
   const handleUnlinkFromBankStatement = async (expenseId: string) => {
-    if (!confirm(
-      'Are you sure you want to unlink this expense from the bank statement?\n\n' +
-      'The bank statement line will be set back to "Unmatched" status.'
-    )) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to unlink this expense from the bank statement?\n\nThe bank statement line will be set back to "Unmatched" status.', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -904,13 +903,13 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
         exp.id === expenseId ? updatedExpense : exp
       ));
 
-      alert('Expense unlinked from bank statement successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Expense unlinked from bank statement successfully' });
       setModalOpen(false);
       setEditingExpense(null);
       resetForm();
     } catch (error: any) {
       console.error('Error unlinking expense:', error.message);
-      alert('Failed to unlink expense: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to unlink expense: ' + error.message });
     }
   };
 
@@ -1027,7 +1026,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
 
   const exportToCSV = () => {
     if (filteredExpenses.length === 0) {
-      alert('No expenses to export');
+      showToast({ type: 'info', title: 'Notice', message: 'No expenses to export' });
       return;
     }
 

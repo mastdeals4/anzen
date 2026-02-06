@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { Layout } from '../components/Layout';
 import { AlertTriangle, TrendingUp, Package, Calendar, FileText } from 'lucide-react';
 import { ImportRequirementsTable } from '../components/ImportRequirementsTable';
+import { showToast } from '../components/ToastNotification';
 import { useAuth } from '../contexts/AuthContext';
 
 interface ImportRequirement {
@@ -80,7 +81,7 @@ export default function ImportRequirements() {
       }
     } catch (error: any) {
       console.error('Error fetching import requirements:', error.message);
-      alert('Failed to load import requirements');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load import requirements' });
     } finally {
       setLoading(false);
     }
@@ -129,11 +130,11 @@ export default function ImportRequirements() {
 
       if (error) throw error;
 
-      alert('Status updated successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Status updated successfully!' });
       fetchImportRequirements();
     } catch (error: any) {
       console.error('Error updating status:', error.message);
-      alert('Failed to update status');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update status' });
     }
   };
 

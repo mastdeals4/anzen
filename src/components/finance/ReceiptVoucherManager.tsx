@@ -4,6 +4,8 @@ import { Plus, Eye, Search, ArrowDownCircle, Check, Edit2, Trash2, X, Printer } 
 import { Modal } from '../Modal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface Customer {
   id: string;
@@ -305,7 +307,7 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
       pdf.save(`Receipt-${selectedVoucher.voucher_number}.pdf`);
     } catch (error) {
       console.error('Error generating PDF:', error);
-      alert('Error generating PDF. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Error generating PDF. Please try again.' });
     }
   };
 
@@ -313,7 +315,7 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
     e.preventDefault();
 
     if (allocations.length > 0 && totalAllocated > formData.amount) {
-      alert('Total allocated amount cannot exceed payment amount');
+      showToast({ type: 'error', title: 'Error', message: 'Total allocated amount cannot exceed payment amount' });
       return;
     }
 
@@ -411,7 +413,7 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
       loadVouchers();
     } catch (error: any) {
       console.error('Error saving voucher:', error);
-      alert('Failed to save: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save: ' + error.message });
     }
   };
 
@@ -485,7 +487,7 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
   };
 
   const handleDelete = async (voucher: ReceiptVoucher) => {
-    if (!confirm(`Delete receipt voucher ${voucher.voucher_number}? This will remove all allocations and cannot be undone.`)) {
+    if (!await showConfirm({ title: 'Confirm', message: `Delete receipt voucher ${voucher.voucher_number}? This will remove all allocations and cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 

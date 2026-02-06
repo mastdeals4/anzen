@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { UserPlus, Trash2, CheckCircle, XCircle, Mail, Lock, User as UserIcon, Briefcase, Edit2, X as XIcon } from 'lucide-react';
 import { Modal } from '../Modal';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface UserProfile {
   id: string;
@@ -68,7 +70,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
       if (profileError) throw profileError;
 
-      alert(`User ${formData.full_name} created successfully! Username: ${formData.username}`);
+      showToast({ type: 'success', title: 'Success', message: `User ${formData.full_name} created successfully! Username: ${formData.username}` });
       setShowAddModal(false);
       setFormData({
         username: '',
@@ -80,7 +82,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
       onRefresh();
     } catch (error: any) {
       console.error('Error creating user:', error);
-      alert(error.message || 'Failed to create user. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to create user. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -118,7 +120,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         throw new Error(result.error || 'Failed to update user');
       }
 
-      alert(`User ${formData.full_name} updated successfully!`);
+      showToast({ type: 'success', title: 'Success', message: `User ${formData.full_name} updated successfully!` });
       setShowEditModal(false);
       setEditingUser(null);
       setFormData({
@@ -131,7 +133,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
       onRefresh();
     } catch (error: any) {
       console.error('Error updating user:', error);
-      alert(error.message || 'Failed to update user. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to update user. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -151,7 +153,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
   const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     const action = currentStatus ? 'deactivate' : 'activate';
-    if (!confirm(`Are you sure you want to ${action} this user?`)) {
+    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to ${action} this user?`, variant: 'warning', confirmLabel: action.charAt(0).toUpperCase() + action.slice(1) })) {
       return;
     }
 
@@ -163,16 +165,16 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
       if (error) throw error;
 
-      alert(`User ${currentStatus ? 'deactivated' : 'activated'} successfully!`);
+      showToast({ type: 'success', title: 'Success', message: `User ${currentStatus ? 'deactivated' : 'activated'} successfully!` });
       onRefresh();
     } catch (error) {
       console.error('Error updating user status:', error);
-      alert('Failed to update user status.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update user status.' });
     }
   };
 
   const deleteUser = async (userId: string, username: string) => {
-    if (!confirm(`Are you sure you want to permanently delete user "${username}"? This action cannot be undone.`)) {
+    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to permanently delete user "${username}"? This action cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -185,11 +187,11 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
       if (profileError) throw profileError;
 
-      alert('User deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'User deleted successfully!' });
       onRefresh();
     } catch (error) {
       console.error('Error deleting user:', error);
-      alert('Failed to delete user. The user may have associated records.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete user. The user may have associated records.' });
     }
   };
 
@@ -204,7 +206,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     if (!passwordUser) return;
 
     if (newPassword.length < 6) {
-      alert('Password must be at least 6 characters long');
+      showToast({ type: 'error', title: 'Error', message: 'Password must be at least 6 characters long' });
       return;
     }
 
@@ -235,13 +237,13 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         throw new Error(result.error || 'Failed to update password');
       }
 
-      alert(`Password updated successfully for ${passwordUser.full_name}!`);
+      showToast({ type: 'success', title: 'Success', message: `Password updated successfully for ${passwordUser.full_name}!` });
       setShowPasswordModal(false);
       setPasswordUser(null);
       setNewPassword('');
     } catch (error: any) {
       console.error('Error changing password:', error);
-      alert(error.message || 'Failed to change password. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to change password. Please try again.' });
     } finally {
       setLoading(false);
     }

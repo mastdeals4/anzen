@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Plus, Edit, Trash2, Search, FileText, Eye, X, Upload, DollarSign } from 'lucide-react';
 import { Modal } from '../Modal';
 import { FileUpload } from '../FileUpload';
+import { showToast } from '../ToastNotification';
 
 interface Supplier {
   id: string;
@@ -226,23 +227,23 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
     e.preventDefault();
 
     if (!canManage) {
-      alert('You do not have permission to create purchase invoices');
+      showToast({ type: 'error', title: 'Error', message: 'You do not have permission to create purchase invoices' });
       return;
     }
 
     if (!formData.supplier_id) {
-      alert('Please select a supplier');
+      showToast({ type: 'error', title: 'Error', message: 'Please select a supplier' });
       return;
     }
 
     if (lineItems.length === 0 || lineItems.every(item => item.line_total === 0)) {
-      alert('Please add at least one line item');
+      showToast({ type: 'error', title: 'Error', message: 'Please add at least one line item' });
       return;
     }
 
     // Validate exchange rate for USD
     if (formData.currency === 'USD' && formData.exchange_rate <= 1) {
-      alert('Please enter a valid exchange rate for USD');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a valid exchange rate for USD' });
       return;
     }
 
@@ -250,19 +251,19 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
     for (let i = 0; i < lineItems.length; i++) {
       const item = lineItems[i];
       if (item.item_type === 'inventory' && !item.product_id) {
-        alert(`Line ${i + 1}: Please select a product for inventory items`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select a product for inventory items` });
         return;
       }
       if (item.item_type === 'expense' && !item.expense_account_id) {
-        alert(`Line ${i + 1}: Please select an expense account`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select an expense account` });
         return;
       }
       if (item.item_type === 'fixed_asset' && !item.asset_account_id) {
-        alert(`Line ${i + 1}: Please select an asset account`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select an asset account` });
         return;
       }
       if (!item.description.trim()) {
-        alert(`Line ${i + 1}: Please enter a description`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please enter a description` });
         return;
       }
     }
@@ -321,13 +322,13 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
 
       if (itemsError) throw itemsError;
 
-      alert('Purchase invoice created successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Purchase invoice created successfully!' });
       resetForm();
       setModalOpen(false);
       loadInvoices();
     } catch (error: any) {
       console.error('Error creating purchase invoice:', error);
-      alert(`Error: ${error.message}`);
+      showToast({ type: 'error', title: 'Error', message: `Error: ${error.message}` });
     }
   };
 
@@ -360,7 +361,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
       }));
     } catch (error: any) {
       console.error('Error uploading files:', error);
-      alert(`Error uploading files: ${error.message}`);
+      showToast({ type: 'error', title: 'Error', message: `Error uploading files: ${error.message}` });
     } finally {
       setUploading(false);
     }

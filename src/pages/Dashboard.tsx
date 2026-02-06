@@ -5,16 +5,18 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
 import { TodaysActionsDashboard } from '../components/commandCenter/TodaysActionsDashboard';
+import { RevenueChart } from '../components/dashboard/RevenueChart';
+import { SalesPipelineChart } from '../components/dashboard/SalesPipelineChart';
+import { PaymentOverview } from '../components/dashboard/PaymentOverview';
 import {
-  Package,
   AlertTriangle,
   Clock,
-  Users,
-  DollarSign,
   TrendingUp,
-  Bell,
   FileText,
   ClipboardCheck,
+  Zap,
+  UserCircle,
+  ArrowRight,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -119,7 +121,6 @@ export function Dashboard() {
 
       const estimatedProfit = totalRevenue - (totalSubtotal * 0.7);
 
-      // Calculate overdue amounts
       const overdueInvoicesWithBalances = await Promise.all(
         (overdueInvoicesResult.data || []).map(async (inv) => {
           const { data: paidData } = await supabase
@@ -158,22 +159,25 @@ export function Dashboard() {
       value: stats.lowStockItems,
       icon: AlertTriangle,
       color: 'orange',
+      link: 'stock',
     },
     {
       title: t('dashboard.nearExpiry'),
       value: stats.nearExpiryBatches,
       icon: Clock,
       color: 'red',
+      link: 'batches',
     },
     {
       title: t('dashboard.salesThisMonth'),
       value: stats.salesThisMonth,
       icon: TrendingUp,
       color: 'blue',
+      link: 'sales',
     },
   ];
 
-  const approvalCards = [];
+  const approvalCards: any[] = [];
   if (profile?.role === 'admin' || profile?.role === 'accounts') {
     approvalCards.push({
       title: 'Overdue Invoices',
@@ -212,9 +216,14 @@ export function Dashboard() {
     'red-gradient': { bg: 'bg-gradient-to-br from-red-500 to-orange-500', text: 'text-white', icon: 'bg-white/20' },
     green: { bg: 'bg-green-50', text: 'text-green-600', icon: 'bg-green-100' },
     emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', icon: 'bg-emerald-100' },
-    purple: { bg: 'bg-purple-50', text: 'text-purple-600', icon: 'bg-purple-100' },
     yellow: { bg: 'bg-yellow-50', text: 'text-yellow-600', icon: 'bg-yellow-100' },
   };
+
+  const quickLinks = [
+    { label: 'Go to Command Center', page: 'command-center', icon: Zap, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' },
+    { label: 'View All Inquiries', page: 'crm', icon: UserCircle, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' },
+    { label: 'Sales Orders', page: 'sales-orders', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' },
+  ];
 
   return (
     <Layout>
@@ -245,55 +254,72 @@ export function Dashboard() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-            {statCards.map((card:any, index) => {
-              const Icon = card.icon;
-              const colors = colorClasses[card.color];
-              const isClickable = !!card.link;
-              return (
-                <div
-                  key={index}
-                  className={`${colors.bg} rounded-lg shadow p-3 md:p-4 transition hover:shadow-lg ${isClickable ? 'cursor-pointer' : ''}`}
-                  onClick={() => isClickable && setCurrentPage(card.link)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xs md:text-sm font-medium ${card.color === 'red-gradient' ? 'text-white/80' : 'text-gray-600'} truncate`}>{card.title}</p>
-                      <p className={`text-xl md:text-2xl font-bold ${colors.text} mt-1`}>
-                        {card.value}
-                      </p>
-                      {card.subtitle && (
-                        <p className={`text-xs mt-0.5 ${card.color === 'red-gradient' ? 'text-white/90' : 'text-gray-500'} truncate`}>
-                          {card.subtitle}
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 md:gap-4">
+              {statCards.map((card: any, index) => {
+                const Icon = card.icon;
+                const colors = colorClasses[card.color];
+                const isClickable = !!card.link;
+                return (
+                  <div
+                    key={index}
+                    className={`${colors.bg} rounded-xl shadow-sm border border-gray-100/50 p-3 md:p-4 transition-all hover:shadow-md hover:-translate-y-0.5 ${isClickable ? 'cursor-pointer' : ''}`}
+                    onClick={() => isClickable && setCurrentPage(card.link)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xs font-medium ${card.color === 'red-gradient' ? 'text-white/80' : 'text-gray-600'} truncate`}>{card.title}</p>
+                        <p className={`text-xl md:text-2xl font-bold ${colors.text} mt-1`}>
+                          {card.value}
                         </p>
-                      )}
-                    </div>
-                    <div className={`${colors.icon} p-2 md:p-3 rounded-full flex-shrink-0 ml-2`}>
-                      <Icon className={`w-4 h-4 md:w-5 md:h-5 ${colors.text}`} />
+                        {card.subtitle && (
+                          <p className={`text-xs mt-0.5 ${card.color === 'red-gradient' ? 'text-white/90' : 'text-gray-500'} truncate`}>
+                            {card.subtitle}
+                          </p>
+                        )}
+                      </div>
+                      <div className={`${colors.icon} p-2 rounded-full flex-shrink-0 ml-2`}>
+                        <Icon className={`w-4 h-4 ${colors.text}`} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <RevenueChart />
+              <SalesPipelineChart />
+            </div>
+          </>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-          <div className="md:col-span-2 lg:col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="md:col-span-1 lg:col-span-1">
+            <PaymentOverview />
+          </div>
+          <div className="md:col-span-1 lg:col-span-1">
             <TodaysActionsDashboard />
           </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Links</h3>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <h3 className="text-base font-semibold text-gray-900 mb-4">Quick Links</h3>
             <div className="space-y-2">
-              <a href="#" className="block p-3 bg-blue-50 hover:bg-blue-100 rounded-lg transition text-blue-700 font-medium">
-                Go to Command Center
-              </a>
-              <a href="#" className="block p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium">
-                View All Inquiries
-              </a>
-              <a href="#" className="block p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium">
-                Create Manual Inquiry
-              </a>
+              {quickLinks.map((link, index) => {
+                const LinkIcon = link.icon;
+                return (
+                  <button
+                    key={index}
+                    onClick={() => setCurrentPage(link.page)}
+                    className={`w-full flex items-center justify-between p-3 ${link.color} rounded-lg transition font-medium text-sm group`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <LinkIcon className="w-4 h-4" />
+                      <span>{link.label}</span>
+                    </div>
+                    <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

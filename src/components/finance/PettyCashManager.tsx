@@ -4,6 +4,8 @@ import { Plus, Wallet, ArrowDownCircle, ArrowUpCircle, RefreshCw, Upload, X, Fil
 import { Modal } from '../Modal';
 import { useFinance } from '../../contexts/FinanceContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface PettyCashDocument {
   id: string;
@@ -396,7 +398,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
       setBankAccounts(bankRes.data || []);
     } catch (error: any) {
       console.error('Error loading petty cash data:', error);
-      alert('Failed to load petty cash data: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load petty cash data: ' + error.message });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -461,7 +463,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
   };
 
   const deleteExistingDocument = async (documentId: string) => {
-    if (!confirm('Are you sure you want to delete this document?')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this document?', variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -474,10 +476,10 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
       if (error) throw error;
 
       setExistingDocuments(prev => prev.filter(doc => doc.id !== documentId));
-      alert('Document deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Document deleted successfully!' });
     } catch (error) {
       console.error('Error deleting document:', error);
-      alert('Failed to delete document');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete document' });
     }
   };
 
@@ -536,13 +538,13 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
     e.preventDefault();
 
     if (formData.transaction_type === 'expense' && !formData.expense_category) {
-      alert('Please select an expense category');
+      showToast({ type: 'error', title: 'Error', message: 'Please select an expense category' });
       return;
     }
 
     const selectedCategory = expenseCategories.find(c => c.value === formData.expense_category);
     if (selectedCategory?.requiresContainer && !formData.import_container_id) {
-      alert(`${selectedCategory.label} requires linking to an import container`);
+      showToast({ type: 'error', title: 'Error', message: `${selectedCategory.label} requires linking to an import container` });
       return;
     }
 
@@ -627,17 +629,17 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
         await Promise.all(uploadPromises);
       }
 
-      alert(editingTransaction ? 'Petty cash transaction updated successfully!' : 'Petty cash transaction added successfully!');
+      showToast({ type: 'success', title: 'Success', message: editingTransaction ? 'Petty cash transaction updated successfully!' : 'Petty cash transaction added successfully!' });
       closeModal();
       loadData();
     } catch (error: any) {
       console.error('Error saving petty cash transaction:', error);
-      alert('Failed to save transaction: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save transaction: ' + error.message });
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this transaction?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this transaction?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       // Get associated documents to delete from storage
@@ -669,17 +671,17 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
         }
       }
 
-      alert('Transaction deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Transaction deleted successfully!' });
       await loadData();
     } catch (error: any) {
       console.error('Error deleting transaction:', error);
-      alert('Failed to delete transaction: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete transaction: ' + error.message });
     }
   };
 
   const exportToCSV = () => {
     if (filteredTransactions.length === 0) {
-      alert('No transactions to export');
+      showToast({ type: 'info', title: 'Notice', message: 'No transactions to export' });
       return;
     }
 

@@ -10,6 +10,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Edit, Trash2, FileText, Eye, FileX } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface SalesInvoice {
   id: string;
@@ -585,7 +587,7 @@ export function Sales() {
       const selectedChallan = pendingChallans.find(ch => ch.id === challanId);
       if (!selectedChallan) {
         console.error('Selected challan not found in pending challans list');
-        alert('Error: Selected delivery challan not found. Please refresh and try again.');
+        showToast({ type: 'error', title: 'Error', message: 'Selected delivery challan not found. Please refresh and try again.' });
         return;
       }
 
@@ -606,7 +608,7 @@ export function Sales() {
 
       if (!challanItems || challanItems.length === 0) {
         console.warn('No items found for this delivery challan');
-        alert('This delivery challan has no items. Please add items manually.');
+        showToast({ type: 'info', title: 'Info', message: 'This delivery challan has no items. Please add items manually.' });
         return;
       }
 
@@ -641,14 +643,14 @@ export function Sales() {
       }
 
       if (invoiceItems.length === 0) {
-        alert('Could not load items from delivery challan. Please add items manually.');
+        showToast({ type: 'error', title: 'Error', message: 'Could not load items from delivery challan. Please add items manually.' });
         return;
       }
 
       setItems(invoiceItems);
     } catch (error: any) {
       console.error('Error loading challan items:', error);
-      alert(`Failed to load delivery challan items: ${error.message || 'Unknown error'}. Please try again or add items manually.`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to load delivery challan items: ${error.message || 'Unknown error'}. Please try again or add items manually.` });
     }
   };
 
@@ -816,7 +818,7 @@ export function Sales() {
       // Validate that invoice has at least one item with a product selected
       const validItems = items.filter(item => item.product_id && item.product_id.trim() !== '');
       if (validItems.length === 0) {
-        alert('Please add at least one product to the invoice before saving.');
+        showToast({ type: 'error', title: 'Error', message: 'Please add at least one product to the invoice before saving.' });
         return;
       }
 
@@ -977,7 +979,7 @@ export function Sales() {
       resetForm();
     } catch (error: any) {
       console.error('Error saving invoice:', error);
-      alert(`Failed to save invoice: ${error.message || 'Unknown error'}. Please check console for details.`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to save invoice: ${error.message || 'Unknown error'}. Please check console for details.` });
     }
   };
 
@@ -1031,7 +1033,7 @@ export function Sales() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this invoice?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this invoice?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -1043,7 +1045,7 @@ export function Sales() {
       loadInvoices();
     } catch (error) {
       console.error('Error deleting invoice:', error);
-      alert('Failed to delete invoice. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete invoice. Please try again.' });
     }
   };
 
@@ -1058,7 +1060,7 @@ export function Sales() {
       loadInvoices();
     } catch (error) {
       console.error('Error updating payment status:', error);
-      alert('Failed to update payment status.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update payment status.' });
     }
   };
 

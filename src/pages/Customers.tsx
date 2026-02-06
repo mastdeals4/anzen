@@ -7,6 +7,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Edit, Trash2, Mail, Phone } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 import { indonesiaCities, paymentTermsOptions } from '../data/indonesiaCities';
 
 interface Customer {
@@ -92,7 +94,7 @@ export function Customers() {
       loadCustomers();
     } catch (error) {
       console.error('Error saving customer:', error);
-      alert(t('errors.failedToSaveCustomer'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSaveCustomer') });
     }
   };
 
@@ -131,7 +133,7 @@ export function Customers() {
   };
 
   const handleDelete = async (customer: Customer) => {
-    if (!confirm(t('confirm.deleteCustomer'))) return;
+    if (!await showConfirm({ title: 'Confirm', message: t('confirm.deleteCustomer'), variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -143,7 +145,7 @@ export function Customers() {
       loadCustomers();
     } catch (error) {
       console.error('Error deleting customer:', error);
-      alert(t('errors.failedToDeleteCustomer'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToDeleteCustomer') });
     }
   };
 

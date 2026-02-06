@@ -174,7 +174,7 @@ export function Layout({ children }: LayoutProps) {
             return (
               <a
                 key={item.id}
-                href={`#${item.id}`}
+                href={`/${item.id}`}
                 onClick={(e) => {
                   e.preventDefault();
                   setCurrentPage(item.id);

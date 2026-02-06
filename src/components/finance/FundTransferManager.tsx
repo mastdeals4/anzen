@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Plus, ArrowRightLeft, CheckCircle, Clock, Edit, Trash2 } from 'lucide-react';
 import { Modal } from '../Modal';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface FundTransfer {
   id: string;
@@ -130,7 +132,7 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
       setBankAccounts(banksRes.data || []);
     } catch (error: any) {
       console.error('Error loading fund transfers:', error.message);
-      alert('Failed to load fund transfers');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load fund transfers' });
     } finally {
       setLoading(false);
     }
@@ -213,34 +215,34 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
     e.preventDefault();
 
     if (formData.from_amount <= 0) {
-      alert('From Amount must be greater than 0');
+      showToast({ type: 'error', title: 'Error', message: 'From Amount must be greater than 0' });
       return;
     }
 
     if (formData.to_amount <= 0) {
-      alert('To Amount must be greater than 0');
+      showToast({ type: 'error', title: 'Error', message: 'To Amount must be greater than 0' });
       return;
     }
 
     if (formData.from_account_type === formData.to_account_type) {
       if (formData.from_account_type === 'bank') {
         if (formData.from_bank_account_id === formData.to_bank_account_id) {
-          alert('Cannot transfer to the same bank account');
+          showToast({ type: 'error', title: 'Error', message: 'Cannot transfer to the same bank account' });
           return;
         }
       } else {
-        alert('Cannot transfer to the same account type');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot transfer to the same account type' });
         return;
       }
     }
 
     if (formData.from_account_type === 'bank' && !formData.from_bank_account_id) {
-      alert('Please select source bank account');
+      showToast({ type: 'error', title: 'Error', message: 'Please select source bank account' });
       return;
     }
 
     if (formData.to_account_type === 'bank' && !formData.to_bank_account_id) {
-      alert('Please select destination bank account');
+      showToast({ type: 'error', title: 'Error', message: 'Please select destination bank account' });
       return;
     }
 
@@ -278,7 +280,7 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
         
         if (error) throw error;
 
-        alert('Fund transfer updated successfully!');
+        showToast({ type: 'success', title: 'Success', message: 'Fund transfer updated successfully!' });
       } else {
         // CREATE new transfer
         // Generate transfer number
@@ -360,7 +362,7 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
 
           if (pettyCashError) {
             console.error('Error creating petty cash transaction:', pettyCashError);
-            alert('Warning: Fund transfer created but petty cash entry failed: ' + pettyCashError.message);
+            showToast({ type: 'warning', title: 'Warning', message: 'Fund transfer created but petty cash entry failed: ' + pettyCashError.message });
           } else {
             console.log('Petty cash transaction created successfully:', pettyCashTxNumber);
           }
@@ -393,7 +395,7 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
             .eq('id', formData.to_bank_statement_line_id);
         }
 
-        alert('Fund transfer created and posted successfully!');
+        showToast({ type: 'success', title: 'Success', message: 'Fund transfer created and posted successfully!' });
       }
 
       setModalOpen(false);
@@ -401,7 +403,7 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
       loadData();
     } catch (error: any) {
       console.error('Error with fund transfer:', error.message);
-      alert('Failed to save fund transfer: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save fund transfer: ' + error.message });
     }
   };
 
@@ -452,7 +454,7 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
   };
 
   const handleDelete = async (transferId: string) => {
-    if (!confirm('Are you sure you want to delete this fund transfer? This will also delete the associated petty cash transaction and journal entry.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this fund transfer? This will also delete the associated petty cash transaction and journal entry.', variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -488,11 +490,11 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
 
       if (error) throw error;
 
-      alert('Fund transfer deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Fund transfer deleted successfully!' });
       loadData();
     } catch (error: any) {
       console.error('Error deleting fund transfer:', error.message);
-      alert('Failed to delete fund transfer: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete fund transfer: ' + error.message });
     }
   };
 

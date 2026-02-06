@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Plus, Eye, Trash2, PackageX, AlertTriangle, Edit, CheckCircle, XCircle } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 import { Modal } from '../components/Modal';
 import { DataTable } from '../components/DataTable';
 import { MaterialReturnView } from '../components/MaterialReturnView';
@@ -237,13 +239,13 @@ export default function MaterialReturns() {
     e.preventDefault();
 
     if (!formData.customer_id || !formData.original_dc_id || !formData.return_reason) {
-      alert('Please complete all required fields');
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all required fields' });
       return;
     }
 
     const validItems = returnItems.filter(item => item.quantity_returned > 0);
     if (validItems.length === 0) {
-      alert('Please enter at least one item with return quantity');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter at least one item with return quantity' });
       return;
     }
 
@@ -251,7 +253,7 @@ export default function MaterialReturns() {
       item => item.quantity_returned > item.original_quantity
     );
     if (hasInvalidQuantities) {
-      alert('Return quantity cannot exceed original quantity');
+      showToast({ type: 'error', title: 'Error', message: 'Return quantity cannot exceed original quantity' });
       return;
     }
 
@@ -302,7 +304,7 @@ export default function MaterialReturns() {
 
         if (itemsError) throw itemsError;
 
-        alert('Material return updated successfully.');
+        showToast({ type: 'success', title: 'Success', message: 'Material return updated successfully.' });
       } else {
         const { data: returnData, error: returnError} = await supabase
           .from('material_returns')
@@ -340,7 +342,7 @@ export default function MaterialReturns() {
 
         if (itemsError) throw itemsError;
 
-        alert('Material return created successfully. Pending approval.');
+        showToast({ type: 'success', title: 'Success', message: 'Material return created successfully. Pending approval.' });
       }
 
       setModalOpen(false);
@@ -348,7 +350,7 @@ export default function MaterialReturns() {
       loadReturns();
     } catch (error: any) {
       console.error('Error saving return:', error);
-      alert(error.message || 'Failed to save material return');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to save material return' });
     }
   };
 
@@ -370,7 +372,7 @@ export default function MaterialReturns() {
       setViewModalOpen(true);
     } catch (error) {
       console.error('Error loading return items:', error);
-      alert('Failed to load return details');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load return details' });
     }
   };
 
@@ -416,12 +418,12 @@ export default function MaterialReturns() {
       setModalOpen(true);
     } catch (error) {
       console.error('Error loading return for edit:', error);
-      alert('Failed to load return for editing');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load return for editing' });
     }
   };
 
   const handleApprove = async (id: string) => {
-    if (!confirm('Approve this material return? Stock will be added back to inventory based on disposition.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this material return? Stock will be added back to inventory based on disposition.', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -434,11 +436,11 @@ export default function MaterialReturns() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Material return approved successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Material return approved successfully' });
       loadReturns();
     } catch (error: any) {
       console.error('Error approving return:', error);
-      alert(error.message || 'Failed to approve material return');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to approve material return' });
     }
   };
 
@@ -457,16 +459,16 @@ export default function MaterialReturns() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Material return rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Material return rejected' });
       loadReturns();
     } catch (error: any) {
       console.error('Error rejecting return:', error);
-      alert(error.message || 'Failed to reject material return');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to reject material return' });
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this material return?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this material return?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -478,7 +480,7 @@ export default function MaterialReturns() {
       loadReturns();
     } catch (error) {
       console.error('Error deleting return:', error);
-      alert('Failed to delete material return');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete material return' });
     }
   };
 

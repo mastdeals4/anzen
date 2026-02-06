@@ -4,6 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../DataTable';
 import { Modal } from '../Modal';
 import { Plus, Edit, Trash2, FileText, Send, Check, X, Clock } from 'lucide-react';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface Product {
   id: string;
@@ -146,7 +148,7 @@ export function QuotationManager({ leadId, customerId, canManage }: QuotationMan
     e.preventDefault();
 
     if (items.length === 0 || items.some(item => !item.product_id || item.quantity <= 0)) {
-      alert('Please add at least one valid line item');
+      showToast({ type: 'error', title: 'Error', message: 'Please add at least one valid line item' });
       return;
     }
 
@@ -218,7 +220,7 @@ export function QuotationManager({ leadId, customerId, canManage }: QuotationMan
       loadQuotations();
     } catch (error) {
       console.error('Error saving quotation:', error);
-      alert('Failed to save quotation. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save quotation. Please try again.' });
     }
   };
 
@@ -254,7 +256,7 @@ export function QuotationManager({ leadId, customerId, canManage }: QuotationMan
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this quotation?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this quotation?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -266,7 +268,7 @@ export function QuotationManager({ leadId, customerId, canManage }: QuotationMan
       loadQuotations();
     } catch (error) {
       console.error('Error deleting quotation:', error);
-      alert('Failed to delete quotation. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete quotation. Please try again.' });
     }
   };
 
@@ -281,7 +283,7 @@ export function QuotationManager({ leadId, customerId, canManage }: QuotationMan
       loadQuotations();
     } catch (error) {
       console.error('Error updating quotation status:', error);
-      alert('Failed to update quotation status. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update quotation status. Please try again.' });
     }
   };
 

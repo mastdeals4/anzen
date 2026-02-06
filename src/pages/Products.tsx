@@ -6,6 +6,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Edit, Trash2, Upload, X } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface Product {
   id: string;
@@ -246,7 +248,7 @@ export function Products() {
         .limit(1);
 
       if (salesItems && salesItems.length > 0) {
-        alert('Cannot delete this product. It has been used in sales invoices. Please use the "Deactivate" option instead or contact your administrator.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in sales invoices. Please use the "Deactivate" option instead or contact your administrator.' });
         return;
       }
 
@@ -257,7 +259,7 @@ export function Products() {
         .limit(1);
 
       if (salesOrderItems && salesOrderItems.length > 0) {
-        alert('Cannot delete this product. It has been used in sales orders. Please deactivate it instead.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in sales orders. Please deactivate it instead.' });
         return;
       }
 
@@ -268,7 +270,7 @@ export function Products() {
         .limit(1);
 
       if (challanItems && challanItems.length > 0) {
-        alert('Cannot delete this product. It has been used in delivery challans. Please use the "Deactivate" option instead.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in delivery challans. Please use the "Deactivate" option instead.' });
         return;
       }
 
@@ -278,17 +280,20 @@ export function Products() {
         .eq('product_id', product.id);
 
       if (batches && batches.length > 0) {
-        const confirmDelete = confirm(
-          `This product has ${batches.length} batch(es). Deleting this product will permanently remove:\n` +
+        const confirmDelete = await showConfirm({
+          title: 'Confirm',
+          message: `This product has ${batches.length} batch(es). Deleting this product will permanently remove:\n` +
           `- ${batches.length} batches\n` +
           `- All related inventory transactions\n` +
           `- All related documents\n\n` +
-          `Are you absolutely sure you want to continue?`
-        );
+          `Are you absolutely sure you want to continue?`,
+          variant: 'danger',
+          confirmLabel: 'Delete'
+        });
 
         if (!confirmDelete) return;
       } else {
-        if (!confirm('Are you sure you want to delete this product?')) return;
+        if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this product?', variant: 'danger', confirmLabel: 'Delete' })) return;
       }
 
       if (batches && batches.length > 0) {
@@ -311,12 +316,12 @@ export function Products() {
 
       if (error) throw error;
 
-      alert('Product deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Product deleted successfully' });
       await loadProducts();
     } catch (error: any) {
       console.error('Error deleting product:', error);
       const errorMessage = error?.message || 'Unknown error occurred';
-      alert(`Failed to delete product: ${errorMessage}\n\nIf this product is in use, consider deactivating it instead.`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to delete product: ${errorMessage}\n\nIf this product is in use, consider deactivating it instead.` });
     }
   };
 
@@ -442,13 +447,13 @@ export function Products() {
         }
       }
 
-      alert(editingProduct ? 'Product updated successfully' : 'Product added successfully');
+      showToast({ type: 'success', title: 'Success', message: editingProduct ? 'Product updated successfully' : 'Product added successfully' });
       setModalOpen(false);
       resetForm();
       await loadProducts();
     } catch (error: any) {
       console.error('Error saving product:', error);
-      alert('Failed to save product: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save product: ' + error.message });
     }
   };
 
@@ -466,12 +471,12 @@ export function Products() {
       document.body.removeChild(a);
     } catch (error) {
       console.error('Error downloading:', error);
-      alert('Failed to download file');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to download file' });
     }
   };
 
   const deleteDocument = async (docId: string, sourceId: string) => {
-    if (!confirm('Delete this document?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Delete this document?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -481,13 +486,13 @@ export function Products() {
 
       if (error) throw error;
 
-      alert('Document deleted');
+      showToast({ type: 'success', title: 'Success', message: 'Document deleted' });
       if (viewingProduct) {
         await loadProductSources(viewingProduct.id);
       }
     } catch (error: any) {
       console.error('Error deleting document:', error);
-      alert('Failed to delete: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete: ' + error.message });
     }
   };
 

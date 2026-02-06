@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Mail, Send, Paperclip, Save, FileText, Loader } from 'lucide-react';
 import { Modal } from '../Modal';
+import { showToast } from '../ToastNotification';
 
 interface EmailTemplate {
   id: string;
@@ -87,7 +88,7 @@ export function EmailComposer({ inquiry, onClose, onSent }: EmailComposerProps) 
 
   const sendEmail = async () => {
     if (!toEmail || !subject || !body) {
-      alert('Please fill in all required fields');
+      showToast({ type: 'error', title: 'Error', message: 'Please fill in all required fields' });
       return;
     }
 
@@ -130,13 +131,13 @@ export function EmailComposer({ inquiry, onClose, onSent }: EmailComposerProps) 
           .eq('id', selectedTemplate.id);
       }
 
-      alert('Email logged successfully! Note: Actual email sending requires SMTP configuration.');
+      showToast({ type: 'success', title: 'Success', message: 'Email logged successfully! Note: Actual email sending requires SMTP configuration.' });
 
       if (onSent) onSent();
       if (onClose) onClose();
     } catch (error) {
       console.error('Error sending email:', error);
-      alert('Failed to send email. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to send email. Please try again.' });
     } finally {
       setSending(false);
     }

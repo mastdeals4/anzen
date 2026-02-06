@@ -6,6 +6,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, TrendingUp, TrendingDown, RefreshCw, RotateCcw, AlertTriangle, Package, CheckCircle, XCircle, Upload } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
 import MaterialReturns from './MaterialReturns';
 import StockRejections from './StockRejections';
 
@@ -274,10 +275,10 @@ export function Inventory() {
       setModalOpen(false);
       resetForm();
       loadData();
-      alert('Transaction added successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Transaction added successfully' });
     } catch (error) {
       console.error('Error saving transaction:', error);
-      alert(t('errors.failedToSaveTransaction'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSaveTransaction') });
     }
   };
 
@@ -300,10 +301,10 @@ export function Inventory() {
       setModalOpen(false);
       resetForm();
       loadData();
-      alert('Material return created successfully. Awaiting approval.');
+      showToast({ type: 'success', title: 'Success', message: 'Material return created successfully. Awaiting approval.' });
     } catch (error) {
       console.error('Error creating return:', error);
-      alert('Failed to create return. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create return. Please try again.' });
     }
   };
 
@@ -326,10 +327,10 @@ export function Inventory() {
       setModalOpen(false);
       resetForm();
       loadData();
-      alert('Stock rejection created successfully. Awaiting approval.');
+      showToast({ type: 'success', title: 'Success', message: 'Stock rejection created successfully. Awaiting approval.' });
     } catch (error) {
       console.error('Error creating rejection:', error);
-      alert('Failed to create rejection. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create rejection. Please try again.' });
     }
   };
 

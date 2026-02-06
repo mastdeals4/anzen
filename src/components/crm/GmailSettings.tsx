@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Mail, CheckCircle, AlertCircle, RefreshCw, LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface GmailConnection {
   id: string;
@@ -56,12 +58,12 @@ export function GmailSettings() {
     }
   };
 
-  const handleConnectGmail = () => {
+  const handleConnectGmail = async () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     const redirectUri = `${window.location.origin}/auth/gmail/callback`;
 
     if (!clientId) {
-      alert('Gmail integration is not configured. Please add VITE_GOOGLE_CLIENT_ID to your .env file.\n\nSteps:\n1. Go to Google Cloud Console\n2. Create OAuth 2.0 credentials\n3. Add the Client ID to .env file\n4. Restart the dev server\n\nSee GMAIL_SETUP.md for detailed instructions.');
+      showToast({ type: 'error', title: 'Error', message: 'Gmail integration is not configured. Please add VITE_GOOGLE_CLIENT_ID to your .env file.\n\nSteps:\n1. Go to Google Cloud Console\n2. Create OAuth 2.0 credentials\n3. Add the Client ID to .env file\n4. Restart the dev server\n\nSee GMAIL_SETUP.md for detailed instructions.' });
       return;
     }
 
@@ -71,18 +73,11 @@ export function GmailSettings() {
     console.log('\n📋 Add this to Google Cloud Console:');
     console.log('   https://console.cloud.google.com/apis/credentials');
 
-    const confirmed = confirm(
-      `⚠️ IMPORTANT: Before connecting Gmail\n\n` +
-      `You must add this redirect URI to Google Cloud Console:\n\n` +
-      `${redirectUri}\n\n` +
-      `Steps:\n` +
-      `1. Go to: https://console.cloud.google.com/apis/credentials\n` +
-      `2. Click your OAuth Client ID\n` +
-      `3. Under "Authorized redirect URIs", add:\n   ${redirectUri}\n` +
-      `4. Click "Save"\n` +
-      `5. Wait 5 minutes for changes to propagate\n\n` +
-      `Have you completed these steps?`
-    );
+    const confirmed = await showConfirm({
+      title: 'Confirm',
+      message: `IMPORTANT: Before connecting Gmail\n\nYou must add this redirect URI to Google Cloud Console:\n\n${redirectUri}\n\nSteps:\n1. Go to: https://console.cloud.google.com/apis/credentials\n2. Click your OAuth Client ID\n3. Under "Authorized redirect URIs", add:\n   ${redirectUri}\n4. Click "Save"\n5. Wait 5 minutes for changes to propagate\n\nHave you completed these steps?`,
+      variant: 'warning'
+    });
 
     if (!confirmed) {
       return;
@@ -117,7 +112,7 @@ export function GmailSettings() {
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect your Gmail account? Email syncing will stop.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to disconnect your Gmail account? Email syncing will stop.', variant: 'warning' })) {
       return;
     }
 
@@ -132,11 +127,11 @@ export function GmailSettings() {
 
       if (error) throw error;
 
-      alert('Gmail account disconnected successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Gmail account disconnected successfully' });
       loadConnection();
     } catch (error) {
       console.error('Error disconnecting Gmail:', error);
-      alert('Failed to disconnect Gmail account');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to disconnect Gmail account' });
     }
   };
 
@@ -156,7 +151,7 @@ export function GmailSettings() {
       loadConnection();
     } catch (error) {
       console.error('Error toggling sync:', error);
-      alert('Failed to update sync settings');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update sync settings' });
     }
   };
 
@@ -175,7 +170,7 @@ export function GmailSettings() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        alert('Please sign in to sync emails');
+        showToast({ type: 'error', title: 'Error', message: 'Please sign in to sync emails' });
         setSyncing(false);
         return;
       }
@@ -205,7 +200,7 @@ export function GmailSettings() {
       const result = await response.json();
 
       if (result.success) {
-        alert(`Email sync completed!\n\n✓ Total messages found: ${result.totalMessages}\n✓ New emails processed: ${result.processedCount}\n✓ New inquiries: ${result.newInquiriesCount}`);
+        showToast({ type: 'success', title: 'Success', message: `Email sync completed!\n\nTotal messages found: ${result.totalMessages}\nNew emails processed: ${result.processedCount}\nNew inquiries: ${result.newInquiriesCount}` });
         loadConnection();
       } else {
         throw new Error(result.error || 'Sync failed');
@@ -213,9 +208,9 @@ export function GmailSettings() {
     } catch (error) {
       console.error('Error syncing emails:', error);
       if (error instanceof Error && error.name === 'AbortError') {
-        alert('Sync is taking longer than expected. It will continue in the background. Check back in a few minutes.');
+        showToast({ type: 'warning', title: 'Warning', message: 'Sync is taking longer than expected. It will continue in the background. Check back in a few minutes.' });
       } else {
-        alert(`Failed to sync emails: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        showToast({ type: 'error', title: 'Error', message: `Failed to sync emails: ${error instanceof Error ? error.message : 'Unknown error'}` });
       }
     } finally {
       setSyncing(false);

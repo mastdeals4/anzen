@@ -7,6 +7,8 @@ import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck, 
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
 import { ProformaInvoiceView } from '../components/ProformaInvoiceView';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 
 interface Customer {
   id: string;
@@ -144,7 +146,7 @@ export default function SalesOrders() {
       setSalesOrders(data || []);
     } catch (error: any) {
       console.error('Error fetching sales orders:', error.message);
-      alert(t('errors.failedToLoadSalesOrders'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToLoadSalesOrders') });
     } finally {
       setLoading(false);
     }
@@ -214,7 +216,7 @@ export default function SalesOrders() {
   };
 
   const handleSubmitForApproval = async (orderId: string) => {
-    if (!confirm(t('salesOrders.submitForApproval') + '?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: t('salesOrders.submitForApproval') + '?', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -224,17 +226,17 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert(t('success.salesOrderSubmitted'));
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderSubmitted') });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error submitting for approval:', error.message);
-      alert(t('errors.failedToUpdate'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToUpdate') });
     }
   };
 
   const handleArchiveOrder = async () => {
     if (!orderToArchive || !archiveReason.trim()) {
-      alert(t('validation.enterArchiveReason'));
+      showToast({ type: 'error', title: 'Error', message: t('validation.enterArchiveReason') });
       return;
     }
 
@@ -255,19 +257,19 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert(t('success.salesOrderArchived'));
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderArchived') });
       setShowArchiveModal(false);
       setArchiveReason('');
       setOrderToArchive(null);
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error archiving order:', error.message);
-      alert(t('errors.failedToUpdate'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToUpdate') });
     }
   };
 
   const handleUnarchiveOrder = async (orderId: string) => {
-    if (!confirm(t('common.unarchive') + '?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: t('common.unarchive') + '?', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -283,11 +285,11 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert(t('success.salesOrderUnarchived'));
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderUnarchived') });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error unarchiving order:', error.message);
-      alert(t('errors.failedToUpdate'));
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToUpdate') });
     }
   };
 
@@ -307,16 +309,16 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert(t('success.salesOrderCancelled'));
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderCancelled') });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error cancelling order:', error.message);
-      alert('Failed to cancel order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to cancel order' });
     }
   };
 
   const handleDeleteOrder = async (orderId: string) => {
-    if (!confirm('Are you sure you want to delete this sales order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this sales order?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -326,11 +328,11 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Sales order deleted successfully!' });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error deleting order:', error.message);
-      alert('Failed to delete order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete order' });
     }
   };
 
@@ -345,7 +347,7 @@ export default function SalesOrders() {
   };
 
   const handleApproveOrder = async (orderId: string) => {
-    if (!confirm('Approve this sales order? Stock will be reserved automatically.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this sales order? Stock will be reserved automatically.', variant: 'warning' })) return;
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -371,28 +373,28 @@ export default function SalesOrders() {
       if (reserveError) {
         console.error('Error reserving stock:', reserveError);
         console.error('Supabase request failed', reserveError);
-        alert('Order approved but stock reservation failed: ' + reserveError.message);
+        showToast({ type: 'warning', title: 'Warning', message: 'Order approved but stock reservation failed: ' + reserveError.message });
       } else if (reserveResult && reserveResult.length > 0) {
         const result = reserveResult[0];
         if (result.success) {
-          alert('✅ Sales order approved and stock fully reserved!');
+          showToast({ type: 'success', title: 'Success', message: 'Sales order approved and stock fully reserved!' });
         } else {
-          alert('⚠️ Order approved with stock shortage.\n\n' + result.message + '\n\nImport requirements have been created automatically.');
+          showToast({ type: 'warning', title: 'Warning', message: 'Order approved with stock shortage.\n\n' + result.message + '\n\nImport requirements have been created automatically.' });
         }
       } else {
-        alert('Sales order approved!');
+        showToast({ type: 'success', title: 'Success', message: 'Sales order approved!' });
       }
 
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error approving order:', error.message);
-      alert('Failed to approve order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to approve order' });
     }
   };
 
   const handleRejectOrder = async () => {
     if (!orderToReject || !rejectionReason.trim()) {
-      alert('Please enter a rejection reason');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a rejection reason' });
       return;
     }
 
@@ -413,14 +415,14 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Sales order rejected' });
       setShowRejectModal(false);
       setRejectionReason('');
       setOrderToReject(null);
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error rejecting order:', error.message);
-      alert('Failed to reject order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to reject order' });
     }
   };
 
