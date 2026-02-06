@@ -277,6 +277,7 @@ export function Sales() {
       const { data: settings } = await supabase
         .from('app_settings')
         .select('invoice_prefix, invoice_start_number')
+        .limit(1)
         .maybeSingle();
 
       const prefix = settings?.invoice_prefix || 'SAPJ';
