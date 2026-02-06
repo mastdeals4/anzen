@@ -191,7 +191,6 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
             <thead className="bg-gray-50 sticky top-0">
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Date</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Journal No</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Type</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Debit Account</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Credit Account</th>
@@ -204,10 +203,9 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
               {filteredVouchers.map((voucher) => (
                 <tr key={voucher.journal_entry_id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-3 py-2 whitespace-nowrap text-gray-900 border-r">
-                    {new Date(voucher.date).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap font-mono text-blue-600 border-r">
-                    {voucher.voucher_no}
+                    <div className="text-xs">
+                      {new Date(voucher.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                    </div>
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap border-r">
                     <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
@@ -225,7 +223,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap border-r">
-                    <span className="text-gray-900 font-medium">
+                    <span className="text-gray-900 font-medium text-xs">
                       Rp {voucher.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </td>
@@ -235,15 +233,13 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    {voucher.is_multi_line && (
-                      <button
-                        onClick={() => handleViewVoucher(voucher)}
-                        className="text-blue-600 hover:text-blue-800"
-                        title="View detailed breakdown"
-                      >
-                        <FileText className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleViewVoucher(voucher)}
+                      className="text-blue-600 hover:text-blue-800"
+                      title="View detailed breakdown"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               ))}
