@@ -495,8 +495,7 @@ export function CAReports() {
     const { data: settings } = await supabase
       .from('app_settings')
       .select('company_name')
-      .limit(1)
-      .maybeSingle();
+      .single();
 
     const companyName = settings?.company_name || 'Your Company Name';
 

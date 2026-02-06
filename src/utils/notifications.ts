@@ -95,6 +95,7 @@ export async function checkAndCreateExpiryNotifications() {
     const { data: settings } = await supabase
       .from('app_settings')
       .select('expiry_alert_days')
+      .limit(1)
       .maybeSingle();
 
     const alertDays = settings?.expiry_alert_days || 30;
