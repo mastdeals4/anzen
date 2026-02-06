@@ -560,7 +560,7 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
           // Ask user for the year since CSV only has dd/MM format
           const currentYear = new Date().getFullYear();
-          const userYear = prompt(`CSV contains dates without year (e.g., 01/12).\nWhich year is this statement for?`, String(currentYear - 1));
+          const userYear = prompt(`CSV contains dates without year (e.g., 01/12).\nWhich year is this statement for?`, String(currentYear));
           if (!userYear) {
             alert('❌ Year is required to process the CSV');
             return;
