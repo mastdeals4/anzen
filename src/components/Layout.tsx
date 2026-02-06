@@ -233,7 +233,7 @@ export function Layout({ children }: LayoutProps) {
                 <div className="flex items-center gap-2 text-gray-500 italic">
                   <Sparkles className="w-3 h-3 text-yellow-500 flex-shrink-0" />
                   <p className="line-clamp-1">
-                    {isLoadingQuote ? 'Loading inspiration...' : `"${quote.content}"`}
+                    {`"${quote.content}"`}
                   </p>
                 </div>
               </div>
