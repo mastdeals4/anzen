@@ -600,7 +600,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
             batches (batch_number),
             import_containers (container_ref),
             delivery_challans (challan_number),
-            bank_accounts (bank_name, account_number, alias, currency),
+            bank_accounts (bank_name, account_number),
             bank_statement_lines (
               id,
               transaction_date,
@@ -653,7 +653,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 batches (batch_number),
                 import_containers (container_ref),
                 delivery_challans (challan_number),
-                bank_accounts (bank_name, account_number, alias, currency),
+                bank_accounts (bank_name, account_number),
                 bank_statement_lines (
                   id,
                   transaction_date,
@@ -700,7 +700,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
             batches (batch_number),
             import_containers (container_ref),
             delivery_challans (challan_number),
-            bank_accounts (bank_name, account_number, alias, currency),
+            bank_accounts (bank_name, account_number),
             bank_statement_lines (
               id,
               transaction_date,
@@ -749,7 +749,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 batches (batch_number),
                 import_containers (container_ref),
                 delivery_challans (challan_number),
-                bank_accounts (bank_name, account_number, alias, currency),
+                bank_accounts (bank_name, account_number),
                 bank_statement_lines (
                   id,
                   transaction_date,

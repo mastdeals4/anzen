@@ -11,7 +11,6 @@ interface BankAccount {
   bank_name: string;
   account_number: string;
   currency: string;
-  alias: string | null;
 }
 
 interface StatementLine {
@@ -313,13 +312,13 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
       setSelectedAccount(account || null);
       loadStatementLines();
     }
-  }, [selectedBank, bankAccounts, financeDateRange]);
+  }, [selectedBank, financeDateRange]);
 
   const loadBankAccounts = async () => {
     try {
       const { data, error } = await supabase
         .from('bank_accounts')
-        .select('id, account_name, bank_name, account_number, currency, alias')
+        .select('id, account_name, bank_name, account_number, currency')
         .eq('is_active', true)
         .order('account_name');
       if (error) throw error;
@@ -723,18 +722,7 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) {
-      alert('❌ No file selected');
-      return;
-    }
-    if (!selectedBank) {
-      alert('❌ Please select a bank account first');
-      return;
-    }
-    if (!selectedAccount) {
-      alert('❌ Bank account not loaded. Please refresh the page.');
-      return;
-    }
+    if (!file || !selectedBank || !selectedAccount) return;
 
     setUploading(true);
     try {
@@ -1727,7 +1715,7 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
             <h3 className="text-sm font-bold">Bank Reconciliation</h3>
             {selectedAccount && (
               <span className="text-slate-300 text-xs">
-                {selectedAccount.alias ? `${selectedAccount.alias} (${selectedAccount.account_number})` : `${selectedAccount.bank_name} - ${selectedAccount.account_number}`}
+                {selectedAccount.bank_name} - {selectedAccount.account_number}
               </span>
             )}
             <div className="flex gap-2">
@@ -1794,7 +1782,7 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
           >
             {bankAccounts.map(bank => (
               <option key={bank.id} value={bank.id}>
-                {bank.alias ? `${bank.alias} (${bank.account_number})` : `${bank.bank_name} - ${bank.account_number} (${bank.currency})`}
+                {bank.bank_name} - {bank.account_number}
               </option>
             ))}
           </select>
