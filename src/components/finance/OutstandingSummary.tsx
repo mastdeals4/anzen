@@ -28,149 +28,25 @@ export default function OutstandingSummary() {
   const loadOutstanding = async () => {
     setLoading(true);
     try {
-      const today = new Date();
-      const parties: OutstandingParty[] = [];
+      const rpcName = partyType === 'customer'
+        ? 'get_customer_outstanding_summary'
+        : 'get_supplier_outstanding_summary';
 
-      if (partyType === 'customer') {
-        const { data: customers } = await supabase
-          .from('customers')
-          .select('id, name, email')
-          .order('name');
+      const { data, error } = await supabase.rpc(rpcName);
 
-        if (!customers) return;
+      if (error) throw error;
 
-        for (const customer of customers) {
-          const { data: invoices } = await supabase
-            .from('sales_invoices')
-            .select('id, invoice_date, total_amount, payment_status')
-            .eq('customer_id', customer.id)
-            .in('payment_status', ['pending', 'partial']);
-
-          const { data: receipts } = await supabase
-            .from('finance_receipt_vouchers')
-            .select('amount')
-            .eq('customer_id', customer.id);
-
-          const { data: creditNotes } = await supabase
-            .from('credit_notes')
-            .select('total_amount')
-            .eq('customer_id', customer.id);
-
-          const totalInvoiced = invoices?.reduce((sum, inv) => sum + inv.total_amount, 0) || 0;
-          const totalReceived = receipts?.reduce((sum, rec) => sum + rec.amount, 0) || 0;
-          const totalCreditNotes = creditNotes?.reduce((sum, cn) => sum + cn.total_amount, 0) || 0;
-          const outstanding = totalInvoiced - totalReceived - totalCreditNotes;
-
-          if (outstanding > 0) {
-            const aging = {
-              age_0_30: 0,
-              age_31_60: 0,
-              age_61_90: 0,
-              age_90_plus: 0,
-            };
-
-            let oldestDate: Date | null = null;
-
-            invoices?.forEach(inv => {
-              if (inv.payment_status === 'pending' || inv.payment_status === 'partial') {
-                const invDate = new Date(inv.invoice_date);
-                const daysOld = Math.floor((today.getTime() - invDate.getTime()) / (1000 * 60 * 60 * 24));
-
-                if (!oldestDate || invDate < oldestDate) {
-                  oldestDate = invDate;
-                }
-
-                if (daysOld <= 30) {
-                  aging.age_0_30 += inv.total_amount;
-                } else if (daysOld <= 60) {
-                  aging.age_31_60 += inv.total_amount;
-                } else if (daysOld <= 90) {
-                  aging.age_61_90 += inv.total_amount;
-                } else {
-                  aging.age_90_plus += inv.total_amount;
-                }
-              }
-            });
-
-            parties.push({
-              id: customer.id,
-              name: customer.name,
-              email: customer.email,
-              total_outstanding: outstanding,
-              oldest_invoice_date: oldestDate?.toISOString(),
-              ...aging,
-            });
-          }
-        }
-      } else {
-        const { data: suppliers } = await supabase
-          .from('suppliers')
-          .select('id, name, email')
-          .order('name');
-
-        if (!suppliers) return;
-
-        for (const supplier of suppliers) {
-          const { data: invoices } = await supabase
-            .from('finance_purchase_invoices')
-            .select('id, invoice_date, total_amount, payment_status')
-            .eq('supplier_id', supplier.id)
-            .in('payment_status', ['pending', 'partial']);
-
-          const { data: payments } = await supabase
-            .from('finance_payment_vouchers')
-            .select('amount')
-            .eq('supplier_id', supplier.id);
-
-          const totalInvoiced = invoices?.reduce((sum, inv) => sum + inv.total_amount, 0) || 0;
-          const totalPaid = payments?.reduce((sum, pay) => sum + pay.amount, 0) || 0;
-          const outstanding = totalInvoiced - totalPaid;
-
-          if (outstanding > 0) {
-            const aging = {
-              age_0_30: 0,
-              age_31_60: 0,
-              age_61_90: 0,
-              age_90_plus: 0,
-            };
-
-            let oldestDate: Date | null = null;
-
-            invoices?.forEach(inv => {
-              if (inv.payment_status === 'pending' || inv.payment_status === 'partial') {
-                const invDate = new Date(inv.invoice_date);
-                const daysOld = Math.floor((today.getTime() - invDate.getTime()) / (1000 * 60 * 60 * 24));
-
-                if (!oldestDate || invDate < oldestDate) {
-                  oldestDate = invDate;
-                }
-
-                if (daysOld <= 30) {
-                  aging.age_0_30 += inv.total_amount;
-                } else if (daysOld <= 60) {
-                  aging.age_31_60 += inv.total_amount;
-                } else if (daysOld <= 90) {
-                  aging.age_61_90 += inv.total_amount;
-                } else {
-                  aging.age_90_plus += inv.total_amount;
-                }
-              }
-            });
-
-            parties.push({
-              id: supplier.id,
-              name: supplier.name,
-              email: supplier.email,
-              total_outstanding: outstanding,
-              oldest_invoice_date: oldestDate?.toISOString(),
-              ...aging,
-            });
-          }
-        }
-      }
-
-      parties.sort((a, b) => b.total_outstanding - a.total_outstanding);
-      setOutstandingParties(parties);
+      setOutstandingParties((data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        total_outstanding: Number(row.total_outstanding) || 0,
+        age_0_30: Number(row.age_0_30) || 0,
+        age_31_60: Number(row.age_31_60) || 0,
+        age_61_90: Number(row.age_61_90) || 0,
+        age_90_plus: Number(row.age_90_plus) || 0,
+        oldest_invoice_date: row.oldest_invoice_date,
+      })));
     } catch (err) {
       console.error('Error loading outstanding:', err);
     } finally {
@@ -200,7 +76,7 @@ export default function OutstandingSummary() {
 
     const csv = [
       `${partyType === 'customer' ? 'Customer' : 'Supplier'} Outstanding Summary`,
-      `Generated: ${new Date().toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `Generated: ${new Date().toLocaleString('id-ID')}`,
       '',
       headers.join(','),
       ...rows.map(row => row.join(',')),
@@ -261,7 +137,7 @@ export default function OutstandingSummary() {
               onClick={() => setPartyType('supplier')}
               className={`px-2.5 py-1.5 rounded-lg font-medium text-xs ${
                 partyType === 'supplier'
-                  ? 'bg-purple-600 text-white'
+                  ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
