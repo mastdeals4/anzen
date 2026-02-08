@@ -93,6 +93,12 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
   const [deletePreview, setDeletePreview] = useState<any>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [customers, setCustomers] = useState<Array<{ id: string; company_name: string }>>([]);
+  const [receiptCustomerId, setReceiptCustomerId] = useState('');
+  const [receiptInvoices, setReceiptInvoices] = useState<any[]>([]);
+  const [receiptAllocations, setReceiptAllocations] = useState<{[invoiceId: string]: number}>({});
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
+  const [existingReceipts, setExistingReceipts] = useState<any[]>([]);
+  const [linkExistingReceipt, setLinkExistingReceipt] = useState(false);
 
   const expenseCategories = [
     {
@@ -1515,6 +1521,41 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
     }
   };
 
+  const loadCustomerInvoices = async (custId: string) => {
+    setLoadingInvoices(true);
+    try {
+      const { data } = await supabase
+        .rpc('get_invoices_with_balance', { customer_uuid: custId });
+      const unpaid = (data || []).filter((inv: any) => inv.balance_amount > 0);
+      setReceiptInvoices(unpaid);
+    } catch (err) {
+      console.error('Error loading invoices:', err);
+    } finally {
+      setLoadingInvoices(false);
+    }
+  };
+
+  const loadExistingReceipts = async (line: StatementLine) => {
+    try {
+      const { data } = await supabase
+        .from('receipt_vouchers')
+        .select('id, voucher_number, voucher_date, amount, customers(company_name)')
+        .is('journal_entry_id', null)
+        .order('voucher_date', { ascending: false })
+        .limit(50);
+
+      const { data: allReceipts } = await supabase
+        .from('receipt_vouchers')
+        .select('id, voucher_number, voucher_date, amount, customers(company_name)')
+        .order('voucher_date', { ascending: false })
+        .limit(100);
+
+      setExistingReceipts(allReceipts || []);
+    } catch (err) {
+      console.error('Error loading receipts:', err);
+    }
+  };
+
   const handleRecordReceipt = async (line: StatementLine, type: string, customerId: string, description: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -1523,11 +1564,9 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
       if (type === 'customer_payment') {
         if (!customerId) throw new Error('Please select a customer');
 
-        // Generate voucher number
         const { data: voucherNum, error: voucherError } = await supabase.rpc('generate_voucher_number', { p_prefix: 'RV' });
         if (voucherError) throw voucherError;
 
-        // Create receipt voucher
         const { data: receipt, error: receiptError } = await supabase
           .from('receipt_vouchers')
           .insert({
@@ -1546,7 +1585,16 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
         if (receiptError) throw receiptError;
 
-        // Link to bank statement
+        for (const [invoiceId, amount] of Object.entries(receiptAllocations)) {
+          if (amount <= 0) continue;
+          await supabase.from('voucher_allocations').insert({
+            voucher_type: 'receipt',
+            receipt_voucher_id: receipt.id,
+            sales_invoice_id: invoiceId,
+            allocated_amount: amount,
+          });
+        }
+
         const { error: updateError } = await supabase
           .from('bank_statement_lines')
           .update({
@@ -1559,9 +1607,9 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
         if (updateError) throw updateError;
 
-        alert(`✅ Receipt Voucher ${voucherNum} created successfully`);
+        const allocCount = Object.values(receiptAllocations).filter(a => a > 0).length;
+        alert(`Receipt Voucher ${voucherNum} created${allocCount > 0 ? ` and allocated to ${allocCount} invoice(s)` : ''}`);
       } else {
-        // For non-customer payment types, just record the transaction
         const { error: updateError } = await supabase
           .from('bank_statement_lines')
           .update({
@@ -1574,15 +1622,48 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
         if (updateError) throw updateError;
 
-        alert('✅ Receipt recorded successfully');
+        alert('Receipt recorded successfully');
       }
 
       setRecordModal(false);
       setRecordingLine(null);
+      setReceiptCustomerId('');
+      setReceiptInvoices([]);
+      setReceiptAllocations({});
+      setLinkExistingReceipt(false);
       loadStatementLines();
     } catch (error: any) {
       console.error('Error recording receipt:', error);
-      alert('❌ ' + error.message);
+      alert('Error: ' + error.message);
+    }
+  };
+
+  const handleLinkExistingReceipt = async (line: StatementLine, receiptId: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('bank_statement_lines')
+        .update({
+          reconciliation_status: 'recorded',
+          matched_receipt_id: receiptId,
+          matched_at: new Date().toISOString(),
+          matched_by: user.id,
+        })
+        .eq('id', line.id);
+
+      if (error) throw error;
+
+      setRecordModal(false);
+      setRecordingLine(null);
+      setLinkExistingReceipt(false);
+      setExistingReceipts([]);
+      loadStatementLines();
+      alert('Linked to existing receipt successfully');
+    } catch (error: any) {
+      console.error('Error linking receipt:', error);
+      alert('Error: ' + error.message);
     }
   };
 
@@ -2267,68 +2348,177 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
             {recordingLine.credit > 0 && (
               <div>
-                <h4 className="font-medium mb-2">Record as Receipt</h4>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    const type = formData.get('type') as string;
-                    const customerId = formData.get('customer_id') as string;
-                    const description = formData.get('description') as string;
-                    handleRecordReceipt(recordingLine, type, customerId, description);
-                  }}
-                  className="space-y-3"
-                >
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-                    <select
-                      name="type"
-                      id="receiptType"
-                      required
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      onChange={(e) => {
-                        const customerField = document.getElementById('customerField');
-                        if (customerField) {
-                          customerField.style.display = e.target.value === 'customer_payment' ? 'block' : 'none';
-                        }
-                      }}
-                    >
-                      <option value="">Select type...</option>
-                      <option value="customer_payment">Customer Payment</option>
-                      <option value="capital">Capital Injection</option>
-                      <option value="other_income">Other Income</option>
-                      <option value="loan">Loan/Financing</option>
-                    </select>
-                  </div>
-                  <div id="customerField" style={{ display: 'none' }}>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Customer *</label>
-                    <select
-                      name="customer_id"
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select customer...</option>
-                      {customers.map(c => (
-                        <option key={c.id} value={c.id}>{c.company_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                    <input
-                      type="text"
-                      name="description"
-                      defaultValue={recordingLine.description}
-                      className="w-full px-3 py-2 border rounded-lg"
-                      placeholder="Optional: Override description"
-                    />
-                  </div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium">Record as Receipt</h4>
                   <button
-                    type="submit"
-                    className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    type="button"
+                    onClick={() => {
+                      setLinkExistingReceipt(!linkExistingReceipt);
+                      if (!linkExistingReceipt) loadExistingReceipts(recordingLine);
+                    }}
+                    className="text-xs text-blue-600 hover:underline"
                   >
-                    Record Receipt
+                    {linkExistingReceipt ? 'Create New Receipt' : 'Link Existing Receipt'}
                   </button>
-                </form>
+                </div>
+
+                {linkExistingReceipt ? (
+                  <div className="space-y-3">
+                    <p className="text-xs text-gray-500">Select an existing receipt voucher to link to this bank statement line.</p>
+                    <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
+                      {existingReceipts.length === 0 ? (
+                        <div className="p-3 text-center text-gray-500 text-sm">No receipt vouchers found</div>
+                      ) : (
+                        existingReceipts.map(r => (
+                          <button
+                            key={r.id}
+                            onClick={() => handleLinkExistingReceipt(recordingLine, r.id)}
+                            className="w-full p-2 text-left hover:bg-blue-50 text-sm flex justify-between items-center"
+                          >
+                            <div>
+                              <span className="font-mono font-medium">{r.voucher_number}</span>
+                              <span className="text-gray-500 ml-2">{r.customers?.company_name}</span>
+                              <div className="text-xs text-gray-400">{new Date(r.voucher_date).toLocaleDateString('id-ID')}</div>
+                            </div>
+                            <span className="font-medium text-green-600">
+                              Rp {r.amount?.toLocaleString('id-ID', { minimumFractionDigits: 2 })}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const formData = new FormData(e.currentTarget);
+                      const type = formData.get('type') as string;
+                      const description = formData.get('description') as string;
+                      handleRecordReceipt(recordingLine, type, receiptCustomerId, description);
+                    }}
+                    className="space-y-3"
+                  >
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
+                      <select
+                        name="type"
+                        required
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        onChange={(e) => {
+                          if (e.target.value !== 'customer_payment') {
+                            setReceiptCustomerId('');
+                            setReceiptInvoices([]);
+                            setReceiptAllocations({});
+                          }
+                        }}
+                      >
+                        <option value="">Select type...</option>
+                        <option value="customer_payment">Customer Payment</option>
+                        <option value="capital">Capital Injection</option>
+                        <option value="other_income">Other Income</option>
+                        <option value="loan">Loan/Financing</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Customer *</label>
+                      <select
+                        name="customer_id"
+                        value={receiptCustomerId}
+                        onChange={(e) => {
+                          setReceiptCustomerId(e.target.value);
+                          setReceiptAllocations({});
+                          if (e.target.value) {
+                            loadCustomerInvoices(e.target.value);
+                          } else {
+                            setReceiptInvoices([]);
+                          }
+                        }}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Select customer...</option>
+                        {customers.map(c => (
+                          <option key={c.id} value={c.id}>{c.company_name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {receiptCustomerId && receiptInvoices.length > 0 && (
+                      <div className="border rounded-lg p-2">
+                        <p className="text-xs font-medium text-gray-600 mb-2">Allocate to Invoices (optional)</p>
+                        <div className="max-h-40 overflow-y-auto space-y-1">
+                          {receiptInvoices.map((inv: any) => {
+                            const isChecked = receiptAllocations[inv.id] !== undefined;
+                            return (
+                              <div key={inv.id} className="flex items-center gap-2 text-xs p-1 hover:bg-gray-50 rounded">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      const remaining = recordingLine.credit - Object.values(receiptAllocations).reduce((a, b) => a + b, 0);
+                                      setReceiptAllocations(prev => ({
+                                        ...prev,
+                                        [inv.id]: Math.min(inv.balance_amount, remaining)
+                                      }));
+                                    } else {
+                                      const next = { ...receiptAllocations };
+                                      delete next[inv.id];
+                                      setReceiptAllocations(next);
+                                    }
+                                  }}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-mono">{inv.invoice_number}</span>
+                                  <span className="text-red-500 ml-1">Bal: Rp {inv.balance_amount?.toLocaleString('id-ID')}</span>
+                                </div>
+                                {isChecked && (
+                                  <input
+                                    type="number"
+                                    value={receiptAllocations[inv.id] || ''}
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      setReceiptAllocations(prev => ({ ...prev, [inv.id]: Math.min(val, inv.balance_amount) }));
+                                    }}
+                                    className="w-24 px-1 py-0.5 border rounded text-right text-xs"
+                                    min={0}
+                                    max={inv.balance_amount}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-2 pt-2 border-t text-xs flex justify-between">
+                          <span>Allocated:</span>
+                          <span className="font-medium text-green-600">
+                            Rp {Object.values(receiptAllocations).reduce((a, b) => a + b, 0).toLocaleString('id-ID', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {receiptCustomerId && loadingInvoices && (
+                      <div className="text-xs text-gray-500 text-center py-2">Loading invoices...</div>
+                    )}
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                      <input
+                        type="text"
+                        name="description"
+                        defaultValue={recordingLine.description}
+                        className="w-full px-3 py-2 border rounded-lg"
+                        placeholder="Optional: Override description"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    >
+                      Record Receipt
+                    </button>
+                  </form>
+                )}
               </div>
             )}
           </div>

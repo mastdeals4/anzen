@@ -153,33 +153,16 @@ export function Dashboard() {
     }
   };
 
-  const baseStatCards = [
-    {
-      title: t('dashboard.lowStock'),
-      value: stats.lowStockItems,
-      icon: AlertTriangle,
-      color: 'orange',
-      link: 'stock',
-    },
-    {
-      title: t('dashboard.nearExpiry'),
-      value: stats.nearExpiryBatches,
-      icon: Clock,
-      color: 'red',
-      link: 'batches',
-    },
-    {
-      title: t('dashboard.salesThisMonth'),
-      value: stats.salesThisMonth,
-      icon: TrendingUp,
-      color: 'blue',
-      link: 'sales',
-    },
-  ];
+  const role = profile?.role;
+  const isAdmin = role === 'admin';
+  const isAccounts = role === 'accounts';
+  const isSales = role === 'sales';
+  const isWarehouse = role === 'warehouse';
 
-  const approvalCards: any[] = [];
-  if (profile?.role === 'admin' || profile?.role === 'accounts') {
-    approvalCards.push({
+  const statCards: any[] = [];
+
+  if (isAdmin || isAccounts) {
+    statCards.push({
       title: 'Overdue Invoices',
       value: stats.overdueInvoicesCount,
       subtitle: `Rp ${stats.overdueInvoicesAmount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
@@ -188,8 +171,8 @@ export function Dashboard() {
       link: 'sales'
     });
   }
-  if (profile?.role === 'admin' || profile?.role === 'sales') {
-    approvalCards.push({
+  if (isAdmin || isSales) {
+    statCards.push({
       title: 'Pending PO Approvals',
       value: stats.pendingSalesOrders,
       icon: FileText,
@@ -197,8 +180,8 @@ export function Dashboard() {
       link: 'sales-orders'
     });
   }
-  if (profile?.role === 'admin') {
-    approvalCards.push({
+  if (isAdmin) {
+    statCards.push({
       title: 'Pending DC Approvals',
       value: stats.pendingDeliveryChallans,
       icon: ClipboardCheck,
@@ -206,8 +189,47 @@ export function Dashboard() {
       link: 'delivery-challan'
     });
   }
-
-  const statCards = [...approvalCards, ...baseStatCards];
+  if (isAdmin || isAccounts) {
+    statCards.push({
+      title: t('dashboard.salesThisMonth'),
+      value: stats.salesThisMonth,
+      icon: TrendingUp,
+      color: 'blue',
+      link: 'sales',
+    });
+  }
+  if (isAdmin || isWarehouse) {
+    statCards.push({
+      title: t('dashboard.lowStock'),
+      value: stats.lowStockItems,
+      icon: AlertTriangle,
+      color: 'orange',
+      link: 'stock',
+    });
+    statCards.push({
+      title: t('dashboard.nearExpiry'),
+      value: stats.nearExpiryBatches,
+      icon: Clock,
+      color: 'red',
+      link: 'batches',
+    });
+  }
+  if (isSales) {
+    statCards.push({
+      title: 'Pending Follow-ups',
+      value: stats.pendingFollowUps,
+      icon: Clock,
+      color: 'orange',
+      link: 'crm',
+    });
+    statCards.push({
+      title: 'Total Customers',
+      value: stats.totalCustomers,
+      icon: UserCircle,
+      color: 'blue',
+      link: 'customers',
+    });
+  }
 
   const colorClasses: Record<string, { bg: string; text: string; icon: string }> = {
     blue: { bg: 'bg-blue-50', text: 'text-blue-600', icon: 'bg-blue-100' },
@@ -219,11 +241,22 @@ export function Dashboard() {
     yellow: { bg: 'bg-yellow-50', text: 'text-yellow-600', icon: 'bg-yellow-100' },
   };
 
-  const quickLinks = [
-    { label: 'Go to Command Center', page: 'command-center', icon: Zap, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' },
-    { label: 'View All Inquiries', page: 'crm', icon: UserCircle, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' },
-    { label: 'Sales Orders', page: 'sales-orders', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' },
-  ];
+  const quickLinks: { label: string; page: string; icon: any; color: string }[] = [];
+  if (isAdmin || isSales) {
+    quickLinks.push({ label: 'Go to Command Center', page: 'command-center', icon: Zap, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'View All Inquiries', page: 'crm', icon: UserCircle, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Sales Orders', page: 'sales-orders', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
+  if (isAccounts) {
+    quickLinks.push({ label: 'Finance Module', page: 'finance', icon: FileText, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'Receivables', page: 'finance', icon: TrendingUp, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Sales Invoices', page: 'sales', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
+  if (isWarehouse) {
+    quickLinks.push({ label: 'Stock Management', page: 'stock', icon: ClipboardCheck, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'Delivery Challans', page: 'delivery-challan', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Inventory', page: 'inventory', icon: AlertTriangle, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
 
   return (
     <Layout>
@@ -287,41 +320,54 @@ export function Dashboard() {
               })}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <RevenueChart />
-              <SalesPipelineChart />
-            </div>
+            {(isAdmin || isAccounts) && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <RevenueChart />
+                <SalesPipelineChart />
+              </div>
+            )}
+            {isSales && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <SalesPipelineChart />
+              </div>
+            )}
           </>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <div className="md:col-span-1 lg:col-span-1">
-            <PaymentOverview />
-          </div>
-          <div className="md:col-span-1 lg:col-span-1">
-            <TodaysActionsDashboard />
-          </div>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h3 className="text-base font-semibold text-gray-900 mb-4">Quick Links</h3>
-            <div className="space-y-2">
-              {quickLinks.map((link, index) => {
-                const LinkIcon = link.icon;
-                return (
-                  <button
-                    key={index}
-                    onClick={() => setCurrentPage(link.page)}
-                    className={`w-full flex items-center justify-between p-3 ${link.color} rounded-lg transition font-medium text-sm group`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <LinkIcon className="w-4 h-4" />
-                      <span>{link.label}</span>
-                    </div>
-                    <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </button>
-                );
-              })}
+        <div className={`grid grid-cols-1 ${(isAdmin || isAccounts) ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2'} gap-6`}>
+          {(isAdmin || isAccounts) && (
+            <div className="md:col-span-1 lg:col-span-1">
+              <PaymentOverview />
             </div>
-          </div>
+          )}
+          {(isAdmin || isSales) && (
+            <div className="md:col-span-1 lg:col-span-1">
+              <TodaysActionsDashboard />
+            </div>
+          )}
+          {quickLinks.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <h3 className="text-base font-semibold text-gray-900 mb-4">Quick Links</h3>
+              <div className="space-y-2">
+                {quickLinks.map((link, index) => {
+                  const LinkIcon = link.icon;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentPage(link.page)}
+                      className={`w-full flex items-center justify-between p-3 ${link.color} rounded-lg transition font-medium text-sm group`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <LinkIcon className="w-4 h-4" />
+                        <span>{link.label}</span>
+                      </div>
+                      <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Layout>

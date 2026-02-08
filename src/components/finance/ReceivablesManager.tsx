@@ -263,15 +263,8 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // 1. Generate voucher number
-      const year = new Date().getFullYear().toString().slice(-2);
-      const month = (new Date().getMonth() + 1).toString().padStart(2, '0');
-      const { count } = await supabase
-        .from('receipt_vouchers')
-        .select('*', { count: 'exact', head: true })
-        .like('voucher_number', `RV${year}${month}%`);
-
-      const voucherNumber = `RV${year}${month}-${String((count || 0) + 1).padStart(4, '0')}`;
+      const { data: voucherNumber, error: numError } = await supabase.rpc('generate_voucher_number', { p_prefix: 'RV' });
+      if (numError) throw numError;
 
       // 2. Insert receipt voucher
       const { data: voucher, error: voucherError } = await supabase

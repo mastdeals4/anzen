@@ -260,14 +260,9 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
   };
 
   const generateVoucherNumber = async () => {
-    const year = new Date().getFullYear().toString().slice(-2);
-    const month = (new Date().getMonth() + 1).toString().padStart(2, '0');
-    const { count } = await supabase
-      .from('receipt_vouchers')
-      .select('*', { count: 'exact', head: true })
-      .like('voucher_number', `RV${year}${month}%`);
-    
-    return `RV${year}${month}-${String((count || 0) + 1).padStart(4, '0')}`;
+    const { data, error } = await supabase.rpc('generate_voucher_number', { p_prefix: 'RV' });
+    if (error) throw error;
+    return data as string;
   };
 
   const handleAllocationChange = (targetId: string, targetType: 'invoice' | 'salesorder', amount: number) => {
@@ -375,36 +370,19 @@ export function ReceiptVoucherManager({ canManage }: ReceiptVoucherManagerProps)
 
       for (const alloc of allocations) {
         if (alloc.targetType === 'invoice') {
-          // Allocate to Sales Invoice
           await supabase.from('voucher_allocations').insert({
             voucher_type: 'receipt',
             receipt_voucher_id: voucher.id,
             sales_invoice_id: alloc.targetId,
             allocated_amount: alloc.amount,
           });
-
-          const invoice = allocationTargets.find(t => t.type === 'invoice' && t.id === alloc.targetId) as (SalesInvoice & { type: 'invoice' });
-          if (invoice) {
-            const newPaidAmount = (invoice.paid_amount || 0) + alloc.amount;
-            const newBalance = invoice.total_amount - newPaidAmount;
-            await supabase
-              .from('sales_invoices')
-              .update({
-                paid_amount: newPaidAmount,
-                balance_amount: newBalance,
-                payment_status: newBalance <= 0 ? 'paid' : 'partial',
-              })
-              .eq('id', alloc.targetId);
-          }
         } else if (alloc.targetType === 'salesorder') {
-          // Allocate to Sales Order (Advance Payment)
           await supabase.from('voucher_allocations').insert({
             voucher_type: 'receipt',
             receipt_voucher_id: voucher.id,
             sales_order_id: alloc.targetId,
             allocated_amount: alloc.amount,
           });
-          // Note: SO advance status will be auto-updated by trigger
         }
       }
 
