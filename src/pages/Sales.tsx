@@ -1386,20 +1386,22 @@ export function Sales() {
               </div>
 
               {customerSalesOrders.length > 0 && !editingInvoice && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Link to Sales Order (for advance payment)</label>
+                <div className="p-3 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                  <label className="block text-sm font-bold text-blue-900 mb-2">
+                    🔗 Link to Sales Order (for advance payment tracking)
+                  </label>
                   <select
                     value={selectedSOId}
                     onChange={(e) => setSelectedSOId(e.target.value)}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
                   >
-                    <option value="">-- No Sales Order --</option>
+                    <option value="">-- Select Sales Order (if this invoice is from an SO) --</option>
                     {customerSalesOrders.map(so => (
                       <option key={so.id} value={so.id}>
                         {so.so_number} - Rp {so.total_amount.toLocaleString('id-ID')}
                         {so.advance_payment_amount > 0
-                          ? ` (Advance: Rp ${so.advance_payment_amount.toLocaleString('id-ID')})`
-                          : ''}
+                          ? ` 💰 ADVANCE PAID: Rp ${so.advance_payment_amount.toLocaleString('id-ID')}`
+                          : ' (No advance)'}
                       </option>
                     ))}
                   </select>
@@ -1407,13 +1409,32 @@ export function Sales() {
                     const so = customerSalesOrders.find(s => s.id === selectedSOId);
                     if (so && so.advance_payment_amount > 0) {
                       return (
-                        <p className="text-xs text-green-600 mt-1">
-                          Advance of Rp {so.advance_payment_amount.toLocaleString('id-ID')} will be auto-applied to this invoice
+                        <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded">
+                          <p className="text-sm font-bold text-green-800">
+                            ✅ Advance Payment: Rp {so.advance_payment_amount.toLocaleString('id-ID')} will be automatically applied to this invoice
+                          </p>
+                          <p className="text-xs text-green-700 mt-1">
+                            The invoice payment status will be updated automatically after saving.
+                          </p>
+                        </div>
+                      );
+                    }
+                    if (selectedSOId) {
+                      return (
+                        <p className="text-xs text-blue-600 mt-2">
+                          ℹ️ This SO has no advance payment recorded.
                         </p>
                       );
                     }
                     return null;
                   })()}
+                  {customerSalesOrders.some(so => so.advance_payment_amount > 0) && !selectedSOId && (
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded">
+                      <p className="text-xs font-medium text-amber-800">
+                        ⚠️ IMPORTANT: This customer has Sales Orders with advance payments. Select the correct SO above to apply advance payment to this invoice!
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
