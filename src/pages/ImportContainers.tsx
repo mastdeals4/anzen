@@ -28,16 +28,6 @@ interface ImportContainer {
   import_invoice_value: number;
   currency: string;
   exchange_rate: number;
-  duty_bm: number;
-  ppn_import: number;
-  pph_import: number;
-  freight_charges: number;
-  clearing_forwarding: number;
-  port_charges: number;
-  container_handling: number;
-  transportation: number;
-  loading_import: number;
-  bpom_ski_fees: number;
   other_import_costs: number;
   total_import_expenses: number;
   allocated_expenses: number;
@@ -85,16 +75,6 @@ export default function ImportContainers() {
     import_invoice_value: 0,
     currency: 'USD',
     exchange_rate: 15000,
-    duty_bm: 0,
-    ppn_import: 0,
-    pph_import: 0,
-    freight_charges: 0,
-    clearing_forwarding: 0,
-    port_charges: 0,
-    container_handling: 0,
-    transportation: 0,
-    loading_import: 0,
-    bpom_ski_fees: 0,
     other_import_costs: 0,
     notes: ''
   });
@@ -160,7 +140,7 @@ export default function ImportContainers() {
         : containerRows;
 
       setContainers(containersWithExpenses);
-    } catch (error: any) {
+    } catch {
       showToast({ type: 'error', title: t('common.error'), message: 'Failed to load import containers' });
     } finally {
       setLoading(false);
@@ -195,31 +175,11 @@ export default function ImportContainers() {
         import_invoice_value: formData.import_invoice_value,
         currency: formData.currency,
         exchange_rate: formData.exchange_rate,
-        duty_bm: formData.duty_bm,
-        ppn_import: formData.ppn_import,
-        pph_import: formData.pph_import,
-        freight_charges: formData.freight_charges,
-        clearing_forwarding: formData.clearing_forwarding,
-        port_charges: formData.port_charges,
-        container_handling: formData.container_handling,
-        transportation: formData.transportation,
-        loading_import: formData.loading_import,
-        bpom_ski_fees: formData.bpom_ski_fees,
         other_import_costs: formData.other_import_costs,
       } : editingContainer ? {} : {
         import_invoice_value: 0,
         currency: 'USD',
         exchange_rate: 15000,
-        duty_bm: 0,
-        ppn_import: 0,
-        pph_import: 0,
-        freight_charges: 0,
-        clearing_forwarding: 0,
-        port_charges: 0,
-        container_handling: 0,
-        transportation: 0,
-        loading_import: 0,
-        bpom_ski_fees: 0,
         other_import_costs: 0,
       };
       const containerData = { ...operationalData, ...costingData };
@@ -270,10 +230,7 @@ export default function ImportContainers() {
       container_ref: '', supplier_id: '',
       import_date: new Date().toISOString().split('T')[0],
       import_invoice_value: 0, currency: 'USD', exchange_rate: 15000,
-      duty_bm: 0, ppn_import: 0, pph_import: 0, freight_charges: 0,
-      clearing_forwarding: 0, port_charges: 0, container_handling: 0,
-      transportation: 0, other_import_costs: 0, notes: ''
-      , loading_import: 0, bpom_ski_fees: 0
+      other_import_costs: 0, notes: ''
     });
     setLinkedExpenses([]);
     setExpenseInclusion({});
@@ -344,19 +301,9 @@ export default function ImportContainers() {
       container_ref: container.container_ref,
       supplier_id: container.supplier_id,
       import_date: container.import_date,
-      import_invoice_value: container.import_invoice_value,
-      currency: container.currency,
-      exchange_rate: container.exchange_rate,
-      duty_bm: container.duty_bm || 0,
-      ppn_import: container.ppn_import || 0,
-      pph_import: container.pph_import || 0,
-      freight_charges: container.freight_charges || 0,
-      clearing_forwarding: container.clearing_forwarding || 0,
-      port_charges: container.port_charges || 0,
-      container_handling: container.container_handling || 0,
-      transportation: container.transportation || 0,
-      loading_import: container.loading_import || 0,
-      bpom_ski_fees: container.bpom_ski_fees || 0,
+      import_invoice_value: container.import_invoice_value || 0,
+      currency: container.currency || 'USD',
+      exchange_rate: container.exchange_rate || 15000,
       other_import_costs: container.other_import_costs || 0,
       notes: container.notes || ''
     });
@@ -385,13 +332,6 @@ export default function ImportContainers() {
     return `Rp ${amount?.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const calculateTotal = () => {
-    return (formData.duty_bm || 0) + (formData.ppn_import || 0) + (formData.pph_import || 0) +
-      (formData.freight_charges || 0) + (formData.clearing_forwarding || 0) + (formData.port_charges || 0) +
-      (formData.container_handling || 0) + (formData.transportation || 0) + (formData.loading_import || 0) +
-      (formData.bpom_ski_fees || 0) + (formData.other_import_costs || 0);
-  };
-
   const includedLinkedExpensesTotal = () => {
     return linkedExpenses
       .filter(exp => expenseInclusion[exp.id] === true)
@@ -407,17 +347,6 @@ export default function ImportContainers() {
   const pibPpnTotal = pibExpenses.reduce((sum, exp) => sum + (exp.pib_ppn_amount || 0), 0);
   const pibPphTotal = pibExpenses.reduce((sum, exp) => sum + (exp.pib_pph_amount || 0), 0);
   const pibPaymentTotal = pibExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
-
-  const numInput = (label: string, field: keyof typeof formData, required = false) => (
-    <div>
-      <label className="block text-xs font-medium text-gray-700 mb-1">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>
-      <MoneyInput
-        value={(formData as any)[field]}
-        onChange={(amount) => setFormData({ ...formData, [field]: amount })}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-      />
-    </div>
-  );
 
   return (
     <Layout>
@@ -454,7 +383,7 @@ export default function ImportContainers() {
                   {canViewCosting && (
                     <>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase hidden md:table-cell">{t('importContainers.invoiceValue')}</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">{t('importContainers.importExpenses')}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Landed-Cost Pool</th>
                     </>
                   )}
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.status')}</th>
@@ -478,10 +407,10 @@ export default function ImportContainers() {
                             {formatCurrency(container.import_invoice_value, container.currency)}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-right">
-                            <div className="text-sm text-gray-900 font-semibold">{formatCurrency(container.linked_expenses_total || 0, 'IDR')}</div>
-                            {container.total_import_expenses > 0 && (
-                              <div className="text-xs text-gray-500">{t('importContainers.directCosts')}: {formatCurrency(container.total_import_expenses, 'IDR')}</div>
-                            )}
+                            <div className="text-sm text-gray-900 font-semibold">{formatCurrency((container.linked_expenses_total || 0) + (container.other_import_costs || 0), 'IDR')}</div>
+                            <div className="text-xs text-gray-500">
+                              Linked: {formatCurrency(container.linked_expenses_total || 0, 'IDR')} + Other: {formatCurrency(container.other_import_costs || 0, 'IDR')}
+                            </div>
                           </td>
                         </>
                       )}
@@ -557,7 +486,7 @@ export default function ImportContainers() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('validation.enterExchangeRate').replace('Please enter a valid ', '')}</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Exchange Rate (IDR per USD)</label>
                       <input type="number" step="0.01" value={formData.exchange_rate}
                         onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 0 })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
@@ -568,45 +497,13 @@ export default function ImportContainers() {
               </div>
 
               {canViewCosting && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('importContainers.invoiceValue')} <span className="text-red-500">*</span></label>
-                    <MoneyInput value={formData.import_invoice_value}
-                      onChange={(amount) => setFormData({ ...formData, import_invoice_value: amount })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required
-                    />
-                  </div>
-
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h3 className="text-sm font-semibold text-blue-900 mb-3">{t('importContainers.importCostBreakdown')}</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {numInput(t('importContainers.dutyBm'), 'duty_bm')}
-                      {numInput(t('importContainers.ppnImport'), 'ppn_import')}
-                      {numInput(t('importContainers.pphImport'), 'pph_import')}
-                      {numInput(t('importContainers.freightCharges'), 'freight_charges')}
-                      {numInput(t('importContainers.clearingForwarding'), 'clearing_forwarding')}
-                      {numInput(t('importContainers.portCharges'), 'port_charges')}
-                      {numInput(t('importContainers.containerHandling'), 'container_handling')}
-                      {numInput(t('importContainers.transportation'), 'transportation')}
-                      {numInput(t('importContainers.loadingUnloading'), 'loading_import')}
-                      {numInput(t('importContainers.bpomFees'), 'bpom_ski_fees')}
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          {t('importContainers.otherImportCosts')}
-                          <span className="text-xs text-blue-600 ml-2">✓ {t('importContainers.autoCalculated')}</span>
-                        </label>
-                        <MoneyInput value={formData.other_import_costs} readOnly disabled hideZero={false}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-100 cursor-not-allowed"
-                          onChange={() => undefined}
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-blue-200 flex justify-between items-center">
-                      <span className="text-sm font-semibold text-blue-900">{t('importContainers.totalImportExpenses')}:</span>
-                      <span className="text-lg font-bold text-blue-900">{formatCurrency(calculateTotal(), 'IDR')}</span>
-                    </div>
-                  </div>
-                </>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('importContainers.invoiceValue')} <span className="text-red-500">*</span></label>
+                  <MoneyInput value={formData.import_invoice_value}
+                    onChange={(amount) => setFormData({ ...formData, import_invoice_value: amount })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required
+                  />
+                </div>
               )}
 
               {canViewCosting && editingContainer && linkedExpenses.length > 0 && (
@@ -658,7 +555,7 @@ export default function ImportContainers() {
                   </div>
                   <div className="mt-3 pt-3 border-t border-green-300 space-y-1">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-semibold text-green-900">Actual Linked Expenses Included:</span>
+                      <span className="text-sm font-semibold text-green-900">Selected Actual Linked Costs:</span>
                       <span className="text-sm font-bold text-green-900">{formatCurrency(includedLinkedExpensesTotal(), 'IDR')}</span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -710,6 +607,18 @@ export default function ImportContainers() {
                 </div>
               )}
 
+              {canViewCosting && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-blue-900 mb-3">Other Import Costs</h3>
+                  <p className="text-xs text-blue-700 mb-2">For genuine miscellaneous costs not already represented by a linked Finance Tracker expense. This amount participates in the landed-cost calculation but does NOT create a finance expense or journal entry.</p>
+                  <MoneyInput
+                    value={formData.other_import_costs}
+                    onChange={(amount) => setFormData({ ...formData, other_import_costs: amount })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
                 <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -719,16 +628,16 @@ export default function ImportContainers() {
 
               {canViewCosting && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                <div className="flex gap-2">
-                  <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <ul className="text-sm text-amber-800 list-disc list-inside space-y-1">
-                    <li>Link batches to this container before allocating costs</li>
-                    <li>Once allocated, container and batch costs are locked</li>
-                    <li>Costs are allocated proportionally by invoice value</li>
-                    <li>All import costs will be CAPITALIZED to inventory</li>
-                  </ul>
+                  <div className="flex gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <ul className="text-sm text-amber-800 list-disc list-inside space-y-1">
+                      <li>Link batches to this container before allocating costs</li>
+                      <li>Once allocated, container and batch costs are locked</li>
+                      <li>Costs are allocated proportionally by invoice value</li>
+                      <li>All import costs will be CAPITALIZED to inventory</li>
+                    </ul>
+                  </div>
                 </div>
-              </div>
               )}
 
               <div className="flex justify-end gap-3 pt-2">
