@@ -103,6 +103,7 @@ export function Batches() {
   const [quickViewInvoice, setQuickViewInvoice] = useState<{ invoice: any; items: any[] } | null>(null);
   const [companySettings, setCompanySettings] = useState<any>(null);
   const batchOperationIdRef = useRef<string | null>(null);
+  const priceFieldRef = useRef<'usd' | 'idr' | null>(null);
   const [formData, setFormData] = useState({
     batch_number: '',
     product_id: '',
@@ -111,6 +112,7 @@ export function Batches() {
     import_quantity: 0,
     packaging_details: '',
     import_price_usd: 0,
+    import_price_idr: 0,
     exchange_rate_usd_to_idr: 0,
     duty_charges: 0,
     duty_percent: 0,
@@ -134,6 +136,33 @@ export function Batches() {
   const loadCompanySettings = async () => {
     const { data } = await supabase.from('app_settings').select('*').maybeSingle();
     if (data) setCompanySettings(data);
+  };
+
+  const handleUSDChange = (usd: number) => {
+    priceFieldRef.current = 'usd';
+    const rate = formData.exchange_rate_usd_to_idr;
+    const idr = rate > 0 ? usd * rate : formData.import_price_idr;
+    setFormData(prev => ({ ...prev, import_price_usd: usd, import_price_idr: idr }));
+  };
+
+  const handleIDRChange = (idr: number) => {
+    priceFieldRef.current = 'idr';
+    const rate = formData.exchange_rate_usd_to_idr;
+    const usd = rate > 0 ? idr / rate : formData.import_price_usd;
+    setFormData(prev => ({ ...prev, import_price_idr: idr, import_price_usd: rate > 0 ? Number(usd.toFixed(4)) : usd }));
+  };
+
+  const handleExchangeRateChange = (rate: number) => {
+    const activeField = priceFieldRef.current;
+    if (activeField === 'idr' && rate > 0) {
+      const usd = formData.import_price_idr / rate;
+      setFormData(prev => ({ ...prev, exchange_rate_usd_to_idr: rate, import_price_usd: Number(usd.toFixed(4)) }));
+    } else if (activeField === 'usd' && rate > 0) {
+      const idr = formData.import_price_usd * rate;
+      setFormData(prev => ({ ...prev, exchange_rate_usd_to_idr: rate, import_price_idr: idr }));
+    } else {
+      setFormData(prev => ({ ...prev, exchange_rate_usd_to_idr: rate }));
+    }
   };
 
   const openQuickViewSO = async (soNumber: string) => {
@@ -294,7 +323,13 @@ export function Batches() {
     }
 
     try {
-      const importPriceIDR = canViewCosting ? formData.import_price_usd * formData.exchange_rate_usd_to_idr : 0;
+      // Use the IDR price directly if the user entered IDR (local purchase),
+      // otherwise derive IDR from USD × exchange rate (import purchase).
+      const importPriceIDR = canViewCosting
+        ? (formData.import_price_idr > 0 && formData.import_price_usd <= 0
+            ? formData.import_price_idr
+            : formData.import_price_usd * formData.exchange_rate_usd_to_idr)
+        : 0;
 
       // Calculate actual charge amounts based on type
       const calculateCharge = (amount: number, type: 'percentage' | 'fixed', basePrice: number) => {
@@ -428,6 +463,7 @@ export function Batches() {
       import_quantity: batch.import_quantity,
       packaging_details: batch.packaging_details,
       import_price_usd: batch.import_price_usd || 0,
+      import_price_idr: batch.import_price || 0,
       exchange_rate_usd_to_idr: batch.exchange_rate_usd_to_idr || 0,
       duty_percent: batch.duty_percent ?? productDutyPercent,
       duty_charges: batch.duty_charges,
@@ -545,6 +581,7 @@ export function Batches() {
       import_quantity: 0,
       packaging_details: '',
       import_price_usd: 0,
+      import_price_idr: 0,
       exchange_rate_usd_to_idr: 0,
       duty_percent: 0,
       duty_charges: 0,
@@ -557,6 +594,7 @@ export function Batches() {
       per_pack_weight: '',
       pack_type: 'bag',
     });
+    priceFieldRef.current = null;
   };
 
   const showTransactionHistory = async (productId: string, productName: string, productCode: string, batchId?: string, batchNumber?: string) => {
@@ -744,7 +782,9 @@ export function Batches() {
   };
 
   const calculateTotalCostIDR = () => {
-    const importPriceIDR = formData.import_price_usd * formData.exchange_rate_usd_to_idr;
+    const importPriceIDR = formData.import_price_idr > 0 && formData.import_price_usd <= 0
+      ? formData.import_price_idr
+      : formData.import_price_usd * formData.exchange_rate_usd_to_idr;
 
     const calculateCharge = (amount: number, type: 'percentage' | 'fixed') => {
       if (type === 'percentage') {
@@ -761,7 +801,9 @@ export function Batches() {
   };
 
   const getChargeAmount = (amount: number, type: 'percentage' | 'fixed') => {
-    const importPriceIDR = formData.import_price_usd * formData.exchange_rate_usd_to_idr;
+    const importPriceIDR = formData.import_price_idr > 0 && formData.import_price_usd <= 0
+      ? formData.import_price_idr
+      : formData.import_price_usd * formData.exchange_rate_usd_to_idr;
     if (type === 'percentage') {
       return (importPriceIDR * amount) / 100;
     }
@@ -1426,16 +1468,16 @@ export function Batches() {
                 <div className="border-b pb-1.5">
                   <h3 className="text-xs font-semibold text-gray-900 mb-1 flex items-center gap-1.5">
                     <DollarSign className="w-3.5 h-3.5 text-green-600" />
-                    Import Pricing (USD)
+                    Purchase Price
                   </h3>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                        Import Price (USD)
+                        Purchase Price (USD)
                       </label>
                       <MoneyInput
                         value={formData.import_price_usd}
-                        onChange={(amount) => setFormData({ ...formData, import_price_usd: amount })}
+                        onChange={handleUSDChange}
                         className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                         min="0"
                         placeholder="0.00"
@@ -1445,16 +1487,29 @@ export function Batches() {
 
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                        Exchange Rate (USD to IDR)
+                        Purchase Price (IDR)
+                      </label>
+                      <MoneyInput
+                        value={formData.import_price_idr}
+                        onChange={handleIDRChange}
+                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                        min="0"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                        Exchange Rate (IDR per USD)
                       </label>
                       <input
                         type="number"
                         value={formData.exchange_rate_usd_to_idr === 0 ? '' : formData.exchange_rate_usd_to_idr}
-                        onChange={(e) => setFormData({ ...formData, exchange_rate_usd_to_idr: e.target.value === '' ? 0 : Number(e.target.value) })}
+                        onChange={(e) => handleExchangeRateChange(e.target.value === '' ? 0 : Number(e.target.value))}
                         className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                         min="0"
                         step="0.0001"
-                        placeholder="15000"
+                        placeholder="17000"
                       />
                       <p className="text-xs text-gray-500 mt-0.5">
                         1 USD = {formData.exchange_rate_usd_to_idr.toLocaleString()} IDR
@@ -1462,15 +1517,22 @@ export function Batches() {
                     </div>
                   </div>
 
-                  {formData.import_price_usd > 0 && formData.exchange_rate_usd_to_idr > 0 && (
+                  {((formData.import_price_usd > 0 || formData.import_price_idr > 0) && formData.exchange_rate_usd_to_idr > 0) && (
                     <div className="mt-1 p-1.5 bg-green-50 border border-green-200 rounded">
                       <p className="text-xs text-green-800">
-                        <span className="font-semibold">Calculated Import Price (IDR):</span>{' '}
-                        {formatCurrency(formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
+                        <span className="font-semibold">Purchase Price (IDR):</span>{' '}
+                        {formatCurrency(formData.import_price_usd > 0 ? formData.import_price_usd * formData.exchange_rate_usd_to_idr : formData.import_price_idr)}
                       </p>
-                      <p className="text-xs text-green-600 mt-0.5">
-                        {formatCurrency(formData.import_price_usd, 'USD')} × {formData.exchange_rate_usd_to_idr.toLocaleString()} = {formatCurrency(formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
-                      </p>
+                      {formData.import_price_usd > 0 && (
+                        <p className="text-xs text-green-600 mt-0.5">
+                          {formatCurrency(formData.import_price_usd, 'USD')} × {formData.exchange_rate_usd_to_idr.toLocaleString()} = {formatCurrency(formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
+                        </p>
+                      )}
+                      {formData.import_price_idr > 0 && formData.import_price_usd <= 0 && (
+                        <p className="text-xs text-green-600 mt-0.5">
+                          {formatCurrency(formData.import_price_idr)} ÷ {formData.exchange_rate_usd_to_idr.toLocaleString()} = {formatCurrency(formData.import_price_idr / formData.exchange_rate_usd_to_idr, 'USD')}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1498,9 +1560,9 @@ export function Batches() {
                             %
                           </div>
                         </div>
-                        {formData.duty_percent > 0 && formData.import_price_usd > 0 && formData.exchange_rate_usd_to_idr > 0 && (
+                        {formData.duty_percent > 0 && (formData.import_price_usd > 0 || formData.import_price_idr > 0) && (
                           <p className="text-xs text-gray-600 mt-0.5">
-                            = {formatCurrency((formData.import_price_usd * formData.exchange_rate_usd_to_idr * formData.duty_percent) / 100)}
+                            = {formatCurrency((formData.import_price_idr > 0 && formData.import_price_usd <= 0 ? formData.import_price_idr : formData.import_price_usd * formData.exchange_rate_usd_to_idr) * formData.duty_percent / 100)}
                           </p>
                         )}
                       </div>
@@ -1599,15 +1661,15 @@ export function Batches() {
               <h3 className="text-xs font-semibold text-blue-900 mb-1.5">Total Cost Summary</h3>
               <div className="space-y-0.5 text-xs text-blue-800">
                 <div className="flex justify-between">
-                  <span>Import Price (per unit):</span>
+                  <span>Purchase Price (per unit):</span>
                   <span className="font-medium">
-                    {formatCurrency(formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
+                    {formatCurrency(formData.import_price_idr > 0 && formData.import_price_usd <= 0 ? formData.import_price_idr : formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Duty (Form A1):</span>
                   <span className="font-medium">
-                    {formatCurrency((formData.import_price_usd * formData.exchange_rate_usd_to_idr * formData.duty_percent) / 100)}
+                    {formatCurrency((formData.import_price_idr > 0 && formData.import_price_usd <= 0 ? formData.import_price_idr : formData.import_price_usd * formData.exchange_rate_usd_to_idr) * formData.duty_percent / 100)}
                     {formData.duty_percent > 0 && (
                       <span className="text-xs ml-1">({formData.duty_percent}%)</span>
                     )}
@@ -1641,17 +1703,21 @@ export function Batches() {
                       <div className="flex justify-between items-center">
                         <span className="font-bold text-green-900">Total Batch Cost:</span>
                         <div className="text-right">
-                          <div className="font-bold text-green-700">
-                            {formatCurrency(formData.import_price_usd * formData.import_quantity, 'USD')}
-                          </div>
+                          {formData.import_price_usd > 0 && (
+                            <div className="font-bold text-green-700">
+                              {formatCurrency(formData.import_price_usd * formData.import_quantity, 'USD')}
+                            </div>
+                          )}
                           <div className="text-xs text-green-600">
-                            {formatCurrency((formData.import_price_usd * formData.exchange_rate_usd_to_idr) * formData.import_quantity)}
+                            {formatCurrency(calculateTotalCostIDR() * formData.import_quantity)}
                           </div>
                         </div>
                       </div>
-                      <div className="text-xs text-green-700 mt-0.5">
-                        {formatCurrency(formData.import_price_usd, 'USD')} × {formData.import_quantity} = {formatCurrency(formData.import_price_usd * formData.import_quantity, 'USD')}
-                      </div>
+                      {formData.import_price_usd > 0 && (
+                        <div className="text-xs text-green-700 mt-0.5">
+                          {formatCurrency(formData.import_price_usd, 'USD')} × {formData.import_quantity} = {formatCurrency(formData.import_price_usd * formData.import_quantity, 'USD')}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
