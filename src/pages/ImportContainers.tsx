@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Layout } from '../components/Layout';
-import { Package, Plus, Edit, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { MoneyInput } from '../components/MoneyInput';
@@ -60,6 +60,10 @@ interface LinkedExpense {
   stamp_duty_amount?: number | null;
   bank_charges_amount?: number | null;
   broker_items?: BrokerItem[] | null;
+  include_in_landed_cost?: boolean | null;
+  pib_bm_amount?: number | null;
+  pib_ppn_amount?: number | null;
+  pib_pph_amount?: number | null;
 }
 
 export default function ImportContainers() {
@@ -72,6 +76,8 @@ export default function ImportContainers() {
   const [showModal, setShowModal] = useState(false);
   const [editingContainer, setEditingContainer] = useState<ImportContainer | null>(null);
   const [linkedExpenses, setLinkedExpenses] = useState<LinkedExpense[]>([]);
+  const [expenseInclusion, setExpenseInclusion] = useState<Record<string, boolean>>({});
+  const [savingInclusion, setSavingInclusion] = useState(false);
   const [formData, setFormData] = useState({
     container_ref: '',
     supplier_id: '',
@@ -141,11 +147,12 @@ export default function ImportContainers() {
             containerRows.map(async (container) => {
               const { data: expenses } = await supabase
                 .from('finance_expenses')
-                .select('id, amount, expense_category, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items')
+                .select('id, amount, expense_category, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, include_in_landed_cost')
                 .eq('import_container_id', container.id);
               const states = await getEffectiveExpensePostingStates((expenses || []).map(expense => expense.id));
-              const linkedExpensesTotal = expenses
+              const linkedExpensesTotal = (expenses || [])
                 ?.filter(expense => isEffectiveExpensePosting(states.get(expense.id)?.effective_posting_state))
+                .filter(expense => expense.include_in_landed_cost === true)
                 .reduce((sum, exp) => sum + calculateCanonicalExpenseTotal(exp), 0) || 0;
               return { ...container, linked_expenses_total: linkedExpensesTotal };
             })
@@ -269,28 +276,55 @@ export default function ImportContainers() {
       , loading_import: 0, bpom_ski_fees: 0
     });
     setLinkedExpenses([]);
+    setExpenseInclusion({});
   };
 
   const loadLinkedExpenses = async (containerId: string) => {
     try {
       const { data, error } = await supabase
         .from('finance_expenses')
-        .select('id, expense_category, amount, expense_date, description, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items')
+        .select('id, expense_category, amount, expense_date, description, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, include_in_landed_cost, pib_bm_amount, pib_ppn_amount, pib_pph_amount')
         .eq('import_container_id', containerId)
         .order('expense_date', { ascending: false });
       if (error) throw error;
       const states = await getEffectiveExpensePostingStates((data || []).map(expense => expense.id));
-      setLinkedExpenses((data || []).filter(expense => isEffectiveExpensePosting(states.get(expense.id)?.effective_posting_state)));
+      const active = (data || []).filter(expense => isEffectiveExpensePosting(states.get(expense.id)?.effective_posting_state));
+      setLinkedExpenses(active);
+      const inclusionMap: Record<string, boolean> = {};
+      for (const exp of active) {
+        inclusionMap[exp.id] = exp.include_in_landed_cost === true;
+      }
+      setExpenseInclusion(inclusionMap);
     } catch {
       setLinkedExpenses([]);
+      setExpenseInclusion({});
+    }
+  };
+
+  const handleToggleInclusion = async (expenseId: string, checked: boolean) => {
+    setExpenseInclusion(prev => ({ ...prev, [expenseId]: checked }));
+    setSavingInclusion(true);
+    try {
+      const { error } = await supabase
+        .from('finance_expenses')
+        .update({ include_in_landed_cost: checked })
+        .eq('id', expenseId);
+      if (error) throw error;
+    } catch (error: any) {
+      setExpenseInclusion(prev => ({ ...prev, [expenseId]: !checked }));
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to update inclusion: ' + error.message });
+    } finally {
+      setSavingInclusion(false);
     }
   };
 
   const getExpenseCategoryLabel = (category: string): string => {
     const labels: Record<string, string> = {
       duty_customs: 'Duty & Customs (BM)',
+      duty_import: 'Import Duty',
       ppn_import: 'PPN Import',
       pph_import: 'PPh Import',
+      pib_import: 'PIB Import',
       freight_import: 'Freight (Import)',
       clearing_forwarding: 'Clearing & Forwarding',
       port_charges: 'Port Charges',
@@ -298,6 +332,8 @@ export default function ImportContainers() {
       transport_import: 'Transportation (Import)',
       loading_import: 'Loading / Unloading (Import)',
       bpom_ski_fees: 'BPOM / SKI Fees',
+      import_broker: 'Import Broker',
+      other_import: 'Other Import Cost',
     };
     return labels[category] || category;
   };
@@ -355,6 +391,22 @@ export default function ImportContainers() {
       (formData.container_handling || 0) + (formData.transportation || 0) + (formData.loading_import || 0) +
       (formData.bpom_ski_fees || 0) + (formData.other_import_costs || 0);
   };
+
+  const includedLinkedExpensesTotal = () => {
+    return linkedExpenses
+      .filter(exp => expenseInclusion[exp.id] === true)
+      .reduce((sum, exp) => sum + calculateCanonicalExpenseTotal(exp), 0);
+  };
+
+  const landedCostPool = () => {
+    return includedLinkedExpensesTotal() + (formData.other_import_costs || 0);
+  };
+
+  const pibExpenses = linkedExpenses.filter(exp => exp.expense_category === 'pib_import');
+  const pibDutyTotal = pibExpenses.reduce((sum, exp) => sum + (exp.pib_bm_amount || 0), 0);
+  const pibPpnTotal = pibExpenses.reduce((sum, exp) => sum + (exp.pib_ppn_amount || 0), 0);
+  const pibPphTotal = pibExpenses.reduce((sum, exp) => sum + (exp.pib_pph_amount || 0), 0);
+  const pibPaymentTotal = pibExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
 
   const numInput = (label: string, field: keyof typeof formData, required = false) => (
     <div>
@@ -559,21 +611,101 @@ export default function ImportContainers() {
 
               {canViewCosting && editingContainer && linkedExpenses.length > 0 && (
                 <div className="bg-green-50 border-2 border-green-200 rounded-lg p-4">
-                  <h3 className="text-sm font-semibold text-green-900 mb-3">📎 {t('importContainers.linkedExpenses')}</h3>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {linkedExpenses.map((expense) => (
-                      <div key={expense.id} className="bg-white rounded p-3 flex justify-between items-center gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm text-gray-900 truncate">{getExpenseCategoryLabel(expense.expense_category)}</div>
-                          <div className="text-xs text-gray-600">{expense.expense_date} • {expense.description || 'No description'}</div>
+                  <h3 className="text-sm font-semibold text-green-900 mb-1">{t('importContainers.linkedExpenses')}</h3>
+                  <p className="text-xs text-green-700 mb-3">Check the box to include an actual expense in this container's landed-cost allocation. Unchecked expenses remain valid finance expenses but are excluded from the landed-cost pool.</p>
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-3 pb-1 text-xs font-semibold text-gray-500 uppercase border-b border-green-200">
+                      <div>Expense</div>
+                      <div className="text-right">Amount</div>
+                      <div className="text-center">Include in<br/>Landed Cost</div>
+                      <div className="text-center w-6"></div>
+                    </div>
+                    {linkedExpenses.map((expense) => {
+                      const isIncluded = expenseInclusion[expense.id] === true;
+                      const isPIB = expense.expense_category === 'pib_import';
+                      return (
+                        <div key={expense.id} className="bg-white rounded p-3 grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
+                          <div className="min-w-0">
+                            <div className="font-medium text-sm text-gray-900 truncate">{getExpenseCategoryLabel(expense.expense_category)}</div>
+                            <div className="text-xs text-gray-600">{expense.expense_date} • {expense.description || 'No description'}</div>
+                            {isPIB && (expense.pib_bm_amount || expense.pib_ppn_amount || expense.pib_pph_amount) ? (
+                              <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                                {expense.pib_bm_amount ? <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded">BM: {formatCurrency(expense.pib_bm_amount)}</span> : null}
+                                {expense.pib_ppn_amount ? <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded">PPN: {formatCurrency(expense.pib_ppn_amount)}</span> : null}
+                                {expense.pib_pph_amount ? <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 rounded">PPh: {formatCurrency(expense.pib_pph_amount)}</span> : null}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className={`font-semibold text-sm whitespace-nowrap ${isIncluded ? 'text-green-700' : 'text-gray-400'}`}>
+                            {formatCurrency(calculateCanonicalExpenseTotal(expense), 'IDR')}
+                          </div>
+                          <div className="flex justify-center">
+                            <input
+                              type="checkbox"
+                              checked={isIncluded}
+                              onChange={(e) => handleToggleInclusion(expense.id, e.target.checked)}
+                              disabled={savingInclusion}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                              title={isPIB ? 'PIB expenses: only the duty (BM) component should be included in landed cost. PPN and PPh are excluded.' : 'Include in container landed-cost allocation'}
+                            />
+                          </div>
+                          <div className="w-6 flex justify-center">
+                            {isPIB && <Info className="w-3.5 h-3.5 text-amber-500" />}
+                          </div>
                         </div>
-                        <div className="font-semibold text-green-700 text-sm whitespace-nowrap">{formatCurrency(calculateCanonicalExpenseTotal(expense), 'IDR')}</div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                  <div className="mt-3 pt-3 border-t border-green-300 flex justify-between items-center">
-                    <span className="text-sm font-semibold text-green-900">{t('importContainers.totalFromLinked')}:</span>
-                    <span className="text-lg font-bold text-green-900">{formatCurrency(linkedExpenses.reduce((sum, exp) => sum + calculateCanonicalExpenseTotal(exp), 0), 'IDR')}</span>
+                  <div className="mt-3 pt-3 border-t border-green-300 space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-green-900">Actual Linked Expenses Included:</span>
+                      <span className="text-sm font-bold text-green-900">{formatCurrency(includedLinkedExpensesTotal(), 'IDR')}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-green-900">Other Import Costs:</span>
+                      <span className="text-sm font-bold text-green-900">{formatCurrency(formData.other_import_costs || 0, 'IDR')}</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-green-200">
+                      <span className="text-sm font-bold text-green-900">Container Landed-Cost Pool:</span>
+                      <span className="text-lg font-bold text-green-900">{formatCurrency(landedCostPool(), 'IDR')}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {canViewCosting && editingContainer && pibExpenses.length > 0 && (pibDutyTotal > 0 || pibPpnTotal > 0 || pibPphTotal > 0) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-2">
+                      <h3 className="text-sm font-semibold text-amber-900">PIB / Customs Breakdown</h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                        <div>
+                          <div className="text-xs text-amber-700 font-medium">Import Duty (BM)</div>
+                          <div className="font-bold text-amber-900">{formatCurrency(pibDutyTotal)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-amber-700 font-medium">Import PPN</div>
+                          <div className="font-bold text-gray-500">{formatCurrency(pibPpnTotal)}</div>
+                          <div className="text-[10px] text-gray-400">Excluded from landed cost</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-amber-700 font-medium">Import PPh22</div>
+                          <div className="font-bold text-gray-500">{formatCurrency(pibPphTotal)}</div>
+                          <div className="text-[10px] text-gray-400">Excluded from landed cost</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-amber-700 font-medium">PIB Payment Total</div>
+                          <div className="font-bold text-amber-900">{formatCurrency(pibPaymentTotal)}</div>
+                          <div className="text-[10px] text-gray-400">Not landed cost</div>
+                        </div>
+                      </div>
+                      {pibDutyTotal > 0 && (
+                        <div className="mt-2 p-2 bg-amber-100 rounded text-xs text-amber-800">
+                          <strong>Import Duty detected: {formatCurrency(pibDutyTotal)}.</strong> Please ensure this duty is entered/confirmed in the relevant batch landed-cost calculation. Do not enter the same duty both here and on the batch — it must be counted only once.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

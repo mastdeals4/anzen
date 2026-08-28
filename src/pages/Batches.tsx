@@ -1052,7 +1052,7 @@ export function Batches() {
                                   const freeStock = batch.current_stock - (batch.reserved_stock || 0);
                                   const landedCostPerUnit = batch.landed_cost_per_unit || batch.import_price;
                                   const containerPerUnit = (batch.import_cost_allocated && batch.import_quantity > 0) ? batch.import_cost_allocated / batch.import_quantity : 0;
-                                  const fullLandedIDR = landedCostPerUnit + containerPerUnit;
+                                  const fullLandedIDR = landedCostPerUnit;
                                   const hasUSD = batch.import_price_usd && batch.exchange_rate_usd_to_idr;
                                   const isArchived = !batch.is_active;
                                   const isSoldOut = batch.current_stock <= 0 && batch.is_active;
