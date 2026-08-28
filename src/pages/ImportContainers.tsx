@@ -3,12 +3,12 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Layout } from '../components/Layout';
-import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, Info } from 'lucide-react';
+import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { MoneyInput } from '../components/MoneyInput';
 import { showToast } from '../components/ToastNotification';
-import { showConfirm } from '../components/ConfirmDialog';
+
 import { formatDate } from '../utils/dateFormat';
 import { canSeeInventoryCosting } from '../utils/permissions';
 import { calculateCanonicalExpenseTotal } from '../utils/taxCalculations';
@@ -212,24 +212,6 @@ export default function ImportContainers() {
     }
   };
 
-  const handleAllocate = async (containerId: string) => {
-    if (!await showConfirm({ title: t('common.confirm'), message: t('confirm.allocateCosts'), variant: 'warning', confirmLabel: t('importContainers.allocateCosts') })) return;
-    try {
-      const { data, error } = await supabase.rpc('allocate_import_costs_to_batches', { p_container_id: containerId });
-      if (error) throw error;
-      const result = data as any;
-      if (result.success) {
-        const message = canViewCosting ? `Allocated costs to ${result.batches_allocated} batches. Total: Rp ${result.total_cost?.toLocaleString()}` : `Allocated costs to ${result.batches_allocated} batches.`;
-        showToast({ type: 'success', title: t('common.success'), message });
-        fetchContainers();
-      } else {
-        showToast({ type: 'error', title: t('common.error'), message: result.error });
-      }
-    } catch (error: any) {
-      showToast({ type: 'error', title: t('common.error'), message: 'Failed to allocate costs: ' + error.message });
-    }
-  };
-
   const resetForm = () => {
     setFormData({ container_ref: '', supplier_id: '', import_date: new Date().toISOString().split('T')[0], import_invoice_value: 0, currency: 'USD', exchange_rate: 15000, other_import_costs: 0, notes: '' });
     setLinkedExpenses([]); setLinkedPettyCash([]); setInclusionMap({});
@@ -427,10 +409,7 @@ export default function ImportContainers() {
                     <td className="px-4 py-3 whitespace-nowrap text-center">{getStatusBadge(container.status)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-center">
                       <div className="flex items-center justify-center gap-2">
-                        {container.status === 'draft' ? (<>
-                          <button onClick={() => handleEdit(container)} className="text-blue-600 hover:text-blue-800" title={t('common.edit')}><Edit className="w-4 h-4" /></button>
-                          <button onClick={() => handleAllocate(container.id)} className="text-green-600 hover:text-green-800" title={t('importContainers.allocateCosts')}><CheckCircle className="w-4 h-4" /></button>
-                        </>) : (<span className="text-gray-400 text-xs">{t('importContainers.locked')}</span>)}
+                        <button onClick={() => handleEdit(container)} className="text-blue-600 hover:text-blue-800" title={t('common.edit')}><Edit className="w-4 h-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -541,12 +520,6 @@ export default function ImportContainers() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
                 <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
-
-              {canViewCosting && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2">
-                  <div className="flex gap-2"><AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" /><ul className="text-xs text-amber-800 list-disc list-inside space-y-0.5"><li>Link batches before allocating</li><li>Once allocated, costs are locked</li><li>Allocated proportionally by invoice value</li><li>All costs capitalized to inventory</li></ul></div>
-                </div>
-              )}
 
               <div className="flex justify-end gap-3 pt-1">
                 <button type="button" onClick={() => { setShowModal(false); setEditingContainer(null); resetForm(); }} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">{t('common.cancel')}</button>
