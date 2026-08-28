@@ -1,0 +1,2 @@
+transaction_date,transaction_type,expense_category,payee,amount,currency,reference_number,description
+31/07/2026,expense,office,Example Payee,100000,IDR,PC-REF-001,Office supplies

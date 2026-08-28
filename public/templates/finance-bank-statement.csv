@@ -1,0 +1,2 @@
+transaction_date,value_date,description,reference_number,debit_amount,credit_amount,currency,running_balance
+31/07/2026,31/07/2026,Example bank transaction,TRX-001,100000,0,IDR,9900000

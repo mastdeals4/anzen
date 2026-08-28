@@ -1,0 +1,3 @@
+entry_date,reference_number,description,line_number,account_code,line_description,debit,credit,transaction_currency,exchange_rate
+31/07/2026,MJ-001,Example balanced journal,1,6100,Expense line,100000,0,IDR,1
+31/07/2026,MJ-001,Example balanced journal,2,1100,Cash line,0,100000,IDR,1

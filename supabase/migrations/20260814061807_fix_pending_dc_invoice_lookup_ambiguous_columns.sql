@@ -1,0 +1,12 @@
+-- This migration was already applied directly to the linked production
+-- project on 2026-08-14 06:18:07 UTC (created_by: simplykool@gmail.com).
+--
+-- It replaces public.get_pending_dc_items_for_customer(uuid, uuid) with the
+-- qualified-column implementation for pending/editing DC invoice selection.
+-- The live migration record retains its original statement and is the source
+-- of truth for this historical, already-applied version.  This history marker
+-- restores the repository/production migration sequence without re-running
+-- an unknown change against production.
+--
+-- The Sales invoice-view fix in 20260814110000 does not depend on this RPC:
+-- it uses explicit item/product/batch/DC lookups instead of embedded joins.

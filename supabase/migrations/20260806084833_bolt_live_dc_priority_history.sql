@@ -1,0 +1,4 @@
+-- Migration-history marker for the Bolt migration already deployed to the
+-- linked database as 20260806084833. Its cross-SO reservation-priority
+-- workaround is deliberately superseded by 20260806130000 so Delivery Challan
+-- approval consumes only the canonical reservation belonging to its own SO.
