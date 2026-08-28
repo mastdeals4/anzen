@@ -153,16 +153,16 @@ export default function ImportContainers() {
         ? await Promise.all(
             containerRows.map(async (container) => {
               const [{ data: expenses }, { data: pettyCash }] = await Promise.all([
-                supabase.from('finance_expenses').select('id, amount, expense_category, include_in_landed_cost').eq('import_container_id', container.id),
+                supabase.from('finance_expenses').select('id, amount, expense_category, ppn_amount, stamp_duty_amount, broker_items, include_in_landed_cost').eq('import_container_id', container.id),
                 supabase.from('petty_cash_transactions').select('id, amount, include_in_landed_cost').eq('import_container_id', container.id),
               ]);
               const states = await getEffectiveExpensePostingStates((expenses || []).map(e => e.id));
               const linkedExpensesTotal = (expenses || [])
                 .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
-                .filter(e => e.include_in_landed_cost === true)
+                .filter(e => e.include_in_landed_cost !== false)
                 .reduce((sum, e) => sum + calculateCanonicalExpenseTotal(e), 0) || 0;
               const linkedPettyCashTotal = (pettyCash || [])
-                .filter(pc => pc.include_in_landed_cost === true)
+                .filter(pc => pc.include_in_landed_cost !== false)
                 .reduce((sum, pc) => sum + (pc.amount || 0), 0) || 0;
               return { ...container, linked_expenses_total: linkedExpensesTotal, linked_petty_cash_total: linkedPettyCashTotal };
             })
@@ -249,8 +249,8 @@ export default function ImportContainers() {
       setLinkedPettyCash((pcData || []) as LinkedPettyCash[]);
 
       const map: Record<string, boolean> = {};
-      for (const e of activeExpenses) map[e.id] = e.include_in_landed_cost === true;
-      for (const pc of (pcData || [])) map[pc.id] = pc.include_in_landed_cost === true;
+      for (const e of activeExpenses) map[e.id] = e.include_in_landed_cost !== false;
+      for (const pc of (pcData || [])) map[pc.id] = pc.include_in_landed_cost !== false;
       setInclusionMap(map);
     } catch {
       setLinkedExpenses([]); setLinkedPettyCash([]); setInclusionMap({});
@@ -358,13 +358,13 @@ export default function ImportContainers() {
   const unifiedItems: UnifiedLinkedItem[] = [
     ...linkedExpenses.filter(e => e.expense_category !== 'pib_import').map(e => ({
       id: e.id, source: 'expense' as SourceType, category: e.expense_category, amount: calculateCanonicalExpenseTotal(e),
-      date: e.expense_date, description: e.description || '', include_in_landed_cost: inclusionMap[e.id] === true,
+      date: e.expense_date, description: e.description || '', include_in_landed_cost: inclusionMap[e.id] !== false,
       isPIB: false,
     })),
     ...linkedPettyCash.map(pc => ({
       id: pc.id, source: 'petty_cash' as SourceType, category: pc.expense_category || pc.transaction_type,
       amount: pc.amount, date: pc.transaction_date, description: pc.description || '',
-      include_in_landed_cost: inclusionMap[pc.id] === true, isPIB: false,
+      include_in_landed_cost: inclusionMap[pc.id] !== false, isPIB: false,
     })),
   ];
 
