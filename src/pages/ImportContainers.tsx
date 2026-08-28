@@ -159,6 +159,7 @@ export default function ImportContainers() {
               const states = await getEffectiveExpensePostingStates((expenses || []).map(e => e.id));
               const linkedExpensesTotal = (expenses || [])
                 .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
+                .filter(e => e.expense_category !== 'pib_import')
                 .filter(e => e.include_in_landed_cost !== false)
                 .reduce((sum, e) => sum + calculateCanonicalExpenseTotal(e), 0) || 0;
               const linkedPettyCashTotal = (pettyCash || [])
