@@ -272,7 +272,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       await openStorageDocument(url);
     } catch (err) {
       console.error('Error opening purchase invoice attachment:', err);
-      showToast('Unable to open attachment. Please try again.', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Unable to open attachment. Please try again.' });
     }
   };
 
@@ -282,7 +282,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       await downloadStorageDocument(url, filename);
     } catch (err) {
       console.error('Error downloading purchase invoice attachment:', err);
-      showToast('Unable to download attachment. Please try again.', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Unable to download attachment. Please try again.' });
     }
   };
 
@@ -1314,7 +1314,10 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => void handleOpenAttachment(selectedInvoice.document_urls[0])}
+                            onClick={() => {
+                              const url = selectedInvoice.document_urls;
+                              if (url && url.length > 0) void handleOpenAttachment(url[0]);
+                            }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-800 rounded hover:bg-amber-50 text-xs font-medium"
                           >
                             <FileText className="w-3.5 h-3.5" />
