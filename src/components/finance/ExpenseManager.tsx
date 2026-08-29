@@ -3616,7 +3616,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     documentDate={formData.expense_date}
                     documentOutstanding={Math.max(
                       0,
-                      calculateCanonicalCashPayable(formData)
+                      calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
                         - Number(editingExpense?.paid_amount || 0)
                         + Number(editingExpense?.bank_statement_lines?.reduce(
                           (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
@@ -3631,7 +3631,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0),
                         Math.max(
                           0,
-                          calculateCanonicalCashPayable(formData)
+                          calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
                             - Number(editingExpense?.paid_amount || 0)
                             + Number(editingExpense?.bank_statement_lines?.reduce(
                               (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
