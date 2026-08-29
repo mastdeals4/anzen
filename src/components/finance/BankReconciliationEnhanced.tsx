@@ -791,7 +791,7 @@ export function BankReconciliationEnhanced({
               || expense?.expense_category
               || 'Expense';
             counterparty = expense?.suppliers?.company_name;
-            documentTotal = Number(expense?.amount || 0);
+            documentTotal = expense ? calculateCanonicalCashPayable(expense) : 0;
             documentRemaining = Math.max(0, documentTotal - Number(expense?.paid_amount || 0));
           } else if (allocation.document_type === 'receipt') {
             const receipt = receiptMap.get(allocation.document_id);
