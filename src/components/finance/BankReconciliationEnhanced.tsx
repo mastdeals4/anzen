@@ -791,7 +791,7 @@ export function BankReconciliationEnhanced({
               || expense?.expense_category
               || 'Expense';
             counterparty = expense?.suppliers?.company_name;
-            documentTotal = Number(expense?.amount || 0);
+            documentTotal = expense ? calculateCanonicalCashPayable(expense) : 0;
             documentRemaining = Math.max(0, documentTotal - Number(expense?.paid_amount || 0));
           } else if (allocation.document_type === 'receipt') {
             const receipt = receiptMap.get(allocation.document_id);
@@ -1853,8 +1853,23 @@ export function BankReconciliationEnhanced({
           .eq('id', expenseId)
           .single();
       if (expenseError || !exp) throw expenseError || new Error('Expense not found');
+      // For import_broker expenses, the client-side broker_items JSONB may not
+      // fully deserialize from PostgREST (e.g. null on some payloads), which
+      // makes calculateCanonicalCashPayable omit reimbursement lines. Use the
+      // authoritative DB function calculate_finance_expense_payable — the same
+      // canonical function used by the Expense Manager and the database
+      // triggers — so the reconciliation modal matches the Expense screen.
+      let canonicalPayable: number;
+      if (exp.expense_category === 'import_broker' && linkPaymentKind === 'supplier') {
+        const { data: rpcPayable, error: rpcError } = await supabase
+          .rpc('calculate_finance_expense_payable', { p_expense_id: expenseId });
+        if (rpcError) throw rpcError;
+        canonicalPayable = Number(rpcPayable) || 0;
+      } else {
+        canonicalPayable = calculateCanonicalCashPayable(exp);
+      }
       const documentOutstanding = linkPaymentKind === 'supplier'
-        ? Math.max(0, calculateCanonicalCashPayable(exp) - Number(exp.paid_amount || 0))
+        ? Math.max(0, canonicalPayable - Number(exp.paid_amount || 0))
         : Math.max(0, Number(exp.pph_amount || 0) - Number(exp.pph_paid_amount || 0));
       const amount = Math.min(line.remainingAmount, documentOutstanding);
       if (amount <= 0.01) throw new Error('No remaining amount is available to allocate.');
