@@ -186,6 +186,16 @@ export default function PurchaseOrders() {
     }
   };
 
+  const fetchPurchaseOrderById = async (id: string): Promise<PurchaseOrder> => {
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .select(`*, suppliers (id, company_name, contact_person, email, phone, address), purchase_order_items (*, products (id, product_name, product_code, unit), product_sources!purchase_order_items_make_id_fkey (supplier_name, grade))`)
+      .eq('id', id)
+      .single();
+    if (error) throw error;
+    return data as PurchaseOrder;
+  };
+
   const fetchSuppliers = async () => {
     try {
       const { data, error } = await supabase
@@ -304,21 +314,27 @@ export default function PurchaseOrders() {
     setShowCreateModal(true);
   };
 
-  const handleEdit = (po: PurchaseOrder) => {
-    setEditingPO(po);
-    setFormData({
-      supplier_id: po.supplier_id,
-      po_date: po.po_date,
-      expected_delivery_date: po.expected_delivery_date || '',
-      delivery_address: po.delivery_address || '',
-      currency: po.currency,
-      exchange_rate: po.exchange_rate,
-      payment_terms: po.payment_terms || 'Net 30',
-      notes: po.notes || '',
-      terms_conditions: po.terms_conditions || '',
-    });
-    setPOItems(po.purchase_order_items || []);
-    setShowCreateModal(true);
+  const handleEdit = async (po: PurchaseOrder) => {
+    try {
+      const currentPO = await fetchPurchaseOrderById(po.id);
+      setEditingPO(currentPO);
+      setFormData({
+        supplier_id: currentPO.supplier_id,
+        po_date: currentPO.po_date,
+        expected_delivery_date: currentPO.expected_delivery_date || '',
+        delivery_address: currentPO.delivery_address || '',
+        currency: currentPO.currency,
+        exchange_rate: currentPO.exchange_rate,
+        payment_terms: currentPO.payment_terms || 'Net 30',
+        notes: currentPO.notes || '',
+        terms_conditions: currentPO.terms_conditions || '',
+      });
+      setPOItems(currentPO.purchase_order_items || []);
+      setShowCreateModal(true);
+    } catch (error) {
+      console.error('Error loading purchase order:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load purchase order' });
+    }
   };
 
   const handleProductChange = (index: number, productId: string) => {
@@ -438,36 +454,24 @@ export default function PurchaseOrders() {
 
         if (poError) throw poError;
 
-        // Delete old items
-        await supabase
-          .from('purchase_order_items')
-          .delete()
-          .eq('po_id', editingPO.id);
-
-        // Insert new items (exclude generated and system columns)
-        const itemsToInsert = poItems.map((item, index) => ({
-          po_id: editingPO.id,
-          line_number: index + 1,
-          product_id: item.product_id,
-          make_id: item.make_id || null,
-          description: item.description,
-          quantity: item.quantity,
-          unit: item.unit,
-          unit_price: item.unit_price,
-          discount_percent: item.discount_percent || 0,
-          discount_amount: item.discount_amount || 0,
-          line_total: item.line_total,
-          quantity_received: 0,
-          coa_code: item.coa_code || null,
-          specification: item.specification || null,
-          notes: item.notes || null,
-        }));
-
-        const { error: itemsError } = await supabase
-          .from('purchase_order_items')
-          .insert(itemsToInsert);
-
-        if (itemsError) throw itemsError;
+        const existingItems = editingPO.purchase_order_items || [];
+        const retainedIds = poItems.map(item => item.id).filter((id): id is string => Boolean(id));
+        const removedIds = existingItems.map(item => item.id).filter((id): id is string => Boolean(id) && !retainedIds.includes(id));
+        if (removedIds.length) {
+          const { data: linked, error: linkError } = await supabase.from('purchase_invoice_items').select('purchase_order_item_id').in('purchase_order_item_id', removedIds);
+          if (linkError) throw linkError;
+          if (linked && linked.length) throw new Error('One or more items are linked to a Purchase Invoice and cannot be removed.');
+          const { error } = await supabase.from('purchase_order_items').delete().in('id', removedIds);
+          if (error) throw error;
+        }
+        for (let index = 0; index < poItems.length; index++) {
+          const item = poItems[index];
+          const payload = { po_id: editingPO.id, line_number: index + 1, product_id: item.product_id, make_id: item.make_id || null, description: item.description, quantity: item.quantity, unit: item.unit, unit_price: item.unit_price, discount_percent: item.discount_percent || 0, discount_amount: item.discount_amount || 0, line_total: item.line_total, quantity_received: item.quantity_received || 0, coa_code: item.coa_code || null, specification: item.specification || null, notes: item.notes || null };
+          const result = item.id
+            ? await supabase.from('purchase_order_items').update(payload).eq('id', item.id)
+            : await supabase.from('purchase_order_items').insert(payload);
+          if (result.error) throw result.error;
+        }
 
         showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       } else {
@@ -543,6 +547,18 @@ export default function PurchaseOrders() {
     if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this Purchase Order?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
+      const { data: linkedInvoices, error: linkError } = await supabase
+        .from('purchase_invoices')
+        .select('id')
+        .eq('purchase_order_id', poId)
+        .limit(1);
+      if (linkError) throw linkError;
+      if (linkedInvoices && linkedInvoices.length > 0) {
+        showToast({ type: 'error', title: 'Cannot delete', message: 'This Purchase Order is linked to a Purchase Invoice.' });
+        return;
+      }
+      const { error: itemError } = await supabase.from('purchase_order_items').delete().eq('po_id', poId);
+      if (itemError) throw itemError;
       const { error } = await supabase
         .from('purchase_orders')
         .delete()
@@ -558,9 +574,15 @@ export default function PurchaseOrders() {
     }
   };
 
-  const handleView = (po: PurchaseOrder) => {
-    setSelectedPO(po);
-    setShowViewModal(true);
+  const handleView = async (po: PurchaseOrder) => {
+    try {
+      const currentPO = await fetchPurchaseOrderById(po.id);
+      setSelectedPO(currentPO);
+      setShowViewModal(true);
+    } catch (error) {
+      console.error('Error loading purchase order:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load purchase order' });
+    }
   };
 
   // Create a finance-only invoice draft from this PO.  No receiving, batch,
