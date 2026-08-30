@@ -14,9 +14,11 @@ export interface RealtimeChannelOptions {
   onEvent: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
 }
 
-// Module-level cache of active channel names to guard against StrictMode
-// double-mounts creating duplicate subscriptions.
-const activeChannels = new Set<string>();
+// Module-level ownership map guards against StrictMode double-mounts and
+// multiple mounted copies of a screen using the same stable channel name.
+// The token check in cleanup prevents an older effect from removing a newer
+// subscription that replaced it.
+const activeChannels = new Map<string, { token: symbol; channel: ReturnType<typeof supabase.channel> }>();
 
 /**
  * Stable, StrictMode-safe realtime subscription.
@@ -46,13 +48,12 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
 
     // If a channel with this name is already active (StrictMode double-mount
     // or a stale subscription), tear it down first.
-    if (activeChannels.has(channelName)) {
+    const token = Symbol(channelName);
+    const existingEntry = activeChannels.get(channelName);
+    if (existingEntry) {
       // Best-effort removal: supabase.removeChannel accepts channel objects,
       // but getChannels() lets us find by topic.
-      const existing = supabase.getChannels().find((c) => c.topic === `realtime:${channelName}`);
-      if (existing) {
-        supabase.removeChannel(existing);
-      }
+      supabase.removeChannel(existingEntry.channel);
       activeChannels.delete(channelName);
     }
 
@@ -71,6 +72,7 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
     let retryTimer: number | undefined;
     let retryAttempt = 0;
     let channel: ReturnType<typeof supabase.channel> | undefined;
+    let subscribing = false;
 
     const scheduleRetry = () => {
       if (disposed || retryTimer !== undefined) return;
@@ -82,7 +84,8 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
     };
 
     const subscribe = () => {
-      if (disposed) return;
+      if (disposed || subscribing) return;
+      subscribing = true;
       if (channel) supabase.removeChannel(channel);
       channel = supabase.channel(channelName);
 
@@ -94,6 +97,7 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
         });
 
       channel.subscribe((status) => {
+        subscribing = false;
         if (disposed) return;
         if (status === 'SUBSCRIBED') {
           retryAttempt = 0;
@@ -103,7 +107,7 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
           scheduleRetry();
         }
       });
-      activeChannels.add(channelName);
+      activeChannels.set(channelName, { token, channel });
     };
 
     subscribe();
@@ -112,7 +116,8 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
       disposed = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       if (channel) supabase.removeChannel(channel);
-      activeChannels.delete(channelName);
+      const current = activeChannels.get(channelName);
+      if (current?.token === token) activeChannels.delete(channelName);
     };
   }, [channelName, table, schema, event, filter, enabled]);
 }

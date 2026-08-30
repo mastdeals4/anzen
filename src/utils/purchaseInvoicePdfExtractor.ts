@@ -1,5 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+// Resolve the worker as a module URL so Vite can transform the dependency in
+// both dev and production without requesting the source module through the
+// dev server's `?url` plugin path (which can produce a 500 during lazy loads).
+const pdfWorkerUrl = new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 // Vite bundles the worker as a hashed asset and rewrites this URL for both
 // development and production deployments. Without this, pdfjs-dist throws
@@ -87,7 +90,7 @@ export async function extractPurchaseInvoicePdf(file: File): Promise<ExtractedPu
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push(content.items.map((item: any) => `${item.str || ''}${item.hasEOL ? '\n' : ' '}`).join('').replace(/[ \t]+\n/g, '\n'));
+    pages.push(content.items.map((item: { str?: string; hasEOL?: boolean }) => `${item.str || ''}${item.hasEOL ? '\n' : ' '}`).join('').replace(/[ \t]+\n/g, '\n'));
   }
   const rawText = pages.join('\n');
 
