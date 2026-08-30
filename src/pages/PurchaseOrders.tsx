@@ -605,42 +605,42 @@ export default function PurchaseOrders() {
 
   return (
     <Layout>
-      <div className="p-6">
+      <div className="flex flex-col gap-1.5 p-2 sm:p-3">
         {/* Header */}
-        <div className="mb-6 flex justify-between items-center">
+        <div className="flex items-center justify-between h-8 px-2 bg-white border border-gray-200 rounded">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Purchase Orders</h1>
-            <p className="text-gray-600">Manage procurement from suppliers</p>
+            <h1 className="text-xs font-bold text-gray-900">Purchase Orders</h1>
+            <p className="text-[10px] text-gray-400">Manage procurement from suppliers</p>
           </div>
           {profile?.role !== 'auditor_ca' && (
             <button
               onClick={handleCreateNew}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            className="inline-flex items-center gap-1 h-7 px-2 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700"
             >
-              <Plus className="h-5 w-5" />
+              <Plus className="h-3 w-3" />
               New Purchase Order
             </button>
           )}
         </div>
 
         {/* Filters */}
-        <div className="mb-6 flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
+        <div className="flex items-center gap-2 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded flex-wrap">
+          <div className="flex-1 max-w-sm">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 h-3 w-3" />
               <input
                 type="text"
                 placeholder="Search PO number, supplier..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg"
+                className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
               />
             </div>
           </div>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg"
+            className="h-7 px-2 text-xs border border-gray-300 rounded"
           >
             <option value="all">All Status</option>
             <option value="draft">Draft</option>
@@ -653,33 +653,33 @@ export default function PurchaseOrders() {
         </div>
 
         {/* Table */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded overflow-hidden">
           <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200 text-xs">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">PO Number</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Supplier</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Products</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Amount</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">PO Number</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">Date</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">Supplier</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">Products</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">Total Amount</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredPOs.map((po) => (
                 <tr key={po.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs font-medium text-gray-900">
                     {po.po_number}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-gray-500">
                     {formatDate(po.po_date)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-gray-500">
                     {po.suppliers?.company_name}
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
+                  <td className="px-2 py-1.5 text-xs text-gray-600">
                     <div className="flex flex-col gap-1 max-w-xs">
                       {po.purchase_order_items && po.purchase_order_items.length > 0 ? (
                         <>
@@ -687,7 +687,8 @@ export default function PurchaseOrders() {
                             <div key={idx} className="flex items-center gap-1 text-xs">
                               <Package className="w-3 h-3 text-blue-500 flex-shrink-0" />
                               <span className="truncate">
-                                {item.products?.product_name || item.description}
+                                <span className="block">{item.products?.product_name || item.description}</span>
+                                <span className="block text-[10px] text-gray-500">Make: {item.product_sources?.supplier_name || 'Not recorded'}</span>
                                 <span className="text-gray-400 ml-1">×{item.quantity}</span>
                               </span>
                             </div>
@@ -703,20 +704,20 @@ export default function PurchaseOrders() {
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-gray-900 font-medium">
                     {formatCurrency(po.total_amount, po.currency)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {getStatusBadge(po.status)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <div className="flex gap-2">
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-gray-500">
+                    <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => handleView(po)}
                         className="text-blue-600 hover:text-blue-800"
                         title="View"
                       >
-                        <Eye className="h-5 w-5" />
+                        <Eye className="h-4 w-4" />
                       </button>
                       {po.status !== 'cancelled' && profile?.role !== 'auditor_ca' && (
                         <button
@@ -724,7 +725,7 @@ export default function PurchaseOrders() {
                           className="text-indigo-600 hover:text-indigo-800"
                           title="Create Purchase Invoice"
                         >
-                          <FileText className="h-5 w-5" />
+                          <FileText className="h-4 w-4" />
                         </button>
                       )}
                       {po.status === 'draft' && profile?.role !== 'auditor_ca' && (
@@ -734,14 +735,14 @@ export default function PurchaseOrders() {
                             className="text-green-600 hover:text-green-800"
                             title="Edit"
                           >
-                            <Edit className="h-5 w-5" />
+                            <Edit className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDelete(po.id)}
                             className="text-red-600 hover:text-red-800"
                             title="Delete"
                           >
-                            <Trash2 className="h-5 w-5" />
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </>
                       )}
@@ -751,7 +752,7 @@ export default function PurchaseOrders() {
                           className="text-purple-600 hover:text-purple-800"
                           title="Approve"
                         >
-                          <CheckCircle className="h-5 w-5" />
+                          <CheckCircle className="h-4 w-4" />
                         </button>
                       )}
                     </div>
