@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { Layout } from '../components/Layout';
-import { FileText, Plus, Search, CheckCircle, XCircle, Download, Package } from 'lucide-react';
+import { FileText, Plus, Search, CheckCircle, XCircle, Download, Package, Trash2 } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { PurchaseOrderView } from '../components/PurchaseOrderView';
 import { SearchableSelect } from '../components/SearchableSelect';
