@@ -64,24 +64,12 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
     };
     if (filter) changeConfig.filter = filter;
 
-    // Realtime connections can be unavailable temporarily (for example while
-    // a device is offline or the hosted websocket endpoint is restarting).
-    // Recreate the channel with bounded backoff instead of surfacing an
-    // unhandled websocket error or leaving the subscription permanently dead.
+    // Create one channel for this effect lifecycle. Supabase's client manages
+    // reconnects for an established channel; replacing channels here can
+    // create overlapping sockets and noisy close-before-established errors.
     let disposed = false;
-    let retryTimer: number | undefined;
-    let retryAttempt = 0;
     let channel: ReturnType<typeof supabase.channel> | undefined;
     let subscribing = false;
-
-    const scheduleRetry = () => {
-      if (disposed || retryTimer !== undefined) return;
-      const delay = Math.min(30_000, 1_000 * 2 ** retryAttempt++);
-      retryTimer = window.setTimeout(() => {
-        retryTimer = undefined;
-        subscribe();
-      }, delay);
-    };
 
     const subscribe = () => {
       if (disposed || subscribing) return;
@@ -100,12 +88,12 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
         subscribing = false;
         if (disposed) return;
         if (status === 'SUBSCRIBED') {
-          retryAttempt = 0;
           return;
         }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          scheduleRetry();
-        }
+        // Supabase owns reconnecting an established socket. Avoid creating
+        // replacement channels here: doing so while a connection is still
+        // opening causes repeated close-before-established errors and
+        // duplicate subscriptions.
       });
       activeChannels.set(channelName, { token, channel });
     };
@@ -114,7 +102,6 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
 
     return () => {
       disposed = true;
-      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       if (channel) supabase.removeChannel(channel);
       const current = activeChannels.get(channelName);
       if (current?.token === token) activeChannels.delete(channelName);
