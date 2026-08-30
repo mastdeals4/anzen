@@ -12,6 +12,7 @@ import { MoneyInput } from '../components/MoneyInput';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
+import { useNavigation } from '../contexts/NavigationContext';
 
 interface Supplier {
   id: string;
@@ -28,10 +29,18 @@ interface Product {
   unit: string;
 }
 
+interface ProductSource {
+  id: string;
+  product_id: string;
+  supplier_name: string | null;
+  grade: string | null;
+}
+
 interface POItem {
   id?: string;
   line_number: number;
   product_id: string;
+  make_id?: string | null;
   description: string;
   quantity: number;
   unit: string;
@@ -45,6 +54,7 @@ interface POItem {
   specification?: string;
   notes?: string;
   products?: Product;
+  product_sources?: Pick<ProductSource, 'supplier_name' | 'grade'> | null;
 }
 
 interface PurchaseOrder {
@@ -77,10 +87,12 @@ export default function PurchaseOrders() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const { dateRange } = useFinance();
+  const { setCurrentPage, setNavigationData } = useNavigation();
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [filteredPOs, setFilteredPOs] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productSources, setProductSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -105,6 +117,7 @@ export default function PurchaseOrders() {
     {
       line_number: 1,
       product_id: '',
+      make_id: null,
       description: '',
       quantity: 0,
       unit: '',
@@ -123,6 +136,7 @@ export default function PurchaseOrders() {
     fetchPurchaseOrders();
     fetchSuppliers();
     fetchProducts();
+    fetchProductSources();
   }, [dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
@@ -151,6 +165,10 @@ export default function PurchaseOrders() {
               product_name,
               product_code,
               unit
+            ),
+            product_sources!purchase_order_items_make_id_fkey (
+              supplier_name,
+              grade
             )
           )
         `)
@@ -195,6 +213,20 @@ export default function PurchaseOrders() {
       setProducts(data || []);
     } catch (error: any) {
       console.error('Error fetching products:', error.message);
+    }
+  };
+
+  const fetchProductSources = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('product_sources')
+        .select('id, product_id, supplier_name, grade')
+        .order('supplier_name');
+
+      if (error) throw error;
+      setProductSources(data || []);
+    } catch (error: any) {
+      console.error('Error fetching product sources:', error.message);
     }
   };
 
@@ -257,6 +289,7 @@ export default function PurchaseOrders() {
       {
         line_number: 1,
         product_id: '',
+        make_id: null,
         description: '',
         quantity: 0,
         unit: '',
@@ -295,6 +328,9 @@ export default function PurchaseOrders() {
       newItems[index] = {
         ...newItems[index],
         product_id: productId,
+        make_id: productSources.some(source => source.id === newItems[index].make_id && source.product_id === productId)
+          ? newItems[index].make_id
+          : null,
         description: product.product_name,
         unit: product.unit,
         unit_price: 0,
@@ -318,6 +354,7 @@ export default function PurchaseOrders() {
       {
         line_number: poItems.length + 1,
         product_id: '',
+        make_id: null,
         description: '',
         quantity: 0,
         unit: '',
@@ -412,6 +449,7 @@ export default function PurchaseOrders() {
           po_id: editingPO.id,
           line_number: index + 1,
           product_id: item.product_id,
+          make_id: item.make_id || null,
           description: item.description,
           quantity: item.quantity,
           unit: item.unit,
@@ -447,6 +485,7 @@ export default function PurchaseOrders() {
           po_id: newPO.id,
           line_number: index + 1,
           product_id: item.product_id,
+          make_id: item.make_id || null,
           description: item.description,
           quantity: item.quantity,
           unit: item.unit,
@@ -522,6 +561,14 @@ export default function PurchaseOrders() {
   const handleView = (po: PurchaseOrder) => {
     setSelectedPO(po);
     setShowViewModal(true);
+  };
+
+  // Create a finance-only invoice draft from this PO.  No receiving, batch,
+  // stock or accounting action occurs until the invoice is explicitly saved
+  // through the existing Purchase Invoice workflow.
+  const handleCreateInvoice = (po: PurchaseOrder) => {
+    setNavigationData({ createPurchaseInvoice: true, purchaseOrder: po });
+    setCurrentPage('finance');
   };
 
   if (loading) {
@@ -649,6 +696,15 @@ export default function PurchaseOrders() {
                       >
                         <Eye className="h-5 w-5" />
                       </button>
+                      {po.status !== 'cancelled' && profile?.role !== 'auditor_ca' && (
+                        <button
+                          onClick={() => handleCreateInvoice(po)}
+                          className="text-indigo-600 hover:text-indigo-800"
+                          title="Create Purchase Invoice"
+                        >
+                          <FileText className="h-5 w-5" />
+                        </button>
+                      )}
                       {po.status === 'draft' && profile?.role !== 'auditor_ca' && (
                         <>
                           <button
@@ -786,6 +842,7 @@ export default function PurchaseOrders() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '180px'}}>Product</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '150px'}}>Make / Manufacturer</th>
                         <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '120px'}}>Specification</th>
                         <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '80px'}}>COA No</th>
                         <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '60px'}}>Qty</th>
@@ -807,6 +864,25 @@ export default function PurchaseOrders() {
                               placeholder="Select"
                               className="text-xs"
                               required
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            <SearchableSelect
+                              value={item.make_id || ''}
+                              onChange={(value) => {
+                                const newItems = [...poItems];
+                                newItems[index] = { ...newItems[index], make_id: value || null };
+                                setPOItems(newItems);
+                              }}
+                              options={productSources
+                                .filter(source => source.product_id === item.product_id)
+                                .map(source => ({
+                                  value: source.id,
+                                  label: `${source.supplier_name || 'Unnamed make'}${source.grade ? ` (${source.grade})` : ''}`,
+                                }))}
+                              placeholder={item.product_id ? 'Select Make' : 'Select product first'}
+                              className="text-xs"
+                              disabled={!item.product_id}
                             />
                           </td>
                           <td className="px-2 py-1">

@@ -12,6 +12,7 @@ import html2canvas from 'html2canvas';
 interface SalesOrderItem {
   id?: string;
   product_id: string;
+  make_id?: string | null;
   quantity: number;
   unit_price: number;
   discount_percent: number;
@@ -24,6 +25,10 @@ interface SalesOrderItem {
     product_code: string;
     unit: string;
   };
+  product_sources?: {
+    supplier_name: string | null;
+    grade: string | null;
+  } | null;
 }
 
 interface ProformaInvoiceViewProps {
@@ -380,7 +385,13 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
                     return (
                       <tr key={item.id || index} className="border-b border-black">
                         <td className="border-r border-black p-1.5 text-center print:p-1">{index + 1}</td>
-                        <td className="border-r border-black p-1.5 print:p-1">{item.products?.product_name || 'Unknown Product'}</td>
+                        <td className="border-r border-black p-1.5 print:p-1">
+                          <div>{item.products?.product_name || 'Unknown Product'}</div>
+                          <div className="text-[9px] leading-none text-gray-600 print:text-[8px]">
+                            {item.product_sources?.supplier_name || 'Not recorded'}
+                            {item.product_sources?.grade ? ` (${item.product_sources.grade})` : ''}
+                          </div>
+                        </td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{quantity.toLocaleString()}</td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{item.products?.unit || 'Kg'}</td>
                         <td className={`border-r border-black p-1.5 text-right print:p-1 ${!hasAnyDiscount ? '' : ''}`}>{formatCurrency(unitPrice)}</td>

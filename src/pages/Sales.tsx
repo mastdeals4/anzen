@@ -21,6 +21,10 @@ import { LinkedDocsCell } from '../components/LinkedDocsCell';
 import { MoneyInput } from '../components/MoneyInput';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
 
+function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
 interface SalesInvoice {
   id: string;
   invoice_number: string;
@@ -63,6 +67,10 @@ interface SOItemOption {
   product_id: string;
   product_name: string;
   unit_price: number;
+  quantity: number;
+  tax_percent: number;
+  make_id: string | null;
+  make_name: string | null;
 }
 
 interface SalesOrderOption {
@@ -87,12 +95,15 @@ interface InvoiceItem {
   challan_id?: string | null;
   dc_number?: string;
   max_quantity?: number;
+  make_id?: string | null;
+  make_name?: string | null;
   products?: {
     product_name: string;
     product_code: string;
   };
   batches?: {
     batch_number: string;
+    product_sources?: { supplier_name: string | null; grade: string | null } | null;
   } | null;
 }
 
@@ -150,6 +161,8 @@ interface Batch {
   duty_charges: number;
   freight_charges: number;
   other_charges: number;
+  make_id: string | null;
+  product_sources?: { supplier_name: string | null; grade: string | null } | null;
 }
 
 interface DeliveryChallan {
@@ -308,6 +321,8 @@ export function Sales() {
           challan_id: item.challan_id,
           dc_number: item.challan_number,
           max_quantity: item.remaining_quantity,
+          make_id: batches.find(batch => batch.id === item.batch_id)?.make_id || null,
+          make_name: batches.find(batch => batch.id === item.batch_id)?.product_sources?.supplier_name || null,
         };
       });
 
@@ -471,7 +486,7 @@ export function Sales() {
   const handleFlyChallanClick = async (challanId: string) => {
     const [{ data: challan }, { data: challanItems }] = await Promise.all([
       supabase.from('delivery_challans').select('*, customers(company_name, address, city, phone, pbf_license)').eq('id', challanId).maybeSingle(),
-      supabase.from('delivery_challan_items').select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details)').eq('challan_id', challanId)
+      supabase.from('delivery_challan_items').select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))').eq('challan_id', challanId)
     ]);
     if (challan) {
       setSelectedFlyChallan(challan);
@@ -484,7 +499,15 @@ export function Sales() {
     if (!soId) return;
     const { data } = await supabase
       .from('sales_orders')
-      .select('*, customers(*), sales_order_items(*, products(id, product_name, product_code, unit))')
+      .select(`
+        *,
+        customers(*),
+        sales_order_items(
+          *,
+          products(id, product_name, product_code, unit),
+          product_sources!sales_order_items_make_id_fkey(supplier_name, grade)
+        )
+      `)
       .eq('id', soId)
       .maybeSingle();
     if (data) setLinkedSOPreview(data);
@@ -583,12 +606,15 @@ export function Sales() {
       // Load ALL batches for reference (including 0 stock for delivery challan invoices)
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, product_id, current_stock, import_price, duty_charges, freight_charges, other_charges, import_quantity, import_date, expiry_date')
+        .select('id, batch_number, product_id, make_id, current_stock, import_price, duty_charges, freight_charges, other_charges, import_quantity, import_date, expiry_date, product_sources!batches_make_id_fkey(supplier_name, grade)')
         .eq('is_active', true)
         .order('import_date', { ascending: true });
 
       if (error) throw error;
-      setBatches(data || []);
+      setBatches((data || []).map(batch => ({
+        ...batch,
+        product_sources: normalizeNestedRelation(batch.product_sources),
+      })));
     } catch (error) {
       console.error('Error loading batches:', error);
     }
@@ -630,7 +656,7 @@ export function Sales() {
         .from('sales_orders')
         .select(`
           id, so_number, total_amount, advance_payment_amount, advance_payment_status, status,
-          sales_order_items(product_id, unit_price, products(product_name))
+          sales_order_items(product_id, quantity, unit_price, tax_percent, make_id, product_sources!sales_order_items_make_id_fkey(supplier_name, grade), products(product_name))
         `)
         .eq('customer_id', customerId)
         .eq('is_archived', false)
@@ -650,6 +676,10 @@ export function Sales() {
           product_id: item.product_id,
           product_name: item.products?.product_name || 'Unknown',
           unit_price: item.unit_price || 0,
+          quantity: Number(item.quantity) || 0,
+          tax_percent: Number(item.tax_percent) || 0,
+          make_id: item.make_id || null,
+          make_name: item.product_sources?.supplier_name || null,
         })),
       }));
 
@@ -658,6 +688,29 @@ export function Sales() {
       console.error('Error loading customer sales orders:', error);
       setCustomerSalesOrders([]);
     }
+  };
+
+  const handleSalesOrderSelect = (salesOrderId: string) => {
+    setSelectedSOId(salesOrderId);
+    setSoAutoLinked(false);
+    if (!salesOrderId) return;
+
+    const salesOrder = customerSalesOrders.find(order => order.id === salesOrderId);
+    if (!salesOrder?.items?.length) return;
+
+    // An SO supplies commercial Product/Make data only. Physical Batch data
+    // remains unset until a Delivery Challan is selected.
+    setItems(salesOrder.items.map(item => ({
+      product_id: item.product_id,
+      batch_id: null,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      tax_rate: item.tax_percent,
+      total: item.quantity * item.unit_price * (1 + item.tax_percent / 100),
+      delivery_challan_item_id: null,
+      make_id: item.make_id,
+      make_name: item.make_name,
+    })));
   };
 
   const loadPendingDCOptions = async (customerId: string) => {
@@ -909,7 +962,7 @@ export function Sales() {
 
       const { data: challanItems, error } = await supabase
         .from('delivery_challan_items')
-        .select('product_id, batch_id, quantity, products(product_name, product_code), batches(batch_number, import_price, duty_charges, freight_charges, other_charges, import_quantity)')
+        .select('product_id, batch_id, quantity, products(product_name, product_code), batches(batch_number, import_price, duty_charges, freight_charges, other_charges, import_quantity, make_id, product_sources!batches_make_id_fkey(supplier_name, grade))')
         .eq('challan_id', challanId);
 
       if (error) {
@@ -943,6 +996,7 @@ export function Sales() {
           }
         }
 
+        const batch = normalizeNestedRelation(item.batches);
         invoiceItems.push({
           product_id: item.product_id,
           batch_id: item.batch_id,
@@ -950,6 +1004,8 @@ export function Sales() {
           unit_price: unitPrice,
           tax_rate: 11,
           total: item.quantity * unitPrice * 1.11,
+          make_id: batch?.make_id || null,
+          make_name: normalizeNestedRelation(batch?.product_sources)?.supplier_name || null,
         });
       }
 
@@ -1013,6 +1069,8 @@ export function Sales() {
         tax_rate: 11,
         total: 0,
         delivery_challan_item_id: item.id || null, // Link to DC item
+        make_id: item.batches?.make_id || batch?.make_id || null,
+        make_name: item.batches?.product_sources?.supplier_name || batch?.product_sources?.supplier_name || null,
       };
     });
 
@@ -1040,6 +1098,7 @@ export function Sales() {
         dc_number: item.dc_number,
         products: item.products,
         batches: item.batches,
+        make_name: item.batches?.product_sources?.supplier_name || null,
       }));
 
       setInvoiceItems(mappedItems);
@@ -1782,7 +1841,7 @@ export function Sales() {
                   ) : (
                     <select
                       value={selectedSOId}
-                      onChange={(e) => setSelectedSOId(e.target.value)}
+                      onChange={(e) => handleSalesOrderSelect(e.target.value)}
                       className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
                     >
                       <option value="">-- Select Sales Order (if this invoice is from an SO) --</option>
@@ -1924,6 +1983,9 @@ export function Sales() {
                               <option key={p.id} value={p.id}>{p.product_name}</option>
                             ))}
                           </select>
+                          <div className="mt-0.5 truncate text-[10px] text-gray-500">
+                            Make: {item.make_name || item.batches?.product_sources?.supplier_name || 'Not recorded'}
+                          </div>
                         </div>
 
                         <div className="col-span-2">

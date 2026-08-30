@@ -13,6 +13,10 @@ import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
 import { MoneyInput } from '../components/MoneyInput';
 
+function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
 interface CreditNote {
   id: string;
   credit_note_number: string;
@@ -50,7 +54,12 @@ interface CreditNoteItem {
   };
   batches?: {
     batch_number: string;
-  };
+    current_stock?: number;
+    product_sources?: {
+      supplier_name: string | null;
+      grade: string | null;
+    } | null;
+  } | null;
 }
 
 interface Customer {
@@ -69,6 +78,10 @@ interface Batch {
   batch_number: string;
   product_id: string;
   current_stock: number;
+  product_sources?: {
+    supplier_name: string | null;
+    grade: string | null;
+  } | null;
 }
 
 interface SalesInvoice {
@@ -176,13 +189,22 @@ export function CreditNotes() {
     try {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, product_id, current_stock')
+        .select(`
+          id,
+          batch_number,
+          product_id,
+          current_stock,
+          product_sources!batches_make_id_fkey(supplier_name, grade)
+        `)
         .eq('product_id', productId)
         .eq('is_active', true)
         .order('batch_number');
 
       if (error) throw error;
-      setBatches(data || []);
+      setBatches((data || []).map(batch => ({
+        ...batch,
+        product_sources: normalizeNestedRelation(batch.product_sources),
+      })));
     } catch (error) {
       console.error('Error loading batches:', error);
     }
@@ -196,7 +218,10 @@ export function CreditNotes() {
         .select(`
           *,
           products(product_name, product_code),
-          batches(batch_number)
+          batches(
+            batch_number,
+            product_sources!batches_make_id_fkey(supplier_name, grade)
+          )
         `)
         .eq('credit_note_id', creditNote.id);
 
@@ -257,19 +282,30 @@ export function CreditNotes() {
           quantity,
           unit_price,
           products(product_name, product_code),
-          batches(batch_number, current_stock)
+          batches(
+            batch_number,
+            current_stock,
+            product_sources!batches_make_id_fkey(supplier_name, grade)
+          )
         `)
         .eq('invoice_id', invoiceId);
 
       if (error) throw error;
 
       if (data && data.length > 0) {
-        const invoiceItems = data.map(item => ({
+        const invoiceItems = data.map(item => {
+          const batch = normalizeNestedRelation(item.batches);
+          return {
           product_id: item.product_id,
           batch_id: item.batch_id || '',
           quantity: item.quantity,
           unit_price: item.unit_price,
-        }));
+          batches: batch ? {
+            ...batch,
+            product_sources: normalizeNestedRelation(batch.product_sources),
+          } : null,
+          };
+        });
         setItems(invoiceItems);
       }
     } catch (error) {
@@ -335,7 +371,7 @@ export function CreditNotes() {
 
       if (creditNoteError) throw creditNoteError;
 
-      const itemsWithCreditNoteId = items.map(item => ({
+      const itemsWithCreditNoteId = items.map(({ products: _products, batches: _batches, ...item }) => ({
         ...item,
         credit_note_id: creditNoteData.id,
       }));
@@ -664,7 +700,11 @@ export function CreditNotes() {
               </div>
 
               <div className="space-y-3">
-                {items.map((item, index) => (
+                {items.map((item, index) => {
+                  const selectedBatch = batches.find(batch => batch.id === item.batch_id) || item.batches;
+                  const makeName = selectedBatch?.product_sources?.supplier_name || 'Not recorded';
+
+                  return (
                   <div key={index} className="p-3 border border-gray-200 rounded-lg space-y-2">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
@@ -706,6 +746,9 @@ export function CreditNotes() {
                               </option>
                             ))}
                         </select>
+                        {item.batch_id && (
+                          <div className="mt-1 text-xs text-gray-500">Make: {makeName}</div>
+                        )}
                       </div>
 
                       <div>
@@ -751,7 +794,8 @@ export function CreditNotes() {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

@@ -22,6 +22,7 @@ interface Batch {
   id: string;
   batch_number: string;
   product_id: string;
+  make_id: string | null;
   import_date: string;
   import_quantity: number;
   current_stock: number;
@@ -48,6 +49,7 @@ interface Batch {
     product_code: string;
     unit: string;
   };
+  product_sources?: { supplier_name: string | null; grade: string | null } | null;
   import_containers?: {
     container_ref: string;
   };
@@ -77,12 +79,36 @@ interface BatchDocument {
   uploaded_at: string;
 }
 
+interface PendingInward {
+  invoice_id: string;
+  invoice_number: string;
+  item_id: string;
+  product_id: string;
+  make_id: string | null;
+  import_container_id: string | null;
+  invoice_date: string;
+  currency: string;
+  exchange_rate: number;
+  unit: string;
+  unit_price: number;
+  supplier_name: string;
+  product_name: string;
+  quantity: number;
+  received: number;
+  pending: number;
+  make_name: string | null;
+  batch_number: string | null;
+  expiry_date: string | null;
+  container_ref: string | null;
+}
+
 export function Batches() {
   const { t } = useLanguage();
   const { profile } = useAuth();
   const canViewCosting = canSeeInventoryCosting(profile?.role);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productMakes, setProductMakes] = useState<Array<{ id: string; supplier_name: string | null; grade: string | null }>>([]);
   const [importContainers, setImportContainers] = useState<ImportContainer[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -101,12 +127,15 @@ export function Batches() {
   const [quickViewSO, setQuickViewSO] = useState<{ order: any; items: any[] } | null>(null);
   const [quickViewDC, setQuickViewDC] = useState<{ challan: any; items: any[] } | null>(null);
   const [quickViewInvoice, setQuickViewInvoice] = useState<{ invoice: any; items: any[] } | null>(null);
+  const [pendingInwards, setPendingInwards] = useState<PendingInward[]>([]);
+  const [pendingInwardContext, setPendingInwardContext] = useState<{ invoice_id: string; item_id: string } | null>(null);
   const [companySettings, setCompanySettings] = useState<any>(null);
   const batchOperationIdRef = useRef<string | null>(null);
   const priceFieldRef = useRef<'usd' | 'idr' | null>(null);
   const [formData, setFormData] = useState({
     batch_number: '',
     product_id: '',
+    make_id: '',
     import_container_id: '',
     import_date: '',
     import_quantity: 0,
@@ -131,7 +160,106 @@ export function Batches() {
     loadProducts();
     loadImportContainers();
     loadCompanySettings();
+    loadPendingInwards();
   }, [canViewCosting]);
+
+  const loadPendingInwards = async () => {
+    const { data, error } = await supabase.from('purchase_invoices').select('*,suppliers(company_name),purchase_invoice_items(*,products(product_name))');
+    if (error) {
+      console.error('Error loading pending inwards:', error);
+      setPendingInwards([]);
+      return;
+    }
+    const rows = (data || []).filter((invoice: any) => invoice.receiving_approval_status === 'approved').flatMap((invoice: any) => (invoice.purchase_invoice_items || [])
+      .filter((item: any) => item.item_type === 'inventory')
+      .map((item: any) => ({
+        invoice_id: invoice.id, invoice_number: invoice.invoice_number, item_id: item.id,
+        product_id: item.product_id, make_id: item.receiving_make_id || null,
+        import_container_id: item.receiving_import_container_id || null,
+        invoice_date: invoice.invoice_date, currency: invoice.currency || 'IDR', exchange_rate: Number(invoice.exchange_rate) || 1,
+        unit: item.unit || item.products?.unit || '', unit_price: Number(item.unit_price) || 0,
+        supplier_name: invoice.suppliers?.company_name || '—',
+        product_name: item.products?.product_name || item.description || '—',
+        quantity: Number(item.quantity) || 0, received: 0, pending: Number(item.quantity) || 0,
+        make_name: null,
+        batch_number: item.receiving_batch_number || null, expiry_date: item.receiving_expiry_date || null,
+        container_ref: null,
+      })));
+    const makeIds = Array.from(new Set(rows.map((r: PendingInward) => r.make_id).filter(Boolean))) as string[];
+    const containerIds = Array.from(new Set(rows.map((r: PendingInward) => r.import_container_id).filter(Boolean))) as string[];
+    const [makeResult, containerResult] = await Promise.all([
+      makeIds.length ? supabase.from('product_sources').select('id,supplier_name').in('id', makeIds) : Promise.resolve({ data: [], error: null }),
+      containerIds.length ? supabase.from('import_containers').select('id,container_ref').in('id', containerIds) : Promise.resolve({ data: [], error: null }),
+    ]);
+    const makeNames = new Map((makeResult.data || []).map((m: any) => [m.id, m.supplier_name]));
+    const containerRefs = new Map((containerResult.data || []).map((c: any) => [c.id, c.container_ref]));
+    rows.forEach((r: PendingInward) => {
+      r.make_name = r.make_id ? makeNames.get(r.make_id) || null : null;
+      r.container_ref = r.import_container_id ? containerRefs.get(r.import_container_id) || null : null;
+    });
+    const itemIds = rows.map((r: PendingInward) => r.item_id);
+    if (itemIds.length) {
+      const { data: allocations } = await supabase.from('purchase_invoice_receiving_allocations').select('purchase_invoice_item_id,received_quantity').in('purchase_invoice_item_id', itemIds).eq('status', 'received');
+      const totals = (allocations || []).reduce((acc: Record<string, number>, a: any) => { acc[a.purchase_invoice_item_id] = (acc[a.purchase_invoice_item_id] || 0) + Number(a.received_quantity); return acc; }, {});
+      rows.forEach((r: PendingInward) => { r.received = totals[r.item_id] || 0; r.pending = Math.max(0, r.quantity - r.received); });
+    }
+    setPendingInwards(rows.filter((r: PendingInward) => r.pending > 0));
+  };
+
+  const openPendingInward = async (row: PendingInward) => {
+    if (!canEdit || !row.product_id) return;
+    const { data: makes, error: makesError } = await supabase
+      .from('product_sources')
+      .select('id,supplier_name,grade')
+      .eq('product_id', row.product_id)
+      .order('supplier_name');
+    if (makesError) {
+      showToast({ type: 'error', title: 'Unable to open inward', message: makesError.message });
+      return;
+    }
+
+    const product = products.find(p => p.id === row.product_id);
+    setEditingBatch(null);
+    setPendingInwardContext({ invoice_id: row.invoice_id, item_id: row.item_id });
+    setProductMakes(makes || []);
+    setUploadedFiles([]);
+    setFormData({
+      batch_number: row.batch_number || '',
+      product_id: row.product_id,
+      make_id: row.make_id || (makes?.length === 1 ? makes[0].id : ''),
+      import_container_id: row.import_container_id || '',
+      import_date: new Date().toISOString().split('T')[0],
+      import_quantity: row.pending,
+      packaging_details: '',
+      import_price_usd: row.currency === 'USD' ? row.unit_price : 0,
+      import_price_idr: row.currency === 'USD' ? 0 : row.unit_price,
+      exchange_rate_usd_to_idr: row.currency === 'USD' ? row.exchange_rate : 0,
+      duty_charges: 0,
+      duty_percent: product?.duty_percent || 0,
+      duty_charge_type: 'percentage',
+      freight_charges: 0,
+      freight_charge_type: 'fixed',
+      other_charges: 0,
+      other_charge_type: 'fixed',
+      expiry_date: row.expiry_date || '',
+      per_pack_weight: '',
+      pack_type: 'bag',
+    });
+    setModalOpen(true);
+  };
+
+  const rejectPendingInward = async (row: PendingInward) => {
+    const reason = window.prompt('Rejection reason (required):')?.trim();
+    if (!reason) return;
+    const { error } = await supabase.rpc('reject_purchase_invoice_inward', {
+      p_purchase_invoice_id: row.invoice_id,
+      p_purchase_invoice_item_id: row.item_id,
+      p_reason: reason,
+    });
+    if (error) { showToast({ type: 'error', title: 'Reject failed', message: error.message }); return; }
+    showToast({ type: 'success', title: 'Rejected', message: 'Correct and resubmit the Purchase Invoice for approval.' });
+    await loadPendingInwards();
+  };
 
   const loadCompanySettings = async () => {
     const { data } = await supabase.from('app_settings').select('*').maybeSingle();
@@ -212,6 +340,7 @@ export function Batches() {
           id,
           batch_number,
           product_id,
+          make_id,
           import_date,
           import_quantity,
           current_stock,
@@ -227,6 +356,7 @@ export function Batches() {
         .select(`
           ${batchColumns},
           products(product_name, product_code, unit),
+          product_sources!batches_make_id_fkey(supplier_name, grade),
           import_containers(container_ref),
           stock_reservations(id, reserved_quantity, status, sales_orders(so_number))
         `)
@@ -273,6 +403,21 @@ export function Batches() {
       setProducts(data || []);
     } catch (error) {
       console.error('Error loading products:', error);
+    }
+  };
+
+  const loadProductMakes = async (productId: string, autoSelectSingle = true) => {
+    if (!productId) { setProductMakes([]); return; }
+    const { data, error } = await supabase
+      .from('product_sources')
+      .select('id, supplier_name, grade')
+      .eq('product_id', productId)
+      .order('supplier_name');
+    if (error) throw error;
+    const makes = data || [];
+    setProductMakes(makes);
+    if (autoSelectSingle && !editingBatch && makes.length === 1) {
+      setFormData(current => current.product_id === productId ? { ...current, make_id: makes[0].id } : current);
     }
   };
 
@@ -323,6 +468,10 @@ export function Batches() {
     }
 
     try {
+      if (!editingBatch && !formData.make_id) {
+        showToast({ type: 'error', title: 'Make required', message: 'Create or select a Make / Manufacturer for new inventory batches.' });
+        return;
+      }
       // Use the IDR price directly if the user entered IDR (local purchase),
       // otherwise derive IDR from USD × exchange rate (import purchase).
       const importPriceIDR = canViewCosting
@@ -352,6 +501,7 @@ export function Batches() {
       const batchPayload = {
         batch_number: formData.batch_number,
         product_id: formData.product_id,
+        make_id: formData.make_id || null,
         import_container_id: formData.import_container_id && formData.import_container_id.trim() !== '' ? formData.import_container_id : null,
         import_date: formData.import_date,
         import_quantity: formData.import_quantity,
@@ -371,11 +521,18 @@ export function Batches() {
       const operationId = batchOperationIdRef.current || crypto.randomUUID();
       batchOperationIdRef.current = operationId;
 
-      const { data: result, error } = await supabase.rpc('save_batch_inventory_v1', {
-        p_batch_id: editingBatch?.id || null,
-        p_payload: batchPayload,
-        p_operation_id: operationId,
-      });
+      const { data: result, error } = pendingInwardContext
+        ? await supabase.rpc('receive_purchase_invoice_item', {
+            p_purchase_invoice_item_id: pendingInwardContext.item_id,
+            p_received_quantity: formData.import_quantity,
+            p_operation_id: operationId,
+            p_payload: batchPayload,
+          })
+        : await supabase.rpc('save_batch_inventory_v1', {
+            p_batch_id: editingBatch?.id || null,
+            p_payload: batchPayload,
+            p_operation_id: operationId,
+          });
 
       if (error) throw error;
       if (!result?.success || !result?.batch_id) {
@@ -388,7 +545,7 @@ export function Batches() {
       batchOperationIdRef.current = null;
       setModalOpen(false);
       resetForm();
-      loadBatches();
+      await Promise.all([loadBatches(), loadPendingInwards()]);
     } catch (error: any) {
       console.error('Error saving batch:', error);
       let msg = 'Failed to save batch. Please try again.';
@@ -458,6 +615,7 @@ export function Batches() {
     setFormData({
       batch_number: batch.batch_number,
       product_id: batch.product_id,
+      make_id: batch.make_id || '',
       import_container_id: batch.import_container_id || '',
       import_date: batch.import_date,
       import_quantity: batch.import_quantity,
@@ -476,6 +634,7 @@ export function Batches() {
       per_pack_weight: perPackWeight,
       pack_type: packType,
     });
+    await loadProductMakes(batch.product_id, false);
 
     const { data: docs } = await supabase
       .from('batch_documents')
@@ -571,11 +730,14 @@ export function Batches() {
 
   const resetForm = () => {
     batchOperationIdRef.current = null;
+    setPendingInwardContext(null);
     setEditingBatch(null);
     setUploadedFiles([]);
+    setProductMakes([]);
     setFormData({
       batch_number: '',
       product_id: '',
+      make_id: '',
       import_container_id: '',
       import_date: '',
       import_quantity: 0,
@@ -882,6 +1044,20 @@ export function Batches() {
           </div>
         </div>
 
+        <div className="bg-white rounded-lg shadow">
+          <div className="p-3 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Inward Pending</h2>
+            <span className="text-xs text-gray-500">Approved Purchase Invoice receipts awaiting physical arrival</span>
+          </div>
+          {pendingInwards.length === 0 ? <p className="p-4 text-sm text-gray-400">No approved receipts pending inward.</p> : (
+            <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-gray-50"><tr>
+              <th className="px-3 py-2 text-left text-xs text-gray-500">Supplier / Invoice</th><th className="px-3 py-2 text-left text-xs text-gray-500">Product</th><th className="px-3 py-2 text-left text-xs text-gray-500">Make / Batch</th><th className="px-3 py-2 text-right text-xs text-gray-500">Pending</th><th className="px-3 py-2 text-right text-xs text-gray-500">Action</th>
+            </tr></thead><tbody className="divide-y divide-gray-100">{pendingInwards.map(row => <tr key={row.item_id}>
+              <td className="px-3 py-2">{row.supplier_name}<div className="text-xs text-gray-400">{row.invoice_number}</div></td><td className="px-3 py-2">{row.product_name}</td><td className="px-3 py-2">{row.make_name || 'Not specified'}<div className="text-xs text-gray-400">{row.batch_number || 'Batch at inward'}</div></td><td className="px-3 py-2 text-right font-semibold text-orange-700">{row.pending.toLocaleString()} {row.unit}</td><td className="px-3 py-2 text-right"><button className="text-blue-600 hover:underline text-xs mr-2" onClick={() => { window.location.href = `/finance/purchase?document=${row.invoice_id}`; }}>Edit</button>{canEdit && <button className="text-green-600 hover:underline text-xs mr-2" onClick={() => void openPendingInward(row)}>Inward</button>}<button className="text-red-600 hover:underline text-xs" onClick={() => void rejectPendingInward(row)}>Reject</button></td>
+            </tr>)}</tbody></table></div>
+          )}
+        </div>
+
         {/* Batches Table - Grouped by Product */}
         <div className="bg-white rounded-lg shadow">
           <div className="p-3 border-b border-gray-200 flex items-center gap-3">
@@ -930,7 +1106,8 @@ export function Batches() {
               return (
                 batch.batch_number?.toLowerCase().includes(q) ||
                 batch.products?.product_name?.toLowerCase().includes(q) ||
-                batch.products?.product_code?.toLowerCase().includes(q)
+                batch.products?.product_code?.toLowerCase().includes(q) ||
+                batch.product_sources?.supplier_name?.toLowerCase().includes(q)
               );
             });
 
@@ -1029,6 +1206,7 @@ export function Batches() {
                             <thead className="bg-gray-50">
                               <tr>
                                 <th className="px-3 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wider">Batch #</th>
+                                <th className="px-3 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wider">Make / Manufacturer</th>
                                 <th className="px-3 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wider w-24">Import</th>
                                 <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-20">Stock</th>
                                 <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-16">Res</th>
@@ -1068,6 +1246,7 @@ export function Batches() {
                                         </button>
                                         {isArchived && <span className="ml-1.5 text-[10px] text-gray-400 bg-gray-200 px-1 rounded">archived</span>}
                                       </td>
+                                      <td className="px-3 py-1.5 text-gray-600">{batch.product_sources?.supplier_name || 'Not recorded'}</td>
                                       <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{formatDate(batch.import_date)}</td>
                                       <td className="px-3 py-1.5 text-right">
                                         <span className={`font-semibold ${batch.current_stock <= 0 ? 'text-red-500' : isLowStock(batch) ? 'text-orange-600' : 'text-gray-900'}`}>
@@ -1249,7 +1428,7 @@ export function Batches() {
             setModalOpen(false);
             resetForm();
           }}
-          title={editingBatch ? 'Edit Batch' : 'Add New Batch'}
+          title={pendingInwardContext ? 'Approve Inward — Batch Details' : editingBatch ? 'Edit Batch' : 'Add New Batch'}
           size="xl"
         >
           <form onSubmit={handleSubmit} className="space-y-2">
@@ -1295,20 +1474,22 @@ export function Batches() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Product *
                   </label>
                   <SearchableSelect
                     value={formData.product_id}
-                    onChange={(value) => {
+                    onChange={async (value) => {
                       const selectedProduct = products.find(p => p.id === value);
                       setFormData({
                         ...formData,
                         product_id: value,
+                        make_id: '',
                         duty_percent: selectedProduct?.duty_percent || 0
                       });
+                      await loadProductMakes(value);
                     }}
                     options={products.map(p => ({
                       value: p.id,
@@ -1318,6 +1499,19 @@ export function Batches() {
                     className="text-sm"
                     required
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Make / Manufacturer {editingBatch ? '' : '*'}</label>
+                  <SearchableSelect
+                    value={formData.make_id}
+                    onChange={(value) => setFormData({ ...formData, make_id: value })}
+                    options={productMakes.map(m => ({ value: m.id, label: `${m.supplier_name || 'Unnamed make'}${m.grade ? ` (${m.grade})` : ''}` }))}
+                    placeholder={productMakes.length ? 'Select Make / Manufacturer' : 'No makes recorded'}
+                    className="text-sm"
+                    required={!editingBatch}
+                  />
+                  {!productMakes.length && <p className="text-xs text-amber-600 mt-0.5">Add a Make / Manufacturer in the Product record first.</p>}
                 </div>
 
                 <div>
@@ -1752,7 +1946,7 @@ export function Batches() {
                 type="submit"
                 className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition"
               >
-                {editingBatch ? 'Update Batch' : 'Add Batch'}
+                {pendingInwardContext ? 'Approve Inward' : editingBatch ? 'Update Batch' : 'Add Batch'}
               </button>
             </div>
           </form>

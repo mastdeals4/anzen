@@ -19,6 +19,10 @@ import { fetchLinkedDocumentsBundle, LinkedDocRef } from '../utils/linkedDocumen
 import { LinkedDocsCell } from '../components/LinkedDocsCell';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
 
+function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
 interface DeliveryChallan {
   id: string;
   challan_number: string;
@@ -90,6 +94,7 @@ interface Product {
 interface SalesOrderItemSource {
   id: string;
   product_id: string;
+  make_id: string | null;
   quantity: number;
   delivered_quantity: number;
   unit_price: number;
@@ -105,6 +110,8 @@ interface Batch {
   expiry_date: string | null;
   packaging_details: string | null;
   import_date: string | null;
+  make_id: string | null;
+  product_sources?: { supplier_name: string | null; grade: string | null } | null;
 }
 
 const isExpired = (expiryDate: string | null): boolean => {
@@ -311,7 +318,15 @@ export function DeliveryChallan() {
     if (!soId) return;
     const { data } = await supabase
       .from('sales_orders')
-      .select('*, customers(*), sales_order_items(*, products(id, product_name, product_code, unit))')
+      .select(`
+        *,
+        customers(*),
+        sales_order_items(
+          *,
+          products(id, product_name, product_code, unit),
+          product_sources!sales_order_items_make_id_fkey(supplier_name, grade)
+        )
+      `)
       .eq('id', soId)
       .maybeSingle();
     if (data) setLinkedSOPreview(data);
@@ -409,13 +424,16 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, product_id, current_stock, reserved_stock, expiry_date, packaging_details, import_date')
+        .select('id, batch_number, product_id, make_id, current_stock, reserved_stock, expiry_date, packaging_details, import_date, product_sources!batches_make_id_fkey(supplier_name, grade)')
         .eq('is_active', true)
         .gt('current_stock', 0)
         .order('import_date', { ascending: true });
 
       if (error) throw error;
-      setBatches(data || []);
+      setBatches((data || []).map(batch => ({
+        ...batch,
+        product_sources: normalizeNestedRelation(batch.product_sources),
+      })));
     } catch (error) {
       console.error('Error loading batches:', error);
     }
@@ -425,7 +443,7 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('delivery_challan_items')
-        .select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, current_stock)')
+        .select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, current_stock, make_id, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))')
         .eq('challan_id', challanId);
 
       if (error) throw error;
@@ -478,7 +496,7 @@ export function DeliveryChallan() {
           const [soItemsResult, reservationsResult] = await Promise.all([
             supabase
               .from('sales_order_items')
-              .select(`id, product_id, quantity, delivered_quantity, unit_price, products(product_name, unit)`)
+              .select(`id, product_id, make_id, quantity, delivered_quantity, unit_price, products(product_name, unit)`)
               .eq('sales_order_id', soId),
             supabase
               .from('so_product_reservation_status')
@@ -506,7 +524,7 @@ export function DeliveryChallan() {
             const newItems = soItems.map(item => {
               const productBatches = batches
                 .filter(b => {
-                  return b.product_id === item.product_id && b.current_stock > 0 && !isExpired(b.expiry_date);
+                    return b.product_id === item.product_id && (!item.make_id || b.make_id === item.make_id) && b.current_stock > 0 && !isExpired(b.expiry_date);
                 })
                 .sort((a, b) => {
                   const ea = a.expiry_date ? new Date(a.expiry_date).getTime() : Number.MAX_SAFE_INTEGER;
@@ -839,6 +857,14 @@ export function DeliveryChallan() {
       let challanId: string;
 
       if (editingChallan) {
+        // Approved allocations have already posted physical stock.  Reject
+        // before writing even header fields: the old ordering updated the
+        // header in one request and only then rejected the item edit, leaving
+        // an approved DC partially changed despite the error shown to users.
+        if (editingChallan.approval_status === 'approved') {
+          throw new Error('Approved Delivery Challans cannot be edited. Reject/cancel the DC to reverse its allocation, then create a corrected DC.');
+        }
+
         // When editing, DO NOT update challan_number (it's unique and shouldn't change)
         const updateData = {
           customer_id: formData.customer_id,
@@ -873,21 +899,17 @@ export function DeliveryChallan() {
           number_of_packs: item.number_of_packs,
         }));
 
-        if (editingChallan.approval_status === 'approved') {
-          throw new Error('Approved Delivery Challans cannot be edited. Reject/cancel the DC to reverse its allocation, then create a corrected DC.');
-        } else {
-          const { data: rpcResult, error: rpcError } = await supabase.rpc('edit_delivery_challan', {
-            p_challan_id: editingChallan.id,
-            p_new_items: itemsForRpc
-          });
-          if (rpcError) {
-            console.error('RPC Error:', rpcError);
-            throw new Error(`Failed to update DC: ${rpcError.message}`);
-          }
-          if (!rpcResult?.success) {
-            console.error('RPC Result Error:', rpcResult?.error);
-            throw new Error(rpcResult?.error || 'Failed to update DC items');
-          }
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('edit_delivery_challan', {
+          p_challan_id: editingChallan.id,
+          p_new_items: itemsForRpc
+        });
+        if (rpcError) {
+          console.error('RPC Error:', rpcError);
+          throw new Error(`Failed to update DC: ${rpcError.message}`);
+        }
+        if (!rpcResult?.success) {
+          console.error('RPC Result Error:', rpcResult?.error);
+          throw new Error(rpcResult?.error || 'Failed to update DC items');
         }
 
         challanId = updatedChallan.id;
@@ -1358,6 +1380,7 @@ export function DeliveryChallan() {
           }}
           title={editingChallan ? `Edit DC - ${formData.challan_number}` : `Create DC - ${formData.challan_number}`}
           size="xl"
+          maxWidth="max-w-[90vw]"
         >
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1526,7 +1549,23 @@ export function DeliveryChallan() {
                 </div>
               )}
 
-              <div className="space-y-2">
+              <div className="overflow-x-auto max-h-96 rounded border border-gray-200">
+                <table className="min-w-[1220px] w-full text-xs">
+                  <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left w-52">Product</th>
+                      <th className="px-2 py-1.5 text-left w-40">Make / Manufacturer</th>
+                      <th className="px-2 py-1.5 text-left w-48">Batch</th>
+                      <th className="px-2 py-1.5 text-left w-28">Expiry</th>
+                      <th className="px-2 py-1.5 text-left w-36">Packaging</th>
+                      <th className="px-2 py-1.5 text-right w-24">Qty</th>
+                      <th className="px-2 py-1.5 text-left w-16">UOM</th>
+                      <th className="px-2 py-1.5 text-right w-24">Available</th>
+                      <th className="px-2 py-1.5 text-right w-20">Packs</th>
+                      <th className="px-2 py-1.5 w-10" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
                 {items.map((item, index) => {
                   const batchUsageInForm = new Map<string, number>();
                   items.forEach((formItem, formIndex) => {
@@ -1539,16 +1578,15 @@ export function DeliveryChallan() {
                   const availableBatches = batches.filter(b => {
                     const baseAvailable = getAvailableStock(b);
                     const usedInOtherItems = batchUsageInForm.get(b.id) || 0;
-                    return b.product_id === item.product_id && (baseAvailable - usedInOtherItems) > 0;
+                    const sourceMake = salesOrderItemSources.find(source => source.id === item.sales_order_item_id)?.make_id || null;
+                    return b.product_id === item.product_id && (!sourceMake || b.make_id === sourceMake) && (baseAvailable - usedInOtherItems) > 0;
                   });
                   const selectedBatch = batches.find(b => b.id === item.batch_id);
 
                   return (
-                    <div key={index} className="relative p-2 bg-gray-50 rounded border border-gray-200">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
-                        <div>
-                          <label className="block text-xs text-gray-600 mb-0.5">Product *</label>
-                          <SearchableSelect
+                    <tr key={index} className="bg-white hover:bg-blue-50/40 align-top">
+                      <td className="px-2 py-1">
+                        <SearchableSelect
                             value={item.product_id}
                             onChange={(value) => {
                               const newItems = [...items];
@@ -1560,139 +1598,25 @@ export function DeliveryChallan() {
                             className="text-xs"
                             required
                           />
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between mb-0.5">
-                            <label className="block text-xs text-gray-600">Batch *</label>
-                            {item.product_id && availableBatches.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const fifoBatch = getFIFOBatch(item.product_id);
-                                  if (fifoBatch) {
-                                    handleBatchChange(index, fifoBatch.id);
-                                  }
-                                }}
-                                className="text-[10px] text-blue-600 hover:text-blue-700 font-medium"
-                                title="Select oldest batch (FIFO)"
-                              >
-                                Use FIFO
-                              </button>
-                            )}
-                          </div>
-                          {!item.product_id ? (
-                            <div className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100 text-gray-400">
-                              Select product first
-                            </div>
-                          ) : availableBatches.length > 0 ? (
-                            <SearchableSelect
-                              value={item.batch_id}
-                              onChange={(value) => handleBatchChange(index, value)}
-                              options={availableBatches.map((b, idx) => {
-                                const fifoIndicator = idx === 0 ? ' 🔄' : '';
-                                const baseAvailable = getAvailableStock(b);
-                                const usedInOtherItems = batchUsageInForm.get(b.id) || 0;
-                                const actualAvailable = baseAvailable - usedInOtherItems;
-                                return {
-                                  value: b.id,
-                                  label: `${b.batch_number} (Avl: ${actualAvailable}kg)${fifoIndicator}`
-                                };
-                              })}
-                              placeholder="Select Batch"
-                              className="text-xs"
-                              required
-                            />
-                          ) : (
-                            <div className="w-full px-2 py-1 text-xs border border-red-300 rounded bg-red-50 text-red-700 flex items-center gap-1">
-                              <span>⚠</span>
-                              <span>No stock available</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {selectedBatch && (
-                        <div className="mb-2">
-                          <div className="overflow-x-auto">
-                          <table className="w-full text-[10px] border border-gray-300">
-                            <thead className="bg-gray-200">
-                              <tr>
-                                <th className="px-1 py-0.5 text-left border-r border-gray-300">Batch</th>
-                                <th className="px-1 py-0.5 text-left border-r border-gray-300">Expiry</th>
-                                <th className="px-1 py-0.5 text-left border-r border-gray-300">Packaging</th>
-                                <th className="px-1 py-0.5 text-right border-r border-gray-300">Total</th>
-                                <th className="px-1 py-0.5 text-right font-semibold">Available</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr className="bg-white">
-                                <td className="px-1 py-0.5 border-r border-gray-300">{selectedBatch.batch_number}</td>
-                                <td className="px-1 py-0.5 border-r border-gray-300">
-                                  {selectedBatch.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', {day: '2-digit', month: '2-digit', year: '2-digit'}) : '-'}
-                                </td>
-                                <td className="px-1 py-0.5 border-r border-gray-300">{selectedBatch.packaging_details || '-'}</td>
-                                <td className="px-1 py-0.5 text-right border-r border-gray-300">{selectedBatch.current_stock}kg</td>
-                                <td className="px-1 py-0.5 text-right font-bold text-green-600">
-                                  {(() => {
-                                    const baseAvailable = getAvailableStock(selectedBatch);
-                                    const usedInOtherItems = batchUsageInForm.get(selectedBatch.id) || 0;
-                                    return baseAvailable - usedInOtherItems;
-                                  })()}kg
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          </div>
-                        </div>
-                      )}
-
-                      {item.pack_size && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                          <div>
-                            <label className="block text-xs text-gray-600 mb-0.5">No. of Packs *</label>
-                            <input
-                              type="number"
-                              value={item.number_of_packs || ''}
-                              onChange={(e) => updatePackQuantity(index, Number(e.target.value))}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                              required
-                              min="1"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-600 mb-0.5">Pack Size</label>
-                            <input
-                              type="text"
-                              value={`${item.pack_size} kg`}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100"
-                              disabled
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-600 mb-0.5">Total Qty (Kg)</label>
-                            <input
-                              type="text"
-                              value={`${item.quantity} kg`}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100"
-                              disabled
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {items.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeItem(index)}
-                          className="absolute top-1 right-1 text-xs text-red-600 hover:text-red-800 bg-white px-2 py-0.5 rounded border border-red-300 shadow-sm"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
+                      </td>
+                      <td className="px-2 py-1 text-gray-600">{selectedBatch?.product_sources?.supplier_name || 'Not recorded'}</td>
+                      <td className="px-2 py-1">
+                        {!item.product_id ? <span className="text-gray-400">Select product first</span> : availableBatches.length > 0 ? <div className="flex items-center gap-1"><SearchableSelect value={item.batch_id} onChange={(value) => handleBatchChange(index, value)} options={availableBatches.map((b, idx) => ({ value: b.id, label: `${b.batch_number} (Avl: ${getAvailableStock(b) - (batchUsageInForm.get(b.id) || 0)}kg)${idx === 0 ? ' 🔄' : ''}` }))} placeholder="Select Batch" className="text-xs flex-1" required /><button type="button" onClick={() => { const fifoBatch = getFIFOBatch(item.product_id); if (fifoBatch) handleBatchChange(index, fifoBatch.id); }} className="shrink-0 text-[10px] text-blue-600 hover:text-blue-700 font-medium" title="Select oldest batch (FIFO)">FIFO</button></div> : <span className="text-red-600">No stock available</span>}
+                      </td>
+                      <td className="px-2 py-1 text-gray-600">{selectedBatch?.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}</td>
+                      <td className="px-2 py-1 text-gray-600 truncate max-w-36">{selectedBatch?.packaging_details || '—'}</td>
+                      <td className="px-2 py-1">
+                        {item.pack_size ? <input type="text" value={item.quantity || 0} className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-100 text-right" disabled /> : <input type="number" min="0.01" step="0.01" value={item.quantity || ''} onChange={(e) => { const next = [...items]; next[index] = { ...next[index], quantity: Number(e.target.value) || 0 }; setItems(next); }} className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right" required />}
+                      </td>
+                      <td className="px-2 py-1 text-gray-600">{item.products?.unit || selectedBatch?.product_id && products.find(p => p.id === selectedBatch.product_id)?.unit || 'kg'}</td>
+                      <td className="px-2 py-1 text-right font-semibold text-green-700">{selectedBatch ? `${(getAvailableStock(selectedBatch) - (batchUsageInForm.get(selectedBatch.id) || 0)).toLocaleString()} kg` : '—'}</td>
+                      <td className="px-2 py-1">{item.pack_size ? <input type="number" min="1" value={item.number_of_packs || ''} onChange={(e) => updatePackQuantity(index, Number(e.target.value))} className="w-full min-w-[4.5rem] appearance-none px-1.5 py-1 text-xs border border-gray-300 rounded text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" required /> : <span className="text-gray-400">—</span>}</td>
+                      <td className="px-2 py-1 text-center">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
+                    </tr>
                   );
                 })}
+                  </tbody>
+                </table>
               </div>
             </div>
 

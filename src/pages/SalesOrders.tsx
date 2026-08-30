@@ -42,6 +42,7 @@ interface Product {
 interface SalesOrderItem {
   id: string;
   product_id: string;
+  make_id?: string | null;
   quantity: number;
   unit_price: number;
   discount_percent: number;
@@ -54,6 +55,10 @@ interface SalesOrderItem {
   delivered_quantity: number;
   quoted_usd_unit_price?: number | null;
   products?: Product;
+  product_sources?: {
+    supplier_name: string | null;
+    grade: string | null;
+  } | null;
 }
 
 interface SODeliveryInvoiceStatus {
@@ -204,10 +209,15 @@ export default function SalesOrders() {
             tax_percent,
             tax_amount,
             line_total,
+            make_id,
             item_delivery_date,
             notes,
             delivered_quantity,
             quoted_usd_unit_price,
+            product_sources!sales_order_items_make_id_fkey (
+              supplier_name,
+              grade
+            ),
             products (
               id,
               product_name,
@@ -269,7 +279,7 @@ export default function SalesOrders() {
   const openLinkedChallanView = async (challanId: string) => {
     const [{ data: challan }, { data: items }] = await Promise.all([
       supabase.from('delivery_challans').select('*, customers(company_name, address, city, phone, pbf_license)').eq('id', challanId).maybeSingle(),
-      supabase.from('delivery_challan_items').select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details)').eq('challan_id', challanId)
+      supabase.from('delivery_challan_items').select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))').eq('challan_id', challanId)
     ]);
     if (!challan) return;
     setLinkedChallanPreview(challan);
@@ -1025,7 +1035,7 @@ export default function SalesOrders() {
             setEditingOrder(null);
           }}
           title={editingOrder ? "Edit Sales Order" : "Create Sales Order"}
-          maxWidth="max-w-6xl"
+          maxWidth="max-w-[90vw]"
         >
           <SalesOrderForm
             existingOrder={(editingOrder as any) || undefined}

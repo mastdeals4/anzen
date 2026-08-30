@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Search, FileText, X, AlertCircle, CreditCard } from 'lucide-react';
+import { Plus, Search, FileText, X, AlertCircle, CreditCard, PackageCheck } from 'lucide-react';
 import { showConfirm } from '../ConfirmDialog';
 import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
@@ -15,6 +15,8 @@ import { formatDate } from '../../utils/dateFormat';
 import { downloadStorageDocument, openStorageDocument, resolveStorageUrlCached } from '../../utils/signedUrlCache';
 import { formatCurrency } from '../../utils/currency';
 import { useFinance } from '../../contexts/FinanceContext';
+import { useNavigation } from '../../contexts/NavigationContext';
+import { extractPurchaseInvoicePdf, ExtractedPurchaseInvoice } from '../../utils/purchaseInvoicePdfExtractor';
 
 interface Supplier {
   id: string;
@@ -33,6 +35,7 @@ interface Product {
   unit: string;
   current_stock: number;
 }
+interface ImportContainerOption { id: string; container_ref: string; status: string | null; }
 
 interface ChartOfAccount {
   id: string;
@@ -43,6 +46,7 @@ interface ChartOfAccount {
 
 interface PurchaseInvoiceItem {
   id?: string;
+  purchase_order_item_id?: string | null;
   item_type: 'inventory' | 'fixed_asset' | 'expense' | 'freight' | 'duty' | 'insurance' | 'clearing' | 'other';
   product_id: string | null;
   product_name?: string;
@@ -53,6 +57,29 @@ interface PurchaseInvoiceItem {
   line_total: number;
   expense_account_id: string | null;
   asset_account_id: string | null;
+  receiving_make_id?: string | null;
+  receiving_make?: { supplier_name: string | null; grade: string | null } | null;
+  receiving_batch_number?: string | null;
+  receiving_expiry_date?: string | null;
+  receiving_import_container_id?: string | null;
+  receiving_notes?: string | null;
+}
+
+interface ReceivingAllocation {
+  id: string;
+  purchase_invoice_item_id: string;
+  batch_id: string;
+  received_quantity: number;
+  status: string;
+}
+
+interface ReceivingDocument {
+  id?: string;
+  file?: File;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+  file_url?: string;
 }
 
 interface PurchaseInvoice {
@@ -75,8 +102,11 @@ interface PurchaseInvoice {
   document_urls: string[] | null;
   purchase_type: string;
   requires_faktur_pajak: boolean;
+  purchase_order_id?: string | null;
   suppliers?: { company_name: string; pkp_status: boolean };
   journal_entry_id?: string | null;
+  receiving_approval_status?: 'draft' | 'pending_approval' | 'approved' | 'rejected';
+  receiving_rejection_reason?: string | null;
 }
 
 interface PurchaseInvoiceManagerProps {
@@ -88,9 +118,12 @@ interface PurchaseInvoiceManagerProps {
 
 export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInvoiceId, onInitialViewHandled }: PurchaseInvoiceManagerProps) {
   const { dateRange } = useFinance();
+  const { navigationData, clearNavigationData } = useNavigation();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productSources, setProductSources] = useState<Array<{ id: string; product_id: string; supplier_name: string | null; grade: string | null }>>([]);
+  const [importContainers, setImportContainers] = useState<ImportContainerOption[]>([]);
   const [accounts, setAccounts] = useState<ChartOfAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [ppnRate, setPpnRate] = useState(0); // 0 or 11
@@ -106,6 +139,38 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   const [uploading, setUploading] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<PurchaseInvoice | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [receivingOpen, setReceivingOpen] = useState(false);
+  const [receivingItem, setReceivingItem] = useState<PurchaseInvoiceItem | null>(null);
+  const [receivingMakes, setReceivingMakes] = useState<Array<{ id: string; supplier_name: string | null; grade: string | null }>>([]);
+  const [receivingBatches, setReceivingBatches] = useState<Array<{ id: string; batch_number: string; make_id: string | null; current_stock: number; import_container_id: string | null }>>([]);
+  const [receivingAllocations, setReceivingAllocations] = useState<ReceivingAllocation[]>([]);
+  const [receivingDocuments, setReceivingDocuments] = useState<ReceivingDocument[]>([]);
+  const [receivingForm, setReceivingForm] = useState({ make_id: '', batch_id: '', batch_number: '', expiry_date: '', quantity: 0, import_container_id: '' });
+  const [receivingBusy, setReceivingBusy] = useState(false);
+  const [purchaseOrderId, setPurchaseOrderId] = useState<string | null>(null);
+  const [supplierPurchaseOrders, setSupplierPurchaseOrders] = useState<Array<{
+    id: string;
+    po_number: string;
+    po_date: string;
+    supplier_id: string;
+    currency: string;
+    exchange_rate: number;
+    status: string;
+    purchase_order_items?: Array<{
+      id: string;
+      product_id: string;
+      make_id?: string | null;
+      description?: string | null;
+      quantity: number;
+      unit?: string | null;
+      unit_price: number;
+      line_total?: number | null;
+      products?: { product_name: string; unit: string } | null;
+    }>;
+  }>>([]);
+  const [loadingSupplierPurchaseOrders, setLoadingSupplierPurchaseOrders] = useState(false);
+  const [pdfExtraction, setPdfExtraction] = useState<ExtractedPurchaseInvoice | null>(null);
+  const [pdfExtracting, setPdfExtracting] = useState(false);
 
   const [formData, setFormData] = useState({
     invoice_number: '',
@@ -137,6 +202,51 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     loadInvoices();
   }, [dateRange.startDate, dateRange.endDate]);
 
+  // A PO creates only an invoice draft. Receiving, batches and stock remain
+  // explicit later actions in the existing receiving workflow.
+  useEffect(() => {
+    if (navigationData?.createPurchaseInvoice !== true || !navigationData.purchaseOrder) return;
+    const po = navigationData.purchaseOrder as any;
+    const poItems = Array.isArray(po.purchase_order_items) ? po.purchase_order_items : [];
+    if (typeof po.id === 'string') {
+      setSupplierPurchaseOrders(prev => prev.some(item => item.id === po.id) ? prev : [po as typeof supplierPurchaseOrders[number], ...prev]);
+    }
+    setEditingInvoice(null);
+    setPurchaseOrderId(typeof po.id === 'string' ? po.id : null);
+    setFormData(prev => ({
+      ...prev,
+      invoice_number: '',
+      supplier_id: po.supplier_id || '',
+      invoice_date: new Date().toISOString().split('T')[0],
+      due_date: '',
+      currency: po.currency || 'IDR',
+      exchange_rate: Number(po.exchange_rate) || 1,
+      notes: po.po_number ? `Created from PO ${po.po_number}` : '',
+      document_urls: [],
+    }));
+    setPpnRate(0);
+    setStampDutyAmount(0);
+    const mapped = poItems.filter((item: any) => item.product_id).map((item: any) => ({
+      item_type: 'inventory' as const,
+      product_id: item.product_id,
+      purchase_order_item_id: item.id || null,
+      product_name: item.products?.product_name,
+      description: item.description || item.products?.product_name || '',
+      // This is an initial ordered-quantity suggestion; users may change it
+      // to the supplier-billed quantity before saving the invoice.
+      quantity: Number(item.quantity) || 0,
+      unit: item.unit || item.products?.unit || 'pcs',
+      unit_price: Number(item.unit_price) || 0,
+      line_total: Number(item.line_total) || 0,
+      expense_account_id: null,
+      asset_account_id: null,
+      receiving_make_id: item.make_id || null,
+    }));
+    if (mapped.length) setLineItems(mapped);
+    setModalOpen(true);
+    clearNavigationData();
+  }, [navigationData, clearNavigationData]);
+
   useEffect(() => {
     if (!initialViewInvoiceId || loading) return;
     const openInitialInvoice = async () => {
@@ -165,8 +275,19 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   useEffect(() => {
     loadSuppliers();
     loadProducts();
+    void loadProductSources();
     loadAccounts();
+    void loadImportContainers();
   }, []);
+
+  const loadProductSources = async () => {
+    const { data } = await supabase.from('product_sources').select('id,product_id,supplier_name,grade').order('supplier_name');
+    setProductSources((data || []) as typeof productSources);
+  };
+
+  useEffect(() => {
+    void loadSupplierPurchaseOrders(formData.supplier_id);
+  }, [formData.supplier_id]);
 
   const loadInvoices = async () => {
     try {
@@ -211,12 +332,110 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     setAccounts(data || []);
   };
 
+  const loadImportContainers = async () => {
+    const { data } = await supabase.from('import_containers').select('id,container_ref,status').order('created_at', { ascending: false }).limit(200);
+    setImportContainers((data || []) as ImportContainerOption[]);
+  };
+
+  const loadSupplierPurchaseOrders = async (supplierId: string) => {
+    if (!supplierId) {
+      setSupplierPurchaseOrders([]);
+      return;
+    }
+    setLoadingSupplierPurchaseOrders(true);
+    try {
+      const { data, error } = await supabase
+        .from('purchase_orders')
+        .select('id,po_number,po_date,supplier_id,currency,exchange_rate,status,purchase_order_items(id,product_id,make_id,description,quantity,unit,unit_price,line_total,products(product_name,unit))')
+        .eq('supplier_id', supplierId)
+        .order('po_date', { ascending: false });
+      if (error) throw error;
+      // Normalize the generated relation shape once at the query boundary.
+      // Depending on the client schema metadata, PostgREST may expose this
+      // many-to-one Product relation as either an object or a one-element
+      // array; the form model consistently uses a single Product object.
+      const fetched = (data || [])
+        .filter(po => String(po.status || '').toLowerCase() !== 'cancelled')
+        .map(po => ({
+          ...po,
+          purchase_order_items: (po.purchase_order_items || []).map(item => ({
+            ...item,
+            products: Array.isArray(item.products) ? item.products[0] || null : item.products || null,
+          })),
+        }));
+      setSupplierPurchaseOrders(prev => {
+        const selected = purchaseOrderId ? prev.find(item => item.id === purchaseOrderId) : null;
+        return selected && !fetched.some(item => item.id === selected.id) ? [selected, ...fetched] : fetched;
+      });
+    } catch (error) {
+      console.error('Error loading supplier purchase orders:', error);
+      setSupplierPurchaseOrders([]);
+    } finally {
+      setLoadingSupplierPurchaseOrders(false);
+    }
+  };
+
+  const emptyInvoiceLine = (): PurchaseInvoiceItem => ({
+    item_type: 'inventory',
+    product_id: null,
+    description: '',
+    quantity: 1,
+    unit: 'pcs',
+    unit_price: 0,
+    line_total: 0,
+    expense_account_id: null,
+    asset_account_id: null,
+  });
+
+  const mapPurchaseOrderLines = (po: (typeof supplierPurchaseOrders)[number]) =>
+    (po.purchase_order_items || []).filter(item => item.product_id).map(item => ({
+      item_type: 'inventory' as const,
+      product_id: item.product_id,
+      receiving_make_id: item.make_id || null,
+      purchase_order_item_id: item.id,
+      product_name: item.products?.product_name,
+      description: item.description || item.products?.product_name || '',
+      quantity: Number(item.quantity) || 0,
+      unit: item.unit || item.products?.unit || 'pcs',
+      unit_price: Number(item.unit_price) || 0,
+      line_total: Number(item.line_total) || (Number(item.quantity) || 0) * (Number(item.unit_price) || 0),
+      expense_account_id: null,
+      asset_account_id: null,
+    }));
+
+  const handleSupplierChange = (supplierId: string) => {
+    const hadSelectedPO = Boolean(purchaseOrderId);
+    setFormData(prev => ({ ...prev, supplier_id: supplierId }));
+    setPurchaseOrderId(null);
+    if (hadSelectedPO) setLineItems([emptyInvoiceLine()]);
+  };
+
+  const handlePurchaseOrderChange = (poId: string) => {
+    if (!poId) {
+      setPurchaseOrderId(null);
+      setLineItems([emptyInvoiceLine()]);
+      return;
+    }
+    const po = supplierPurchaseOrders.find(item => item.id === poId);
+    if (!po || String(po.status || '').toLowerCase() === 'cancelled') return;
+    if (po.supplier_id !== formData.supplier_id) return;
+    const mapped = mapPurchaseOrderLines(po);
+    setPurchaseOrderId(po.id);
+    setFormData(prev => ({
+      ...prev,
+      currency: po.currency || prev.currency,
+      exchange_rate: Number(po.exchange_rate) || 1,
+      notes: po.po_number ? `Created from PO ${po.po_number}` : prev.notes,
+    }));
+    if (mapped.length) setLineItems(mapped);
+  };
+
   const loadViewLineItems = async (invoiceId: string) => {
     setViewLoading(true);
     try {
       const { data, error } = await supabase
         .from('purchase_invoice_items')
-        .select('*, products(product_name, unit)')
+        .select('*, products(product_name, unit), receiving_make:product_sources!purchase_invoice_items_receiving_make_id_fkey(supplier_name, grade)')
         .eq('purchase_invoice_id', invoiceId)
         .order('created_at');
       if (error) throw error;
@@ -233,11 +452,85 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     }
   };
 
+  const loadReceivingAllocations = async (invoiceId: string) => {
+    const { data } = await supabase.from('purchase_invoice_receiving_allocations').select('id,purchase_invoice_item_id,batch_id,received_quantity,status').eq('purchase_invoice_id', invoiceId).eq('status', 'received');
+    setReceivingAllocations((data || []) as ReceivingAllocation[]);
+  };
+
+  const openReceiving = async (item: PurchaseInvoiceItem) => {
+    if (!selectedInvoice || item.item_type !== 'inventory' || !item.product_id) return;
+    const { data, error } = await supabase.from('product_sources').select('id,supplier_name,grade').eq('product_id', item.product_id).order('supplier_name');
+    if (error) { showToast({ type: 'error', title: 'Error', message: error.message }); return; }
+    const makes = data || [];
+    const { data: batches } = await supabase.from('batches').select('id,batch_number,make_id,current_stock,import_container_id').eq('product_id', item.product_id).eq('is_active', true).order('batch_number');
+    const received = receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0);
+    setReceivingItem(item);
+    setReceivingMakes(makes);
+    setReceivingBatches((batches || []) as Array<{ id: string; batch_number: string; make_id: string | null; current_stock: number; import_container_id: string | null }>);
+    setReceivingForm({ make_id: item.receiving_make_id || (makes.length === 1 ? makes[0].id : ''), batch_id: '', batch_number: item.receiving_batch_number || '', expiry_date: item.receiving_expiry_date || '', quantity: Math.max(0, Number(item.quantity) - received), import_container_id: item.receiving_import_container_id || '' });
+    setReceivingDocuments([]);
+    setReceivingOpen(true);
+  };
+
+  // Reuse the existing Batch document storage/table used by the Batches page.
+  // Documents are uploaded only after the receiving RPC returns its batch id;
+  // a document failure must not cause the stock receipt to be retried.
+  const uploadReceivingBatchDocuments = async (batchId: string) => {
+    const filesToUpload = receivingDocuments.filter(file => file.file && !file.id);
+    for (const fileData of filesToUpload) {
+      try {
+        const fileName = `${Date.now()}_${fileData.file!.name}`;
+        const filePath = `${batchId}/${fileName}`;
+        const { error: uploadError } = await supabase.storage.from('batch-documents').upload(filePath, fileData.file!);
+        if (uploadError) throw uploadError;
+        const { data: { publicUrl } } = supabase.storage.from('batch-documents').getPublicUrl(filePath);
+        const { error: dbError } = await supabase.from('batch_documents').insert([{
+          batch_id: batchId,
+          file_url: publicUrl,
+          file_name: fileData.file_name,
+          file_type: fileData.file_type,
+          file_size: fileData.file_size,
+        }]);
+        if (dbError) throw dbError;
+      } catch (error) {
+        console.error('Error uploading receiving batch document:', error);
+        showToast({ type: 'error', title: 'Document upload failed', message: `Could not attach ${fileData.file_name}. The receipt was saved.` });
+      }
+    }
+  };
+
+  const submitReceiving = async () => {
+    if (!selectedInvoice || !receivingItem?.id || !receivingItem.product_id || !receivingForm.make_id || (!receivingForm.batch_id && !receivingForm.batch_number.trim()) || receivingForm.quantity <= 0) {
+      showToast({ type: 'error', title: 'Incomplete receiving', message: 'Select a Make, batch number, and positive quantity.' }); return;
+    }
+    setReceivingBusy(true);
+    try {
+      const operationId = crypto.randomUUID();
+      const { data, error } = await supabase.rpc('receive_purchase_invoice_item', {
+        p_purchase_invoice_item_id: receivingItem.id,
+        p_received_quantity: receivingForm.quantity,
+        p_operation_id: operationId,
+        p_payload: { product_id: receivingItem.product_id, make_id: receivingForm.make_id, batch_id: receivingForm.batch_id || null, batch_number: receivingForm.batch_number.trim(), import_date: selectedInvoice.invoice_date, expiry_date: receivingForm.expiry_date || null, import_price: receivingItem.unit_price, import_price_usd: selectedInvoice.currency === 'USD' ? receivingItem.unit_price : null, exchange_rate_usd_to_idr: selectedInvoice.currency === 'USD' ? selectedInvoice.exchange_rate : null, import_container_id: receivingForm.import_container_id || null, packaging_details: receivingItem.unit },
+      });
+      if (error) throw error;
+      const batchId = (data as { batch_id?: string } | null)?.batch_id;
+      if (batchId && receivingDocuments.length > 0) await uploadReceivingBatchDocuments(batchId);
+      showToast({ type: 'success', title: 'Inventory received', message: 'Batch and stock receipt created.' });
+      setReceivingOpen(false);
+      setReceivingDocuments([]);
+      await loadReceivingAllocations(selectedInvoice.id);
+      await loadViewLineItems(selectedInvoice.id);
+    } catch (error: any) {
+      showToast({ type: 'error', title: 'Receiving failed', message: error.message });
+    } finally { setReceivingBusy(false); }
+  };
+
   const handleOpenView = async (invoice: PurchaseInvoice) => {
     setSelectedInvoice(invoice);
     setViewModal(true);
     setViewBlobUrl(null);
     await loadViewLineItems(invoice.id);
+    await loadReceivingAllocations(invoice.id);
     if (invoice.document_urls && invoice.document_urls.length > 0) {
       setViewBlobLoading(true);
       try {
@@ -267,6 +560,17 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     }
   };
 
+  const updateReceivingApproval = async (invoice: PurchaseInvoice, action: 'submit' | 'approve') => {
+    const rpc = action === 'submit' ? 'submit_purchase_invoice_for_receiving' : 'approve_purchase_invoice_for_receiving';
+    const { error } = await supabase.rpc(rpc, { p_purchase_invoice_id: invoice.id });
+    if (error) {
+      showToast({ type: 'error', title: 'Approval update failed', message: error.message });
+      return;
+    }
+    showToast({ type: 'success', title: action === 'submit' ? 'Submitted' : 'Approved', message: action === 'submit' ? 'Invoice submitted for receiving approval.' : 'Invoice approved for inward.' });
+    await loadInvoices();
+  };
+
   const handleOpenAttachment = async (url: string) => {
     try {
       await openStorageDocument(url);
@@ -287,6 +591,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   };
 
   const selectedSupplier = suppliers.find(s => s.id === formData.supplier_id);
+  const selectedPurchaseOrder = purchaseOrderId
+    ? supplierPurchaseOrders.find(po => po.id === purchaseOrderId) || null
+    : null;
 
   const handleAddLine = () => {
     setLineItems([
@@ -326,16 +633,19 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       newLines[index].expense_account_id = null;
       newLines[index].asset_account_id = null;
       newLines[index].description = '';
+      newLines[index].receiving_make_id = null;
+      newLines[index].receiving_batch_number = null;
+      newLines[index].receiving_expiry_date = null;
+      newLines[index].receiving_import_container_id = null;
     }
 
     // If product changes, auto-fill details
     if (field === 'product_id' && value) {
       const product = products.find(p => p.id === value);
       if (product) {
-        newLines[index].description = product.product_name;
         newLines[index].unit = product.unit;
-        newLines[index].product_name = product.product_name;
       }
+      newLines[index].receiving_make_id = null;
     }
 
     setLineItems(newLines);
@@ -350,6 +660,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
   const handleOpenEdit = async (invoice: PurchaseInvoice) => {
     setEditingInvoice(invoice);
+    setPurchaseOrderId(invoice.purchase_order_id || null);
     setFormData({
       invoice_number: invoice.invoice_number,
       supplier_id: invoice.supplier_id,
@@ -380,6 +691,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     const items = (data || []).map((item: any) => ({
       id: item.id,
       item_type: item.item_type,
+      purchase_order_item_id: item.purchase_order_item_id || null,
       product_id: item.product_id,
       description: item.description,
       quantity: item.quantity,
@@ -388,6 +700,11 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       line_total: item.line_total,
       expense_account_id: item.expense_account_id,
       asset_account_id: item.asset_account_id,
+      receiving_make_id: item.receiving_make_id || null,
+      receiving_batch_number: item.receiving_batch_number || null,
+      receiving_expiry_date: item.receiving_expiry_date || null,
+      receiving_import_container_id: item.receiving_import_container_id || null,
+      receiving_notes: item.receiving_notes || null,
     }));
 
     setLineItems(items.length > 0 ? items : [{
@@ -466,7 +783,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select an asset account` });
         return;
       }
-      if (!item.description.trim()) {
+      if (item.item_type !== 'inventory' && !item.description.trim()) {
         showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please enter a description` });
         return;
       }
@@ -492,6 +809,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         notes: formData.notes.trim() || null,
         document_urls: formData.document_urls,
         requires_faktur_pajak: selectedSupplier?.pkp_status || false,
+        ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}),
       };
 
       const itemsData = lineItems.map(item => ({
@@ -505,12 +823,19 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         tax_amount: 0,
         expense_account_id: item.expense_account_id,
         asset_account_id: item.asset_account_id,
+        receiving_make_id: item.receiving_make_id || null,
+        receiving_batch_number: item.receiving_batch_number || null,
+        receiving_expiry_date: item.receiving_expiry_date || null,
+        receiving_import_container_id: item.receiving_import_container_id || null,
+        receiving_notes: item.receiving_notes || null,
+        ...(purchaseOrderId ? { purchase_order_item_id: item.purchase_order_item_id || null } : {}),
       }));
 
-      const { error: rpcError } = await supabase.rpc('save_purchase_invoice', {
-        p_invoice_id:   editingInvoice ? editingInvoice.id : null,
+      const { error: rpcError } = await supabase.rpc('save_purchase_invoice_with_receiving_details', {
+        p_invoice_id: editingInvoice ? editingInvoice.id : null,
+        p_purchase_order_id: purchaseOrderId || null,
         p_invoice_data: invoiceData,
-        p_items:        itemsData,
+        p_items: itemsData,
       });
       if (rpcError) throw rpcError;
 
@@ -523,6 +848,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       });
 
       resetForm();
+      setPurchaseOrderId(null);
       setEditingInvoice(null);
       setModalOpen(false);
       loadInvoices();
@@ -536,6 +862,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     setUploading(true);
     try {
       const uploadedUrls: string[] = [];
+      let extractedDraft: ExtractedPurchaseInvoice | null = null;
 
       for (const file of files) {
         const fileExt = file.name.split('.').pop();
@@ -553,18 +880,110 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           .getPublicUrl(filePath);
 
         uploadedUrls.push(publicUrl);
+        if (!extractedDraft && file.type === 'application/pdf') {
+          setPdfExtracting(true);
+          try {
+            extractedDraft = await extractPurchaseInvoicePdf(file);
+          } catch (extractError) {
+            console.warn('Supplier invoice PDF extraction unavailable:', extractError);
+            showToast({ type: 'error', title: 'PDF extraction unavailable', message: 'The PDF was attached. Please enter the invoice details manually.' });
+          } finally {
+            setPdfExtracting(false);
+          }
+        }
       }
 
       setFormData(prev => ({
         ...prev,
         document_urls: [...prev.document_urls, ...uploadedUrls],
       }));
+      if (extractedDraft) applyExtractedPurchaseInvoice(extractedDraft);
     } catch (error: any) {
       console.error('Error uploading files:', error);
       showToast({ type: 'error', title: 'Error', message: `Error uploading files: ${error.message}` });
     } finally {
       setUploading(false);
     }
+  };
+
+  const normaliseMatchText = (value: string | null | undefined) => (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const applyExtractedPurchaseInvoice = (draft: ExtractedPurchaseInvoice) => {
+    const supplierCandidates = draft.supplierName
+      ? suppliers.filter(s => normaliseMatchText(s.company_name) === normaliseMatchText(draft.supplierName))
+      : [];
+    const matchedSupplier = formData.supplier_id || (supplierCandidates.length === 1 ? supplierCandidates[0].id : '');
+    if (draft.supplierName && formData.supplier_id) {
+      const selectedSupplierName = suppliers.find(s => s.id === formData.supplier_id)?.company_name;
+      if (selectedSupplierName && normaliseMatchText(selectedSupplierName) !== normaliseMatchText(draft.supplierName)) {
+        showToast({ type: 'error', title: 'Supplier mismatch', message: `PDF supplier is ${draft.supplierName}; your selected supplier was preserved.` });
+      }
+    }
+    setPdfExtraction(draft);
+    setFormData(prev => ({
+      ...prev,
+      supplier_id: matchedSupplier || prev.supplier_id,
+      invoice_number: draft.invoiceNumber || prev.invoice_number,
+      invoice_date: draft.invoiceDate || prev.invoice_date,
+      due_date: draft.dueDate || prev.due_date,
+      currency: draft.currency || prev.currency,
+      exchange_rate: draft.exchangeRate || prev.exchange_rate,
+      faktur_pajak_number: draft.taxNumber || prev.faktur_pajak_number,
+    }));
+    if (draft.taxAmount && draft.subtotal) {
+      const rate = Math.round((draft.taxAmount / draft.subtotal) * 100);
+      if (rate === 11) setPpnRate(11);
+    }
+
+    const selectedPo = purchaseOrderId
+      ? supplierPurchaseOrders.find(po => po.id === purchaseOrderId)
+      : undefined;
+    const matchedPo = !selectedPo && draft.poNumber
+      ? supplierPurchaseOrders.find(po => normaliseMatchText(po.po_number) === normaliseMatchText(draft.poNumber) && (!matchedSupplier || po.supplier_id === matchedSupplier))
+      : undefined;
+    const poForLineMapping = selectedPo || matchedPo;
+    if (matchedPo) {
+      setPurchaseOrderId(matchedPo.id);
+      setFormData(prev => ({ ...prev, notes: prev.notes || `Created from PO ${matchedPo.po_number}` }));
+    }
+
+    if (draft.lines.length > 0) {
+      const mappedLines = draft.lines.map((line, index) => {
+        const candidates = products.filter(product => normaliseMatchText(product.product_name) === normaliseMatchText(line.description));
+        const product = candidates.length === 1 ? candidates[0] : undefined;
+        const poItem = (poForLineMapping?.purchase_order_items || []).find(item => product?.id === item.product_id);
+        const existingLine = lineItems[index];
+        const quantity = line.quantity || 0;
+        const unitPrice = line.unitPrice || 0;
+        return {
+          item_type: 'inventory' as const,
+          // Keep an existing PO-line link when PDF matching is uncertain;
+          // the user can still review the Product cell before saving.
+          purchase_order_item_id: poItem?.id || existingLine?.purchase_order_item_id || null,
+          receiving_make_id: poItem?.make_id || existingLine?.receiving_make_id || null,
+          product_id: product?.id || null,
+          product_name: product?.product_name,
+          description: line.description,
+          receiving_batch_number: line.batchNumber || null,
+          receiving_expiry_date: line.expiryDate || null,
+          quantity,
+          unit: line.unit || product?.unit || 'pcs',
+          unit_price: unitPrice,
+          line_total: line.lineTotal ?? quantity * unitPrice,
+          expense_account_id: null,
+          asset_account_id: null,
+        };
+      });
+      setLineItems(mappedLines);
+    }
+
+    if (draft.poNumber && selectedPo) {
+      const selected = selectedPo;
+      if (selected && normaliseMatchText(selected.po_number) !== normaliseMatchText(draft.poNumber)) {
+        showToast({ type: 'error', title: 'PO mismatch', message: `PDF references ${draft.poNumber}, but the selected PO is ${selected.po_number}. Your selection was preserved.` });
+      }
+    }
+    showToast({ type: 'success', title: 'Draft extracted', message: 'Review the highlighted invoice details before creating the Purchase Invoice.' });
   };
 
   const handleRemoveDocument = (index: number) => {
@@ -575,6 +994,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   };
 
   const resetForm = () => {
+    setPurchaseOrderId(null);
     setFormData({
       invoice_number: '',
       supplier_id: '',
@@ -609,6 +1029,14 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   );
 
   const totals = calculateTotals();
+  const receivingAlreadyReceived = receivingItem?.id
+    ? receivingAllocations
+      .filter(a => a.purchase_invoice_item_id === receivingItem.id)
+      .reduce((sum, allocation) => sum + Number(allocation.received_quantity), 0)
+    : 0;
+  const receivingRemaining = receivingItem
+    ? Math.max(0, Number(receivingItem.quantity) - receivingAlreadyReceived)
+    : 0;
 
   if (loading) {
     return <div className="p-8 text-center">Loading...</div>;
@@ -736,6 +1164,12 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       {canManage && (
                         <FinanceActionButton action="edit" onClick={() => handleOpenEdit(invoice)} />
                       )}
+                      {canManage && (!invoice.receiving_approval_status || invoice.receiving_approval_status === 'draft' || invoice.receiving_approval_status === 'rejected') && (
+                        <button onClick={() => void updateReceivingApproval(invoice, 'submit')} className="text-blue-600 hover:text-blue-800 text-xs" title="Submit for inward approval">Submit</button>
+                      )}
+                      {canManage && invoice.receiving_approval_status === 'pending_approval' && (
+                        <button onClick={() => void updateReceivingApproval(invoice, 'approve')} className="text-green-600 hover:text-green-800 text-xs" title="Approve for inward">Approve</button>
+                      )}
                       {canManage && onPayInvoice && invoice.status !== 'paid' && invoice.balance_amount > 0 && (
                         <button
                           onClick={() => onPayInvoice({ id: invoice.id, invoice_number: invoice.invoice_number, supplier_id: invoice.supplier_id, balance_amount: invoice.balance_amount })}
@@ -763,6 +1197,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         onClose={() => { setModalOpen(false); setEditingInvoice(null); resetForm(); }}
         title={editingInvoice ? `Edit Invoice: ${editingInvoice.invoice_number}` : 'New Purchase Invoice'}
         size="xl"
+        maxWidth="max-w-[90vw]"
         footer={
           <>
             <button
@@ -793,7 +1228,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               </label>
               <SearchableSelect
                 value={formData.supplier_id}
-                onChange={(val) => setFormData({ ...formData, supplier_id: val })}
+                onChange={handleSupplierChange}
                 options={suppliers.map(s => ({ value: s.id, label: `${s.company_name}${s.pkp_status ? ' (PKP)' : ''}` }))}
                 placeholder="Select Supplier"
               />
@@ -810,6 +1245,31 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               </select>
             </div>
           </div>
+
+          {formData.supplier_id && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-0.5">Purchase Order (optional)</label>
+              <select
+                value={purchaseOrderId || ''}
+                onChange={(e) => handlePurchaseOrderChange(e.target.value)}
+                disabled={loadingSupplierPurchaseOrders}
+                className={SAP_INPUT}
+              >
+                <option value="">No PO — standalone supplier invoice</option>
+                {supplierPurchaseOrders.map(po => (
+                  <option key={po.id} value={po.id}>
+                    {po.po_number} · {po.po_date} · {po.status}
+                  </option>
+                ))}
+              </select>
+              {purchaseOrderId && supplierPurchaseOrders.find(po => po.id === purchaseOrderId) && (
+                <p className="mt-0.5 text-[10px] font-medium text-blue-700">
+                  PO: {supplierPurchaseOrders.find(po => po.id === purchaseOrderId)?.po_number}
+                </p>
+              )}
+              {loadingSupplierPurchaseOrders && <p className="mt-0.5 text-[10px] text-gray-400">Loading supplier POs…</p>}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)] gap-3 items-start">
             <div className="grid grid-cols-12 gap-2">
@@ -854,34 +1314,6 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className={SAP_INPUT} placeholder="Supplier invoice notes..." />
               </div>
-              <div>
-                <div className="flex items-center justify-between mb-0.5">
-                  <span className="text-xs font-medium text-gray-700">Attachments</span>
-                  {formData.document_urls.length > 0 && (
-                    <span className="text-[10px] text-gray-400">{formData.document_urls.length} file(s)</span>
-                  )}
-                </div>
-                <FileUpload
-                  compact
-                  disabled={uploading}
-                  onUpload={handleFileUpload}
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  multiple
-                />
-                {formData.document_urls.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {formData.document_urls.map((url, index) => (
-                      <span key={index} className="inline-flex max-w-full items-center gap-1 bg-green-50 border border-green-200 rounded px-1.5 py-0.5 text-[10px] text-green-700">
-                        <FileText className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{url.split('/').pop()}</span>
-                        <button type="button" onClick={() => handleRemoveDocument(index)} className="p-0.5 text-red-600 hover:bg-red-50 rounded shrink-0" title="Remove attachment">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           </div>
 
@@ -899,9 +1331,27 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               </button>
             </div>
 
-            <div className="space-y-2 max-h-[46vh] overflow-y-auto pr-1">
+            <div className="max-h-[46vh] overflow-y-auto pr-1">
+              <div className="overflow-x-auto rounded border border-gray-200 mb-2">
+                <table className="min-w-[980px] w-full text-xs">
+                  <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr>
+                    <th className="px-2 py-1.5 text-left">Product</th><th className="px-2 py-1.5 text-left">Make</th><th className="px-2 py-1.5 text-left">Batch No.</th><th className="px-2 py-1.5 text-left">Expiry</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-left">UOM</th><th className="px-2 py-1.5 text-right">Unit Price</th><th className="px-2 py-1.5 text-right">Total</th><th className="px-2 py-1.5" />
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-100">{lineItems.map((item, index) => item.item_type === 'inventory' && <tr key={`inventory-${index}`}>
+                    <td className="px-2 py-1"><select value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
+                    <td className="px-2 py-1"><select value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">Not specified</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
+                    <td className="px-2 py-1"><input value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-28 px-1.5 py-1 border border-gray-300 rounded" placeholder="Optional" /></td>
+                    <td className="px-2 py-1"><input type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-32 px-1.5 py-1 border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1"><input type="number" min="0" step="0.01" value={item.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} className="w-20 px-1.5 py-1 text-right border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1"><input value={item.unit} onChange={(e) => handleLineChange(index, 'unit', e.target.value)} className="w-16 px-1.5 py-1 border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1"><MoneyInput decimal value={item.unit_price} onChange={(n) => handleLineChange(index, 'unit_price', n)} className="w-24 px-1.5 py-1 text-right border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1 text-right font-medium">{item.line_total.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right">{lineItems.length > 1 && <button type="button" onClick={() => handleRemoveLine(index)} className="text-red-600"><X className="w-3.5 h-3.5" /></button>}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
               {lineItems.map((item, index) => (
-                <div key={index} className="border border-gray-200 rounded p-2 space-y-1.5">
+                <div key={index} className={`${item.item_type === 'inventory' ? 'hidden' : 'border border-gray-200 rounded p-2 space-y-1.5'}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Line {index + 1}</span>
                     {lineItems.length > 1 && (
@@ -1025,6 +1475,33 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     />
                   </div>
 
+                  {item.item_type === 'inventory' && (
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Make</label>
+                        <select value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
+                          <option value="">Not specified</option>
+                          {productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed make'}{source.grade ? ` (${source.grade})` : ''}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Batch Number</label>
+                        <input value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" placeholder="If provided" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Expiry</label>
+                        <input type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Import Container</label>
+                        <select value={item.receiving_import_container_id || ''} onChange={(e) => handleLineChange(index, 'receiving_import_container_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
+                          <option value="">None / local</option>
+                          {importContainers.map(container => <option key={container.id} value={container.id}>{container.container_ref}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                     <div>
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
@@ -1119,6 +1596,56 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                 </div>
               )}
             </div>
+
+            <div className="mt-3 border-t pt-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-gray-700">Supplier Invoice Documents</span>
+                {formData.document_urls.length > 0 && <span className="text-[10px] text-gray-400">{formData.document_urls.length} file(s)</span>}
+              </div>
+              <FileUpload
+                compact
+                disabled={uploading}
+                onUpload={handleFileUpload}
+                accept=".pdf,.jpg,.jpeg,.png"
+                multiple
+              />
+              {pdfExtracting && <p className="mt-1 text-[10px] text-blue-600">Reading supplier invoice PDF…</p>}
+              {pdfExtraction && !pdfExtracting && (
+                <div className="mt-1 rounded border border-blue-200 bg-blue-50 px-2 py-1.5 text-[10px] text-blue-900">
+                  <div className="font-semibold">Extracted draft — review before creating</div>
+                  <div className="mt-0.5 grid grid-cols-2 gap-x-2 gap-y-0.5">
+                    <span>Supplier: {pdfExtraction.supplierName || 'Not found'}{pdfExtraction.supplierName && (formData.supplier_id ? ' ✓' : ' ⚠ Review')}</span>
+                    <span>PO: {pdfExtraction.poNumber || 'Not found'}{pdfExtraction.poNumber && purchaseOrderId ? (supplierPurchaseOrders.find(po => po.id === purchaseOrderId && normaliseMatchText(po.po_number) === normaliseMatchText(pdfExtraction.poNumber)) ? ' ✓ Matched' : ' ⚠ Review') : ''}</span>
+                    <span>Invoice #: {pdfExtraction.invoiceNumber || 'Not found'}</span>
+                    <span>Lines: {pdfExtraction.lines.length || 0}</span>
+                    <span>Products: {lineItems.filter(line => line.item_type === 'inventory' && line.product_id).length} matched / {lineItems.filter(line => line.item_type === 'inventory' && !line.product_id).length} review</span>
+                    <span>Makes: {lineItems.filter(line => line.item_type === 'inventory' && line.receiving_make_id).length} selected / {lineItems.filter(line => line.item_type === 'inventory' && !line.receiving_make_id).length} review</span>
+                  </div>
+                  {pdfExtraction.lines.length > 0 && (
+                    <div className="mt-1 border-t border-blue-200 pt-1">
+                      {pdfExtraction.lines.map((line, index) => (
+                        <div key={`${line.description}-${index}`} className="truncate">
+                          Product {index + 1}: {line.description} — {lineItems[index]?.product_id ? '✓ Matched' : '⚠ Review'}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {formData.document_urls.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {formData.document_urls.map((url, index) => (
+                    <span key={index} className="inline-flex max-w-full items-center gap-1 bg-green-50 border border-green-200 rounded px-1.5 py-0.5 text-[10px] text-green-700">
+                      <FileText className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{url.split('/').pop()}</span>
+                      <button type="button" onClick={() => handleRemoveDocument(index)} className="p-0.5 text-red-600 hover:bg-red-50 rounded shrink-0" title="Remove attachment">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
         </form>
@@ -1159,6 +1686,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   : selectedInvoice.status === 'partial' ? 'bg-yellow-100 text-yellow-800'
                   : 'bg-red-100 text-red-800'
                 }`}>{selectedInvoice.status}</span>
+                <p className="mt-1 text-[10px] text-blue-700">Receiving: {selectedInvoice.receiving_approval_status || 'draft'}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Currency</p>
@@ -1200,11 +1728,15 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       <tr>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Make</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Qty</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Received</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Remaining</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Unit</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Rate</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
@@ -1212,19 +1744,27 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         <tr key={item.id || idx} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
                           <td className="px-3 py-2 font-medium text-gray-900">{item.product_name || <span className="text-gray-400 italic">—</span>}</td>
+                          <td className="px-3 py-2 text-gray-600">{item.receiving_make?.supplier_name || <span className="text-gray-400 italic">Not recorded</span>}{item.receiving_make?.grade ? ` (${item.receiving_make.grade})` : ''}</td>
                           <td className="px-3 py-2 text-gray-600 max-w-xs">
                             <p className="truncate" title={item.description}>{item.description || '—'}</p>
                           </td>
                           <td className="px-3 py-2 text-right text-gray-900">{Number(item.quantity).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right text-green-700">{receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right text-orange-700">{Math.max(0, Number(item.quantity) - receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0)).toLocaleString()}</td>
                           <td className="px-3 py-2 text-gray-500">{item.unit}</td>
                           <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(item.unit_price, selectedInvoice.currency)}</td>
                           <td className="px-3 py-2 text-right font-medium text-gray-900">{formatCurrency(item.line_total, selectedInvoice.currency)}</td>
+                          <td className="px-3 py-2 text-right">
+                            {item.item_type === 'inventory' && (!selectedInvoice.receiving_approval_status || selectedInvoice.receiving_approval_status === 'approved') && Number(item.quantity) > receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0) && canManage && (
+                              <button type="button" onClick={() => void openReceiving(item)} className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"><PackageCheck className="w-3 h-3" />Receive</button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot className="bg-gray-50">
                       <tr>
-                        <td colSpan={6} className="px-3 py-2 text-right text-sm font-semibold text-gray-700">Total</td>
+                        <td colSpan={10} className="px-3 py-2 text-right text-sm font-semibold text-gray-700">Total</td>
                         <td className="px-3 py-2 text-right text-sm font-bold text-gray-900">
                           {formatCurrency(selectedInvoice.total_amount, selectedInvoice.currency)}
                         </td>
@@ -1330,6 +1870,32 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                 )}
               </div>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {receivingOpen && receivingItem && selectedInvoice && (
+        <Modal isOpen={receivingOpen} onClose={() => setReceivingOpen(false)} title="Receive Inventory" size="md">
+          <div className="space-y-3">
+            <div className="rounded bg-gray-50 p-3 text-sm"><div className="font-semibold">{receivingItem.product_name || receivingItem.description}</div><div className="text-gray-500">Invoice quantity: {Number(receivingItem.quantity).toLocaleString()} {receivingItem.unit}</div><div className="text-green-700">Already received: {receivingAlreadyReceived.toLocaleString()} {receivingItem.unit}</div><div className="text-orange-700">Remaining: {receivingRemaining.toLocaleString()} {receivingItem.unit}</div></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Make / Manufacturer *</label><SearchableSelect value={receivingForm.make_id} onChange={v => setReceivingForm(f => f.make_id === v ? f : ({ ...f, make_id: v, batch_id: '', batch_number: '', import_container_id: '' }))} options={receivingMakes.map(m => ({ value: m.id, label: `${m.supplier_name || 'Unnamed make'}${m.grade ? ` (${m.grade})` : ''}` }))} placeholder={receivingMakes.length ? 'Select Make / Manufacturer' : 'No makes recorded'} /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Existing Batch (optional)</label><select className={SAP_INPUT} value={receivingForm.batch_id} onChange={e => { const b = receivingBatches.find(x => x.id === e.target.value); setReceivingForm(f => ({ ...f, batch_id: e.target.value, batch_number: b?.batch_number || '', import_container_id: b?.import_container_id || '' })); }}><option value="">Create new batch</option>{receivingBatches.filter(b => b.make_id === receivingForm.make_id || b.make_id === null).map(b => <option key={b.id} value={b.id}>{b.batch_number} (stock {Number(b.current_stock).toLocaleString()}){b.make_id === null ? ' (Make not recorded)' : ''}</option>)}</select></div>
+            {!receivingForm.batch_id && <div><label className="block text-xs font-medium text-gray-700 mb-1">New Batch Number *</label><input className={SAP_INPUT} value={receivingForm.batch_number} onChange={e => setReceivingForm(f => ({ ...f, batch_number: e.target.value }))} /></div>}
+            <div className="grid grid-cols-2 gap-2"><div><label className="block text-xs font-medium text-gray-700 mb-1">Quantity *</label><input type="number" min="0.01" step="0.01" className={SAP_INPUT} value={receivingForm.quantity} onChange={e => setReceivingForm(f => ({ ...f, quantity: Number(e.target.value) || 0 }))} /></div><div><label className="block text-xs font-medium text-gray-700 mb-1">Expiry</label><input type="date" className={SAP_INPUT} value={receivingForm.expiry_date} onChange={e => setReceivingForm(f => ({ ...f, expiry_date: e.target.value }))} /></div></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Import Container (optional)</label><select className={SAP_INPUT} disabled={Boolean(receivingForm.batch_id)} value={receivingForm.import_container_id} onChange={e => setReceivingForm(f => ({ ...f, import_container_id: e.target.value }))}><option value="">Local purchase / no container</option>{importContainers.map(c => <option key={c.id} value={c.id}>{c.container_ref}{c.status ? ` (${c.status})` : ''}</option>)}</select>{receivingForm.batch_id && <p className="mt-1 text-[10px] text-gray-500">Existing batch container is preserved.</p>}</div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Batch Documents (optional)</label>
+              <FileUpload
+                compact
+                accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc"
+                multiple
+                disabled={receivingBusy}
+                existingFiles={receivingDocuments}
+                onFilesChange={(files) => setReceivingDocuments(files as ReceivingDocument[])}
+              />
+              <p className="mt-1 text-[10px] text-gray-500">Attached to the received Batch using the existing Batch document system.</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2"><button type="button" className={F_BTN_SECONDARY} onClick={() => setReceivingOpen(false)}>Cancel</button><button type="button" className={F_BTN_PRIMARY} disabled={receivingBusy} onClick={() => void submitReceiving()}>{receivingBusy ? 'Receiving…' : 'Confirm Receiving'}</button></div>
           </div>
         </Modal>
       )}

@@ -22,7 +22,7 @@ export interface InvoiceDisplayItem {
   challan_id: string | null;
   dc_number?: string;
   products?: { product_name: string; product_code: string; unit: string };
-  batches?: { batch_number: string; expiry_date: string | null } | null;
+  batches?: { batch_number: string; expiry_date: string | null; product_sources?: { supplier_name: string | null; grade: string | null } | null } | null;
 }
 
 interface InvoiceItemRow {
@@ -49,6 +49,7 @@ interface BatchRow {
   id: string;
   batch_number: string;
   expiry_date: string | null;
+  product_sources?: { supplier_name: string | null; grade: string | null } | null;
 }
 
 interface DcItemRow {
@@ -91,7 +92,7 @@ export async function loadInvoiceDisplayItems(
       ? client.from('products').select('id, product_name, product_code, unit').in('id', productIds)
       : Promise.resolve({ data: emptyProducts, error: null }),
     batchIds.length
-      ? client.from('batches').select('id, batch_number, expiry_date').in('id', batchIds)
+      ? client.from('batches').select('id, batch_number, expiry_date, product_sources!batches_make_id_fkey(supplier_name, grade)').in('id', batchIds)
       : Promise.resolve({ data: emptyBatches, error: null }),
     dcItemIds.length
       ? client.from('delivery_challan_items').select('id, challan_id').in('id', dcItemIds)

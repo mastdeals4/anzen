@@ -28,6 +28,7 @@ interface StockInfo {
 interface OrderItem {
   id?: string;
   product_id: string;
+  make_id: string | null;
   quantity: number;
   unit_price: number;
   discount_percent: number;
@@ -58,6 +59,7 @@ interface SalesOrder {
   sales_order_items?: Array<{
     id: string;
     product_id: string;
+    make_id?: string | null;
     quantity: number;
     unit_price: number;
     discount_percent: number;
@@ -97,6 +99,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [stockInfo, setStockInfo] = useState<Record<string, StockInfo>>({});
+  const [productMakes, setProductMakes] = useState<Record<string, Array<{ id: string; supplier_name: string | null; grade: string | null }>>>({});
   const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -115,6 +118,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
   const [items, setItems] = useState<OrderItem[]>([
     {
       product_id: '',
+      make_id: null,
       quantity: 1,
       unit_price: 0,
       discount_percent: 0,
@@ -157,6 +161,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
         const mappedItems: OrderItem[] = existingOrder.sales_order_items.map(item => ({
           id: item.id,
           product_id: item.product_id,
+          make_id: item.make_id ?? null,
           quantity: item.quantity,
           unit_price: item.unit_price,
           discount_percent: item.discount_percent,
@@ -173,6 +178,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
         mappedItems.forEach(item => {
           if (item.product_id) {
             fetchStockInfo(item.product_id);
+            void fetchProductMakes(item.product_id);
           }
         });
       }
@@ -190,7 +196,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       if (resolvedProductId) {
         const quantity = Number(prefill.quantity) || 1;
         const unitPrice = Number(prefill.unit_price) || 0;
-        setItems([{ product_id: resolvedProductId, quantity, unit_price: unitPrice, discount_percent: 0, discount_amount: 0, tax_percent: 0, tax_amount: 0, line_total: quantity * unitPrice, item_delivery_date: prefill.expected_delivery_date || '', notes: '', quoted_usd_unit_price: prefill.quoted_usd_unit_price ?? null }]);
+        setItems([{ product_id: resolvedProductId, make_id: null, quantity, unit_price: unitPrice, discount_percent: 0, discount_amount: 0, tax_percent: 0, tax_amount: 0, line_total: quantity * unitPrice, item_delivery_date: prefill.expected_delivery_date || '', notes: '', quoted_usd_unit_price: prefill.quoted_usd_unit_price ?? null }]);
         fetchStockInfo(resolvedProductId);
       }
     }
@@ -254,12 +260,22 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
     }
   };
 
-  const handleProductChange = (index: number, productId: string) => {
+  const fetchProductMakes = async (productId: string) => {
+    if (productMakes[productId]) return productMakes[productId];
+    const { data } = await supabase.from('product_sources').select('id,supplier_name,grade').eq('product_id', productId).order('supplier_name');
+    const makes = (data || []) as Array<{ id: string; supplier_name: string | null; grade: string | null }>;
+    setProductMakes(prev => ({ ...prev, [productId]: makes }));
+    return makes;
+  };
+
+  const handleProductChange = async (index: number, productId: string) => {
     const product = products.find(p => p.id === productId);
     if (!product) return;
 
     const newItems = [...items];
     newItems[index].product_id = productId;
+    const makes = await fetchProductMakes(productId);
+    newItems[index].make_id = makes.length === 1 ? makes[0].id : null;
     newItems[index].unit_price = 0;
     setItems(newItems);
     calculateLineTotal(index);
@@ -314,6 +330,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       ...items,
       {
         product_id: '',
+        make_id: null,
         quantity: 1,
         unit_price: 0,
         discount_percent: 0,
@@ -386,6 +403,13 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
     if (items.length === 0 || items.some(item => !item.product_id || item.quantity <= 0)) {
       showToast({ type: 'error', title: 'Error', message: 'Please add valid items to the order' });
       return;
+    }
+    for (const item of items) {
+      const makes = await fetchProductMakes(item.product_id);
+      if (makes.length > 0 && !item.make_id) {
+        showToast({ type: 'error', title: 'Make required', message: 'Select a Make / Manufacturer for each product line.' });
+        return;
+      }
     }
 
     // Check if editing an approved/reserved order
@@ -510,6 +534,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
         const itemValues = (item: OrderItem) => ({
           sales_order_id: existingOrder.id,
           product_id: item.product_id,
+          make_id: item.make_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
           discount_percent: item.discount_percent,
@@ -588,6 +613,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
         const itemsToInsert = items.map(item => ({
           sales_order_id: soData.id,
           product_id: item.product_id,
+          make_id: item.make_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
           discount_percent: item.discount_percent,
@@ -650,10 +676,10 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
   };
 
   return (
-    <form className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.customer')} *</label>
+    <form className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-x-3 gap-y-2">
+        <div className="md:col-span-5">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('sales.customer')} *</label>
           <SearchableSelect
             value={formData.customer_id}
             onChange={(val) => setFormData({ ...formData, customer_id: val })}
@@ -662,44 +688,44 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.customerPoNumber')} *</label>
+        <div className="md:col-span-3">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.customerPoNumber')} *</label>
           <input
             type="text"
             value={formData.customer_po_number}
             onChange={(e) => setFormData({ ...formData, customer_po_number: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2"
+            className="w-full border rounded-md px-2 py-1.5 text-sm"
             required
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.customerPoDate')} *</label>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.customerPoDate')} *</label>
           <input
             type="date"
             value={formData.customer_po_date}
             onChange={(e) => setFormData({ ...formData, customer_po_date: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2"
+            className="w-full border rounded-md px-2 py-1.5 text-sm"
             required
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.soDate')}</label>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.soDate')}</label>
           <input
             type="date"
             value={formData.so_date}
             onChange={(e) => setFormData({ ...formData, so_date: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2"
+            className="w-full border rounded-md px-2 py-1.5 text-sm"
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Currency *</label>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">Currency *</label>
           <select
             value={formData.currency}
             onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2"
+            className="w-full border rounded-md px-2 py-1.5 text-sm"
             required
           >
             <option value="IDR">IDR (Rp)</option>
@@ -707,42 +733,42 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
           </select>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">USD → IDR rate (historical, optional)</label>
+        <div className="md:col-span-3">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">USD → IDR rate (historical, optional)</label>
           <input
             type="number"
             min="0"
             step="0.000001"
             value={formData.commercial_usd_to_idr_rate ?? ''}
             onChange={(e) => setFormData({ ...formData, commercial_usd_to_idr_rate: e.target.value === '' ? null : Number(e.target.value) })}
-            className="w-full border rounded-lg px-3 py-2"
+            className="w-full border rounded-md px-2 py-1.5 text-sm"
             placeholder={formData.currency === 'IDR' ? 'Required only when IDR derives from USD' : 'Not required for USD'}
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.expectedDeliveryDate')}</label>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.expectedDeliveryDate')}</label>
           <input
             type="date"
             value={formData.expected_delivery_date}
             onChange={(e) => setFormData({ ...formData, expected_delivery_date: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2"
+            className="w-full border rounded-md px-2 py-1.5 text-sm"
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.uploadPo')}</label>
+        <div className="md:col-span-5">
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.uploadPo')}</label>
           {existingOrder?.customer_po_file_url && !poFile && (
-            <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+            <div className="mb-1 p-1.5 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-blue-600" />
-                <span className="text-sm text-blue-700">PO file already uploaded</span>
+                <span className="text-xs text-blue-700">PO file already uploaded</span>
               </div>
               <a
                 href={poFileSignedUrl || existingOrder.customer_po_file_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-blue-600 hover:text-blue-800 underline"
+                className="text-xs text-blue-600 hover:text-blue-800 underline"
               >
                 View
               </a>
@@ -753,7 +779,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
               type="file"
               accept=".pdf,.jpg,.jpeg,.png"
               onChange={(e) => setPoFile(e.target.files?.[0] || null)}
-              className="w-full border rounded-lg px-3 py-2"
+              className="w-full border rounded-md px-2 py-1.5 text-sm"
             />
             {poFile && (
               <button
@@ -767,7 +793,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
             )}
           </div>
           {poFile && (
-            <p className="mt-1 text-sm text-green-600 flex items-center gap-1">
+            <p className="mt-0.5 text-xs text-green-600 flex items-center gap-1 truncate">
               <FileText className="w-4 h-4" />
               Ready to upload: {poFile.name}
             </p>
@@ -776,17 +802,17 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.notes')}</label>
+        <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.notes')}</label>
         <textarea
           value={formData.notes}
           onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-          className="w-full border rounded-lg px-3 py-2"
-          rows={2}
+          className="w-full border rounded-md px-2 py-1.5 text-sm"
+          rows={1}
         />
       </div>
 
       <div>
-        <div className="flex justify-between items-center mb-3">
+        <div className="flex justify-between items-center mb-1.5">
           <label className="block text-sm font-medium text-gray-700">Order Items</label>
           <button
             type="button"
@@ -797,182 +823,63 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
           </button>
         </div>
 
-        <div className="space-y-3 max-h-96 overflow-y-auto">
-          {items.map((item, index) => (
-            <div key={index} className="border rounded-lg p-3 bg-gray-50">
-              <div className="grid grid-cols-6 gap-2">
-                <div className="col-span-2">
-                  <label className="text-xs text-gray-600">{t('salesOrders.product')} *</label>
-                  <SearchableSelect
-                    value={item.product_id}
-                    onChange={(value) => handleProductChange(index, value)}
-                    options={products.map(product => ({
-                      value: product.id,
-                      label: `${product.product_name}${product.product_code ? ` (${product.product_code})` : ''}`,
-                    }))}
-                    placeholder="Search product..."
-                    className="py-1 text-sm rounded"
-                    required
-                  />
-                  {item.product_id && getStockBadge(item.product_id, item.quantity)}
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-600">{t('sales.quantity')} *</label>
-                  <input
-                    type="text"
-                    value={item.quantity === 0 ? '' : item.quantity}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '') {
-                        handleItemChange(index, 'quantity', 0);
-                      } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num)) {
-                          handleItemChange(index, 'quantity', num);
-                        }
-                      }
-                    }}
-                    onBlur={(e) => {
-                      if (e.target.value === '') {
-                        handleItemChange(index, 'quantity', 0);
-                      }
-                    }}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                    placeholder="Enter quantity"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-600">{t('sales.unitPrice')}</label>
-                  <input
-                    type="text"
-                    value={item.unit_price === 0 ? '' : item.unit_price}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '') {
-                        handleItemChange(index, 'unit_price', 0);
-                      } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num)) {
-                          handleItemChange(index, 'unit_price', num);
-                        }
-                      }
-                    }}
-                    onBlur={(e) => {
-                      if (e.target.value === '') {
-                        handleItemChange(index, 'unit_price', 0);
-                      }
-                    }}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                    placeholder="Enter price"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-600">Quoted USD / unit (optional)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.000001"
-                    value={item.quoted_usd_unit_price ?? ''}
-                    onChange={(e) => handleItemChange(index, 'quoted_usd_unit_price', e.target.value === '' ? null : Number(e.target.value))}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                    placeholder="USD basis"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-600">{t('salesOrders.discountPercent')}</label>
-                  <input
-                    type="text"
-                    value={item.discount_percent === 0 ? '' : item.discount_percent}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '') {
-                        handleItemChange(index, 'discount_percent', 0);
-                      } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num) && num >= 0 && num <= 100) {
-                          handleItemChange(index, 'discount_percent', num);
-                        }
-                      }
-                    }}
-                    onBlur={(e) => {
-                      if (e.target.value === '') {
-                        handleItemChange(index, 'discount_percent', 0);
-                      }
-                    }}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-600">{t('salesOrders.taxPercent')}</label>
-                  <input
-                    type="text"
-                    value={item.tax_percent === 0 ? '' : item.tax_percent}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '') {
-                        handleItemChange(index, 'tax_percent', 0);
-                      } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num) && num >= 0 && num <= 100) {
-                          handleItemChange(index, 'tax_percent', num);
-                        }
-                      }
-                    }}
-                    onBlur={(e) => {
-                      if (e.target.value === '') {
-                        handleItemChange(index, 'tax_percent', 0);
-                      }
-                    }}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-6 gap-2 mt-2">
-                <div className="col-span-2">
-                  <label className="text-xs text-gray-600">Item Delivery Date</label>
-                  <input
-                    type="date"
-                    value={item.item_delivery_date}
-                    onChange={(e) => handleItemChange(index, 'item_delivery_date', e.target.value)}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                  />
-                </div>
-
-                <div className="col-span-3">
-                  <label className="text-xs text-gray-600">Notes</label>
-                  <input
-                    type="text"
-                    value={item.notes}
-                    onChange={(e) => handleItemChange(index, 'notes', e.target.value)}
-                    className="w-full border rounded px-2 py-1 text-sm"
-                  />
-                </div>
-
-                <div className="flex items-end justify-between">
-                  <div>
-                    <label className="text-xs text-gray-600">{t('salesOrders.lineTotal')}</label>
-                    <div className="text-sm font-medium">{formatCurrency(item.line_total)}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeItem(index)}
-                    className="text-red-600 hover:text-red-800"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="max-h-96 overflow-y-auto overflow-x-auto rounded border border-gray-200">
+          <table className="min-w-[1320px] w-full text-xs">
+            <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-2 py-1.5 text-left w-56">Product</th>
+                <th className="px-2 py-1.5 text-left w-40">Make / Manufacturer</th>
+                <th className="px-2 py-1.5 text-right w-24">Qty</th>
+                <th className="px-2 py-1.5 text-right w-28">Unit Price</th>
+                <th className="px-2 py-1.5 text-right w-28">Quoted USD / unit</th>
+                <th className="px-2 py-1.5 text-right w-20">Discount %</th>
+                <th className="px-2 py-1.5 text-right w-20">Tax %</th>
+                <th className="px-2 py-1.5 text-left w-32">Delivery Date</th>
+                <th className="px-2 py-1.5 text-left w-48">Notes</th>
+                <th className="px-2 py-1.5 text-right w-32">Line Total</th>
+                <th className="px-2 py-1.5 w-10" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.map((item, index) => (
+                <tr key={index} className="bg-white hover:bg-blue-50/40">
+                  <td className="px-2 py-1 align-top">
+                    <SearchableSelect
+                      value={item.product_id}
+                      onChange={(value) => { void handleProductChange(index, value); }}
+                      options={products.map(product => ({
+                        value: product.id,
+                        label: `${product.product_name}${product.product_code ? ` (${product.product_code})` : ''}`,
+                      }))}
+                      placeholder="Search product..."
+                      className="py-1 text-xs rounded"
+                      required
+                    />
+                    {item.product_id && getStockBadge(item.product_id, item.quantity)}
+                  </td>
+                  <td className="px-2 py-1 align-top">
+                    <SearchableSelect
+                      value={item.make_id || ''}
+                      onChange={(value) => handleItemChange(index, 'make_id', value || null)}
+                      options={(productMakes[item.product_id] || []).map(make => ({ value: make.id, label: `${make.supplier_name || 'Unnamed make'}${make.grade ? ` (${make.grade})` : ''}` }))}
+                      placeholder={item.product_id ? 'Select Make' : 'Select product first'}
+                      className="py-1 text-xs rounded"
+                      disabled={!item.product_id}
+                    />
+                  </td>
+                  <td className="px-2 py-1 align-top"><input type="text" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const val = e.target.value; handleItemChange(index, 'quantity', val === '' ? 0 : (parseFloat(val) || 0)); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" required /></td>
+                  <td className="px-2 py-1 align-top"><input type="text" value={item.unit_price === 0 ? '' : item.unit_price} onChange={(e) => { const val = e.target.value; handleItemChange(index, 'unit_price', val === '' ? 0 : (parseFloat(val) || 0)); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
+                  <td className="px-2 py-1 align-top"><input type="number" min="0" step="0.000001" value={item.quoted_usd_unit_price ?? ''} onChange={(e) => handleItemChange(index, 'quoted_usd_unit_price', e.target.value === '' ? null : Number(e.target.value))} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="—" /></td>
+                  <td className="px-2 py-1 align-top"><input type="text" value={item.discount_percent === 0 ? '' : item.discount_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'discount_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
+                  <td className="px-2 py-1 align-top"><input type="text" value={item.tax_percent === 0 ? '' : item.tax_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'tax_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
+                  <td className="px-2 py-1 align-top"><input type="date" value={item.item_delivery_date} onChange={(e) => handleItemChange(index, 'item_delivery_date', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
+                  <td className="px-2 py-1 align-top"><input type="text" value={item.notes} onChange={(e) => handleItemChange(index, 'notes', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
+                  <td className="px-2 py-1 text-right align-top font-medium whitespace-nowrap">{formatCurrency(item.line_total)}</td>
+                  <td className="px-2 py-1 text-center align-top">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 

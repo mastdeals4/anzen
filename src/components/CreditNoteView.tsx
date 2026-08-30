@@ -21,6 +21,10 @@ interface CreditNoteItem {
   };
   batches?: {
     batch_number: string;
+    product_sources?: {
+      supplier_name: string | null;
+      grade: string | null;
+    } | null;
   };
 }
 
@@ -353,7 +357,12 @@ export function CreditNoteView({ creditNote, items, onClose, companyProfile }: C
                     return (
                       <tr key={item.id || index} className="border-b border-black">
                         <td className="border-r border-black p-1.5 text-center print:p-1">{index + 1}</td>
-                        <td className="border-r border-black p-1.5 print:p-1">{item.products?.product_name || 'Unknown Product'}</td>
+                        <td className="border-r border-black p-1.5 print:p-1">
+                          <div>{item.products?.product_name || 'Unknown Product'}</div>
+                          <div className="text-[10px] leading-tight text-gray-700 print:text-[9px]">
+                            Make: {item.batches?.product_sources?.supplier_name || 'Not recorded'}
+                          </div>
+                        </td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{item.batches?.batch_number || 'N/A'}</td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{quantity.toLocaleString()}</td>
                         <td className="border-r border-black p-1.5 text-right print:p-1">{formatCurrency(unitPrice)}</td>

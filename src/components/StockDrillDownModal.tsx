@@ -34,6 +34,9 @@ interface BatchDetail {
   pack_type: string | null;
   warehouse_location: string | null;
   supplier_name: string | null;
+  make_name: string | null;
+  received_quantity: number;
+  out_quantity: number;
 }
 
 interface Reservation {
@@ -85,17 +88,34 @@ export function StockDrillDownModal({ product, onClose }: Props) {
         id, batch_number, current_stock, reserved_stock, import_quantity,
         import_date, expiry_date, import_price, import_price_usd,
         cost_per_unit, landed_cost_per_unit, per_pack_weight, pack_type,
-        warehouse_location, is_active,
-        suppliers(company_name)
+        warehouse_location, is_active, make_id,
+        suppliers(company_name),
+        product_sources!batches_make_id_fkey(supplier_name)
       `)
       .eq('product_id', product.product_id)
       .eq('is_active', true)
       .order('expiry_date', { ascending: true, nullsFirst: false });
 
-    setBatches((data || []).map((b: any) => ({
+    const batchRows = (data || []) as any[];
+    const batchIds = batchRows.map(b => b.id);
+    const { data: movements } = batchIds.length
+      ? await supabase.from('inventory_transactions').select('batch_id,transaction_type,quantity').in('batch_id', batchIds)
+      : { data: [] as any[] };
+    const movementByBatch = (movements || []).reduce((acc: Record<string, { received: number; out: number }>, movement: any) => {
+      const current = acc[movement.batch_id] || { received: 0, out: 0 };
+      const quantity = Number(movement.quantity) || 0;
+      if (movement.transaction_type === 'purchase' && quantity > 0) current.received += quantity;
+      if (quantity < 0) current.out += Math.abs(quantity);
+      acc[movement.batch_id] = current;
+      return acc;
+    }, {});
+    setBatches(batchRows.map((b: any) => ({
       ...b,
       available_quantity: b.current_stock - (b.reserved_stock || 0),
       supplier_name: b.suppliers?.company_name || null,
+      make_name: b.product_sources?.supplier_name || null,
+      received_quantity: movementByBatch[b.id]?.received || 0,
+      out_quantity: movementByBatch[b.id]?.out || 0,
     })));
   };
 
@@ -132,6 +152,15 @@ export function StockDrillDownModal({ product, onClose }: Props) {
   }, {} as Record<string, Reservation[]>);
 
   const totalImported = batches.reduce((s, b) => s + b.import_quantity, 0);
+  const makeSummary = Object.values(batches.reduce((acc: Record<string, { name: string; received: number; out: number; balance: number }>, batch) => {
+    const key = batch.make_name || 'Not recorded';
+    const row = acc[key] || { name: key, received: 0, out: 0, balance: 0 };
+    row.received += batch.received_quantity;
+    row.out += batch.out_quantity;
+    row.balance += Number(batch.current_stock) || 0;
+    acc[key] = row;
+    return acc;
+  }, {}));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -189,6 +218,34 @@ export function StockDrillDownModal({ product, onClose }: Props) {
             )}
           </div>
         </div>
+
+        {makeSummary.length > 0 && (
+          <div className="px-5 py-3 border-b">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Stock by Make / Manufacturer</h3>
+            <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-gray-500">Make</th>
+                    <th className="px-3 py-1.5 text-right text-xs font-medium text-gray-500">Received</th>
+                    <th className="px-3 py-1.5 text-right text-xs font-medium text-gray-500">Out</th>
+                    <th className="px-3 py-1.5 text-right text-xs font-medium text-gray-500">Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {makeSummary.map(row => (
+                    <tr key={row.name}>
+                      <td className="px-3 py-1.5 text-gray-800">{row.name}</td>
+                      <td className="px-3 py-1.5 text-right text-green-700">{row.received.toLocaleString()} {product.unit}</td>
+                      <td className="px-3 py-1.5 text-right text-orange-700">{row.out.toLocaleString()} {product.unit}</td>
+                      <td className="px-3 py-1.5 text-right font-semibold text-blue-700">{row.balance.toLocaleString()} {product.unit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex border-b px-5">

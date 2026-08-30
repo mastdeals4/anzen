@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { useLanguage } from '../contexts/LanguageContext';
 import { supabase } from '../lib/supabase';
 import { Package, AlertTriangle, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { useNavigation } from '../contexts/NavigationContext';
 import { formatDate } from '../utils/dateFormat';
-import { StockDrillDownModal } from '../components/StockDrillDownModal';
 
 interface StockSummary {
   product_id: string;
@@ -23,12 +22,26 @@ interface StockSummary {
   nearest_expiry_date: string | null;
 }
 
+interface StockBatchDetail {
+  id: string;
+  batch_number: string;
+  make_id: string | null;
+  expiry_date: string | null;
+  import_quantity: number;
+  current_stock: number;
+  reserved_stock: number;
+  unit: string;
+  make_name: string | null;
+}
+
 export function Stock() {
   const { t } = useLanguage();
   const { setCurrentPage } = useNavigation();
   const [stockSummary, setStockSummary] = useState<StockSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedProduct, setSelectedProduct] = useState<StockSummary | null>(null);
+  const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const [expandedBatches, setExpandedBatches] = useState<StockBatchDetail[]>([]);
+  const [expandedLoading, setExpandedLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
@@ -75,6 +88,54 @@ export function Stock() {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
+  };
+
+  const loadProductBatches = async (product: StockSummary) => {
+    setExpandedLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('batches')
+        .select('id,batch_number,make_id,expiry_date,import_quantity,current_stock,reserved_stock,products(unit)')
+        .eq('product_id', product.product_id)
+        .eq('is_active', true)
+        .order('expiry_date', { ascending: true, nullsFirst: false });
+      if (error) throw error;
+
+      const rows = (data || []) as any[];
+      const makeIds = Array.from(new Set(rows.map(batch => batch.make_id).filter(Boolean))) as string[];
+      const { data: makes, error: makesError } = makeIds.length
+        ? await supabase.from('product_sources').select('id,supplier_name').in('id', makeIds)
+        : { data: [], error: null };
+      if (makesError) throw makesError;
+      const makeNames = new Map((makes || []).map((make: any) => [make.id, make.supplier_name || null]));
+
+      setExpandedBatches(rows.map(batch => ({
+        id: batch.id,
+        batch_number: batch.batch_number,
+        make_id: batch.make_id || null,
+        expiry_date: batch.expiry_date || null,
+        import_quantity: Number(batch.import_quantity) || 0,
+        current_stock: Number(batch.current_stock) || 0,
+        reserved_stock: Number(batch.reserved_stock) || 0,
+        unit: batch.products?.unit || product.unit,
+        make_name: batch.make_id ? makeNames.get(batch.make_id) || null : null,
+      })));
+    } catch (error) {
+      console.error('Error loading product batches:', error);
+      setExpandedBatches([]);
+    } finally {
+      setExpandedLoading(false);
+    }
+  };
+
+  const toggleProduct = (product: StockSummary) => {
+    if (expandedProductId === product.product_id) {
+      setExpandedProductId(null);
+      setExpandedBatches([]);
+      return;
+    }
+    setExpandedProductId(product.product_id);
+    void loadProductBatches(product);
   };
 
   const filteredData = (() => {
@@ -193,15 +254,31 @@ export function Stock() {
                       </td>
                     </tr>
                   ) : (
-                    filteredData.map((item) => (
+                    filteredData.map((item) => {
+                      const isExpanded = expandedProductId === item.product_id;
+                      const makeGroups = isExpanded
+                        ? Array.from(expandedBatches.reduce((groups, batch) => {
+                            const key = batch.make_id || 'not-recorded';
+                            const group = groups.get(key) || { key, name: batch.make_name || 'Not recorded', batches: [] as StockBatchDetail[], stock: 0, reserved: 0 };
+                            group.batches.push(batch);
+                            group.stock += batch.current_stock;
+                            group.reserved += batch.reserved_stock;
+                            groups.set(key, group);
+                            return groups;
+                          }, new Map<string, { key: string; name: string; batches: StockBatchDetail[]; stock: number; reserved: number }>()).values())
+                        : [];
+                      return (
+                      <Fragment key={item.product_id}>
                       <tr
-                        key={item.product_id}
-                        onClick={() => setSelectedProduct(item)}
+                        onClick={() => toggleProduct(item)}
                         className="cursor-pointer hover:bg-blue-50 transition-colors group"
-                        title="Click to view batch & reservation details"
+                        title={isExpanded ? 'Collapse batch details' : 'Expand Make and Batch details'}
                       >
                         <td className="px-3 py-2 text-sm">
-                          <span className="font-medium text-gray-900 group-hover:text-blue-700 transition-colors">{item.product_name}</span>
+                          <span className="inline-flex items-center gap-1.5 font-medium text-gray-900 group-hover:text-blue-700 transition-colors">
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-blue-500" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                            {item.product_name}
+                          </span>
                           <span className="text-[10px] text-gray-400 ml-1.5 capitalize">({item.category})</span>
                         </td>
                         <td className={`px-3 py-2 text-sm text-right font-semibold ${item.total_current_stock === 0 ? 'text-gray-400' : item.total_current_stock < 500 ? 'text-orange-600' : 'text-green-600'}`}>
@@ -241,7 +318,61 @@ export function Stock() {
                           )}
                         </td>
                       </tr>
-                    ))
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={6} className="bg-gray-50 px-3 py-2">
+                            {expandedLoading ? (
+                              <div className="py-3 text-center text-xs text-gray-500">Loading Make / Batch details…</div>
+                            ) : makeGroups.length === 0 ? (
+                              <div className="py-3 text-center text-xs text-gray-500">No active batches recorded for this product.</div>
+                            ) : (
+                              <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-gray-100 border-b">
+                                    <tr>
+                                      <th className="text-left px-3 py-1.5 font-semibold text-gray-500 uppercase">Make</th>
+                                      <th className="text-left px-3 py-1.5 font-semibold text-gray-500 uppercase">Batch</th>
+                                      <th className="text-left px-3 py-1.5 font-semibold text-gray-500 uppercase">Expiry</th>
+                                      <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Qty</th>
+                                      <th className="text-left px-3 py-1.5 font-semibold text-gray-500 uppercase">UOM</th>
+                                      <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Stock</th>
+                                      <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Reserved</th>
+                                      <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Available</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {makeGroups.map(group => (
+                                      <Fragment key={group.key}>
+                                        <tr className="bg-blue-50/60">
+                                          <td className="px-3 py-1.5 font-semibold text-gray-800">{group.name}</td>
+                                          <td className="px-3 py-1.5 text-gray-500" colSpan={4}>{group.batches.length} batch{group.batches.length === 1 ? '' : 'es'}</td>
+                                          <td className="px-3 py-1.5 text-right font-semibold">{group.stock.toLocaleString()} {item.unit}</td>
+                                          <td className="px-3 py-1.5 text-right">{group.reserved.toLocaleString()} {item.unit}</td>
+                                          <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(group.stock - group.reserved).toLocaleString()} {item.unit}</td>
+                                        </tr>
+                                        {group.batches.map(batch => (
+                                          <tr key={batch.id} className="hover:bg-gray-50">
+                                            <td className="px-3 py-1.5 pl-6 text-gray-500">↳</td>
+                                            <td className="px-3 py-1.5 font-mono text-blue-700">{batch.batch_number || '—'}</td>
+                                            <td className={`px-3 py-1.5 ${batch.expiry_date && isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' : batch.expiry_date && isNearExpiry(batch.expiry_date) ? 'text-orange-600 font-semibold' : 'text-gray-600'}`}>{batch.expiry_date ? formatDate(batch.expiry_date) : '—'}</td>
+                                            <td className="px-3 py-1.5 text-right">{batch.import_quantity.toLocaleString()}</td>
+                                            <td className="px-3 py-1.5">{batch.unit}</td>
+                                            <td className="px-3 py-1.5 text-right font-semibold">{batch.current_stock.toLocaleString()} {batch.unit}</td>
+                                            <td className="px-3 py-1.5 text-right">{batch.reserved_stock.toLocaleString()} {batch.unit}</td>
+                                            <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(batch.current_stock - batch.reserved_stock).toLocaleString()} {batch.unit}</td>
+                                          </tr>
+                                        ))}
+                                      </Fragment>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
+                    )})
                   )}
                 </tbody>
               </table>
@@ -250,12 +381,6 @@ export function Stock() {
         </div>
       </div>
 
-      {selectedProduct && (
-        <StockDrillDownModal
-          product={selectedProduct}
-          onClose={() => setSelectedProduct(null)}
-        />
-      )}
     </Layout>
   );
 }

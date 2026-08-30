@@ -31,8 +31,11 @@ interface ProductSource {
   id?: string;
   source_name: string;
   grade: string;
+  supplier_id: string | null;
+  country: string;
+  remarks: string;
   files: File[];
-  existing_docs?: SourceDocument[];
+  existing_docs: SourceDocument[];
 }
 
 interface SourceDocument {
@@ -43,6 +46,10 @@ interface SourceDocument {
   file_size: number;
 }
 
+interface ProductDocument extends SourceDocument {
+  product_id: string;
+}
+
 export function Products() {
   const { t } = useLanguage();
   const { profile } = useAuth();
@@ -51,7 +58,15 @@ export function Products() {
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
-  const [viewingSources, setViewingSources] = useState<any[]>([]);
+  const [viewingSources, setViewingSources] = useState<Array<{
+    id: string;
+    supplier_name: string | null;
+    grade: string | null;
+    country: string | null;
+    remarks: string | null;
+    documents: SourceDocument[];
+  }>>([]);
+  const [viewingProductDocuments, setViewingProductDocuments] = useState<ProductDocument[]>([]);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   const [formData, setFormData] = useState({
@@ -78,7 +93,11 @@ export function Products() {
   const [sources, setSources] = useState<ProductSource[]>([{
     source_name: '',
     grade: 'BP',
-    files: []
+    supplier_id: null,
+    country: '',
+    remarks: '',
+    files: [],
+    existing_docs: [],
   }]);
 
   useEffect(() => {
@@ -131,26 +150,18 @@ export function Products() {
           grade,
           country,
           remarks,
-          created_at
+          created_at,
+          product_source_documents(id, doc_type, original_filename, file_url, file_size)
         `)
         .eq('product_id', productId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      const sourcesWithDocs = await Promise.all(
-        (sourcesData || []).map(async (source) => {
-          const { data: docs } = await supabase
-            .from('product_source_documents')
-            .select('*')
-            .eq('source_id', source.id);
-
-          return {
-            ...source,
-            documents: docs || []
-          };
-        })
-      );
+      const sourcesWithDocs = (sourcesData || []).map(source => ({
+        ...source,
+        documents: source.product_source_documents || [],
+      }));
 
       // Also load product documents (legacy/default)
       const { data: productDocs } = await supabase
@@ -158,27 +169,15 @@ export function Products() {
         .select('*')
         .eq('product_id', productId);
 
-      // If there are product documents, add them as a "Default" source
-      if (productDocs && productDocs.length > 0) {
-        const defaultSource = {
-          id: 'default',
-          supplier_name: 'Product Documents',
-          grade: '-',
-          country: null,
-          remarks: 'General product documents',
-          created_at: new Date().toISOString(),
-          documents: productDocs.map(doc => ({
-            id: doc.id,
-            doc_type: doc.document_type,
-            original_filename: doc.file_name,
-            file_url: doc.file_url,
-            file_size: doc.file_size
-          }))
-        };
-        setViewingSources([defaultSource, ...sourcesWithDocs]);
-      } else {
-        setViewingSources(sourcesWithDocs);
-      }
+      setViewingSources(sourcesWithDocs);
+      setViewingProductDocuments((productDocs || []).map(doc => ({
+        id: doc.id,
+        product_id: doc.product_id,
+        doc_type: doc.document_type,
+        original_filename: doc.file_name,
+        file_url: doc.file_url,
+        file_size: doc.file_size || 0,
+      })));
     } catch (error) {
       console.error('Error loading sources:', error);
     }
@@ -191,7 +190,7 @@ export function Products() {
   };
 
   const addSourceRow = () => {
-    setSources([...sources, { source_name: '', grade: 'BP', files: [] }]);
+    setSources([...sources, { source_name: '', grade: 'BP', supplier_id: null, country: '', remarks: '', files: [], existing_docs: [] }]);
   };
 
   const removeSourceRow = (index: number) => {
@@ -236,35 +235,39 @@ export function Products() {
     });
 
     // Load existing sources
-    const { data: existingSources } = await supabase
+    const { data: existingSources, error: sourcesError } = await supabase
       .from('product_sources')
       .select(`
         id,
         supplier_name,
-        grade
+        grade,
+        supplier_id,
+        country,
+        remarks,
+        product_source_documents(id, doc_type, original_filename, file_url, file_size)
       `)
       .eq('product_id', product.id);
 
-    if (existingSources && existingSources.length > 0) {
-      const sourcesWithDocs = await Promise.all(
-        existingSources.map(async (source) => {
-          const { data: docs } = await supabase
-            .from('product_source_documents')
-            .select('*')
-            .eq('source_id', source.id);
+    if (sourcesError) {
+      showToast({ type: 'error', title: 'Unable to edit product', message: `Could not load existing Make records: ${sourcesError.message}` });
+      setEditingProduct(null);
+      return;
+    }
 
-          return {
-            id: source.id,
-            source_name: source.supplier_name || '',
-            grade: source.grade || 'BP',
-            files: [],
-            existing_docs: docs || []
-          };
-        })
-      );
+    if (existingSources && existingSources.length > 0) {
+      const sourcesWithDocs = existingSources.map(source => ({
+        id: source.id,
+        source_name: source.supplier_name || '',
+        grade: source.grade || 'BP',
+        supplier_id: source.supplier_id,
+        country: source.country || '',
+        remarks: source.remarks || '',
+        files: [],
+        existing_docs: source.product_source_documents || [],
+      }));
       setSources(sourcesWithDocs);
     } else {
-      setSources([{ source_name: '', grade: 'BP', files: [] }]);
+      setSources([{ source_name: '', grade: 'BP', supplier_id: null, country: '', remarks: '', files: [], existing_docs: [] }]);
     }
 
     setModalOpen(true);
@@ -378,7 +381,7 @@ export function Products() {
       min_stock_level: '',
       duty_a1: '',
     });
-    setSources([{ source_name: '', grade: 'BP', files: [] }]);
+    setSources([{ source_name: '', grade: 'BP', supplier_id: null, country: '', remarks: '', files: [], existing_docs: [] }]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -450,15 +453,22 @@ export function Products() {
 
         if (source.id) {
           // Update existing source
-          const { error } = await supabase
+          const { data: updatedSource, error } = await supabase
             .from('product_sources')
             .update({
               supplier_name: source.source_name,
-              grade: source.grade
+              grade: source.grade,
+              supplier_id: source.supplier_id,
+              country: source.country || null,
+              remarks: source.remarks || null,
             })
-            .eq('id', source.id);
+            .eq('id', source.id)
+            .eq('product_id', productId)
+            .select('id')
+            .maybeSingle();
 
           if (error) throw error;
+          if (!updatedSource) throw new Error('Existing Make record no longer belongs to this Product');
           sourceId = source.id;
         } else {
           // Create new source
@@ -468,6 +478,9 @@ export function Products() {
               product_id: productId,
               supplier_name: source.source_name,
               grade: source.grade,
+              supplier_id: source.supplier_id,
+              country: source.country || null,
+              remarks: source.remarks || null,
               created_by: profile?.id
             }])
             .select()
@@ -480,7 +493,7 @@ export function Products() {
         // Upload files for this source
         for (const file of source.files) {
           const fileExt = file.name.split('.').pop();
-          const fileName = `${productId}/${sourceId}/${Date.now()}.${fileExt}`;
+          const fileName = `${productId}/${sourceId}/${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
           const { error: uploadError } = await supabase.storage
             .from('product-source-documents')
@@ -495,7 +508,7 @@ export function Products() {
             .from('product-source-documents')
             .getPublicUrl(fileName);
 
-          await supabase
+          const { error: documentError } = await supabase
             .from('product_source_documents')
             .insert([{
               source_id: sourceId,
@@ -505,6 +518,10 @@ export function Products() {
               file_size: file.size,
               uploaded_by: profile?.id
             }]);
+          if (documentError) {
+            await supabase.storage.from('product-source-documents').remove([fileName]);
+            throw documentError;
+          }
         }
       }
 
@@ -573,11 +590,15 @@ export function Products() {
       const { error } = await supabase
         .from('product_source_documents')
         .delete()
-        .eq('id', docId);
+        .eq('id', docId)
+        .eq('source_id', sourceId);
 
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: 'Document deleted' });
+      setSources(current => current.map(source => source.id === sourceId
+        ? { ...source, existing_docs: source.existing_docs.filter(doc => doc.id !== docId) }
+        : source));
       if (viewingProduct) {
         await loadProductSources(viewingProduct.id);
       }
@@ -808,27 +829,27 @@ export function Products() {
             </div>
           </div>
 
-          {/* Sources Section */}
+          {/* Make / Manufacturer Section */}
           <div className="bg-blue-50 p-4 rounded-lg space-y-4">
             <div className="flex justify-between items-center">
-              <h3 className="font-semibold text-gray-900">Sources</h3>
+              <h3 className="font-semibold text-gray-900">Make / Manufacturer</h3>
               <button
                 type="button"
                 onClick={addSourceRow}
                 className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
               >
                 <Plus className="w-3 h-3" />
-                Add Source
+                Add Make
               </button>
             </div>
 
             {sources.map((source, index) => (
-              <div key={index} className="bg-white p-4 rounded-lg border border-blue-200 space-y-3">
+              <div key={source.id || `new-source-${index}`} className="bg-white p-4 rounded-lg border border-blue-200 space-y-3">
                 <div className="flex justify-between items-start">
                   <div className="flex-1 grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Source Name
+                        Make / Supplier Name
                       </label>
                       <input
                         type="text"
@@ -867,6 +888,27 @@ export function Products() {
                       <X className="w-4 h-4" />
                     </button>
                   )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+                    <input
+                      type="text"
+                      value={source.country}
+                      onChange={(e) => updateSource(index, 'country', e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                    <input
+                      type="text"
+                      value={source.remarks}
+                      onChange={(e) => updateSource(index, 'remarks', e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
 
                 {/* File Upload */}
@@ -922,9 +964,12 @@ export function Products() {
                           className="flex items-center justify-between px-3 py-2 bg-green-50 rounded text-sm"
                         >
                           <span className="text-gray-700">{doc.original_filename}</span>
-                          <span className="text-xs text-gray-500">
-                            {(doc.file_size / 1024).toFixed(1)} KB
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-500 mr-1">{(Number(doc.file_size || 0) / 1024).toFixed(1)} KB</span>
+                            <button type="button" onClick={() => viewDocument(doc.file_url, doc.original_filename)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="View"><Eye className="w-3.5 h-3.5" /></button>
+                            <button type="button" onClick={() => downloadDocument(doc.file_url, doc.original_filename)} className="p-1 text-green-600 hover:bg-green-50 rounded" title="Download"><Download className="w-3.5 h-3.5" /></button>
+                            {source.id && <button type="button" onClick={() => deleteDocument(doc.id, source.id!)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -962,6 +1007,7 @@ export function Products() {
           setViewModalOpen(false);
           setViewingProduct(null);
           setViewingSources([]);
+          setViewingProductDocuments([]);
         }}
         title={viewingProduct?.product_name || 'Product Details'}
         maxWidth="max-w-5xl"
@@ -997,7 +1043,7 @@ export function Products() {
 
             {/* Sources Table */}
             <div>
-              <h3 className="text-lg font-semibold mb-3">Sources & Documents</h3>
+              <h3 className="text-lg font-semibold mb-3">Make / Manufacturer & Documents</h3>
 
               {viewingSources.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -1009,7 +1055,7 @@ export function Products() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Source Name
+                          Make / Manufacturer
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                           Grade
@@ -1070,6 +1116,22 @@ export function Products() {
                 </div>
               )}
             </div>
+
+            {viewingProductDocuments.length > 0 && (
+              <div>
+                <h3 className="text-lg font-semibold mb-3">Product Documents</h3>
+                <p className="text-xs text-gray-500 mb-2">General historical product documents that are not linked to a specific Make.</p>
+                <div className="border rounded-lg divide-y">
+                  {viewingProductDocuments.map(doc => (
+                    <div key={doc.id} className="flex items-center gap-2 px-4 py-2 text-sm">
+                      <span className="flex-1 text-gray-700 truncate">{doc.original_filename}</span>
+                      <button onClick={() => viewDocument(doc.file_url, doc.original_filename)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="View"><Eye className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => downloadDocument(doc.file_url, doc.original_filename)} className="p-1 text-green-600 hover:bg-green-50 rounded" title="Download"><Download className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>

@@ -28,6 +28,7 @@ interface InvoiceItem {
   batches?: {
     batch_number: string;
     expiry_date: string | null;
+    product_sources?: { supplier_name: string | null; grade: string | null } | null;
   } | null;
 }
 
@@ -389,8 +390,6 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
                     const quantity = item.quantity || 0;
                     const unitPrice = item.unit_price || 0;
                     const itemSubtotal = quantity * unitPrice;
-                    const itemTax = item.tax_amount ?? itemSubtotal * ((item.tax_rate || 0) / 100);
-                    const lineTotal = item.line_total ?? itemSubtotal + itemTax;
                     const expDate = item.batches?.expiry_date ? formatExpiryDate(item.batches.expiry_date) : '-';
 
                     return (
@@ -400,15 +399,13 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
                           <div>{item.products?.product_name || 'Unknown Product'}</div>
                           <div className="text-[10px] text-gray-600 print:text-[9px]">DC: {item.dc_number || '-'}</div>
                         </td>
-                        <td className="border-r border-black p-1.5 text-center print:p-1">{item.batches?.batch_number || 'N/A'}</td>
+                        <td className="border-r border-black p-1.5 text-center print:p-1">{item.batches?.batch_number || 'N/A'}<br/><span className="text-[9px] leading-tight">{item.batches?.product_sources?.supplier_name || 'Not recorded'}</span></td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{expDate}</td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{quantity.toLocaleString()}</td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{item.products?.unit || 'Kg'}</td>
                         <td className="border-r border-black p-1.5 text-right print:p-1">{formatCurrency(unitPrice)}</td>
                         <td className="p-1.5 text-right print:p-1">
-                          <div>{formatCurrency(itemSubtotal)}</div>
-                          <div className="text-[10px] text-gray-600 print:text-[9px]">Tax ({item.tax_rate || 0}%): {formatCurrency(itemTax)}</div>
-                          <div className="font-semibold">Line total: {formatCurrency(lineTotal)}</div>
+                          {formatCurrency(itemSubtotal)}
                         </td>
                       </tr>
                     );

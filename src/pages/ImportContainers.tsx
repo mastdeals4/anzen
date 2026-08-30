@@ -38,6 +38,7 @@ interface ImportContainer {
   suppliers?: Supplier;
   linked_expenses_total?: number;
   linked_petty_cash_total?: number;
+  canonical_landed_cost_pool?: number;
 }
 
 interface LinkedExpense {
@@ -97,6 +98,7 @@ export default function ImportContainers() {
   const [linkedExpenses, setLinkedExpenses] = useState<LinkedExpense[]>([]);
   const [linkedPettyCash, setLinkedPettyCash] = useState<LinkedPettyCash[]>([]);
   const [inclusionMap, setInclusionMap] = useState<Record<string, boolean>>({});
+  const [canonicalLandedCostPool, setCanonicalLandedCostPool] = useState(0);
   const [savingInclusion, setSavingInclusion] = useState(false);
   const [formData, setFormData] = useState({
     container_ref: '',
@@ -165,7 +167,8 @@ export default function ImportContainers() {
               const linkedPettyCashTotal = (pettyCash || [])
                 .filter(pc => pc.include_in_landed_cost !== false)
                 .reduce((sum, pc) => sum + (pc.amount || 0), 0) || 0;
-              return { ...container, linked_expenses_total: linkedExpensesTotal, linked_petty_cash_total: linkedPettyCashTotal };
+              const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
+              return { ...container, linked_expenses_total: linkedExpensesTotal, linked_petty_cash_total: linkedPettyCashTotal, canonical_landed_cost_pool: Number(canonicalPool) || 0 };
             })
           )
         : containerRows;
@@ -214,7 +217,7 @@ export default function ImportContainers() {
 
   const resetForm = () => {
     setFormData({ container_ref: '', supplier_id: '', import_date: new Date().toISOString().split('T')[0], import_invoice_value: 0, currency: 'USD', exchange_rate: 15000, other_import_costs: 0, notes: '' });
-    setLinkedExpenses([]); setLinkedPettyCash([]); setInclusionMap({});
+    setLinkedExpenses([]); setLinkedPettyCash([]); setInclusionMap({}); setCanonicalLandedCostPool(0);
   };
 
   const loadLinkedExpenses = async (containerId: string) => {
@@ -312,6 +315,8 @@ export default function ImportContainers() {
 
   const handleEdit = async (container: ImportContainer) => {
     setEditingContainer(container);
+    const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
+    setCanonicalLandedCostPool(Number(canonicalPool) || 0);
     setFormData({
       container_ref: container.container_ref, supplier_id: container.supplier_id, import_date: container.import_date,
       import_invoice_value: container.import_invoice_value || 0, currency: container.currency || 'USD',
@@ -359,7 +364,6 @@ export default function ImportContainers() {
   const pibPaymentTotal = pibExpenses.reduce((s, e) => s + (e.amount || 0), 0);
 
   const selectedLinkedTotal = unifiedItems.filter(i => i.include_in_landed_cost).reduce((s, i) => s + i.amount, 0);
-  const landedCostPool = selectedLinkedTotal + (formData.other_import_costs || 0);
   const hasLinkedItems = unifiedItems.length > 0 || pibExpenses.length > 0;
 
   return (
@@ -402,8 +406,8 @@ export default function ImportContainers() {
                     {canViewCosting && (<>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right hidden md:table-cell">{formatCurrency(container.import_invoice_value, container.currency)}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-right">
-                        <div className="text-sm text-gray-900 font-semibold">{formatCurrency((container.linked_expenses_total || 0) + (container.linked_petty_cash_total || 0) + (container.other_import_costs || 0), 'IDR')}</div>
-                        <div className="text-xs text-gray-500">Linked: {formatCurrency((container.linked_expenses_total || 0) + (container.linked_petty_cash_total || 0), 'IDR')} + Other: {formatCurrency(container.other_import_costs || 0, 'IDR')}</div>
+                        <div className="text-sm text-gray-900 font-semibold">{formatCurrency(container.canonical_landed_cost_pool || 0, 'IDR')}</div>
+                        <div className="text-xs text-gray-500">Canonical dynamic pool</div>
                       </td>
                     </>)}
                     <td className="px-4 py-3 whitespace-nowrap text-center">{getStatusBadge(container.status)}</td>
@@ -483,7 +487,7 @@ export default function ImportContainers() {
                   <div className="mt-2 pt-2 border-t border-green-200 space-y-0.5 text-xs">
                     <div className="flex justify-between"><span className="font-semibold text-green-900">Selected Linked Costs:</span><span className="font-bold text-green-900">{formatCurrency(selectedLinkedTotal, 'IDR')}</span></div>
                     <div className="flex justify-between"><span className="font-semibold text-green-900">Other Import Costs:</span><span className="font-bold text-green-900">{formatCurrency(formData.other_import_costs || 0, 'IDR')}</span></div>
-                    <div className="flex justify-between pt-1 border-t border-green-200"><span className="font-bold text-green-900">Container Landed-Cost Pool:</span><span className="text-sm font-bold text-green-900">{formatCurrency(landedCostPool, 'IDR')}</span></div>
+                    <div className="flex justify-between pt-1 border-t border-green-200"><span className="font-bold text-green-900">Container Landed-Cost Pool:</span><span className="text-sm font-bold text-green-900">{formatCurrency(canonicalLandedCostPool, 'IDR')}</span></div>
                   </div>
                 </div>
               )}

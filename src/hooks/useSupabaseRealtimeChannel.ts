@@ -56,8 +56,6 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
       activeChannels.delete(channelName);
     }
 
-    const channel = supabase.channel(channelName);
-
     const changeConfig: Record<string, string> = {
       event,
       schema,
@@ -65,18 +63,55 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
     };
     if (filter) changeConfig.filter = filter;
 
-    // The postgres_changes typings are permissive; cast to any to satisfy the
-    // overload without narrowing the caller payload type.
-    (channel as unknown as { on: (t: string, cfg: Record<string, string>, cb: (p: RealtimePostgresChangesPayload<Record<string, unknown>>) => void) => unknown })
-      .on('postgres_changes', changeConfig, (payload) => {
-        onEventRef.current(payload);
-      });
+    // Realtime connections can be unavailable temporarily (for example while
+    // a device is offline or the hosted websocket endpoint is restarting).
+    // Recreate the channel with bounded backoff instead of surfacing an
+    // unhandled websocket error or leaving the subscription permanently dead.
+    let disposed = false;
+    let retryTimer: number | undefined;
+    let retryAttempt = 0;
+    let channel: ReturnType<typeof supabase.channel> | undefined;
 
-    channel.subscribe();
-    activeChannels.add(channelName);
+    const scheduleRetry = () => {
+      if (disposed || retryTimer !== undefined) return;
+      const delay = Math.min(30_000, 1_000 * 2 ** retryAttempt++);
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        subscribe();
+      }, delay);
+    };
+
+    const subscribe = () => {
+      if (disposed) return;
+      if (channel) supabase.removeChannel(channel);
+      channel = supabase.channel(channelName);
+
+      // The postgres_changes typings are permissive; cast to any to satisfy
+      // the overload without narrowing the caller payload type.
+      (channel as unknown as { on: (t: string, cfg: Record<string, string>, cb: (p: RealtimePostgresChangesPayload<Record<string, unknown>>) => void) => unknown })
+        .on('postgres_changes', changeConfig, (payload) => {
+          onEventRef.current(payload);
+        });
+
+      channel.subscribe((status) => {
+        if (disposed) return;
+        if (status === 'SUBSCRIBED') {
+          retryAttempt = 0;
+          return;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          scheduleRetry();
+        }
+      });
+      activeChannels.add(channelName);
+    };
+
+    subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      disposed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (channel) supabase.removeChannel(channel);
       activeChannels.delete(channelName);
     };
   }, [channelName, table, schema, event, filter, enabled]);

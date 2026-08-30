@@ -12,6 +12,7 @@ import { DocumentPrintStyles } from './DocumentPrintStyles';
 interface POItem {
   id?: string;
   product_id: string;
+  make_id?: string | null;
   quantity: number;
   unit: string;
   unit_price: number;
@@ -23,6 +24,10 @@ interface POItem {
     product_name: string;
     product_code: string;
   };
+  product_sources?: {
+    supplier_name: string | null;
+    grade: string | null;
+  } | null;
 }
 
 interface PurchaseOrderViewProps {
@@ -341,6 +346,7 @@ export function PurchaseOrderView({ purchaseOrder: po, items, onClose, companyPr
                   <tr className="border-b-2 border-black bg-white">
                     <th className="border-r border-black p-1.5 text-center font-bold print:p-1">No.</th>
                     <th className="border-r border-black p-1.5 text-left font-bold print:p-1">Product Name</th>
+                    <th className="border-r border-black p-1.5 text-left font-bold print:p-1">Make / Manufacturer</th>
                     <th className="border-r border-black p-1.5 text-left font-bold print:p-1">Specification</th>
                     <th className="border-r border-black p-1.5 text-center font-bold print:p-1">COA No.</th>
                     <th className="border-r border-black p-1.5 text-center font-bold print:p-1">Quantity</th>
@@ -355,6 +361,7 @@ export function PurchaseOrderView({ purchaseOrder: po, items, onClose, companyPr
                     <tr key={item.id || index} className="border-b border-black">
                       <td className="border-r border-black p-1.5 text-center print:p-1">{index + 1}</td>
                       <td className="border-r border-black p-1.5 print:p-1">{item.products?.product_name || 'Unknown Product'}</td>
+                      <td className="border-r border-black p-1.5 print:p-1">{item.product_sources?.supplier_name || 'Not recorded'}{item.product_sources?.grade ? ` (${item.product_sources.grade})` : ''}</td>
                       <td className="border-r border-black p-1.5 print:p-1">{item.specification || '-'}</td>
                       <td className="border-r border-black p-1.5 text-center print:p-1">{item.coa_code || '-'}</td>
                       <td className="border-r border-black p-1.5 text-center print:p-1">{item.quantity.toLocaleString()}</td>
@@ -368,6 +375,7 @@ export function PurchaseOrderView({ purchaseOrder: po, items, onClose, companyPr
                   {items.length < 2 && Array.from({ length: 2 - items.length }).map((_, i) => (
                     <tr key={`empty-${i}`} className="border-b border-black">
                       <td className="border-r border-black p-1.5 text-center print:p-1">&nbsp;</td>
+                      <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>

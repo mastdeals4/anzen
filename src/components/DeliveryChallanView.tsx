@@ -24,6 +24,12 @@ interface ChallanItem {
   batches?: {
     batch_number: string;
     expiry_date: string | null;
+    product_sources?: { supplier_name: string | null; grade: string | null } | null;
+    products?: {
+      product_name: string;
+      product_code: string;
+      unit: string;
+    } | null;
     packaging_details: string | null;
   };
 }
@@ -162,7 +168,8 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
   };
 
   const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
-  const firstItemUnit = items[0]?.products?.unit || 'kg';
+  // Batch is the authoritative physical receipt relationship for the PDF.
+  const firstItemUnit = items[0]?.batches?.products?.unit || 'kg';
 
   return (
     <div className="doc-print-root fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 print:static print:bg-white print:overflow-visible">
@@ -272,14 +279,14 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
                   {items.map((item, index) => (
                     <tr key={item.id} className="border-b border-black">
                       <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{index + 1}</td>
-                      <td className="border-r border-black px-1 py-1 print:px-0.5 print:py-0.5">{item.products?.product_name}</td>
-                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.batches?.batch_number}</td>
+                      <td className="border-r border-black px-1 py-1 print:px-0.5 print:py-0.5">{item.batches?.products?.product_name || '-'}</td>
+                    <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.batches?.batch_number}<br/><span className="text-[8px]">{item.batches?.product_sources?.supplier_name || 'Not recorded'}</span></td>
                       <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.batches?.expiry_date ? formatExpiryDate(item.batches.expiry_date) : '-'}
                       </td>
                       <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.pack_type && item.pack_size && item.number_of_packs
-                          ? `${item.pack_size} ${item.products?.unit || 'kg'}/${item.pack_type}`
+                          ? `${item.pack_size} ${item.batches?.products?.unit || 'kg'}/${item.pack_type}`
                           : item.pack_type && item.pack_size
                           ? `${item.pack_size} ${item.pack_type}`
                           : '-'}
@@ -287,7 +294,7 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
                       <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.number_of_packs || '-'}
                       </td>
-                      <td className="px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.quantity.toLocaleString()} {item.products?.unit || firstItemUnit}</td>
+                      <td className="px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.quantity.toLocaleString()} {item.batches?.products?.unit || firstItemUnit}</td>
                     </tr>
                   ))}
                   <tr className="border-t-2 border-black bg-gray-50 font-bold">
