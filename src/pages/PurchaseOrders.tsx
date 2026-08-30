@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { Layout } from '../components/Layout';
-import { FileText, Plus, Search, Eye, Edit, Trash2, CheckCircle, XCircle, Download, Package } from 'lucide-react';
+import { FileText, Plus, Search, CheckCircle, XCircle, Download, Package } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { PurchaseOrderView } from '../components/PurchaseOrderView';
 import { SearchableSelect } from '../components/SearchableSelect';
@@ -13,6 +13,7 @@ import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
 import { useNavigation } from '../contexts/NavigationContext';
+import { FinanceActionButton } from '../components/finance/FinanceUI';
 
 interface Supplier {
   id: string;
@@ -712,13 +713,7 @@ export default function PurchaseOrders() {
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-gray-500">
                     <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => handleView(po)}
-                        className="text-blue-600 hover:text-blue-800"
-                        title="View"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
+                      <FinanceActionButton action="view" label="View" onClick={() => void handleView(po)} />
                       {po.status !== 'cancelled' && profile?.role !== 'auditor_ca' && (
                         <button
                           onClick={() => handleCreateInvoice(po)}
@@ -728,22 +723,10 @@ export default function PurchaseOrders() {
                           <FileText className="h-4 w-4" />
                         </button>
                       )}
-                      {po.status === 'draft' && profile?.role !== 'auditor_ca' && (
+                      {profile?.role !== 'auditor_ca' && (
                         <>
-                          <button
-                            onClick={() => handleEdit(po)}
-                            className="text-green-600 hover:text-green-800"
-                            title="Edit"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(po.id)}
-                            className="text-red-600 hover:text-red-800"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <FinanceActionButton action="edit" label="Edit" onClick={() => void handleEdit(po)} disabled={po.status !== 'draft'} />
+                          <FinanceActionButton action="delete" label="Delete" onClick={() => void handleDelete(po.id)} disabled={po.status !== 'draft'} />
                         </>
                       )}
                       {po.status === 'draft' && profile?.role === 'admin' && (
