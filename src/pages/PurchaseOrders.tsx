@@ -725,8 +725,8 @@ export default function PurchaseOrders() {
                       )}
                       {profile?.role !== 'auditor_ca' && (
                         <>
-                          <FinanceActionButton action="edit" label="Edit" onClick={() => void handleEdit(po)} disabled={po.status !== 'draft'} />
-                          <FinanceActionButton action="delete" label="Delete" onClick={() => void handleDelete(po.id)} disabled={po.status !== 'draft'} />
+                          <FinanceActionButton action="edit" label="Edit" onClick={(event) => { event.stopPropagation(); void handleEdit(po); }} />
+                          <FinanceActionButton action="delete" label="Delete" onClick={(event) => { event.stopPropagation(); void handleDelete(po.id); }} />
                         </>
                       )}
                       {po.status === 'draft' && profile?.role === 'admin' && (
