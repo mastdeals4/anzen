@@ -29,6 +29,7 @@ import {
   FINANCE_RECONCILIATION_REFRESH_EVENT,
   notifyFinanceReconciliationRefresh,
 } from './bankTransactionLinking';
+import { unlinkBankStatementAllocation } from '../../services/financeCommands';
 import { FinanceDocumentAttachments, uploadFinanceDocuments } from './FinanceDocumentAttachments';
 import { getPostedJournalsForExport, writeReconciliationWorkbook, type ReconciliationSummaryRow } from './reconciliationExport';
 import { ExpenseCategorySelect, groupExpenseCategories } from './ExpenseCategorySelect';
@@ -1810,6 +1811,18 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     } catch (error: any) {
       console.error('Error unlinking expense:', error.message);
       alert('Failed to unlink expense: ' + error.message);
+    }
+  };
+
+  const handleUnlinkBankAllocation = async (allocationId: string) => {
+    if (!confirm('Unlink this bank transaction from the expense?')) return;
+    try {
+      await unlinkBankStatementAllocation(allocationId);
+      await syncExpenseBankLinks([editingExpense?.id, viewingExpense?.id]);
+      notifyFinanceReconciliationRefresh();
+    } catch (error) {
+      console.error('Error unlinking bank allocation:', error);
+      alert(`Failed to unlink bank transaction: ${supabaseErrorMessage(error)}`);
     }
   };
 
@@ -3632,13 +3645,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     bankAccountId={formData.bank_account_id}
                     selectedTransactionId={selectedBankTransactionId}
                     linkedTransaction={editingExpense?.bank_statement_lines?.[0] || null}
+                    linkedTransactions={editingExpense?.bank_statement_lines || []}
                     currentExpenseId={editingExpense?.id}
                     documentDate={formData.expense_date}
                     documentOutstanding={Math.max(
                       0,
                       calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
-                        - Number(editingExpense?.paid_amount || 0)
-                        + Number(editingExpense?.bank_statement_lines?.reduce(
+                        - Number(editingExpense?.bank_statement_lines?.reduce(
                           (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
                           0,
                         ) || 0),
@@ -3652,8 +3665,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         Math.max(
                           0,
                           calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
-                            - Number(editingExpense?.paid_amount || 0)
-                            + Number(editingExpense?.bank_statement_lines?.reduce(
+                            - Number(editingExpense?.bank_statement_lines?.reduce(
                               (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
                               0,
                             ) || 0),
@@ -3661,6 +3673,9 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       ));
                     }}
                     onUnlink={() => handleUnlinkFromBankStatement(editingExpense!.id)}
+                    onUnlinkTransaction={(transaction) => transaction.allocation_id
+                      ? handleUnlinkBankAllocation(transaction.allocation_id)
+                      : handleUnlinkFromBankStatement(editingExpense!.id)}
                   />
                 )}
 
