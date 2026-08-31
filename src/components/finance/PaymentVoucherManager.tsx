@@ -1023,9 +1023,13 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     }
   };
 
+  // Salary advance recovery is a non-cash settlement adjustment.  Keep it
+  // available through salary/employee statements, but do not present it as a
+  // normal bank/payment voucher in this cash-payments register.
   const filteredVouchers = vouchers.filter(v =>
-    v.voucher_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.suppliers?.company_name?.toLowerCase().includes(searchTerm.toLowerCase())
+    v.payment_purpose !== 'salary_advance_settlement' &&
+    (v.voucher_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      v.suppliers?.company_name?.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
@@ -1128,6 +1132,14 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
               align: 'center' as const,
               cell: (v: PaymentVoucher) => (
                 <div className="flex items-center justify-center gap-0.5">
+                  {v.payment_method === 'bank_transfer' && v.bank_account_id && (
+                    <FinanceActionButton
+                      action="bankLink"
+                      label={v.bank_statement_line_id ? 'Linked to bank transaction' : 'Link bank transaction'}
+                      className={v.bank_statement_line_id ? 'text-green-700 bg-green-50 hover:bg-green-100' : 'text-gray-500 hover:text-blue-700'}
+                      onClick={(e) => { e.stopPropagation(); handleView(v); }}
+                    />
+                  )}
                   <FinanceActionButton action="view" onClick={(e) => { e.stopPropagation(); handleView(v); }} />
                   {!v.is_posted && (
                     <>
@@ -1718,7 +1730,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                       selectedTransactionId={viewingVoucher.bank_statement_line_id || ''}
                       currentJournalEntryId={viewingVoucher.journal_entry_id}
                       documentDate={viewingVoucher.voucher_date}
-                      documentOutstanding={Number(viewingVoucher.actual_bank_debit ?? viewingVoucher.bank_amount ?? viewingVoucher.settlement_amount ?? 0)}
+                      documentOutstanding={Number(viewingVoucher.actual_bank_debit ?? viewingVoucher.bank_amount ?? viewingVoucher.amount ?? 0)}
                       documentLabel={[viewingVoucher.voucher_number, viewingVoucher.reference_number].filter(Boolean).join(' ')}
                       disabled={!viewingVoucher.is_posted || !viewingVoucher.journal_entry_id}
                       disabledMessage="Post this voucher to create its journal entry before linking a bank transaction."

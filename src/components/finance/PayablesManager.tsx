@@ -86,6 +86,10 @@ interface OutstandingPurchaseInvoice {
   suppliers?: { company_name: string } | null;
 }
 
+interface OutstandingPurchaseInvoiceRpcRow extends OutstandingPurchaseInvoice {
+  supplier_name?: string | null;
+}
+
 interface PayablesManagerProps {
   canManage: boolean;
 }
@@ -152,7 +156,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
     try {
       const { data, error } = await supabase.rpc('get_outstanding_purchase_invoices', { p_as_of_date: dateRange.endDate });
       if (error) throw error;
-      setOutstandingPurchaseInvoices((data || []).map(invoice => ({
+      setOutstandingPurchaseInvoices(((data || []) as OutstandingPurchaseInvoiceRpcRow[]).map((invoice: OutstandingPurchaseInvoiceRpcRow) => ({
         ...invoice,
         suppliers: invoice.supplier_name ? { company_name: invoice.supplier_name } : null,
       })) as OutstandingPurchaseInvoice[]);
