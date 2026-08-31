@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync('supabase/migrations/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations/20260831200000_fix_expense_cancellation_integrity.sql', 'utf8');
 const frontend = fs.readFileSync('src/components/finance/ExpenseManager.tsx', 'utf8');
 
 class ExpensePosting {
   constructor({ paid = 0, pphPaid = 0, voucher = false, bank = false, petty = false, closed = false } = {}) {
     this.approved = true;
+    this.status = 'approved';
     this.original = { active: true, lines: [{ debit: 100, credit: 0 }, { debit: 0, credit: 100 }] };
     this.reversal = null;
     this.audit = [];
@@ -23,6 +24,7 @@ class ExpensePosting {
     this.reversal = { active: false, lines: this.original.lines.map(l => ({ debit: l.credit, credit: l.debit })) };
     this.original.active = false;
     this.approved = false;
+    this.status = 'cancelled';
     this.audit.push({ action: 'CANCEL_POSTING', reason });
   }
 }
@@ -36,6 +38,7 @@ test('unpaid/no-payment cancellation preserves original and linked reversal audi
   const x = new ExpensePosting();
   x.cancel();
   assert.equal(x.original.active, false);
+  assert.equal(x.status, 'cancelled');
   assert.equal(x.reversal.active, false);
   assert.deepEqual(x.reversal.lines, [{ debit: 0, credit: 100 }, { debit: 100, credit: 0 }]);
   assert.deepEqual(x.audit, [{ action: 'CANCEL_POSTING', reason: 'correction' }]);
@@ -65,10 +68,12 @@ test('closed period and repeated cancellation are blocked', () => {
   assert.throws(() => x.cancel(), /not approved/);
 });
 
-test('migration uses deterministic UUID candidate selection and never MIN(uuid)', () => {
-  assert.doesNotMatch(migration, /min\s*\(\s*(?:[a-z_]+\.)?id\s*\)/i);
-  assert.match(migration, /ORDER BY c\.created_at DESC, c\.id LIMIT 1/);
-  assert.match(migration, /IF v_count = 1/);
+test('allocation unlink preserves historical repair evidence before clearing the nullable FK', () => {
+  assert.match(migration, /released_allocation_snapshot/);
+  assert.match(migration, /to_jsonb\(v_a\)/);
+  assert.match(migration, /created_allocation_id = NULL/);
+  assert.match(migration, /WHERE created_allocation_id = v_a\.id/);
+  assert.match(migration, /PERFORM public\.unmatch_bank_statement_allocation\(v_allocation_id\)/);
 });
 
 test('cancellation preserves journals, blocks settlement and retains tax/currency metadata', () => {
@@ -101,4 +106,12 @@ test('frontend blocks settled cancellation before RPC and explains every protect
   assert.match(frontend, /closed accounting period/);
   assert.match(frontend, /already been reversed/);
   assert.match(frontend, /No active journal exists/);
+});
+
+test('bank unlink and cancellation use one atomic RPC and cancelled rows leave normal lists and exports', () => {
+  assert.match(frontend, /unlinkFinanceExpenseBankLink\(cancelPostingTarget\.id, cancelPostingReason\)/);
+  assert.doesNotMatch(frontend, /await unlinkBankTransaction\(cancelPostingBlock\.bankStatementLineId\)/);
+  assert.match(frontend, /effective_posting_state === 'REVERSED'.*approval_status === 'cancelled'.*return false/s);
+  assert.match(migration, /approval_status = 'cancelled'/);
+  assert.match(migration, /IF EXISTS[\s\S]*Expense unlink left an active journal behind/);
 });

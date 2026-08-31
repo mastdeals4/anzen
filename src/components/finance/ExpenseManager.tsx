@@ -28,7 +28,6 @@ import {
 import {
   FINANCE_RECONCILIATION_REFRESH_EVENT,
   notifyFinanceReconciliationRefresh,
-  unlinkBankTransaction,
 } from './bankTransactionLinking';
 import { FinanceDocumentAttachments, uploadFinanceDocuments } from './FinanceDocumentAttachments';
 import { getPostedJournalsForExport, writeReconciliationWorkbook, type ReconciliationSummaryRow } from './reconciliationExport';
@@ -149,7 +148,7 @@ interface FinanceExpense {
   exchange_rate?: number | null;
   bank_account_currency?: string | null;
   payment_currency?: string | null;
-  approval_status: 'pending_approval' | 'approved' | 'rejected';
+  approval_status: 'pending_approval' | 'approved' | 'rejected' | 'cancelled';
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
@@ -492,7 +491,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
   const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'not_reconciled'>('all');
-  const [approvalFilter, setApprovalFilter] = useState<'all' | 'approved' | 'pending_approval'>('all');
+  const [approvalFilter, setApprovalFilter] = useState<'all' | 'approved' | 'pending_approval' | 'cancelled'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
@@ -1483,15 +1482,15 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     }
   };
 
-  const handleEdit = async (expense: FinanceExpense) => {
-    if (expense.effective_posting_state === 'REVERSED' || expense.effective_posting_state === 'AMBIGUOUS') {
+  const handleEdit = async (expense: FinanceExpense, repostAsNew = false) => {
+    if (!repostAsNew && (expense.effective_posting_state === 'REVERSED' || expense.effective_posting_state === 'AMBIGUOUS')) {
       alert(expense.effective_posting_state === 'REVERSED'
         ? 'This expense is cancelled and cannot be edited.'
         : 'This expense requires accounting review before it can be edited.');
       return;
     }
-    setEditingExpense(expense);
-    if (expense.expense_category === 'salary') {
+    setEditingExpense(repostAsNew ? null : expense);
+    if (expense.expense_category === 'salary' && !repostAsNew) {
       const { data, error } = await supabase.rpc('get_salary_advance_applications', { p_salary_expense_id: expense.id });
       if (error) {
         alert(`Unable to load salary advance settlement: ${error.message}`);
@@ -1501,6 +1500,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       setPersistedSalaryAdvanceApplied((data || []).reduce((sum: number, item: { applied_amount: number }) => sum + Number(item.applied_amount || 0), 0));
     } else {
       setPersistedSalaryAdvanceApplied(0);
+      if (repostAsNew) setApplySalaryAdvance(true);
     }
 
     // Check if expense is reconciled to a bank statement
@@ -1746,20 +1746,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
   const handleCancelPostingBankUnlink = async () => {
     if (!cancelPostingTarget || !cancelPostingBlock?.bankStatementLineId) return;
+    if (!cancelPostingReason.trim()) return;
     if (!confirm(
-      'Open the safe unlink workflow for this bank reconciliation?\n\n' +
-      'This removes the reconciliation relationship but does not delete the bank statement, expense, or journal.'
+      'Unlink this bank reconciliation and cancel the expense posting atomically?\n\n' +
+      'The bank statement remains intact. If cancellation cannot complete, the unlink is rolled back.'
     )) return;
     setCancelPostingLoading(true);
     try {
-      await unlinkBankTransaction(cancelPostingBlock.bankStatementLineId);
-      await supabase.rpc('recalculate_expense_payment_state', { p_expense_id: cancelPostingTarget.id });
+      await unlinkFinanceExpenseBankLink(cancelPostingTarget.id, cancelPostingReason);
       notifyFinanceReconciliationRefresh();
-      const { block } = await preflightExpenseCancellation(cancelPostingTarget.id);
-      setCancelPostingBlock(block);
+      closeCancelPostingModal();
       await loadData();
     } catch (err) {
-      alert(`Failed to unlink bank reconciliation: ${supabaseErrorMessage(err)}`);
+      alert(`Failed to unlink and cancel posting: ${supabaseErrorMessage(err)}`);
     } finally {
       setCancelPostingLoading(false);
     }
@@ -1969,6 +1968,15 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
 
   const filteredExpenses = expenses.filter(exp => {
+    // Cancelled postings remain in the database and audit/journal history, but
+    // are not operational Expense entries and must not enter normal exports.
+    const isCancelled = exp.effective_posting_state === 'REVERSED' || exp.approval_status === 'cancelled';
+    if (approvalFilter === 'cancelled') {
+      if (!isCancelled) return false;
+    } else if (isCancelled) {
+      return false;
+    }
+
     // Filter by type
     if (filterType !== 'all') {
       const cat = expenseCategories.find(c => c.value === exp.expense_category);
@@ -2111,6 +2119,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   });
 
   const exportToCSV = async () => {
+    if (approvalFilter === 'cancelled') {
+      alert('Cancelled expenses are audit history and are not included in normal Expense exports.');
+      return;
+    }
     if (filteredExpenses.length === 0) {
       alert('No expenses to export');
       return;
@@ -2368,6 +2380,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             { value: 'all', label: 'All' },
             { value: 'pending_approval', label: 'Pending' },
             { value: 'approved', label: 'Approved' },
+            { value: 'cancelled', label: 'Cancelled' },
           ].map((filter) => (
             <button
               key={filter.value}
@@ -2424,10 +2437,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         <button
           onClick={exportToCSV}
-          disabled={filteredExpenses.length === 0}
+          disabled={filteredExpenses.length === 0 || approvalFilter === 'cancelled'}
           className="ml-auto inline-flex items-center gap-1 h-6 px-2 bg-green-600 text-white rounded text-[11px] font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
-          <Download className="w-3 h-3" /> Export ({filteredExpenses.length})
+          <Download className="w-3 h-3" /> Export ({approvalFilter === 'cancelled' ? 0 : filteredExpenses.length})
         </button>
       </div>
 
@@ -2766,6 +2779,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                 disabled={cancelPostingLoading && cancelPostingTarget?.id === expense.id}
                               />
                             </>
+                          )}
+                          {postingState === 'REVERSED' && (
+                            <FinanceActionButton
+                              action="clone"
+                              label="Repost as New"
+                              onClick={() => void handleEdit(expense, true)}
+                            />
                           )}
                           {(postingState === 'PENDING' || postingState === 'REJECTED') && (
                             <>
@@ -4537,12 +4557,12 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 <p>{cancelPostingBlock.message}</p>
               ) : (
                 <>
-                  <p>This preserves the original journal, creates its auditable reversal, and returns the expense to Pending Approval.</p>
+                  <p>This preserves the original journal, creates its auditable reversal, and removes the expense from normal operational lists.</p>
                   <p className="mt-1 text-xs flex items-center gap-1"><Lock className="w-3 h-3" /> Available only for unpaid expenses in an open accounting period.</p>
                 </>
               )}
             </div>
-            {!cancelPostingBlock && (
+            {(!cancelPostingBlock || cancelPostingBlock.bankStatementLineId) && !cancelPostingBlock?.paymentVoucherId && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-red-500">*</span></label>
                 <textarea
@@ -4569,10 +4589,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 <button
                   type="button"
                   onClick={() => void handleCancelPostingBankUnlink()}
-                  disabled={cancelPostingLoading}
+                  disabled={cancelPostingLoading || !cancelPostingReason.trim()}
                   className="h-7 px-2 text-xs border border-blue-300 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
                 >
-                  {cancelPostingLoading ? 'Checking...' : 'Unlink Bank Reconciliation'}
+                  {cancelPostingLoading ? 'Cancelling...' : 'Unlink & Cancel Posting'}
                 </button>
               )}
               {!cancelPostingBlock && (
