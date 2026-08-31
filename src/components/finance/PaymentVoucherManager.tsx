@@ -1717,6 +1717,9 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                       linkedTransaction={viewingVoucher.bank_statement_line || null}
                       selectedTransactionId={viewingVoucher.bank_statement_line_id || ''}
                       currentJournalEntryId={viewingVoucher.journal_entry_id}
+                      documentDate={viewingVoucher.voucher_date}
+                      documentOutstanding={Number(viewingVoucher.actual_bank_debit ?? viewingVoucher.bank_amount ?? viewingVoucher.settlement_amount ?? 0)}
+                      documentLabel={[viewingVoucher.voucher_number, viewingVoucher.reference_number].filter(Boolean).join(' ')}
                       disabled={!viewingVoucher.is_posted || !viewingVoucher.journal_entry_id}
                       disabledMessage="Post this voucher to create its journal entry before linking a bank transaction."
                       canUnlink={canManage}
