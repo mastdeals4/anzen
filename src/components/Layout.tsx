@@ -65,6 +65,7 @@ interface MenuItem {
   id: string;
   label: string;
   icon: React.ElementType;
+  path?: string;
 }
 
 interface MenuGroup {
@@ -216,6 +217,8 @@ export function Layout({ children }: LayoutProps) {
     { id: 'import-requirements', label: t('nav.importRequirements'),   icon: TrendingUp },
     { id: 'import-containers',   label: t('nav.importContainers'),     icon: Package },
     { id: 'finance',             label: t('nav.finance'),              icon: DollarSign },
+    { id: 'purchase-invoices',   label: 'Purchase Invoices',            icon: FileText, path: '/finance/purchase' },
+    { id: 'tax-compliance',      label: 'Tax Compliance',               icon: FileText, path: '/finance/tax' },
     { id: 'price-calculator',    label: 'Price Calculator',            icon: Calculator },
     { id: 'pricing-dashboard',   label: 'Pricing Overview',            icon: Tags },
     { id: 'sourcing-outbox',     label: 'Sourcing Outbox',             icon: Tags },
@@ -234,7 +237,7 @@ export function Layout({ children }: LayoutProps) {
     { label: 'Sales',     items: allItems.filter(i => ['sales-orders', 'delivery-challan', 'sales'].includes(i.id)) },
     { label: 'Stock',     items: allItems.filter(i => ['products', 'batches', 'stock'].includes(i.id)) },
     { label: 'Purchases', items: allItems.filter(i => ['purchase-orders', 'import-requirements', 'import-containers'].includes(i.id)) },
-    { label: 'Finance',   items: allItems.filter(i => ['finance', 'price-calculator'].includes(i.id)) },
+    { label: 'Finance',   items: allItems.filter(i => ['finance', 'purchase-invoices', 'tax-compliance', 'price-calculator'].includes(i.id)) },
     { label: 'Pricing',   items: allItems.filter(i => ['pricing-dashboard'].includes(i.id)) },
     { label: 'Reports',   items: allItems.filter(i => ['reports'].includes(i.id)) },
     { label: 'System',    items: allItems.filter(i => ['tasks', 'command-center', 'settings'].includes(i.id)) },
@@ -336,8 +339,8 @@ export function Layout({ children }: LayoutProps) {
                     return (
                       <a
                         key={item.id}
-                        href={`/${item.id}`}
-                        onClick={e => { e.preventDefault(); navigate(item.id); }}
+                        href={item.path ?? `/${item.id}`}
+                        onClick={e => { e.preventDefault(); navigate((item.path ?? `/${item.id}`).replace(/^\//, '')); }}
                         className={`relative group flex items-center rounded-md transition-colors duration-100
                           ${isCollapsed ? 'justify-center px-0' : 'gap-2 px-2'}
                           ${isActive

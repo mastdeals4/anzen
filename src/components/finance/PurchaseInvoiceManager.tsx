@@ -506,15 +506,33 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     setReceivingBusy(true);
     try {
       const operationId = crypto.randomUUID();
+      let batchId = receivingForm.batch_id || null;
+      // Existing legacy invoices may have a batch number but no stored batch_id.
+      // Resolve the authoritative physical batch deterministically before
+      // invoking the existing receiving RPC so a duplicate batch is never
+      // created for the same Product/Make/Batch number.
+      if (!batchId && receivingForm.batch_number.trim()) {
+        const { data: matchingBatch, error: batchLookupError } = await supabase
+          .from('batches')
+          .select('id')
+          .eq('product_id', receivingItem.product_id)
+          .eq('make_id', receivingForm.make_id)
+          .eq('batch_number', receivingForm.batch_number.trim())
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        if (batchLookupError) throw batchLookupError;
+        batchId = matchingBatch?.id || null;
+      }
       const { data, error } = await supabase.rpc('receive_purchase_invoice_item', {
         p_purchase_invoice_item_id: receivingItem.id,
         p_received_quantity: receivingForm.quantity,
         p_operation_id: operationId,
-        p_payload: { product_id: receivingItem.product_id, make_id: receivingForm.make_id, batch_id: receivingForm.batch_id || null, batch_number: receivingForm.batch_number.trim(), import_date: selectedInvoice.invoice_date, expiry_date: receivingForm.expiry_date || null, import_price: receivingItem.unit_price, import_price_usd: selectedInvoice.currency === 'USD' ? receivingItem.unit_price : null, exchange_rate_usd_to_idr: selectedInvoice.currency === 'USD' ? selectedInvoice.exchange_rate : null, import_container_id: receivingForm.import_container_id || null, packaging_details: receivingItem.unit },
+        p_payload: { product_id: receivingItem.product_id, make_id: receivingForm.make_id, batch_id: batchId, batch_number: receivingForm.batch_number.trim(), import_date: selectedInvoice.invoice_date, expiry_date: receivingForm.expiry_date || null, import_price: receivingItem.unit_price, import_price_usd: selectedInvoice.currency === 'USD' ? receivingItem.unit_price : null, exchange_rate_usd_to_idr: selectedInvoice.currency === 'USD' ? selectedInvoice.exchange_rate : null, import_container_id: receivingForm.import_container_id || null, packaging_details: receivingItem.unit },
       });
       if (error) throw error;
-      const batchId = (data as { batch_id?: string } | null)?.batch_id;
-      if (batchId && receivingDocuments.length > 0) await uploadReceivingBatchDocuments(batchId);
+      const receivedBatchId = (data as { batch_id?: string } | null)?.batch_id;
+      if (receivedBatchId && receivingDocuments.length > 0) await uploadReceivingBatchDocuments(receivedBatchId);
       showToast({ type: 'success', title: 'Inventory received', message: 'Batch and stock receipt created.' });
       setReceivingOpen(false);
       setReceivingDocuments([]);

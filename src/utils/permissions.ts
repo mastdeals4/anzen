@@ -27,6 +27,8 @@ export const ALL_MODULES = [
   { id: 'import-requirements', label: 'Import Requirements' },
   { id: 'import-containers', label: 'Import Containers' },
   { id: 'finance', label: 'Finance' },
+  { id: 'purchase-invoices', label: 'Purchase Invoices' },
+  { id: 'tax-compliance', label: 'Tax Compliance' },
   { id: 'price-calculator', label: 'Price Calculator' },
   { id: 'crm', label: 'CRM' },
   { id: 'command-center', label: 'Command Center' },

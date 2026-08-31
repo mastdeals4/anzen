@@ -131,7 +131,7 @@ const getFinanceMenu = (t: TFunction): MenuGroup[] => [
 ];
 
 function FinanceContent() {
-  const { profile } = useAuth();
+  const { profile, accessibleModules } = useAuth();
   const { t } = useLanguage();
   const { navigationData, clearNavigationData, setNavigationData, setCurrentPage } = useNavigation();
   const location = useLocation();
@@ -216,7 +216,18 @@ function FinanceContent() {
     setFocusBankStatementLineId(null);
   }, []);
   const [ledgerDrillCode, setLedgerDrillCode] = useState<string | null>(null);
+  const hasFullFinance = accessibleModules.has('finance');
+  const hasPurchaseInvoices = hasFullFinance || accessibleModules.has('purchase-invoices');
+  const hasTaxCompliance = hasFullFinance || accessibleModules.has('tax-compliance');
+  const allowedTabs = useMemo<Set<FinanceTab>>(() => {
+    if (hasFullFinance) return new Set(FINANCE_TABS);
+    const tabs = new Set<FinanceTab>();
+    if (hasPurchaseInvoices) tabs.add('purchase');
+    if (hasTaxCompliance) tabs.add('tax');
+    return tabs;
+  }, [hasFullFinance, hasPurchaseInvoices, hasTaxCompliance]);
   const canManage = profile?.role === 'admin' || profile?.role === 'accounts';
+  const canManagePurchaseInvoices = canManage || accessibleModules.has('purchase-invoices');
 
   // Deep links are intentionally URL-driven so refresh, right-click, middle
   // click and Cmd/Ctrl-click all restore the same Finance record in a new tab.
@@ -283,8 +294,10 @@ function FinanceContent() {
 
   const financeMenu = useMemo(() => {
     if (!t || !t.finance) return [];
-    return getFinanceMenu(t);
-  }, [t]);
+    return getFinanceMenu(t)
+      .map(group => ({ ...group, items: group.items.filter(item => allowedTabs.has(item.id)) }))
+      .filter(group => group.items.length > 0);
+  }, [t, allowedTabs]);
 
   const toggleGroup = (groupLabel: string) => {
     setCollapsedGroups(prev => {
@@ -366,7 +379,8 @@ function FinanceContent() {
   const renderContent = () => {
     switch (activeTab) {
       case 'purchase':
-        return <PurchaseInvoiceManager canManage={canManage} onPayInvoice={handlePayInvoice} initialViewInvoiceId={focusPurchaseInvoiceId} onInitialViewHandled={() => setFocusPurchaseInvoiceId(null)} />;
+        if (!hasPurchaseInvoices) return <div className="p-8 text-center text-gray-500">Access denied</div>;
+        return <PurchaseInvoiceManager canManage={canManagePurchaseInvoices} initialViewInvoiceId={focusPurchaseInvoiceId} onInitialViewHandled={() => setFocusPurchaseInvoiceId(null)} />;
       case 'receipt':
         return <ReceiptVoucherManager canManage={canManage} initialViewVoucherId={focusReceiptId} onInitialViewHandled={() => setFocusReceiptId(null)} />;
       case 'payment':
@@ -450,6 +464,7 @@ function FinanceContent() {
       case 'ageing':
         return <AgeingReport />;
       case 'tax':
+        if (!hasTaxCompliance) return <div className="p-8 text-center text-gray-500">Access denied</div>;
         return <TaxComplianceCentre
           onOpenExpense={(expenseId) => openFinanceTarget('expenses', 'document', expenseId)}
           onOpenPayment={(paymentId) => openFinanceTarget('payment', 'document', paymentId)}
