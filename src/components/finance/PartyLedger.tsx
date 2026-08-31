@@ -326,15 +326,22 @@ export default function PartyLedger() {
       const { data: bills } = await dateRange(
         supabase
           .from('finance_expenses')
-          .select('id, expense_date, invoice_number, voucher_number, amount, expense_category, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, paid_amount, transaction_currency, currency_code, exchange_rate')
+          .select('id, expense_date, invoice_number, voucher_number, amount, expense_category, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, paid_amount, payment_method, transaction_currency, currency_code, exchange_rate')
           .eq('staff_id', selectedParty)
           .neq('expense_category', 'staff_advance')
-          .is('payment_method', null)
           .eq('approval_status', 'approved'),
         'expense_date',
       ).order('expense_date');
 
-      const effectiveBills = await onlyEffectiveExpenses(bills);
+      // Salary is an obligation even when the expense itself records a
+      // payment method (the cash salary payment settles only part of the
+      // gross obligation).  Other expenses remain payable-ledger bills only
+      // when they have no payment method, preserving the existing semantics
+      // for immediately-paid staff expenses.
+      const payableBills = (bills || []).filter((bill) =>
+        bill.expense_category === 'salary' || bill.payment_method === null,
+      );
+      const effectiveBills = await onlyEffectiveExpenses(payableBills);
       if (effectiveBills.length) {
         effectiveBills.forEach(bill => {
           const payable = calculateCanonicalCashPayable(bill);
@@ -352,6 +359,25 @@ export default function PartyLedger() {
           });
         });
       }
+
+      // Salary cash already paid is a settlement of the gross salary
+      // obligation. Keep it as its own debit entry so the employee balance
+      // reflects gross salary less cash paid and advance recovery.
+      effectiveBills.forEach((bill) => {
+        if (bill.expense_category === 'salary' && Number(bill.paid_amount || 0) > 0.01) {
+          const currency = bill.transaction_currency || bill.currency_code || 'IDR';
+          entries.push({
+            id: `${bill.id}:cash-payment`,
+            entry_date: bill.expense_date,
+            particulars: `Cash Salary Paid${currencyDetail(bill.paid_amount, currency, bill.exchange_rate)}`,
+            reference: bill.voucher_number || bill.invoice_number || '',
+            debit: toFunctionalIDR(Number(bill.paid_amount), currency, bill.exchange_rate),
+            credit: 0,
+            running_balance: 0,
+            type: 'payment',
+          });
+        }
+      });
 
       const { data: advances } = await dateRange(
         supabase
@@ -373,7 +399,12 @@ export default function PartyLedger() {
             entry_date: adv.expense_date,
             particulars: `Staff Advance Given${currencyDetail(adv.amount, currency, adv.exchange_rate)}`,
             reference: adv.invoice_number || adv.voucher_number || '',
-            debit: toFunctionalIDR(adv.amount, currency, adv.exchange_rate),
+            // Issuing an advance moves value from Bank to Staff Advances;
+            // it does not increase the employee's salary-payable balance.
+            // Keep the event visible as a memo row without affecting the
+            // ledger totals (the recovery and cash salary payment settle the
+            // salary obligation below).
+            debit: 0,
             credit: 0,
             running_balance: 0,
             type: 'payment',
@@ -393,8 +424,20 @@ export default function PartyLedger() {
       if (vouchers) {
         vouchers.forEach(pv => {
           const isAdjustment = pv.payment_method === 'advance_adjustment';
-          if (pv.payment_purpose === 'salary_advance') return;
           const currency = pv.transaction_currency || pv.payment_currency || pv.currency_code || 'IDR';
+          if (pv.payment_purpose === 'salary_advance') {
+            entries.push({
+              id: pv.id,
+              entry_date: pv.voucher_date,
+              particulars: `Salary Advance Given (non-payable memo)${currencyDetail(pv.amount, currency, pv.exchange_rate)}`,
+              reference: pv.voucher_number,
+              debit: 0,
+              credit: 0,
+              running_balance: 0,
+              type: 'payment',
+            });
+            return;
+          }
           const functionalAmount = toFunctionalIDR(pv.amount, currency, pv.exchange_rate);
           entries.push({
             id: pv.id,
