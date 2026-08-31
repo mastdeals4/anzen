@@ -5,7 +5,6 @@ export const FINANCE_RECONCILIATION_REFRESH_EVENT = 'finance:reconciliation-refr
 
 export interface BankTransactionLine {
   id: string;
-  allocation_id?: string | null;
   transaction_date: string;
   description: string | null;
   reference?: string | null;

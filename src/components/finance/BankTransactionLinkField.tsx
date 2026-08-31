@@ -11,7 +11,6 @@ interface BankTransactionLinkFieldProps {
   bankAccountId: string;
   selectedTransactionId?: string;
   linkedTransaction?: BankTransactionLine | null;
-  linkedTransactions?: BankTransactionLine[];
   currentExpenseId?: string | null;
   currentJournalEntryId?: string | null;
   currentPettyCashId?: string | null;
@@ -20,7 +19,6 @@ interface BankTransactionLinkFieldProps {
   canUnlink?: boolean;
   onSelect: (transaction: BankTransactionLine) => void | Promise<void>;
   onUnlink?: () => void | Promise<void>;
-  onUnlinkTransaction?: (transaction: BankTransactionLine) => void | Promise<void>;
   direction?: 'debit' | 'credit' | 'both';
   candidateFilter?: (line: BankTransactionLine) => boolean;
   autoSelectSingle?: boolean;
@@ -45,15 +43,12 @@ export function BankTransactionLinkField({
   bankAccountId,
   selectedTransactionId = '',
   linkedTransaction,
-  linkedTransactions,
   currentExpenseId,
   currentJournalEntryId,
   currentPettyCashId,
   disabled = false,
   disabledMessage,
   onSelect,
-  onUnlink,
-  onUnlinkTransaction,
   direction = 'debit',
   candidateFilter,
   autoSelectSingle = false,
@@ -86,9 +81,9 @@ export function BankTransactionLinkField({
         return lineText.includes(documentText) ? 0 : 1;
       };
 
-      return amountDistance(left) - amountDistance(right)
+      return dateDistance(left) - dateDistance(right)
+        || amountDistance(left) - amountDistance(right)
         || textDistance(left) - textDistance(right)
-        || dateDistance(left) - dateDistance(right)
         || right.transaction_date.localeCompare(left.transaction_date);
     });
   }, [transactions, documentDate, documentOutstanding, documentLabel]);
@@ -96,28 +91,18 @@ export function BankTransactionLinkField({
   const filteredTransactions = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     const candidates = candidateFilter ? rankedTransactions.filter(candidateFilter) : rankedTransactions;
-    // Keep the initial picker focused on amount-relevant candidates. This is
-    // important for partial settlements: a remaining 40,000 balance should
-    // not be buried beneath unrelated million-rupiah bank lines.
-    const outstanding = Math.max(0, Number(documentOutstanding || 0));
-    const relevant = outstanding > 0
-      ? candidates.filter((line) => {
-          const amount = Number(line.remainingAmount ?? line.debit_amount ?? line.credit_amount ?? 0);
-          const tolerance = Math.max(1000, outstanding * 0.25);
-          return amount <= outstanding + tolerance;
-        })
-      : candidates;
-    const focused = relevant.length > 0 ? relevant : candidates;
-    if (!query) return focused.slice(0, 12);
+    // Keep the initial picker focused. A search deliberately operates over
+    // every available bank line, so older available history stays reachable.
+    if (!query) return candidates.slice(0, 12);
 
-    return focused.filter((line) => [
+    return candidates.filter((line) => [
       line.transaction_date,
       line.description,
       line.reference,
       bankLabel(line),
       String(line.debit_amount),
     ].some((value) => value?.toLowerCase().includes(query)));
-  }, [searchTerm, rankedTransactions, candidateFilter, documentOutstanding]);
+  }, [searchTerm, rankedTransactions, candidateFilter]);
 
   const loadTransactions = async (open = false) => {
     if (!bankAccountId || disabled) return;
@@ -174,35 +159,28 @@ export function BankTransactionLinkField({
   const pendingDocumentAfter = Math.max(0, pendingDocumentOutstanding - pendingAllocation);
   const hasReferenceColumn = filteredTransactions.some((line) => Boolean(line.reference?.trim()));
 
-  const linkedRows = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
-
-  // Keep the picker/modal mounted once the user clicks Add, while showing
-  // the compact linked summary when the picker is closed.
-  if (linkedRows.length > 0 && !dialogOpen) {
+  if (linkedTransaction) {
     return (
       <div>
         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
           Link Bank Transaction
         </label>
-        <div className="space-y-1.5">
-          <div className="text-[10px] text-gray-600">Linked: {linkedRows.length} transaction{linkedRows.length === 1 ? '' : 's'}</div>
-          {linkedRows.map((linked) => (
-            <div key={linked.id} className="p-2 bg-green-50 border border-green-300 rounded">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1 text-xs font-semibold text-green-900"><Landmark className="w-3 h-3" /> Linked Bank Transaction</div>
-                  <div className="text-[10px] text-gray-600 truncate mt-0.5">
-                    {new Date(linked.transaction_date).toLocaleDateString('id-ID')}{' · '}{formatAmount(linked)}{' · '}{linked.description || 'No narration'}{linked.reference ? ` · ${linked.reference}` : ''}{' · '}{bankLabel(linked)}
-                  </div>
-                </div>
-                {(onUnlinkTransaction || onUnlink) && <button type="button" className="text-[10px] text-red-600 hover:text-red-800 shrink-0" onClick={() => {
-                  if (onUnlinkTransaction) void onUnlinkTransaction(linked);
-                  else if (linked.id === linkedRows[0].id) void onUnlink?.();
-                }}>Unlink</button>}
+        <div className="p-2 bg-green-50 border border-green-300 rounded">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1 text-xs font-semibold text-green-900">
+                <Landmark className="w-3 h-3" />
+                Linked Bank Transaction
+              </div>
+              <div className="text-[10px] text-gray-600 truncate mt-0.5">
+                {new Date(linkedTransaction.transaction_date).toLocaleDateString('id-ID')}
+                {' · '}{formatAmount(linkedTransaction)}
+                {' · '}{linkedTransaction.description || 'No narration'}
+                {linkedTransaction.reference ? ` · ${linkedTransaction.reference}` : ''}
+                {' · '}{bankLabel(linkedTransaction)}
               </div>
             </div>
-          ))}
-          {!disabled && <button type="button" onClick={() => void openDialog()} className="text-[10px] text-blue-700 hover:text-blue-900 inline-flex items-center gap-1"><Link2 className="w-3 h-3" /> Add Bank Transaction</button>}
+          </div>
         </div>
       </div>
     );

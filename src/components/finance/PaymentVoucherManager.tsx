@@ -204,7 +204,6 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [expandedInvoiceRows, setExpandedInvoiceRows] = useState<Record<string, boolean>>({});
   const [allocations, setAllocations] = useState<{ invoiceId: string; amount: number; currency: string }[]>([]);
   const [expenseBillAllocations, setExpenseBillAllocations] = useState<{ expenseId: string; amount: number }[]>([]);
   const [outstandingExpenseBills, setOutstandingExpenseBills] = useState<OutstandingExpenseBillForPV[]>([]);
@@ -1024,13 +1023,9 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     }
   };
 
-  // Salary advance recovery is a non-cash settlement adjustment.  Keep it
-  // available through salary/employee statements, but do not present it as a
-  // normal bank/payment voucher in this cash-payments register.
   const filteredVouchers = vouchers.filter(v =>
-    v.payment_purpose !== 'salary_advance_settlement' &&
-    (v.voucher_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.suppliers?.company_name?.toLowerCase().includes(searchTerm.toLowerCase()))
+    v.voucher_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    v.suppliers?.company_name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
@@ -1065,6 +1060,28 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
           rows={filteredVouchers}
           rowKey={(v) => v.id}
           empty="No payment vouchers found"
+          expandable={(v) => {
+            const invs = v.invoice_numbers || [];
+            if (invs.length <= 1) return null;
+            return {
+              label: `+${invs.length - 1} more`,
+              content: (
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Paid Invoices</span>
+                  {invs.map(inv => (
+                    <button
+                      key={inv.id}
+                      onClick={(e) => { e.stopPropagation(); onViewInvoice?.(inv.id); }}
+                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-mono"
+                      title="View purchase invoice"
+                    >
+                      {inv.number}
+                    </button>
+                  ))}
+                </div>
+              ),
+            };
+          }}
           columns={[
             { header: 'Voucher No', cell: (v) => <span className="font-mono font-medium">{v.voucher_number}</span> },
             { header: 'Date',       cell: (v) => new Date(v.voucher_date).toLocaleDateString('id-ID') },
@@ -1084,39 +1101,13 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
               const invs = v.invoice_numbers || [];
               if (invs.length === 0) return <span className="text-gray-400">—</span>;
               const first = invs[0];
-              const expanded = expandedInvoiceRows[v.id] === true;
               return (
-                <div className="flex flex-col items-start leading-tight">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onViewInvoice?.(first.id); }}
-                    className="text-blue-600 hover:text-blue-800 hover:underline font-mono"
-                  >
-                    {first.number}
-                  </button>
-                  {invs.length > 1 && !expanded && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setExpandedInvoiceRows((current) => ({ ...current, [v.id]: true })); }}
-                      className="text-[10px] text-gray-500 hover:text-blue-600"
-                    >
-                      +{invs.length - 1} more invoices
-                    </button>
-                  )}
-                  {expanded && (
-                    <div className="flex flex-col items-start">
-                      {invs.slice(1).map((inv) => (
-                        <button key={inv.id} onClick={(e) => { e.stopPropagation(); onViewInvoice?.(inv.id); }} className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline font-mono">
-                          {inv.number}
-                        </button>
-                      ))}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setExpandedInvoiceRows((current) => ({ ...current, [v.id]: false })); }}
-                        className="text-[10px] text-gray-500 hover:text-blue-600"
-                      >
-                        Show less
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onViewInvoice?.(first.id); }}
+                  className="text-blue-600 hover:text-blue-800 hover:underline font-mono"
+                >
+                  {first.number}
+                </button>
               );
             } },
             { header: 'Bank',       cell: (v) => v.bank_accounts
@@ -1137,14 +1128,6 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
               align: 'center' as const,
               cell: (v: PaymentVoucher) => (
                 <div className="flex items-center justify-center gap-0.5">
-                  {v.payment_method === 'bank_transfer' && v.bank_account_id && (
-                    <FinanceActionButton
-                      action="bankLink"
-                      label={v.bank_statement_line_id ? 'Linked to bank transaction' : 'Link bank transaction'}
-                      className={v.bank_statement_line_id ? 'text-green-700 bg-green-50 hover:bg-green-100' : 'text-gray-500 hover:text-blue-700'}
-                      onClick={(e) => { e.stopPropagation(); handleView(v); }}
-                    />
-                  )}
                   <FinanceActionButton action="view" onClick={(e) => { e.stopPropagation(); handleView(v); }} />
                   {!v.is_posted && (
                     <>
@@ -1734,9 +1717,6 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                       linkedTransaction={viewingVoucher.bank_statement_line || null}
                       selectedTransactionId={viewingVoucher.bank_statement_line_id || ''}
                       currentJournalEntryId={viewingVoucher.journal_entry_id}
-                      documentDate={viewingVoucher.voucher_date}
-                      documentOutstanding={Number(viewingVoucher.actual_bank_debit ?? viewingVoucher.bank_amount ?? viewingVoucher.amount ?? 0)}
-                      documentLabel={[viewingVoucher.voucher_number, viewingVoucher.reference_number].filter(Boolean).join(' ')}
                       disabled={!viewingVoucher.is_posted || !viewingVoucher.journal_entry_id}
                       disabledMessage="Post this voucher to create its journal entry before linking a bank transaction."
                       canUnlink={canManage}
