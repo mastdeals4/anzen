@@ -91,8 +91,9 @@ export function BankTransactionLinkField({
   const filteredTransactions = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     const candidates = candidateFilter ? rankedTransactions.filter(candidateFilter) : rankedTransactions;
-    // Search/filter the complete loaded candidate set. Do not truncate the list.
-    if (!query) return candidates;
+    // Keep the initial picker focused. A search deliberately operates over
+    // every available bank line, so older available history stays reachable.
+    if (!query) return candidates.slice(0, 12);
 
     return candidates.filter((line) => [
       line.transaction_date,
@@ -100,7 +101,6 @@ export function BankTransactionLinkField({
       line.reference,
       bankLabel(line),
       String(line.debit_amount),
-      String(line.credit_amount),
     ].some((value) => value?.toLowerCase().includes(query)));
   }, [searchTerm, rankedTransactions, candidateFilter]);
 
@@ -109,9 +109,9 @@ export function BankTransactionLinkField({
     if (open) setDialogOpen(true);
     setLoading(true);
     try {
-      const rows = await loadUnmatchedDebitBankTransactions({
-        bankAccountId,
-        direction,
+        const rows = await loadUnmatchedDebitBankTransactions({
+          bankAccountId,
+          direction,
         currentExpenseId,
         currentJournalEntryId,
         currentPettyCashId,
