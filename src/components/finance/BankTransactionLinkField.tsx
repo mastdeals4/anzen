@@ -86,9 +86,9 @@ export function BankTransactionLinkField({
         return lineText.includes(documentText) ? 0 : 1;
       };
 
-      return dateDistance(left) - dateDistance(right)
-        || amountDistance(left) - amountDistance(right)
+      return amountDistance(left) - amountDistance(right)
         || textDistance(left) - textDistance(right)
+        || dateDistance(left) - dateDistance(right)
         || right.transaction_date.localeCompare(left.transaction_date);
     });
   }, [transactions, documentDate, documentOutstanding, documentLabel]);
@@ -96,18 +96,28 @@ export function BankTransactionLinkField({
   const filteredTransactions = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     const candidates = candidateFilter ? rankedTransactions.filter(candidateFilter) : rankedTransactions;
-    // Keep the initial picker focused. A search deliberately operates over
-    // every available bank line, so older available history stays reachable.
-    if (!query) return candidates.slice(0, 12);
+    // Keep the initial picker focused on amount-relevant candidates. This is
+    // important for partial settlements: a remaining 40,000 balance should
+    // not be buried beneath unrelated million-rupiah bank lines.
+    const outstanding = Math.max(0, Number(documentOutstanding || 0));
+    const relevant = outstanding > 0
+      ? candidates.filter((line) => {
+          const amount = Number(line.remainingAmount ?? line.debit_amount ?? line.credit_amount ?? 0);
+          const tolerance = Math.max(1000, outstanding * 0.25);
+          return amount <= outstanding + tolerance;
+        })
+      : candidates;
+    const focused = relevant.length > 0 ? relevant : candidates;
+    if (!query) return focused.slice(0, 12);
 
-    return candidates.filter((line) => [
+    return focused.filter((line) => [
       line.transaction_date,
       line.description,
       line.reference,
       bankLabel(line),
       String(line.debit_amount),
     ].some((value) => value?.toLowerCase().includes(query)));
-  }, [searchTerm, rankedTransactions, candidateFilter]);
+  }, [searchTerm, rankedTransactions, candidateFilter, documentOutstanding]);
 
   const loadTransactions = async (open = false) => {
     if (!bankAccountId || disabled) return;
