@@ -90,7 +90,9 @@ export async function extractPurchaseInvoicePdf(file: File): Promise<ExtractedPu
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push(content.items.map((item: { str?: string; hasEOL?: boolean }) => `${item.str || ''}${item.hasEOL ? '\n' : ' '}`).join('').replace(/[ \t]+\n/g, '\n'));
+    pages.push(content.items.map(item => (
+      'str' in item ? `${item.str}${item.hasEOL ? '\n' : ' '}` : ''
+    )).join('').replace(/[ \t]+\n/g, '\n'));
   }
   const rawText = pages.join('\n');
 

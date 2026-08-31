@@ -8,6 +8,7 @@ import { FakturPajakPanel } from './tax/FakturPajakPanel';
 import { PeriodClosePanel } from './tax/PeriodClosePanel';
 import { TaxReportsPanel } from './tax/TaxReportsPanel';
 import { FinancePage } from './FinancePage';
+import { useAuth } from '../../contexts/AuthContext';
 
 type TaxSubTab =
   | 'calendar' | 'periods' | 'pph' | 'payments' | 'faktur' | 'close' | 'reports';
@@ -29,14 +30,17 @@ interface Props {
 }
 
 export function TaxComplianceCentre({ onOpenExpense, onOpenPayment, onOpenJournal }: Props) {
-  const [active, setActive] = useState<TaxSubTab>('calendar');
+  const { accessibleModules } = useAuth();
+  const hasFullFinance = accessibleModules.has('finance');
+  const visibleTabs = hasFullFinance ? TABS : TABS.filter(tab => tab.id === 'faktur');
+  const [active, setActive] = useState<TaxSubTab>(() => hasFullFinance ? 'calendar' : 'faktur');
 
   return (
     <FinancePage title="TAX COMPLIANCE">
       <div className="space-y-2">
       <div className="border-b border-gray-200 bg-white px-1 py-1.5">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-          {TABS.map(t => (
+          {visibleTabs.map(t => (
             <button
               key={t.id}
               onClick={() => setActive(t.id)}

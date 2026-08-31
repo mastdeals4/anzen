@@ -457,7 +457,10 @@ export default function PurchaseOrders() {
 
         const existingItems = editingPO.purchase_order_items || [];
         const retainedIds = poItems.map(item => item.id).filter((id): id is string => Boolean(id));
-        const removedIds = existingItems.map(item => item.id).filter((id): id is string => Boolean(id) && !retainedIds.includes(id));
+        const removedIds = existingItems
+          .map(item => item.id)
+          .filter((id): id is string => typeof id === 'string')
+          .filter(id => !retainedIds.includes(id));
         if (removedIds.length) {
           const { data: linked, error: linkError } = await supabase.from('purchase_invoice_items').select('purchase_order_item_id').in('purchase_order_item_id', removedIds);
           if (linkError) throw linkError;
