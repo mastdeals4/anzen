@@ -827,7 +827,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         notes: formData.notes.trim() || null,
         document_urls: formData.document_urls,
         requires_faktur_pajak: selectedSupplier?.pkp_status || false,
-        ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}),
+        // Always send the current PO value during edits. A linked PO must not
+        // disappear merely because an unrelated invoice field was changed.
+        purchase_order_id: purchaseOrderId,
       };
 
       const itemsData = lineItems.map(item => ({
@@ -846,7 +848,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         receiving_expiry_date: item.receiving_expiry_date || null,
         receiving_import_container_id: item.receiving_import_container_id || null,
         receiving_notes: item.receiving_notes || null,
-        ...(purchaseOrderId ? { purchase_order_item_id: item.purchase_order_item_id || null } : {}),
+        // Preserve each line's stable PO-item relationship. A missing value is
+        // represented explicitly only when the user has actually removed it.
+        purchase_order_item_id: item.purchase_order_item_id || null,
       }));
 
       const { error: rpcError } = await supabase.rpc('save_purchase_invoice_with_receiving_details', {
