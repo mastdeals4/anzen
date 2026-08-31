@@ -8,6 +8,7 @@ import { Plus, Pencil as Edit, Trash2, FileText, DollarSign, Calendar, AlertCirc
 import { formatDate } from '../../utils/dateFormat';
 import { useExpenseCategories } from './useExpenseCategories';
 import { useFinance } from '../../contexts/FinanceContext';
+import { useSupabaseRealtimeChannel } from '../../hooks/useSupabaseRealtimeChannel';
 import * as XLSX from 'xlsx';
 
 interface VendorBill {
@@ -60,6 +61,8 @@ interface OutstandingExpenseBill {
   id: string;
   supplier_id: string | null;
   supplier_name: string | null;
+  staff_id: string | null;
+  staff_name: string | null;
   invoice_number: string | null;
   invoice_date: string;
   due_date: string | null;
@@ -221,6 +224,32 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
       console.error('Error loading bank accounts:', error);
     }
   };
+
+  useSupabaseRealtimeChannel({
+    channelName: 'payables-expenses',
+    table: 'finance_expenses',
+    onEvent: () => { void loadOutstandingExpenseBills(); },
+  });
+  useSupabaseRealtimeChannel({
+    channelName: 'payables-voucher-allocations',
+    table: 'voucher_allocations',
+    onEvent: () => { void loadOutstandingExpenseBills(); },
+  });
+  useSupabaseRealtimeChannel({
+    channelName: 'payables-bank-allocations',
+    table: 'bank_statement_allocations',
+    onEvent: () => { void loadOutstandingExpenseBills(); },
+  });
+  useSupabaseRealtimeChannel({
+    channelName: 'payables-bank-lines',
+    table: 'bank_statement_lines',
+    onEvent: () => { void loadOutstandingExpenseBills(); },
+  });
+  useSupabaseRealtimeChannel({
+    channelName: 'payables-purchase-invoices',
+    table: 'purchase_invoices',
+    onEvent: () => { void loadOutstandingPurchaseInvoices(); },
+  });
 
   const generateBillNumber = async () => {
     const prefix = 'BILL';
@@ -519,7 +548,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
         'Related Purchase Invoice': i.invoice_number, Reference: i.id,
       })),
       ...outstandingExpenseBills.map(e => ({
-        Supplier: e.supplier_name || '', 'Invoice / Expense No.': e.invoice_number || e.id,
+        Supplier: e.supplier_name || e.staff_name || '', 'Invoice / Expense No.': e.invoice_number || e.id,
         'Document Type': 'Supplier Expense', 'Invoice Date': e.invoice_date, 'Due Date': e.due_date || '',
         Category: categoryLabel(e.expense_category), Description: e.description || '', 'Original Amount': Number(e.amount),
         'Paid Amount': Number(e.paid_amount), 'Outstanding Balance': Number(e.balance_amount), Currency: 'IDR',
@@ -822,7 +851,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
                     <tr key={bill.id} className={`hover:bg-purple-50/40 ${isOverdue ? 'bg-red-50/30' : ''}`}>
                       <td className="px-1.5 py-1">
                         <span className="font-medium text-gray-900 text-xs">
-                          {bill.supplier_name || <span className="text-gray-400 italic">No Supplier</span>}
+                          {bill.supplier_name || bill.staff_name || <span className="text-gray-400 italic">Payee not recorded</span>}
                         </span>
                       </td>
                       <td className="px-1.5 py-1">
