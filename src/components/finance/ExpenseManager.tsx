@@ -28,6 +28,7 @@ import {
 } from '../../services/expensePostingLifecycle';
 import {
   FINANCE_RECONCILIATION_REFRESH_EVENT,
+  linkBankTransaction,
   notifyFinanceReconciliationRefresh,
   unlinkBankTransaction,
 } from './bankTransactionLinking';
@@ -3633,8 +3634,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     documentOutstanding={Math.max(
                       0,
                       calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
-                        - Number(editingExpense?.paid_amount || 0)
-                        + Number(editingExpense?.bank_statement_lines?.reduce(
+                        - Number(editingExpense?.bank_statement_lines?.reduce(
                           (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
                           0,
                         ) || 0),
@@ -3642,7 +3642,17 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     documentTotal={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentLabel={editingExpense?.voucher_number || 'Expense'}
                     canUnlink={canManage}
-                    onSelect={(transaction) => {
+                    onSelect={async (transaction) => {
+                      const existingLines = editingExpense?.bank_statement_lines || [];
+                      if (editingExpense && existingLines.length > 0 && !existingLines.some((line) => line.id === transaction.id)) {
+                        const outstanding = Math.max(0, calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
+                          - existingLines.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0), 0));
+                        const amount = Math.min(Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0), outstanding);
+                        await linkBankTransaction({ bankStatementLineId: transaction.id, matchedExpenseId: editingExpense.id, allocationAmount: amount });
+                        await syncExpenseBankLinks([editingExpense.id]);
+                        notifyFinanceReconciliationRefresh();
+                        return;
+                      }
                       setSelectedBankTransactionId(transaction.id);
                       setSelectedBankAllocationAmount(Math.min(
                         Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0),
