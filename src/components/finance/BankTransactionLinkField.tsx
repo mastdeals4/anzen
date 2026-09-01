@@ -101,7 +101,7 @@ export function BankTransactionLinkField({
     const candidates = candidateFilter ? rankedTransactions.filter(candidateFilter) : rankedTransactions;
     // Keep the initial picker focused. A search deliberately operates over
     // every available bank line, so older available history stays reachable.
-    if (!query) return candidates.slice(0, 12);
+    if (!query) return documentOutstanding && documentOutstanding > 0 ? candidates : candidates.slice(0, 12);
 
     return candidates.filter((line) => [
       line.transaction_date,

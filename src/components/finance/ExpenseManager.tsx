@@ -3582,6 +3582,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                   )}
                 </div>
 
+                {editingExpense && (() => {
+                  const netPayable = calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems });
+                  const alreadyPaid = (editingExpense.bank_statement_lines || []).reduce((sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
+                  const balance = Math.max(0, netPayable - alreadyPaid);
+                  return <div className="grid grid-cols-3 gap-1.5 rounded border border-gray-200 bg-gray-50 p-2 text-[10px]"><div><span className="text-gray-500">Net Payable</span><div className="font-mono font-semibold text-gray-900">{formatCurrency(netPayable, expenseFormCurrency)}</div></div><div><span className="text-gray-500">Already Paid</span><div className="font-mono font-semibold text-gray-900">{formatCurrency(alreadyPaid, expenseFormCurrency)}</div></div><div><span className="text-gray-500">Balance</span><div className={`font-mono font-semibold ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{formatCurrency(balance, expenseFormCurrency)}</div></div></div>;
+                })()}
+
                 {formData.payment_method !== null && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Bank Account <span className="text-red-500">*</span></label>
