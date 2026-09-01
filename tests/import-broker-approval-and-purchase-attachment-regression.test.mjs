@@ -19,5 +19,7 @@ assert.doesNotMatch(purchaseInvoiceManager, /href=\{signedUrlCache\[url\] \|\| u
 assert.doesNotMatch(purchaseInvoiceManager, /href=\{signedUrlCache\[selectedInvoice\.document_urls\[0\]\] \|\| selectedInvoice\.document_urls\[0\]\}/);
 assert.ok(signedUrlCache.includes('/storage\\/v1\\/object\\/(?:public|sign)\\/'));
 assert.match(signedUrlCache, /Unable to create a signed URL for this attachment/);
+assert.match(signedUrlCache, /storage\.from\(bucket\)\.download\(path\)/);
+assert.match(signedUrlCache, /URL\.createObjectURL\(downloaded\.data\)/);
 
 console.log('import broker approval and purchase attachment regression checks passed');

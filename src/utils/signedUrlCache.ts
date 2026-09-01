@@ -26,7 +26,19 @@ export async function getSignedUrlCached(
   const { data, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(path, ttlSeconds, options?.download ? { download: options.download } : undefined);
-  if (error || !data?.signedUrl) return null;
+  if (error || !data?.signedUrl) {
+    // Legacy finance attachments may live in the private `documents` bucket.
+    // If signing is unavailable (for example, a stale public URL), fetch the
+    // exact bucket/path through the authenticated Storage client instead of
+    // returning the raw public URL, which produces a misleading NoSuchKey.
+    const downloaded = await supabase.storage.from(bucket).download(path);
+    if (!downloaded.error && downloaded.data) {
+      const objectUrl = URL.createObjectURL(downloaded.data);
+      cache.set(key, { url: objectUrl, expiresAt: now + ttlSeconds * 1000 });
+      return objectUrl;
+    }
+    return null;
+  }
   cache.set(key, { url: data.signedUrl, expiresAt: now + ttlSeconds * 1000 });
   return data.signedUrl;
 }
