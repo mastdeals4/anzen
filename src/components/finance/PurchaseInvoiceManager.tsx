@@ -835,6 +835,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       };
 
       const itemsData = lineItems.map(item => ({
+        ...(item.id ? { id: item.id } : {}),
         item_type: item.item_type,
         product_id: item.product_id,
         description: item.description,
