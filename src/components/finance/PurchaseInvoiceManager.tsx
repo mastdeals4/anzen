@@ -811,6 +811,10 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
     try {
       const { data: userData } = await supabase.auth.getUser();
+      // During edit, retain the invoice's persisted PO when the PO selector
+      // has not finished rehydrating yet. This prevents an otherwise-unchanged
+      // relationship being serialized as null.
+      const effectivePurchaseOrderId = purchaseOrderId || editingInvoice?.purchase_order_id || null;
 
       const invoiceData = {
         invoice_number: formData.invoice_number.trim(),
@@ -827,7 +831,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         notes: formData.notes.trim() || null,
         document_urls: formData.document_urls,
         requires_faktur_pajak: selectedSupplier?.pkp_status || false,
-        ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}),
+        ...(effectivePurchaseOrderId ? { purchase_order_id: effectivePurchaseOrderId } : {}),
       };
 
       const itemsData = lineItems.map(item => ({
@@ -851,7 +855,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
       const { error: rpcError } = await supabase.rpc('save_purchase_invoice_with_receiving_details', {
         p_invoice_id: editingInvoice ? editingInvoice.id : null,
-        p_purchase_order_id: purchaseOrderId || null,
+        p_purchase_order_id: effectivePurchaseOrderId,
         p_invoice_data: invoiceData,
         p_items: itemsData,
       });
