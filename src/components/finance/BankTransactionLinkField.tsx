@@ -52,6 +52,7 @@ export function BankTransactionLinkField({
   currentPettyCashId,
   disabled = false,
   disabledMessage,
+  canUnlink = false,
   onSelect,
   onUnlink,
   onUnlinkTransaction,
