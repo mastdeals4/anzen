@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
@@ -541,6 +541,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   // Applied advances are persisted settlement facts. They are not returned by
   // the outstanding-advance query, so retain their total while editing.
   const [persistedSalaryAdvanceApplied, setPersistedSalaryAdvanceApplied] = useState(0);
+  const salaryInitialLoadRef = useRef<string | null>(null);
   const [selectedUtilityId, setSelectedUtilityId] = useState<string>('');
   const [periodLabel, setPeriodLabel] = useState<string>('');   // Salary Month / Billing Month
   const [supplierFilter, setSupplierFilter] = useState<string>('all');
@@ -696,6 +697,9 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         return;
       }
       const calculation = calculationResult.data as typeof salaryCalculation;
+      const preservingHistoricalValues = Boolean(editingExpense?.id)
+        && salaryInitialLoadRef.current !== editingExpense?.id;
+      if (preservingHistoricalValues) salaryInitialLoadRef.current = editingExpense!.id;
       setSalaryAdvances((advancesResult.data || []) as typeof salaryAdvances);
       const existingApplied = editingExpense?.id
         ? Number((await supabase.rpc('get_salary_advance_applications', { p_salary_expense_id: editingExpense.id })).data?.reduce((sum: number, item: { applied_amount: number }) => sum + Number(item.applied_amount || 0), 0) ?? 0)
@@ -704,12 +708,14 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       setPersistedSalaryAdvanceApplied(existingApplied);
       setSalaryCalculation(calculation ? {
         ...calculation,
+        gross_salary: preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary,
+        pph21_amount: preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount,
         outstanding_salary_advances: advanceApplied,
-        net_salary_payable: Math.max(calculation.gross_salary - advanceApplied - calculation.pph21_amount - calculation.bpjs_amount, 0),
+        net_salary_payable: Math.max((preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary) - advanceApplied - (preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount) - calculation.bpjs_amount, 0),
       } : null);
       // Saving a reopened settlement must not create another FIFO application.
       setApplySalaryAdvance(!editingExpense || existingApplied === 0);
-      if (calculation) {
+      if (calculation && !preservingHistoricalValues) {
         const pph21Code = taxCodes.find((code) => code.code.toUpperCase() === 'PPH21');
         setFormData((previous) => ({
           ...previous,
@@ -1817,6 +1823,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
   const resetForm = () => {
     setEditingExpense(null);
+    salaryInitialLoadRef.current = null;
     setSelectedBankTransactionId('');
     setSelectedBankAllocationAmount(undefined);
     setUploadingFiles([]);
