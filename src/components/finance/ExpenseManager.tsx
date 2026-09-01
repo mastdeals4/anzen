@@ -3631,14 +3631,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     linkedTransactions={editingExpense?.bank_statement_lines || []}
                     currentExpenseId={editingExpense?.id}
                     documentDate={formData.expense_date}
-                    documentOutstanding={Math.max(
-                      0,
-                      calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
-                        - Number(editingExpense?.bank_statement_lines?.reduce(
-                          (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
-                          0,
-                        ) || 0),
-                    )}
+                    documentOutstanding={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentTotal={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentLabel={editingExpense?.voucher_number || 'Expense'}
                     canUnlink={canManage}
@@ -4091,7 +4084,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     </div>
                   ))}
                   <span className="text-gray-300 text-sm font-light">=</span>
-                  <div className="ml-auto flex items-center gap-1.5 px-2 py-0.5 border border-green-200 bg-green-50 rounded">
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 border border-green-200 bg-green-50 rounded">
                     <span className="text-[9px] font-semibold text-green-700 uppercase">Net Payable</span>
                     <span className="text-[12px] font-bold font-mono text-green-800">{fmtMoney(netPayable, 2)}</span>
                   </div>
@@ -4298,7 +4291,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       const lineCurrency = line.bank_accounts?.currency ?? currency;
                       const fmtLine = (n: number) => formatCurrency(n, lineCurrency);
                       const bankAmount = line.debit_amount || line.credit_amount || 0;
-                      const diff = bankAmount - viewingExpense.amount;
+                      const linkedAmount = bslLines.reduce((sum, item) => sum + Number(item.allocation_amount ?? item.debit_amount ?? item.credit_amount ?? 0), 0);
+                      const remainingAmount = Math.max(0, canonicalCashPayable - linkedAmount);
                       return (
                         <div key={line.id} className="px-2 py-1.5 bg-white border border-gray-200 rounded">
                           <div className="flex items-center gap-1.5 mb-1">
@@ -4320,12 +4314,12 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                               <span className="font-mono font-semibold text-gray-900">{fmtLine(bankAmount)}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                              <span className="text-[9px] uppercase font-medium text-gray-400">Matched</span>
-                              <span className="font-mono font-semibold text-gray-900">{fmtMoney(viewingExpense.amount, 2)}</span>
+                              <span className="text-[9px] uppercase font-medium text-gray-400">Linked</span>
+                              <span className="font-mono font-semibold text-gray-900">{fmtLine(linkedAmount)}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                              <span className="text-[9px] uppercase font-medium text-gray-400">Diff</span>
-                              <span className={`font-mono font-medium ${Math.abs(diff) < 1 ? 'text-green-700' : 'text-orange-600'}`}>{fmtLine(diff)}</span>
+                              <span className="text-[9px] uppercase font-medium text-gray-400">Remaining</span>
+                              <span className="font-mono font-medium text-orange-600">{fmtLine(remainingAmount)}</span>
                             </div>
                           </div>
                         </div>
