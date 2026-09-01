@@ -23,6 +23,19 @@ export async function getSignedUrlCached(
   if (hit && hit.expiresAt > now + SAFETY_MARGIN_MS) {
     return hit.url;
   }
+  if (hit?.url.startsWith('blob:')) URL.revokeObjectURL(hit.url);
+  // Legacy finance documents are private objects whose historical public
+  // URLs can produce a signed URL that later fails with NoSuchKey. Fetch the
+  // object through the authenticated Storage API directly for a reliable
+  // browser blob URL.
+  if (bucket === 'documents') {
+    const downloaded = await supabase.storage.from(bucket).download(path);
+    if (!downloaded.error && downloaded.data) {
+      const objectUrl = URL.createObjectURL(downloaded.data);
+      cache.set(key, { url: objectUrl, expiresAt: now + ttlSeconds * 1000 });
+      return objectUrl;
+    }
+  }
   const { data, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(path, ttlSeconds, options?.download ? { download: options.download } : undefined);
