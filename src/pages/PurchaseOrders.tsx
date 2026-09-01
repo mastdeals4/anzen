@@ -761,7 +761,7 @@ export default function PurchaseOrders() {
             isOpen={showCreateModal}
             onClose={() => setShowCreateModal(false)}
             title={editingPO ? 'Edit Purchase Order' : 'New Purchase Order'}
-            maxWidth="max-w-6xl"
+            maxWidth="max-w-[90vw]"
           >
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Header Section - Compact */}
@@ -847,18 +847,18 @@ export default function PurchaseOrders() {
 
                 {/* Compact table with minimal spacing */}
                 <div className="border border-gray-300 rounded overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
+                  <table className="min-w-[1280px] w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '180px'}}>Product</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '150px'}}>Make / Manufacturer</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '120px'}}>Specification</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '80px'}}>COA No</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '60px'}}>Qty</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '50px'}}>Unit</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '90px'}}>Price</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '50px'}}>Disc%</th>
-                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '100px'}}>Total</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '260px'}}>Product</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '220px'}}>Make / Manufacturer</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '200px'}}>Specification</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '130px'}}>COA No</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '85px'}}>Qty</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '85px'}}>Unit</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '130px'}}>Price</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '85px'}}>Disc%</th>
+                        <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-600 whitespace-nowrap" style={{width: '140px'}}>Total</th>
                         <th className="px-2 py-1.5 text-center text-xs font-medium text-gray-600" style={{width: '40px'}}></th>
                       </tr>
                     </thead>
