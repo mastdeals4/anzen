@@ -970,7 +970,10 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       setFormData(prev => ({ ...prev, notes: prev.notes || `Created from PO ${matchedPo.po_number}` }));
     }
 
-    if (draft.lines.length > 0) {
+    // PDF extraction is additive: never replace lines the user has already
+    // entered (or an existing PI's persisted relationships). Populate lines
+    // automatically only for a genuinely blank form.
+    if (draft.lines.length > 0 && lineItems.length === 0) {
       const mappedLines = draft.lines.map((line, index) => {
         const candidates = products.filter(product => normaliseMatchText(product.product_name) === normaliseMatchText(line.description));
         const product = candidates.length === 1 ? candidates[0] : undefined;
