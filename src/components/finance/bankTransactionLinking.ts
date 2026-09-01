@@ -23,6 +23,8 @@ export interface BankTransactionLine {
   allocatedAmount?: number;
   allocationCount?: number;
   remainingAmount?: number;
+  allocation_amount?: number | null;
+  allocation_id?: string | null;
   bank_accounts?: {
     bank_name: string;
     account_name?: string | null;

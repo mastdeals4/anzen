@@ -17,6 +17,7 @@ import {
   getReportingUsdRate,
   saveAndLinkFinanceExpense,
   saveFinanceExpense,
+  unlinkBankStatementAllocation,
   unlinkFinanceExpenseBankLink,
 } from '../../services/financeCommands';
 import {
@@ -3612,6 +3613,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     bankAccountId={formData.bank_account_id}
                     selectedTransactionId={selectedBankTransactionId}
                     linkedTransaction={editingExpense?.bank_statement_lines?.[0] || null}
+                    linkedTransactions={editingExpense?.bank_statement_lines || []}
                     currentExpenseId={editingExpense?.id}
                     documentDate={formData.expense_date}
                     documentOutstanding={Math.max(
@@ -3623,6 +3625,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           0,
                         ) || 0),
                     )}
+                    documentTotal={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentLabel={editingExpense?.voucher_number || 'Expense'}
                     canUnlink={canManage}
                     onSelect={(transaction) => {
@@ -3641,6 +3644,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       ));
                     }}
                     onUnlink={() => handleUnlinkFromBankStatement(editingExpense!.id)}
+                    onUnlinkTransaction={async (line) => {
+                      if (!editingExpense) return;
+                      if (!confirm('Unlink this bank transaction from the expense?')) return;
+                      if (line.allocation_id) {
+                        await unlinkBankStatementAllocation(line.allocation_id);
+                        await syncExpenseBankLinks([editingExpense.id]);
+                        notifyFinanceReconciliationRefresh();
+                      } else {
+                        await unlinkBankTransaction(line.id);
+                        await syncExpenseBankLinks([editingExpense.id]);
+                        notifyFinanceReconciliationRefresh();
+                      }
+                    }}
                   />
                 )}
 

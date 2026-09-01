@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Landmark, Link2, Search } from 'lucide-react';
+import { Landmark, Link2, Search, Plus, Unlink } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import {
   type BankTransactionLine,
@@ -11,6 +11,7 @@ interface BankTransactionLinkFieldProps {
   bankAccountId: string;
   selectedTransactionId?: string;
   linkedTransaction?: BankTransactionLine | null;
+  linkedTransactions?: BankTransactionLine[];
   currentExpenseId?: string | null;
   currentJournalEntryId?: string | null;
   currentPettyCashId?: string | null;
@@ -19,12 +20,14 @@ interface BankTransactionLinkFieldProps {
   canUnlink?: boolean;
   onSelect: (transaction: BankTransactionLine) => void | Promise<void>;
   onUnlink?: () => void | Promise<void>;
+  onUnlinkTransaction?: (transaction: BankTransactionLine) => void | Promise<void>;
   direction?: 'debit' | 'credit' | 'both';
   candidateFilter?: (line: BankTransactionLine) => boolean;
   autoSelectSingle?: boolean;
   /** Used only to rank available candidates; it never excludes history. */
   documentDate?: string;
   documentOutstanding?: number;
+  documentTotal?: number;
   documentLabel?: string;
 }
 
@@ -43,17 +46,21 @@ export function BankTransactionLinkField({
   bankAccountId,
   selectedTransactionId = '',
   linkedTransaction,
+  linkedTransactions,
   currentExpenseId,
   currentJournalEntryId,
   currentPettyCashId,
   disabled = false,
   disabledMessage,
   onSelect,
+  onUnlink,
+  onUnlinkTransaction,
   direction = 'debit',
   candidateFilter,
   autoSelectSingle = false,
   documentDate,
   documentOutstanding,
+  documentTotal,
   documentLabel = 'this document',
 }: BankTransactionLinkFieldProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -159,28 +166,22 @@ export function BankTransactionLinkField({
   const pendingDocumentAfter = Math.max(0, pendingDocumentOutstanding - pendingAllocation);
   const hasReferenceColumn = filteredTransactions.some((line) => Boolean(line.reference?.trim()));
 
-  if (linkedTransaction) {
+  const linkedLines = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
+  if (linkedLines.length > 0) {
+    const linkedTotal = linkedLines.reduce((sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
+    const remainingBalance = documentTotal === undefined && documentOutstanding === undefined
+      ? undefined
+      : Math.max(0, Number(documentTotal ?? documentOutstanding ?? 0) - linkedTotal);
     return (
       <div>
         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
           Link Bank Transaction
         </label>
-        <div className="p-2 bg-green-50 border border-green-300 rounded">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1 text-xs font-semibold text-green-900">
-                <Landmark className="w-3 h-3" />
-                Linked Bank Transaction
-              </div>
-              <div className="text-[10px] text-gray-600 truncate mt-0.5">
-                {new Date(linkedTransaction.transaction_date).toLocaleDateString('id-ID')}
-                {' · '}{formatAmount(linkedTransaction)}
-                {' · '}{linkedTransaction.description || 'No narration'}
-                {linkedTransaction.reference ? ` · ${linkedTransaction.reference}` : ''}
-                {' · '}{bankLabel(linkedTransaction)}
-              </div>
-            </div>
-          </div>
+        <div className="p-2 bg-green-50 border border-green-300 rounded space-y-1.5">
+          <div className="flex items-center justify-between text-xs font-semibold text-green-900"><span className="flex items-center gap-1"><Landmark className="w-3 h-3" /> Linked Bank Transactions ({linkedLines.length})</span><span className="font-mono">Total linked: {formatCurrency(linkedTotal, linkedLines[0].bank_accounts?.currency || 'IDR')}</span></div>
+          {linkedLines.map((line) => { const unlink = canUnlink ? (onUnlinkTransaction || onUnlink) : undefined; return <div key={line.id} className="flex items-center justify-between gap-2 rounded border border-green-200 bg-white px-2 py-1.5"><div className="min-w-0 text-[10px] text-gray-700"><div className="truncate font-medium">{new Date(line.transaction_date).toLocaleDateString('id-ID')} · {formatAmount(line)} · {line.description || 'No narration'}</div><div className="truncate text-gray-500">{line.reference ? `${line.reference} · ` : ''}{bankLabel(line)}</div></div>{unlink && <button type="button" onClick={() => void unlink(line)} disabled={disabled} className="shrink-0 inline-flex items-center gap-1 text-[10px] text-red-600 hover:text-red-800 disabled:text-gray-400"><Unlink className="w-3 h-3" /> Unlink</button>}</div>; })}
+          {remainingBalance !== undefined && <div className="flex items-center justify-between text-[10px] font-semibold text-gray-700"><span>Remaining balance</span><span className={remainingBalance > 0.01 ? 'text-amber-700' : 'text-green-700'}>{formatCurrency(remainingBalance, linkedLines[0].bank_accounts?.currency || 'IDR')}</span></div>}
+          <button type="button" onClick={() => void openDialog()} disabled={!bankAccountId || disabled} className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 hover:text-blue-900 disabled:text-gray-400"><Plus className="w-3 h-3" /> Add Bank Transaction</button>
         </div>
       </div>
     );
