@@ -161,16 +161,14 @@ export function BankTransactionLinkField({
   const pendingBankTotal = Number(pendingTransaction?.debit_amount || pendingTransaction?.credit_amount || 0);
   const pendingAlreadyAllocated = Number(pendingTransaction?.allocatedAmount || 0);
   const pendingBankRemaining = Number(pendingTransaction?.remainingAmount ?? pendingBankTotal);
+  const linkedLines = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
   const existingLinkedTotal = linkedLines.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0), 0);
-  const linkedLinesForCalculation = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
-  const existingLinkedTotal = linkedLinesForCalculation.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0), 0);
   const pendingDocumentOutstanding = Math.max(0, Number(documentOutstanding || 0) - existingLinkedTotal);
   const pendingAllocation = Math.min(pendingBankRemaining, pendingDocumentOutstanding);
   const pendingBankAfter = Math.max(0, pendingBankRemaining - pendingAllocation);
   const pendingDocumentAfter = Math.max(0, pendingDocumentOutstanding - pendingAllocation);
   const hasReferenceColumn = filteredTransactions.some((line) => Boolean(line.reference?.trim()));
 
-  const linkedLines = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
   const linkedView = linkedLines.length > 0 ? (() => {
     const linkedTotal = linkedLines.reduce((sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
     const remainingBalance = documentTotal === undefined && documentOutstanding === undefined
