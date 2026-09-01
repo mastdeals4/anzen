@@ -17,6 +17,7 @@ export interface ExtractedPurchaseInvoiceLine {
   unit?: string;
   unitPrice?: number;
   lineTotal?: number;
+  batches?: Array<{ batchNumber: string; mfgDate?: string; expiryDate?: string }>;
 }
 
 export interface ExtractedPurchaseInvoice {
@@ -98,17 +99,18 @@ export async function extractPurchaseInvoicePdf(file: File): Promise<ExtractedPu
 
   const invoiceNumber = firstCapture(rawText, [
     /(?:invoice\s*(?:no|number)|inv\.?\s*#?|faktur\s*(?:no|number))\s*[:#-]?\s*([^\n]+)/i,
+    /\b([A-Z]\d{6,}\/\d{4})\b/i,
   ]);
   const poNumber = firstCapture(rawText, [/(?:purchase\s*order|PO)\s*(?:no|number|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]*)/i]);
   const supplierName = firstCapture(rawText, [/(?:supplier|vendor|from)\s*[:#-]\s*([^\n]+)/i]);
-  const dateValue = firstCapture(rawText, [/(?:invoice\s*date|date)\s*[:#-]?\s*([^\n]+)/i]);
+  const dateValue = firstCapture(rawText, [/(?:invoice\s*date|date)\s*[:#-]?\s*([^\n]+)/i, /\b(\d{2}\/\d{2}\/\d{4})\b/]);
   const dueValue = firstCapture(rawText, [/(?:due\s*date|payment\s*due)\s*[:#-]?\s*([^\n]+)/i]);
   const taxNumber = firstCapture(rawText, [/(?:faktur\s*pajak|tax\s*(?:id|number|no))\s*[:#-]?\s*([^\n]+)/i]);
   const currency = /\bUSD\b|\$/i.test(rawText) ? 'USD' : /\bIDR\b|\bRP\b|Rp\.?/i.test(rawText) ? 'IDR' : undefined;
   const exchangeRate = parseNumber(firstCapture(rawText, [new RegExp(`(?:exchange\\s*rate|kurs)\\s*[:#-]?\\s*(${numberPattern})`, 'i')]));
   const subtotal = parseNumber(firstCapture(rawText, [new RegExp(`(?:sub\\s*total|subtotal)\\s*[:#-]?\\s*(${numberPattern})`, 'i')]));
   const taxAmount = parseNumber(firstCapture(rawText, [new RegExp(`(?:tax|ppn|vat)\\s*[:#-]?\\s*(${numberPattern})`, 'i')]));
-  const totalAmount = parseNumber(firstCapture(rawText, [new RegExp(`(?:grand\\s*total|\\btotal\\s*(?:amount|due)?)\\s*[:#-]?\\s*(${numberPattern})`, 'i')]));
+  const totalAmount = parseNumber(firstCapture(rawText, [new RegExp(`(?:grand\\s*total|\\btotal\\s*(?:amount|due)?)\\s*[:#-]?\\s*(${numberPattern})`, 'i'), new RegExp(`\\btotal\\b[^\\d]*(${numberPattern})`, 'i')]));
 
   const lines: ExtractedPurchaseInvoiceLine[] = [];
   for (const line of rawText.split(/\n+/)) {
@@ -119,6 +121,20 @@ export async function extractPurchaseInvoicePdf(file: File): Promise<ExtractedPu
       const dateToken = match[1].match(/\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}[\/-](?:\d{1,2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[\/-]?\d{0,4})\b/i);
       lines.push({ description: match[1].replace(dateToken?.[0] || '', '').trim(), expiryDate: dateToken ? parseDate(dateToken[0]) : undefined, quantity: parseNumber(match[2]), unit, unitPrice: parseNumber(match[4]), lineTotal: parseNumber(match[5]) });
     }
+  }
+
+  // Many commercial invoices emit batch/MFG/expiry as separate text blocks.
+  // Preserve those records and attach them to the nearest product line.
+  const batchPattern = /([A-Z0-9][A-Z0-9/.-]{3,})\s+(\d{1,2}[/-][A-Za-z0-9]{3,9}[/-]?\d{0,4})\s+(\d{1,2}[/-][A-Za-z0-9]{3,9}[/-]?\d{0,4})/i;
+  const extractedBlocks = rawText.split(/\n+/).map(value => value.trim()).filter(Boolean);
+  for (let i = 0; i < extractedBlocks.length; i += 1) {
+    const match = extractedBlocks[i].match(batchPattern);
+    if (!match) continue;
+    const target = lines[Math.max(0, lines.length - 1)];
+    if (!target) continue;
+    target.batches = [...(target.batches || []), { batchNumber: match[1], mfgDate: parseDate(match[2]), expiryDate: parseDate(match[3]) }];
+    target.batchNumber = target.batchNumber || match[1];
+    target.expiryDate = target.expiryDate || parseDate(match[3]);
   }
 
   return { supplierName, invoiceNumber, invoiceDate: parseDate(dateValue), dueDate: parseDate(dueValue), currency, exchangeRate, poNumber, taxNumber, subtotal, taxAmount, totalAmount, lines, rawText };
