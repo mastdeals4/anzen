@@ -425,7 +425,8 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       ...prev,
       currency: po.currency || prev.currency,
       exchange_rate: Number(po.exchange_rate) || 1,
-      notes: po.po_number ? `Created from PO ${po.po_number}` : prev.notes,
+      // Linking a PO to an existing PI must not overwrite supplier notes.
+      ...(editingInvoice ? {} : { notes: po.po_number ? `Created from PO ${po.po_number}` : prev.notes }),
     }));
     if (mapped.length) setLineItems(mapped);
   };
