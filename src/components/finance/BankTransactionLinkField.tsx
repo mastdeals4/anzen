@@ -168,7 +168,7 @@ export function BankTransactionLinkField({
   const hasReferenceColumn = filteredTransactions.some((line) => Boolean(line.reference?.trim()));
 
   const linkedLines = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
-  if (linkedLines.length > 0) {
+  const linkedView = linkedLines.length > 0 ? (() => {
     const linkedTotal = linkedLines.reduce((sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
     const remainingBalance = documentTotal === undefined && documentOutstanding === undefined
       ? undefined
@@ -186,10 +186,11 @@ export function BankTransactionLinkField({
         </div>
       </div>
     );
-  }
+  })() : null;
 
   return (
     <div>
+      {linkedView}
       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
         Link Bank Transaction
       </label>
