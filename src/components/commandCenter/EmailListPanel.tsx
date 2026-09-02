@@ -100,7 +100,7 @@ export function EmailListPanel({ onEmailSelect, selectedEmailId }: EmailListPane
     }, 600000); // 10 minutes
 
     return () => {
-      subscription.unsubscribe();
+      supabase.removeChannel(subscription);
       clearInterval(syncInterval);
     };
   }, [loadEmails, handleRefresh]);

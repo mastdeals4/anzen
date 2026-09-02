@@ -54,7 +54,9 @@ export function TodaysActionsDashboard({ onActionClick: _onActionClick }: Todays
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
+      // Remove the channel from Supabase's registry so navigation/unmount
+      // does not leave a socket attempting to establish after cleanup.
+      supabase.removeChannel(subscription);
     };
   }, [profile?.role]);
 

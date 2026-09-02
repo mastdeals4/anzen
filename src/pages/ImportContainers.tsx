@@ -131,9 +131,9 @@ export default function ImportContainers() {
       .subscribe();
 
     return () => {
-      containerSubscription.unsubscribe();
-      expenseSubscription.unsubscribe();
-      pettyCashSubscription.unsubscribe();
+      supabase.removeChannel(containerSubscription);
+      supabase.removeChannel(expenseSubscription);
+      supabase.removeChannel(pettyCashSubscription);
     };
   }, [canViewCosting]);
 

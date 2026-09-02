@@ -158,6 +158,11 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
     };
     run();
 
+    // Do not create a realtime subscription until an inquiry is selected.
+    // The initial render can have no matching inquiry, and subscribing with
+    // an `undefined` id creates a channel that is immediately torn down.
+    if (!selected?.id) return;
+
     const channel = supabase.channel(`inquiry-360-${selected?.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_email_activities', filter: `inquiry_id=eq.${selected?.id}` }, run)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_reminders', filter: `inquiry_id=eq.${selected?.id}` }, run)
