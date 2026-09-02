@@ -442,7 +442,8 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       if (error) throw error;
       const items = (data || []).map((item: any) => ({
         ...item,
-        product_name: item.products?.product_name || null,
+        products: Array.isArray(item.products) ? item.products[0] || null : item.products || null,
+        product_name: (Array.isArray(item.products) ? item.products[0] : item.products)?.product_name || null,
       }));
       setViewLineItems(items);
     } catch (err) {
@@ -694,7 +695,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
     const { data } = await supabase
       .from('purchase_invoice_items')
-      .select('*')
+      .select('*, products(product_name, unit)')
       .eq('purchase_invoice_id', invoice.id)
       .order('created_at');
 
@@ -712,6 +713,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       item_type: item.item_type,
       purchase_order_item_id: item.purchase_order_item_id || null,
       product_id: item.product_id,
+      product_name: (Array.isArray(item.products) ? item.products[0] : item.products)?.product_name || null,
       description: item.description,
       quantity: item.quantity,
       unit: item.unit,
@@ -1369,7 +1371,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     <th className="px-2 py-1.5 text-left">Product</th><th className="px-2 py-1.5 text-left">Make</th><th className="px-2 py-1.5 text-left">Batch No.</th><th className="px-2 py-1.5 text-left">Expiry</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-left">UOM</th><th className="px-2 py-1.5 text-right">Unit Price</th><th className="px-2 py-1.5 text-right">Total</th><th className="px-2 py-1.5" />
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">{lineItems.map((item, index) => item.item_type === 'inventory' && <tr key={`inventory-${index}`}>
-                    <td className="px-2 py-1"><select value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
+                    <td className="px-2 py-1"><select value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && <option value={item.product_id}>{item.product_name}</option>}{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
                     <td className="px-2 py-1"><select value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">Not specified</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
                     <td className="px-2 py-1"><input value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-28 px-1.5 py-1 border border-gray-300 rounded" placeholder="Optional" /></td>
                     <td className="px-2 py-1"><input type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-32 px-1.5 py-1 border border-gray-300 rounded" /></td>
@@ -1429,6 +1431,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                           className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
                         >
                           <option value="">Select Product</option>
+                          {item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && (
+                            <option value={item.product_id}>{item.product_name}</option>
+                          )}
                           {products.map((product) => (
                             <option key={product.id} value={product.id}>
                               {product.product_name} (Stock: {product.current_stock})

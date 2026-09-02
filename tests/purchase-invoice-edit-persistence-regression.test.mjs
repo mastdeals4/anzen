@@ -10,4 +10,8 @@ for (const field of ['purchase_order_item_id', 'receiving_make_id', 'receiving_b
 }
 assert.match(component, /effectivePurchaseOrderId/);
 assert.match(migration, /save_purchase_invoice\(p_invoice_id, v_data, v_items\)/);
+assert.match(component, /select\('\*, products\(product_name, unit\)'\)/);
+assert.match(component, /product_name: \(Array\.isArray\(item\.products\) \? item\.products\[0\] : item\.products\)\?\.product_name/);
+assert.match(component, /products: Array\.isArray\(item\.products\) \? item\.products\[0\] \|\| null : item\.products \|\| null/);
+assert.match(component, /!products\.some\(product => product\.id === item\.product_id\)/);
 console.log('purchase invoice edit persistence regression passed');
