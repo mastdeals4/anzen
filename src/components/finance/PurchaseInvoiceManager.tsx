@@ -854,7 +854,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         receiving_expiry_date: item.receiving_expiry_date || null,
         receiving_import_container_id: item.receiving_import_container_id || null,
         receiving_notes: item.receiving_notes || null,
-        ...(purchaseOrderId ? { purchase_order_item_id: item.purchase_order_item_id || null } : {}),
+        ...(effectivePurchaseOrderId ? { purchase_order_item_id: item.purchase_order_item_id || null } : {}),
       }));
 
       const { error: rpcError } = await supabase.rpc('save_purchase_invoice_with_receiving_details', {

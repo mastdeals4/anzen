@@ -9,6 +9,7 @@ for (const field of ['purchase_order_item_id', 'receiving_make_id', 'receiving_b
   assert.match(migration, new RegExp(field), `PI edit RPC must preserve ${field}`);
 }
 assert.match(component, /effectivePurchaseOrderId/);
+assert.match(component, /\.\.\.\(effectivePurchaseOrderId \? \{ purchase_order_item_id: item\.purchase_order_item_id \|\| null \} : \{\}\)/);
 assert.match(migration, /save_purchase_invoice\(p_invoice_id, v_data, v_items\)/);
 assert.match(component, /select\('\*, products\(product_name, unit\)'\)/);
 assert.match(component, /product_name: \(Array\.isArray\(item\.products\) \? item\.products\[0\] : item\.products\)\?\.product_name/);
