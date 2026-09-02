@@ -1379,17 +1379,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             selectedBankTransactionId || null,
             selectedBankAllocationAmount,
           );
-        } else if (selectedBankTransactionId) {
-          await saveAndLinkFinanceExpense(
-            editingExpense.id,
-            expenseData,
-            selectedBankTransactionId,
-            selectedBankAllocationAmount,
-            profile?.id,
-            formData.expense_category === 'salary' && !!selectedStaffId && applySalaryAdvance && persistedSalaryAdvanceApplied === 0,
-          );
         } else {
           await saveFinanceExpense(editingExpense.id, expenseData);
+          if (selectedBankTransactionId) {
+            alert('Expense saved. An authorized approver must approve it before the bank transaction can be linked.');
+          }
         }
 
         if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance && persistedSalaryAdvanceApplied === 0) {
@@ -1441,7 +1435,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         ));
         void syncExpenseBankLinks([editingExpense.id]);
 
-        if (selectedBankTransactionId && !editingApprovedExpense) {
+        if (selectedBankTransactionId && editingApprovedExpense) {
           setReconciledExpenseIds(prev => new Set(prev).add(editingExpense.id));
           notifyFinanceReconciliationRefresh();
         }

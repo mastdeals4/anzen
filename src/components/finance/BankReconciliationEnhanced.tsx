@@ -25,7 +25,6 @@ import {
   linkBankStatementLine,
   saveCapitalContribution,
   saveBankLinkedFinanceJournal,
-  saveAndLinkFinanceExpense,
   saveFinanceExpense,
   saveFinanceLoan,
   saveFinanceLoanRepayment,
@@ -1810,7 +1809,11 @@ export function BankReconciliationEnhanced({
       if (!user) throw new Error('Not authenticated');
       if (line.currency === 'USD' && recordExchangeRate <= 1) throw new Error('Enter a valid USD-to-IDR exchange rate');
 
-      await saveAndLinkFinanceExpense(null, {
+      // Recording a new expense is a document-creation action, not an
+      // approval action.  Saving it as pending keeps the creator from
+      // accidentally self-approving; the bank line can be linked after an
+      // authorized approver posts the expense.
+      await saveFinanceExpense(null, {
         expense_category: category,
         expense_type: 'admin',
         amount: line.debit,
@@ -1824,13 +1827,12 @@ export function BankReconciliationEnhanced({
         exchange_rate: line.currency === 'IDR' ? 1 : recordExchangeRate,
         approval_status: 'pending_approval',
         created_by: user.id,
-      }, line.id, undefined, user.id);
+      });
 
       setRecordModal(false);
       setRecordingLine(null);
       await loadStatementLines();
-      notifyFinanceReconciliationRefresh();
-      alert('✅ Expense recorded and linked successfully');
+      alert('✅ Expense recorded as pending. An authorized approver must approve it before this bank transaction can be linked.');
     } catch (error: any) {
       console.error('Error recording expense:', error);
       alert('❌ ' + error.message);

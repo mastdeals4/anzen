@@ -67,9 +67,17 @@ test('EXP/26/056 accrual-to-bank edit rebuilds before allocation', () => {
   assert.match(approvedEditMigration, /upsert_expense_journal_header_in_place/);
 });
 
-test('both Expenses and Bank Reconciliation use the same atomic link command', () => {
+test('new expense linking is approval-separated while existing expense linking stays atomic', () => {
   assert.match(expenseUi, /saveAndLinkFinanceExpense/);
-  assert.match(bankUi, /saveAndLinkFinanceExpense\(null/);
+  assert.doesNotMatch(bankUi, /handleRecordExpense[\s\S]*saveAndLinkFinanceExpense\(null/);
+  assert.match(bankUi, /handleRecordExpense[\s\S]*saveFinanceExpense\(null/);
+  assert.match(bankUi, /authorized approver must approve it before this bank transaction can be linked/);
+  const editBranch = expenseUi.slice(
+    expenseUi.indexOf('if (editingExpense) {'),
+    expenseUi.indexOf('} else {\n        // Create new bank expense'),
+  );
+  assert.doesNotMatch(editBranch, /saveAndLinkFinanceExpense\(/);
+  assert.match(editBranch, /authorized approver must approve it before the bank transaction can be linked/);
   const recordExpense = bankUi.slice(
     bankUi.indexOf('const handleRecordExpense'),
     bankUi.indexOf('const handleLinkToExpense'),
