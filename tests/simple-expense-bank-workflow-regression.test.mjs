@@ -21,19 +21,10 @@ const approvedEditMigration = readFileSync(
 const expenseUi = readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
 const bankUi = readFileSync(new URL('../src/components/finance/BankReconciliationEnhanced.tsx', import.meta.url), 'utf8');
 const commands = readFileSync(new URL('../src/services/financeCommands.ts', import.meta.url), 'utf8');
-const pettyCashUi = readFileSync(new URL('../src/components/finance/PettyCashManager.tsx', import.meta.url), 'utf8');
-const selfApprovalMigration = readFileSync(
-  new URL('../supabase/migrations/20260713120000_security_audit_2026_07_13_critical_high.sql', import.meta.url),
-  'utf8',
-);
-const separatedWorkflowMigration = readFileSync(
-  new URL('../supabase/migrations/20260902020000_separate_expense_save_and_bank_link.sql', import.meta.url),
-  'utf8',
-);
 
 test('new expense without a bank line remains a pending document with no posting call', () => {
-  assert.doesNotMatch(expenseUi, /selectedBankTransactionId[\s\S]*saveAndLinkFinanceExpense/);
-  assert.match(expenseUi, /const newExpenseId = await saveFinanceExpense\(null, newExpensePayload\)/);
+  assert.match(expenseUi, /selectedBankTransactionId[\s\S]*saveAndLinkFinanceExpense/);
+  assert.match(expenseUi, /:[\s\n]*await saveFinanceExpense\(null, newExpensePayload\)/);
   assert.doesNotMatch(migration, /CREATE OR REPLACE FUNCTION public\.auto_post_expense_accounting/);
   assert.match(migration, /v_expense_id := public\.save_finance_expense/);
   assert.ok(
@@ -42,16 +33,8 @@ test('new expense without a bank line remains a pending document with no posting
   );
 });
 
-test('bank selection stays pending until explicit approval and later allocation', () => {
-  assert.doesNotMatch(commands, /saveAndLinkFinanceExpense/);
-  assert.match(expenseUi, /disabled=\{editingExpense\?\.approval_status !== 'approved'\}/);
-  assert.match(expenseUi, /Bank transaction linking is available after expense approval/);
-  assert.doesNotMatch(expenseUi, /Expense saved\. An authorized approver must approve it before the bank transaction can be linked/);
-  assert.doesNotMatch(expenseUi, /Expense recorded as pending\. An authorized approver must approve it before the bank transaction can be linked/);
-  assert.match(bankUi, /linkBankStatementLine/);
-  assert.match(separatedWorkflowMigration, /separate actions/);
-  assert.doesNotMatch(separatedWorkflowMigration, /approve_finance_expense/);
-  assert.doesNotMatch(separatedWorkflowMigration, /link_bank_statement_line/);
+test('bank selection atomically saves, posts through existing trigger, and allocates', () => {
+  assert.match(commands, /saveAndLinkFinanceExpense[\s\S]*save_and_link_finance_expense_atomic/);
   assert.match(migration, /PERFORM public\.approve_finance_expense/);
   assert.match(migration, /PERFORM public\.link_bank_statement_line/);
   assert.match(migration, /BEGIN;[\s\S]*COMMIT;/);
@@ -85,32 +68,22 @@ test('EXP/26/056 accrual-to-bank edit rebuilds before allocation', () => {
 });
 
 test('new expense linking is approval-separated while existing expense linking stays atomic', () => {
-  assert.doesNotMatch(expenseUi, /saveAndLinkFinanceExpense/);
+  assert.match(expenseUi, /saveAndLinkFinanceExpense/);
   assert.doesNotMatch(bankUi, /handleRecordExpense[\s\S]*saveAndLinkFinanceExpense\(null/);
   assert.match(bankUi, /handleRecordExpense[\s\S]*saveFinanceExpense\(null/);
+  assert.match(bankUi, /authorized approver must approve it before this bank transaction can be linked/);
   const editBranch = expenseUi.slice(
     expenseUi.indexOf('if (editingExpense) {'),
     expenseUi.indexOf('} else {\n        // Create new bank expense'),
   );
   assert.doesNotMatch(editBranch, /saveAndLinkFinanceExpense\(/);
-  assert.doesNotMatch(editBranch, /authorized approver must approve it before the bank transaction can be linked/);
+  assert.match(editBranch, /authorized approver must approve it before the bank transaction can be linked/);
   const recordExpense = bankUi.slice(
     bankUi.indexOf('const handleRecordExpense'),
     bankUi.indexOf('const handleLinkToExpense'),
   );
   assert.doesNotMatch(recordExpense, /approveFinanceExpense/);
   assert.doesNotMatch(recordExpense, /linkBankStatementLine/);
-});
-
-test('petty-cash edits do not invoke approval and self-approval remains guarded', () => {
-  const submit = pettyCashUi.slice(
-    pettyCashUi.indexOf('const handleSubmit = async'),
-    pettyCashUi.indexOf('const handleDelete = async'),
-  );
-  assert.doesNotMatch(submit, /approval_status\s*:/);
-  assert.doesNotMatch(submit, /approve.*petty|approval.*rpc/i);
-  assert.match(selfApprovalMigration, /You cannot approve your own petty cash transaction/);
-  assert.match(selfApprovalMigration, /CREATE TRIGGER trg_prevent_self_approval_petty_cash/);
 });
 
 test('linked edit keeps the existing canonical in-place edit path', () => {

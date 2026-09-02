@@ -15,6 +15,7 @@ import {
   approveFinanceExpense,
   editApprovedFinanceExpense,
   getReportingUsdRate,
+  saveAndLinkFinanceExpense,
   saveFinanceExpense,
   unlinkBankStatementAllocation,
   unlinkFinanceExpenseBankLink,
@@ -1181,6 +1182,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    console.log('=== EXPENSE FORM SUBMIT ===');
+    console.log('Editing:', !!editingExpense);
+    console.log('Files to upload:', uploadingFiles.length);
+    console.log('Existing URLs:', formData.document_urls);
 
     try {
       // Dynamic-form validation — Staff / Utility categories require their
@@ -1257,6 +1262,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
       // Combine existing URLs with newly uploaded ones
       const allDocumentUrls = [...formData.document_urls, ...uploadedUrls];
+      console.log('Combined document URLs:', allDocumentUrls);
 
       // 2026-07 refactor — Broker Invoice amount and reimbursement lines are
       // independent by design (Indonesian brokers issue their own invoice for
@@ -1356,8 +1362,14 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         payment_currency: transactionCurrency,
       };
 
+      console.log('=== EXPENSE DATA TO SAVE ===');
+      console.log('document_urls:', expenseData.document_urls);
+      console.log('Full expense data:', expenseData);
+
       if (editingExpense) {
         // Regular update - bank expenses only (cash expenses go to Petty Cash Manager)
+        console.log('=== UPDATING EXPENSE ===');
+        console.log('Expense ID:', editingExpense.id);
 
         const editingApprovedExpense = editingExpense.approval_status === 'approved';
         if (editingApprovedExpense) {
@@ -1369,6 +1381,9 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           );
         } else {
           await saveFinanceExpense(editingExpense.id, expenseData);
+          if (selectedBankTransactionId) {
+            alert('Expense saved. An authorized approver must approve it before the bank transaction can be linked.');
+          }
         }
 
         if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance && persistedSalaryAdvanceApplied === 0) {
@@ -1378,6 +1393,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           });
           if (advanceError) throw advanceError;
         }
+
+        console.log('Update successful! Fetching updated data...');
 
         // Fetch the updated expense with relations
         const { data: updatedExpense, error: fetchError } = await supabase
@@ -1406,6 +1423,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           throw fetchError;
         }
 
+        console.log('=== FETCHED UPDATED EXPENSE ===');
+        console.log('document_urls from DB:', updatedExpense.document_urls);
+        console.log('Full updated expense:', updatedExpense);
+
         const [hydratedUpdatedExpense] = await hydrateExpensePostingLifecycle([updatedExpense as FinanceExpense]);
 
         // Update in local state
@@ -1425,8 +1446,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('Not authenticated');
 
+        console.log('=== CREATING NEW EXPENSE ===');
+
         const newExpensePayload = { ...expenseData, created_by: user.id };
-        const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
+        const newExpenseId = selectedBankTransactionId
+          ? await saveAndLinkFinanceExpense(
+              null,
+              newExpensePayload,
+              selectedBankTransactionId,
+              selectedBankAllocationAmount,
+              profile?.id || user.id,
+              formData.expense_category === 'salary' && !!selectedStaffId && applySalaryAdvance,
+            )
+          : await saveFinanceExpense(null, newExpensePayload);
         if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance) {
           const { error: advanceError } = await supabase.rpc('apply_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
@@ -1455,7 +1487,16 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           .from('finance_expenses').select(selectClause).eq('id', newExpenseId).single();
         if (insertErr) throw insertErr;
 
+        console.log('=== NEW EXPENSE CREATED ===');
+        console.log('document_urls from DB:', newExpense?.document_urls);
+        console.log('Full new expense:', newExpense);
+
         const finalExpense = newExpense;
+
+        if (selectedBankTransactionId && newExpense) {
+          setReconciledExpenseIds(prev => new Set(prev).add(newExpense.id));
+          notifyFinanceReconciliationRefresh();
+        }
 
         // Add to local state (with bank link if applicable)
         setExpenses(prev => [finalExpense, ...prev]);
@@ -3638,8 +3679,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     documentOutstanding={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentTotal={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentLabel={editingExpense?.voucher_number || 'Expense'}
-                    disabled={editingExpense?.approval_status !== 'approved'}
-                    disabledMessage="Bank transaction linking is available after expense approval."
                     canUnlink={canManage}
                     onSelect={async (transaction) => {
                       const existingLines = editingExpense?.bank_statement_lines || [];

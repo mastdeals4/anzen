@@ -214,6 +214,7 @@ export function FundTransferManager({
 
   const loadData = async () => {
     try {
+      console.log('loadData: Starting to load fund transfers...');
       setLoading(true);
       const [transfersRes, banksRes] = await Promise.all([
         supabase
@@ -232,6 +233,7 @@ export function FundTransferManager({
           .order('bank_name'),
       ]);
 
+      console.log('loadData: Transfers result:', transfersRes.data?.length, 'records');
       if (transfersRes.error) throw transfersRes.error;
       if (banksRes.error) throw banksRes.error;
 
@@ -398,11 +400,15 @@ export function FundTransferManager({
           to_bank_statement_line_id: formData.to_bank_statement_line_id || null,
         };
 
-        const { error } = await supabase
+        console.log('Updating fund transfer:', editingTransfer.id, transferData);
+        const { data: updatedData, error } = await supabase
           .from('fund_transfers')
           .update(transferData)
-          .eq('id', editingTransfer.id);
+          .eq('id', editingTransfer.id)
+          .select();
 
+        console.log('Update result:', { updatedData, error });
+        
         if (error) throw error;
 
         showToast({ type: 'success', title: 'Success', message: 'Fund transfer updated successfully!' });
