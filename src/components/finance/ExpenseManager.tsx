@@ -15,7 +15,6 @@ import {
   approveFinanceExpense,
   editApprovedFinanceExpense,
   getReportingUsdRate,
-  saveAndLinkFinanceExpense,
   saveFinanceExpense,
   unlinkBankStatementAllocation,
   unlinkFinanceExpenseBankLink,
@@ -1449,16 +1448,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         console.log('=== CREATING NEW EXPENSE ===');
 
         const newExpensePayload = { ...expenseData, created_by: user.id };
-        const newExpenseId = selectedBankTransactionId
-          ? await saveAndLinkFinanceExpense(
-              null,
-              newExpensePayload,
-              selectedBankTransactionId,
-              selectedBankAllocationAmount,
-              profile?.id || user.id,
-              formData.expense_category === 'salary' && !!selectedStaffId && applySalaryAdvance,
-            )
-          : await saveFinanceExpense(null, newExpensePayload);
+        const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
+        if (selectedBankTransactionId) {
+          alert('Expense recorded as pending. An authorized approver must approve it before the bank transaction can be linked.');
+        }
         if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance) {
           const { error: advanceError } = await supabase.rpc('apply_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
