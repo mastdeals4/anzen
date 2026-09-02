@@ -2695,13 +2695,18 @@ export function BankReconciliationEnhanced({
 
       if (error) throw error;
 
-      // Propagate amount change to linked document and re-post journal entries
+      // Canonical allocations represent a settled amount independently from
+      // the bank-line total.  Editing the statement amount must never mutate
+      // the allocated document or its journal; allocation adjustments use the
+      // explicit unlink/relink workflow instead.  Legacy direct links retain
+      // their existing propagation path.
       const newAmount = Number(editFormData.debit) || Number(editFormData.credit) || 0;
-      const hasLink = editingLine.matchedExpenseId || editingLine.matchedReceiptId
+      const hasCanonicalAllocations = editingLine.allocations.length > 0;
+      const hasLegacyLink = editingLine.matchedExpenseId || editingLine.matchedReceiptId
         || editingLine.matchedPaymentId || editingLine.matchedFundTransferId
         || editingLine.matchedPettyCashId || editingLine.matchedTaxPaymentId
         || editingLine.matchedEntry;
-      if (hasLink && newAmount > 0) {
+      if (!hasCanonicalAllocations && hasLegacyLink && newAmount > 0) {
         const { data: propResult, error: propError } = await supabase
           .rpc('propagate_bank_line_amount_edit', {
             p_line_id: editingLine.id,
