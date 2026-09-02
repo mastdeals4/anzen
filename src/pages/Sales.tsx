@@ -946,6 +946,7 @@ export function Sales() {
     }
 
     setSelectedChallanId(challanId);
+    setSelectedDCIds([challanId]);
 
     try {
       const selectedChallan = pendingChallans.find(ch => ch.id === challanId);
@@ -962,7 +963,7 @@ export function Sales() {
 
       const { data: challanItems, error } = await supabase
         .from('delivery_challan_items')
-        .select('product_id, batch_id, quantity, products(product_name, product_code), batches(batch_number, import_price, duty_charges, freight_charges, other_charges, import_quantity, make_id, product_sources!batches_make_id_fkey(supplier_name, grade))')
+        .select('id, product_id, batch_id, quantity, products(product_name, product_code), batches(batch_number, import_price, duty_charges, freight_charges, other_charges, import_quantity, make_id, product_sources!batches_make_id_fkey(supplier_name, grade))')
         .eq('challan_id', challanId);
 
       if (error) {
@@ -1004,6 +1005,9 @@ export function Sales() {
           unit_price: unitPrice,
           tax_rate: 11,
           total: item.quantity * unitPrice * 1.11,
+          delivery_challan_item_id: (item as any).id || null,
+          challan_id: challanId,
+          dc_number: selectedChallan.challan_number,
           make_id: batch?.make_id || null,
           make_name: normalizeNestedRelation(batch?.product_sources)?.supplier_name || null,
         });
@@ -1051,6 +1055,17 @@ export function Sales() {
       po_number: '',
       notes: `Created from Delivery Challan: ${data.challanNumber}`,
     });
+
+    if (data.challanId) {
+      setSelectedDCIds([data.challanId]);
+      const { data: sourceChallan } = await supabase
+        .from('delivery_challans')
+        .select('sales_order_id')
+        .eq('id', data.challanId)
+        .maybeSingle();
+      setSelectedSOId(sourceChallan?.sales_order_id || null);
+      setSoAutoLinked(Boolean(sourceChallan?.sales_order_id));
+    }
 
     if (data.customerId) {
       await loadPendingChallans(data.customerId);
@@ -1115,6 +1130,35 @@ export function Sales() {
     return subtotal + tax;
   };
 
+  // Item-level Delivery Challan links are authoritative. Resolve the header
+  // source links from them before saving so invoices created from a DC cannot
+  // lose their Sales Order/DC provenance. Conflicting Sales Orders are
+  // surfaced instead of being guessed or silently overwritten.
+  const resolveInvoiceSourceLinks = async (sourceItems: InvoiceItem[]) => {
+    const dcItemIds = [...new Set(sourceItems.map(item => item.delivery_challan_item_id).filter((id): id is string => Boolean(id)))];
+    if (!dcItemIds.length) return { challanIds: [...new Set(selectedDCIds)], salesOrderId: selectedSOId || null };
+
+    const { data, error } = await supabase
+      .from('delivery_challan_items')
+      .select('id, challan_id, delivery_challans(id, sales_order_id, challan_number)')
+      .in('id', dcItemIds);
+    if (error) throw error;
+
+    const rows = (data || []).map((row: any) => ({
+      challanId: row.challan_id as string,
+      salesOrderId: Array.isArray(row.delivery_challans) ? row.delivery_challans[0]?.sales_order_id : row.delivery_challans?.sales_order_id,
+    }));
+    const resolvedChallanIds = [...new Set(rows.map(row => row.challanId).filter(Boolean))];
+    const resolvedSoIds = [...new Set(rows.map(row => row.salesOrderId).filter(Boolean))];
+    if (resolvedSoIds.length > 1) {
+      throw new Error('The selected Delivery Challans belong to different Sales Orders. Resolve the conflict before saving this invoice.');
+    }
+    return {
+      challanIds: [...new Set([...selectedDCIds, ...resolvedChallanIds])],
+      salesOrderId: resolvedSoIds[0] || selectedSOId || null,
+    };
+  };
+
   const getBatchCostPerUnit = (batchId: string | null): number => {
     if (!batchId) return 0;
     const batch = batches.find(b => b.id === batchId) as any;
@@ -1172,6 +1216,9 @@ export function Sales() {
     e.preventDefault();
 
     try {
+      const sourceLinks = await resolveInvoiceSourceLinks(items);
+      const sourceDCIds = sourceLinks.challanIds;
+      const sourceSOId = sourceLinks.salesOrderId;
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
@@ -1236,7 +1283,7 @@ export function Sales() {
               subtotal: totals.subtotal,
               tax_amount: totals.taxAmount,
               stamp_duty_amount: totals.stampDuty,
-              linked_challan_ids: selectedDCIds.length > 0 ? selectedDCIds : null,
+              linked_challan_ids: sourceDCIds.length > 0 ? sourceDCIds : null,
               total_amount: totals.total,
               discount_amount: formData.discount,
               po_number: formData.po_number || null,
@@ -1294,7 +1341,8 @@ export function Sales() {
           p_invoice: {
             invoice_number: invoiceNumber,
             customer_id: formData.customer_id,
-            sales_order_id: selectedSOId || null,
+            // sales_order_id: selectedSOId is resolved from authoritative DC items above.
+            sales_order_id: sourceSOId,
             invoice_date: formData.invoice_date,
             due_date: dueDate.toISOString().split('T')[0],
             discount_amount: formData.discount,
@@ -1306,7 +1354,7 @@ export function Sales() {
             stamp_duty_amount: totals.stampDuty,
             total_amount: totals.total,
             created_by: user.id,
-            linked_challan_ids: selectedDCIds.length > 0 ? selectedDCIds : null,
+            linked_challan_ids: sourceDCIds.length > 0 ? sourceDCIds : null,
           },
           p_items: invoiceItemsData,
         });

@@ -33,7 +33,7 @@ test('invoice list detects financially populated invoices with missing product r
 });
 
 test('customer/SO/DC source fields remain part of invoice creation', () => {
-  assert.match(sales, /sales_order_id: selectedSOId/);
-  assert.match(sales, /linked_challan_ids: selectedDCIds/);
+  assert.match(sales, /sales_order_id: sourceSOId/);
+  assert.match(sales, /linked_challan_ids: sourceDCIds/);
   assert.match(sales, /delivery_challan_item_id: item\.delivery_challan_item_id/);
 });
