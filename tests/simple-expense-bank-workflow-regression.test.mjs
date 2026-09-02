@@ -44,7 +44,10 @@ test('new expense without a bank line remains a pending document with no posting
 
 test('bank selection stays pending until explicit approval and later allocation', () => {
   assert.doesNotMatch(commands, /saveAndLinkFinanceExpense/);
-  assert.match(expenseUi, /authorized approver must approve it before the bank transaction can be linked/);
+  assert.match(expenseUi, /disabled=\{editingExpense\?\.approval_status !== 'approved'\}/);
+  assert.match(expenseUi, /Bank transaction linking is available after expense approval/);
+  assert.doesNotMatch(expenseUi, /Expense saved\. An authorized approver must approve it before the bank transaction can be linked/);
+  assert.doesNotMatch(expenseUi, /Expense recorded as pending\. An authorized approver must approve it before the bank transaction can be linked/);
   assert.match(bankUi, /linkBankStatementLine/);
   assert.match(separatedWorkflowMigration, /separate actions/);
   assert.doesNotMatch(separatedWorkflowMigration, /approve_finance_expense/);
@@ -85,13 +88,12 @@ test('new expense linking is approval-separated while existing expense linking s
   assert.doesNotMatch(expenseUi, /saveAndLinkFinanceExpense/);
   assert.doesNotMatch(bankUi, /handleRecordExpense[\s\S]*saveAndLinkFinanceExpense\(null/);
   assert.match(bankUi, /handleRecordExpense[\s\S]*saveFinanceExpense\(null/);
-  assert.match(bankUi, /authorized approver must approve it before this bank transaction can be linked/);
   const editBranch = expenseUi.slice(
     expenseUi.indexOf('if (editingExpense) {'),
     expenseUi.indexOf('} else {\n        // Create new bank expense'),
   );
   assert.doesNotMatch(editBranch, /saveAndLinkFinanceExpense\(/);
-  assert.match(editBranch, /authorized approver must approve it before the bank transaction can be linked/);
+  assert.doesNotMatch(editBranch, /authorized approver must approve it before the bank transaction can be linked/);
   const recordExpense = bankUi.slice(
     bankUi.indexOf('const handleRecordExpense'),
     bankUi.indexOf('const handleLinkToExpense'),

@@ -1369,9 +1369,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           );
         } else {
           await saveFinanceExpense(editingExpense.id, expenseData);
-          if (selectedBankTransactionId) {
-            alert('Expense saved. An authorized approver must approve it before the bank transaction can be linked.');
-          }
         }
 
         if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance && persistedSalaryAdvanceApplied === 0) {
@@ -1430,9 +1427,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         const newExpensePayload = { ...expenseData, created_by: user.id };
         const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
-        if (selectedBankTransactionId) {
-          alert('Expense recorded as pending. An authorized approver must approve it before the bank transaction can be linked.');
-        }
         if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance) {
           const { error: advanceError } = await supabase.rpc('apply_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
@@ -1462,11 +1456,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         if (insertErr) throw insertErr;
 
         const finalExpense = newExpense;
-
-        if (selectedBankTransactionId && newExpense) {
-          setReconciledExpenseIds(prev => new Set(prev).add(newExpense.id));
-          notifyFinanceReconciliationRefresh();
-        }
 
         // Add to local state (with bank link if applicable)
         setExpenses(prev => [finalExpense, ...prev]);
@@ -3649,6 +3638,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     documentOutstanding={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentTotal={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
                     documentLabel={editingExpense?.voucher_number || 'Expense'}
+                    disabled={editingExpense?.approval_status !== 'approved'}
+                    disabledMessage="Bank transaction linking is available after expense approval."
                     canUnlink={canManage}
                     onSelect={async (transaction) => {
                       const existingLines = editingExpense?.bank_statement_lines || [];
