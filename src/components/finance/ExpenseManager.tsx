@@ -1181,10 +1181,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    console.log('=== EXPENSE FORM SUBMIT ===');
-    console.log('Editing:', !!editingExpense);
-    console.log('Files to upload:', uploadingFiles.length);
-    console.log('Existing URLs:', formData.document_urls);
 
     try {
       // Dynamic-form validation — Staff / Utility categories require their
@@ -1261,7 +1257,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
       // Combine existing URLs with newly uploaded ones
       const allDocumentUrls = [...formData.document_urls, ...uploadedUrls];
-      console.log('Combined document URLs:', allDocumentUrls);
 
       // 2026-07 refactor — Broker Invoice amount and reimbursement lines are
       // independent by design (Indonesian brokers issue their own invoice for
@@ -1361,14 +1356,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         payment_currency: transactionCurrency,
       };
 
-      console.log('=== EXPENSE DATA TO SAVE ===');
-      console.log('document_urls:', expenseData.document_urls);
-      console.log('Full expense data:', expenseData);
-
       if (editingExpense) {
         // Regular update - bank expenses only (cash expenses go to Petty Cash Manager)
-        console.log('=== UPDATING EXPENSE ===');
-        console.log('Expense ID:', editingExpense.id);
 
         const editingApprovedExpense = editingExpense.approval_status === 'approved';
         if (editingApprovedExpense) {
@@ -1392,8 +1381,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           });
           if (advanceError) throw advanceError;
         }
-
-        console.log('Update successful! Fetching updated data...');
 
         // Fetch the updated expense with relations
         const { data: updatedExpense, error: fetchError } = await supabase
@@ -1422,10 +1409,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           throw fetchError;
         }
 
-        console.log('=== FETCHED UPDATED EXPENSE ===');
-        console.log('document_urls from DB:', updatedExpense.document_urls);
-        console.log('Full updated expense:', updatedExpense);
-
         const [hydratedUpdatedExpense] = await hydrateExpensePostingLifecycle([updatedExpense as FinanceExpense]);
 
         // Update in local state
@@ -1444,8 +1427,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         // Create new bank expense - cash expenses should be recorded in Petty Cash Manager
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('Not authenticated');
-
-        console.log('=== CREATING NEW EXPENSE ===');
 
         const newExpensePayload = { ...expenseData, created_by: user.id };
         const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
@@ -1479,10 +1460,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         const { data: newExpense, error: insertErr } = await supabase
           .from('finance_expenses').select(selectClause).eq('id', newExpenseId).single();
         if (insertErr) throw insertErr;
-
-        console.log('=== NEW EXPENSE CREATED ===');
-        console.log('document_urls from DB:', newExpense?.document_urls);
-        console.log('Full new expense:', newExpense);
 
         const finalExpense = newExpense;
 
