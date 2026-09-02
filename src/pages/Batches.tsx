@@ -199,9 +199,16 @@ export function Batches() {
     });
     const itemIds = rows.map((r: PendingInward) => r.item_id);
     if (itemIds.length) {
-      const { data: allocations } = await supabase.from('purchase_invoice_receiving_allocations').select('purchase_invoice_item_id,received_quantity').in('purchase_invoice_item_id', itemIds).eq('status', 'received');
-      const totals = (allocations || []).reduce((acc: Record<string, number>, a: any) => { acc[a.purchase_invoice_item_id] = (acc[a.purchase_invoice_item_id] || 0) + Number(a.received_quantity); return acc; }, {});
-      rows.forEach((r: PendingInward) => { r.received = totals[r.item_id] || 0; r.pending = Math.max(0, r.quantity - r.received); });
+      const { data: receivedTotals, error: totalsError } = await supabase.rpc('purchase_invoice_item_received_totals', { p_item_ids: itemIds });
+      if (totalsError) throw totalsError;
+      const totals = (receivedTotals || []).reduce((acc: Record<string, number>, a: any) => {
+        acc[a.purchase_invoice_item_id] = Number(a.received_quantity) || 0;
+        return acc;
+      }, {});
+      rows.forEach((r: PendingInward) => {
+        r.received = totals[r.item_id] || 0;
+        r.pending = Math.max(0, r.quantity - r.received);
+      });
     }
     setPendingInwards(rows.filter((r: PendingInward) => r.pending > 0));
   };

@@ -465,7 +465,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     if (error) { showToast({ type: 'error', title: 'Error', message: error.message }); return; }
     const makes = data || [];
     const { data: batches } = await supabase.from('batches').select('id,batch_number,make_id,current_stock,import_container_id').eq('product_id', item.product_id).eq('is_active', true).order('batch_number');
-    const received = receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0);
+    const { data: receivedTotal, error: receivedError } = await supabase.rpc('purchase_invoice_item_received_quantity', { p_item_id: item.id });
+    if (receivedError) { showToast({ type: 'error', title: 'Unable to calculate receiving balance', message: receivedError.message }); return; }
+    const received = Number(receivedTotal) || 0;
     setReceivingItem(item);
     setReceivingMakes(makes);
     setReceivingBatches((batches || []) as Array<{ id: string; batch_number: string; make_id: string | null; current_stock: number; import_container_id: string | null }>);
