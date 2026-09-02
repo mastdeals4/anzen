@@ -26,6 +26,10 @@ const selfApprovalMigration = readFileSync(
   new URL('../supabase/migrations/20260713120000_security_audit_2026_07_13_critical_high.sql', import.meta.url),
   'utf8',
 );
+const separatedWorkflowMigration = readFileSync(
+  new URL('../supabase/migrations/20260902020000_separate_expense_save_and_bank_link.sql', import.meta.url),
+  'utf8',
+);
 
 test('new expense without a bank line remains a pending document with no posting call', () => {
   assert.doesNotMatch(expenseUi, /selectedBankTransactionId[\s\S]*saveAndLinkFinanceExpense/);
@@ -39,9 +43,12 @@ test('new expense without a bank line remains a pending document with no posting
 });
 
 test('bank selection stays pending until explicit approval and later allocation', () => {
-  assert.match(commands, /saveAndLinkFinanceExpense[\s\S]*save_and_link_finance_expense_atomic/);
+  assert.doesNotMatch(commands, /saveAndLinkFinanceExpense/);
   assert.match(expenseUi, /authorized approver must approve it before the bank transaction can be linked/);
   assert.match(bankUi, /linkBankStatementLine/);
+  assert.match(separatedWorkflowMigration, /separate actions/);
+  assert.doesNotMatch(separatedWorkflowMigration, /approve_finance_expense/);
+  assert.doesNotMatch(separatedWorkflowMigration, /link_bank_statement_line/);
   assert.match(migration, /PERFORM public\.approve_finance_expense/);
   assert.match(migration, /PERFORM public\.link_bank_statement_line/);
   assert.match(migration, /BEGIN;[\s\S]*COMMIT;/);
