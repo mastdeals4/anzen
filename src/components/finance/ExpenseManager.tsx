@@ -495,6 +495,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
   const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'not_reconciled'>('all');
   const [approvalFilter, setApprovalFilter] = useState<'all' | 'approved' | 'pending_approval'>('all');
+  const [lifecycleFilter, setLifecycleFilter] = useState<'operational' | 'cancelled'>('operational');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
@@ -2004,6 +2005,9 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
 
   const filteredExpenses = expenses.filter(exp => {
+    const isCancelled = exp.effective_posting_state === 'REVERSED';
+    if (lifecycleFilter === 'cancelled' ? !isCancelled : isCancelled) return false;
+
     // Filter by type
     if (filterType !== 'all') {
       const cat = expenseCategories.find(c => c.value === exp.expense_category);
@@ -2320,7 +2324,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             <div className="bg-white/20 rounded px-1.5 py-0.5">
               <span className="text-blue-100 text-[9px] mr-1">LINKED</span>
               <span className="text-[11px] font-bold">
-                {expenses.filter(e => reconciledExpenseIds.has(e.id)).length} / {expenses.length}
+                {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED').length}
               </span>
             </div>
           </div>
@@ -2372,6 +2376,25 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
               }`}
             >
               {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="h-4 w-px bg-gray-300"></div>
+
+        <div className="flex gap-0.5">
+          {[
+            { value: 'operational', label: 'Operational' },
+            { value: 'cancelled', label: 'Cancelled' },
+          ].map((filter) => (
+            <button
+              key={filter.value}
+              onClick={() => setLifecycleFilter(filter.value as 'operational' | 'cancelled')}
+              className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
+                lifecycleFilter === filter.value ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {filter.label}
             </button>
           ))}
         </div>
@@ -2757,24 +2780,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           />
                           {(postingState === 'ACTIVE' || postingState === 'PENDING' || postingState === 'REJECTED') && (
                             <FinanceActionButton action="edit" onClick={() => handleEdit(expense)} />
-                          )}
-                          {onSettleBill &&
-                            expense.payment_method === null &&
-                            postingState === 'ACTIVE' &&
-                            (expense.supplier_id || expense.staff_id) &&
-                            (expense.amount || 0) - (expense.paid_amount ?? 0) > 0.01 && (
-                            <button
-                              onClick={() => onSettleBill({
-                                id: expense.id,
-                                supplier_id: expense.supplier_id ?? null,
-                                staff_id: expense.staff_id ?? null,
-                                balance_amount: (expense.amount || 0) - (expense.paid_amount ?? 0),
-                              })}
-                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
-                              title="Settle via Payment Voucher"
-                            >
-                              <Banknote className="w-3.5 h-3.5" />
-                            </button>
                           )}
                           {isAdmin && postingState === 'PENDING' && (
                             <>
