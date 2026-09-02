@@ -423,8 +423,8 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     setPurchaseOrderId(po.id);
     setFormData(prev => ({
       ...prev,
-      currency: po.currency || prev.currency,
-      exchange_rate: Number(po.exchange_rate) || 1,
+      currency: editingInvoice ? prev.currency : (po.currency || prev.currency),
+      exchange_rate: editingInvoice ? prev.exchange_rate : (Number(po.exchange_rate) || 1),
       // Linking a PO to an existing PI must not overwrite supplier notes.
       ...(editingInvoice ? {} : { notes: po.po_number ? `Created from PO ${po.po_number}` : prev.notes }),
     }));
@@ -1284,7 +1284,11 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               >
                 <option value="">No PO — standalone supplier invoice</option>
                 {supplierPurchaseOrders.map(po => (
-                  <option key={po.id} value={po.id}>
+                  <option
+                    key={po.id}
+                    value={po.id}
+                    hidden={Boolean(purchaseOrderId && po.id === purchaseOrderId)}
+                  >
                     {po.po_number} · {po.po_date} · {po.status}
                   </option>
                 ))}

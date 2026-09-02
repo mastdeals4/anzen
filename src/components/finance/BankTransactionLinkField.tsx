@@ -33,7 +33,7 @@ interface BankTransactionLinkFieldProps {
 
 function formatAmount(line: BankTransactionLine) {
   const currency = line.bank_accounts?.currency || 'IDR';
-  const amount = Number(line.debit_amount || line.credit_amount || 0);
+  const amount = Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0);
   return formatCurrency(amount, currency);
 }
 
@@ -162,7 +162,7 @@ export function BankTransactionLinkField({
   const pendingAlreadyAllocated = Number(pendingTransaction?.allocatedAmount || 0);
   const pendingBankRemaining = Number(pendingTransaction?.remainingAmount ?? pendingBankTotal);
   const linkedLines = linkedTransactions ?? (linkedTransaction ? [linkedTransaction] : []);
-  const existingLinkedTotal = linkedLines.reduce((sum, line) => sum + Number(line.allocation_amount || 0), 0);
+  const existingLinkedTotal = linkedLines.reduce((sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
   const pendingDocumentOutstanding = Math.max(0, Number(documentOutstanding || 0) - existingLinkedTotal);
   const pendingAllocation = Math.min(pendingBankRemaining, pendingDocumentOutstanding);
   const pendingBankAfter = Math.max(0, pendingBankRemaining - pendingAllocation);

@@ -839,46 +839,58 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     const expenseIds = [...new Set(candidateIds.filter((id): id is string => Boolean(id)))];
     if (expenseIds.length === 0) return;
 
-    const [{ data, error }, { data: canonicalAllocations, error: allocationError }] = await Promise.all([
-      supabase
-      .from('bank_statement_lines')
-      .select(`
-        id,
-        transaction_date,
-        description,
-        debit_amount,
-        credit_amount,
-        bank_account_id,
-        payment_kind,
-        matched_expense_id,
-        bank_accounts(bank_name, account_number, alias, currency)
-      `)
-      .in('matched_expense_id', expenseIds),
-      supabase
-        .from('bank_statement_allocations')
-        .select(`
-          id,
-          document_id,
-          allocation_amount,
-          payment_kind,
-          bank_statement_lines!inner(
+    const CHUNK_SIZE = 50;
+    const linesList: any[] = [];
+    const allocationsList: any[] = [];
+
+    for (let i = 0; i < expenseIds.length; i += CHUNK_SIZE) {
+      const chunk = expenseIds.slice(i, i + CHUNK_SIZE);
+      const [linesRes, allocRes] = await Promise.all([
+        supabase
+          .from('bank_statement_lines')
+          .select(`
             id,
             transaction_date,
             description,
             debit_amount,
             credit_amount,
             bank_account_id,
+            payment_kind,
+            matched_expense_id,
             bank_accounts(bank_name, account_number, alias, currency)
-          )
-        `)
-        .eq('document_type', 'expense')
-        .in('document_id', expenseIds),
-    ]);
+          `)
+          .in('matched_expense_id', chunk),
+        supabase
+          .from('bank_statement_allocations')
+          .select(`
+            id,
+            document_id,
+            allocation_amount,
+            payment_kind,
+            bank_statement_lines!inner(
+              id,
+              transaction_date,
+              description,
+              debit_amount,
+              credit_amount,
+              bank_account_id,
+              bank_accounts(bank_name, account_number, alias, currency)
+            )
+          `)
+          .eq('document_type', 'expense')
+          .in('document_id', chunk),
+      ]);
 
-    if (error || allocationError) {
-      console.error('Unable to synchronize expense bank links:', error?.message || allocationError?.message);
-      return;
+      if (linesRes.error || allocRes.error) {
+        console.error('Unable to synchronize expense bank links:', linesRes.error?.message || allocRes.error?.message);
+        return;
+      }
+      if (linesRes.data) linesList.push(...linesRes.data);
+      if (allocRes.data) allocationsList.push(...allocRes.data);
     }
+
+    const data = linesList;
+    const canonicalAllocations = allocationsList;
 
     const linksByExpenseId = new Map<string, FinanceExpense['bank_statement_lines']>();
     expenseIds.forEach(id => linksByExpenseId.set(id, []));
@@ -888,7 +900,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       const expenseId = line.matched_expense_id;
       if (!expenseId) return;
       const links = linksByExpenseId.get(expenseId) || [];
-      links.push(line);
+      links.push({
+        ...line,
+        allocation_id: null,
+        allocation_amount: Number(line.debit_amount || line.credit_amount || 0),
+      });
       linksByExpenseId.set(expenseId, links);
     });
 
@@ -897,13 +913,29 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       const line = allocation.bank_statement_lines;
       if (!expenseId || !line) return;
       const links = linksByExpenseId.get(expenseId) || [];
-      if (links.some(existing => existing.id === line.id)) return;
-      links.push({
-        ...line,
-        allocation_id: allocation.id,
-        allocation_amount: Number(allocation.allocation_amount || 0),
-        payment_kind: allocation.payment_kind,
-      });
+      const directMatchIdx = links.findIndex(existing => existing.id === line.id && !existing.allocation_id);
+      if (
+        directMatchIdx >= 0 &&
+        Math.abs(Number(links[directMatchIdx].allocation_amount || 0) - Number(allocation.allocation_amount || 0)) < 0.01
+      ) {
+        // Exact canonical mirror of the direct match line -> attach allocation metadata
+        links[directMatchIdx] = {
+          ...links[directMatchIdx],
+          allocation_id: allocation.id,
+          allocation_amount: Number(allocation.allocation_amount || 0),
+          payment_kind: allocation.payment_kind,
+        };
+      } else {
+        // Distinct allocation record (e.g. separate 40k allocation alongside the 6.82M direct line)
+        links.push({
+          ...line,
+          id: links.some(existing => existing.id === line.id) ? `${line.id}_alloc_${allocation.id}` : line.id,
+          raw_line_id: line.id,
+          allocation_id: allocation.id,
+          allocation_amount: Number(allocation.allocation_amount || 0),
+          payment_kind: allocation.payment_kind,
+        });
+      }
       linksByExpenseId.set(expenseId, links);
     });
 
@@ -3472,6 +3504,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
                         {/* Payment Summary */}
                         {(() => {
+                          const alreadyPaid = (editingExpense?.bank_statement_lines || []).reduce(
+                            (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+                            0,
+                          );
+                          const balance = Math.max(0, brokerTotals.finalCashPayable - alreadyPaid);
                           type FormulaCell = { label: string; value: number; valueColor: string; op?: string };
                           const cells: FormulaCell[] = [
                             { label: 'Broker Invoice Amount', value: brokerInvoiceAmount, valueColor: 'text-gray-900', op: '+' },
@@ -3498,6 +3535,14 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                   <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide">FINAL CASH PAYABLE</span>
                                   <span className="text-sm font-bold font-mono text-emerald-900 mt-0.5">{fmt(brokerTotals.finalCashPayable)}</span>
                                 </div>
+                                <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                                  <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">PAID</span>
+                                  <span className="text-sm font-bold font-mono text-gray-900 mt-0.5">{fmt(alreadyPaid)}</span>
+                                </div>
+                                <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                                  <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">BALANCE</span>
+                                  <span className={`text-sm font-bold font-mono mt-0.5 ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{fmt(balance)}</span>
+                                </div>
                               </div>
                             </div>
                           );
@@ -3512,6 +3557,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     const bc = totals.bankChargesAmount;
                     const payable = totals.netPayable;
                     const settlementAmount = totals.settlementAmount;
+                    const alreadyPaid = (editingExpense?.bank_statement_lines || []).reduce(
+                      (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+                      0,
+                    );
+                    const balance = Math.max(0, payable - alreadyPaid);
                     const fmt = (n: number) => formatCurrency(n, expenseFormCurrency, {
                       minimumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
                       maximumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
@@ -3547,6 +3597,14 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                             <span className="text-sm font-bold font-mono text-blue-900 mt-0.5">{fmt(settlementAmount)}</span>
                           </div>
                         )}
+                        <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">PAID</span>
+                          <span className="text-sm font-bold font-mono text-gray-900 mt-0.5">{fmt(alreadyPaid)}</span>
+                        </div>
+                        <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">BALANCE</span>
+                          <span className={`text-sm font-bold font-mono mt-0.5 ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{fmt(balance)}</span>
+                        </div>
                       </div>
                     );
                   })()}
@@ -3558,12 +3616,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             <div className="grid grid-cols-2 gap-x-4 pt-1.5">
               {/* LEFT: Payment */}
               <div className="space-y-1.5">
-                {editingExpense && (() => {
-                  const netPayable = calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems });
-                  const alreadyPaid = (editingExpense.bank_statement_lines || []).reduce((sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
-                  const balance = Math.max(0, netPayable - alreadyPaid);
-                  return <div className="grid grid-cols-3 gap-1.5 rounded border border-gray-200 bg-gray-50 p-2 text-[10px]"><div><span className="text-gray-500">Net Payable</span><div className="font-mono font-semibold text-gray-900">{formatCurrency(netPayable, expenseFormCurrency)}</div></div><div><span className="text-gray-500">Already Paid</span><div className="font-mono font-semibold text-gray-900">{formatCurrency(alreadyPaid, expenseFormCurrency)}</div></div><div><span className="text-gray-500">Balance</span><div className={`font-mono font-semibold ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{formatCurrency(balance, expenseFormCurrency)}</div></div></div>;
-                })()}
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Payment</p>
 
                 <div>
@@ -3637,8 +3689,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     onSelect={async (transaction) => {
                       const existingLines = editingExpense?.bank_statement_lines || [];
                       if (editingExpense && existingLines.length > 0 && !existingLines.some((line) => line.id === transaction.id)) {
-                        const outstanding = Math.max(0, calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
-                          - existingLines.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0), 0));
+                        const existingTotal = existingLines.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
+                        const outstanding = Math.max(0, calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems }) - existingTotal);
                         const amount = Math.min(Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0), outstanding);
                         await linkBankTransaction({ bankStatementLineId: transaction.id, matchedExpenseId: editingExpense.id, allocationAmount: amount });
                         await syncExpenseBankLinks([editingExpense.id]);
@@ -3653,7 +3705,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
                             - Number(editingExpense?.paid_amount || 0)
                             + Number(editingExpense?.bank_statement_lines?.reduce(
-                              (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount || 0),
+                              (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
                               0,
                             ) || 0),
                         ),
@@ -3668,7 +3720,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         await syncExpenseBankLinks([editingExpense.id]);
                         notifyFinanceReconciliationRefresh();
                       } else {
-                        await unlinkBankTransaction(line.id);
+                        const lineId = (line as any).raw_line_id || line.id;
+                        await unlinkBankTransaction(lineId);
                         await syncExpenseBankLinks([editingExpense.id]);
                         notifyFinanceReconciliationRefresh();
                       }
@@ -4259,7 +4312,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                   ))}
                                   {bslLines.map((b) => {
                                     const lineCurrency = b.bank_accounts?.currency ?? currency;
-                                    const lineAmount = (b.debit_amount || 0) + (b.credit_amount || 0);
+                                    const lineAmount = Number(b.allocation_amount ?? ((b.debit_amount || 0) + (b.credit_amount || 0)));
                                     const fmtLine = (n: number) => formatCurrency(n, lineCurrency, { minimumFractionDigits: lineCurrency === 'IDR' ? 0 : 2, maximumFractionDigits: lineCurrency === 'IDR' ? 0 : 2 });
                                     return (
                                       <tr key={`bsl-${b.id}`} className="border-t border-gray-100">
@@ -4290,8 +4343,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       const lineCurrency = line.bank_accounts?.currency ?? currency;
                       const fmtLine = (n: number) => formatCurrency(n, lineCurrency);
                       const bankAmount = line.debit_amount || line.credit_amount || 0;
-                      const linkedAmount = bslLines.reduce((sum, item) => sum + Number(item.allocation_amount ?? item.debit_amount ?? item.credit_amount ?? 0), 0);
-                      const remainingAmount = Math.max(0, canonicalCashPayable - linkedAmount);
+                      const linkedAmount = Number(line.allocation_amount ?? bankAmount);
+                      const remainingBankAmount = Math.max(0, bankAmount - linkedAmount);
                       return (
                         <div key={line.id} className="px-2 py-1.5 bg-white border border-gray-200 rounded">
                           <div className="flex items-center gap-1.5 mb-1">
@@ -4318,7 +4371,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                             </div>
                             <div className="flex items-center justify-between">
                               <span className="text-[9px] uppercase font-medium text-gray-400">Remaining</span>
-                              <span className="font-mono font-medium text-orange-600">{fmtLine(remainingAmount)}</span>
+                              <span className="font-mono font-medium text-orange-600">{fmtLine(remainingBankAmount)}</span>
                             </div>
                           </div>
                         </div>
