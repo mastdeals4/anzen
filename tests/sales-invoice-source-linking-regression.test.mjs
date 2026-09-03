@@ -111,4 +111,14 @@ test('validate_sales_invoice_so_link explicitly casts linked_challan_ids to uuid
   );
 });
 
+test('post_sales_invoice_cogs is SECURITY DEFINER with fixed search_path', () => {
+  const migration = fs.readFileSync('supabase/migrations/20260903174500_set_post_sales_invoice_cogs_security_definer.sql', 'utf8');
+  assert.match(
+    migration,
+    /CREATE OR REPLACE FUNCTION public\.post_sales_invoice_cogs\(\)\s+RETURNS trigger\s+LANGUAGE plpgsql\s+SECURITY DEFINER\s+SET search_path = public, pg_temp/m,
+    'post_sales_invoice_cogs must be SECURITY DEFINER with search_path = public, pg_temp'
+  );
+});
+
+
 
