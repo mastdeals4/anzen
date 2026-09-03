@@ -80,6 +80,7 @@ interface SalesOrderOption {
   advance_payment_amount: number;
   advance_payment_status: string;
   status: string;
+  po_number?: string | null;
   items?: SOItemOption[];
 }
 
@@ -255,25 +256,65 @@ export function Sales() {
     }
   }, [selectedDCIds]);
 
-  const loadItemsFromSelectedDCs = async (challanIds: string[]) => {
+  const loadItemsFromSelectedDCs = async (challanIds: string[], customerId?: string) => {
+    if (!challanIds || challanIds.length === 0) return;
+
     try {
-      const { data, error } = await supabase
+      const effectiveCustomerId = customerId || formData.customer_id;
+      let query = supabase
         .from('pending_dc_items_by_customer')
         .select('*')
-        .eq('customer_id', formData.customer_id)
         .in('challan_id', challanIds);
 
+      if (effectiveCustomerId) {
+        query = query.eq('customer_id', effectiveCustomerId);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
+
+      let pendingRows = data || [];
+
+      // Fallback if view rows are not yet populated
+      if (pendingRows.length === 0) {
+        const { data: directItems, error: directErr } = await supabase
+          .from('delivery_challan_items')
+          .select('id, challan_id, product_id, batch_id, quantity, delivery_challans(challan_number, customer_id), products(product_name), batches(batch_number, make_id, product_sources!batches_make_id_fkey(supplier_name))')
+          .in('challan_id', challanIds);
+
+        if (!directErr && directItems && directItems.length > 0) {
+          pendingRows = directItems.map((di: any) => ({
+            customer_id: Array.isArray(di.delivery_challans) ? di.delivery_challans[0]?.customer_id : di.delivery_challans?.customer_id,
+            challan_id: di.challan_id,
+            challan_number: Array.isArray(di.delivery_challans) ? di.delivery_challans[0]?.challan_number : di.delivery_challans?.challan_number,
+            dc_item_id: di.id,
+            product_id: di.product_id,
+            product_name: di.products?.product_name || '',
+            batch_id: di.batch_id,
+            batch_number: di.batches?.batch_number || '',
+            original_quantity: di.quantity,
+            remaining_quantity: di.quantity,
+            make_id: di.batches?.make_id || null,
+            make_name: di.batches?.product_sources?.supplier_name || null,
+          }));
+        }
+      }
 
       // Check if selected DCs are linked to a Sales Order
       const { data: dcData } = await supabase
         .from('delivery_challans')
-        .select('id, sales_order_id')
+        .select('id, sales_order_id, sales_orders(id, po_number)')
         .in('id', challanIds)
         .not('sales_order_id', 'is', null);
 
       // Find a common SO from the DCs
-      const soIds = Array.from(new Set((dcData || []).map((d: any) => d.sales_order_id).filter(Boolean)));
+      const soRows = (dcData || []).map((d: any) => ({
+        sales_order_id: d.sales_order_id,
+        po_number: (Array.isArray(d.sales_orders) ? d.sales_orders[0]?.po_number : d.sales_orders?.po_number) || '',
+      })).filter(r => Boolean(r.sales_order_id));
+
+      const soIds = Array.from(new Set(soRows.map(r => r.sales_order_id).filter(Boolean)));
+      const poNumbers = Array.from(new Set(soRows.map(r => r.po_number).filter(Boolean)));
       const soItemPriceMap: Record<string, number> = {};
 
       if (soIds.length === 1) {
@@ -281,6 +322,17 @@ export function Sales() {
         const linkedSoId = soIds[0];
         setSelectedSOId(linkedSoId);
         setSoAutoLinked(true);
+
+        // Carry the customer PO from the authoritative Sales Order into the
+        // new invoice. If the SO has no PO, leave the field editable for entry.
+        const { data: linkedSO } = await supabase
+          .from('sales_orders')
+          .select('po_number')
+          .eq('id', linkedSoId)
+          .maybeSingle();
+        if (linkedSO?.po_number) {
+          setFormData(prev => ({ ...prev, po_number: linkedSO.po_number }));
+        }
 
         // Load SO items to get agreed prices
         const { data: soItems } = await supabase
@@ -291,6 +343,15 @@ export function Sales() {
         (soItems || []).forEach((si: any) => {
           soItemPriceMap[si.product_id] = si.unit_price;
         });
+      } else if (soIds.length > 1) {
+        setSoAutoLinked(false);
+        if (poNumbers.length > 1) {
+          showToast({
+            type: 'error',
+            title: 'Conflicting Sales Orders',
+            message: `Selected Delivery Challans belong to different Sales Orders with conflicting PO numbers (${poNumbers.join(', ')}).`,
+          });
+        }
       } else if (soIds.length === 0 && selectedSOId) {
         // DCs have no SO link — keep existing manual SO selection but don't auto-set
         setSoAutoLinked(false);
@@ -305,7 +366,7 @@ export function Sales() {
         setSoAutoLinked(false);
       }
 
-      const dcItems = (data || []).map((item: any) => {
+      const dcItems = (pendingRows || []).map((item: any) => {
         // Use SO price if available for this product, else fall back to DC selling_price
         const soPrice = soItemPriceMap[item.product_id];
         const unitPrice = soPrice !== undefined ? soPrice : (item.selling_price || item.unit_price || 0);
@@ -321,8 +382,8 @@ export function Sales() {
           challan_id: item.challan_id,
           dc_number: item.challan_number,
           max_quantity: item.remaining_quantity,
-          make_id: batches.find(batch => batch.id === item.batch_id)?.make_id || null,
-          make_name: batches.find(batch => batch.id === item.batch_id)?.product_sources?.supplier_name || null,
+          make_id: item.make_id || batches.find(batch => batch.id === item.batch_id)?.make_id || null,
+          make_name: item.make_name || batches.find(batch => batch.id === item.batch_id)?.product_sources?.supplier_name || null,
         };
       });
 
@@ -332,8 +393,8 @@ export function Sales() {
           const additions = dcItems
             .filter(item => !existingDcItemIds.has(item.delivery_challan_item_id))
             .map(item => ({ ...item, total: calculateItemTotal(item) }));
-          const retained = previous.filter(item => item.product_id || item.delivery_challan_item_id);
-          return additions.length > 0 ? [...retained, ...additions] : retained;
+          const retained = previous.filter(item => (item.product_id && item.product_id.trim() !== '') || item.delivery_challan_item_id);
+          return additions.length > 0 ? [...retained, ...additions] : (retained.length > 0 ? retained : additions);
         });
       }
     } catch (error) {
@@ -655,7 +716,7 @@ export function Sales() {
       const { data, error } = await supabase
         .from('sales_orders')
         .select(`
-          id, so_number, total_amount, advance_payment_amount, advance_payment_status, status,
+          id, so_number, po_number, total_amount, advance_payment_amount, advance_payment_status, status,
           sales_order_items(product_id, quantity, unit_price, tax_percent, make_id, product_sources!sales_order_items_make_id_fkey(supplier_name, grade), products(product_name))
         `)
         .eq('customer_id', customerId)
@@ -668,6 +729,7 @@ export function Sales() {
       const soOptions: SalesOrderOption[] = (data || []).map((so: any) => ({
         id: so.id,
         so_number: so.so_number,
+        po_number: so.po_number || null,
         total_amount: so.total_amount,
         advance_payment_amount: so.advance_payment_amount,
         advance_payment_status: so.advance_payment_status,
@@ -690,27 +752,57 @@ export function Sales() {
     }
   };
 
-  const handleSalesOrderSelect = (salesOrderId: string) => {
+  const handleSalesOrderSelect = async (salesOrderId: string) => {
     setSelectedSOId(salesOrderId);
     setSoAutoLinked(false);
     if (!salesOrderId) return;
 
     const salesOrder = customerSalesOrders.find(order => order.id === salesOrderId);
-    if (!salesOrder?.items?.length) return;
+    if (salesOrder?.po_number) {
+      setFormData(prev => ({ ...prev, po_number: salesOrder.po_number || '' }));
+    }
 
-    // An SO supplies commercial Product/Make data only. Physical Batch data
-    // remains unset until a Delivery Challan is selected.
-    setItems(salesOrder.items.map(item => ({
-      product_id: item.product_id,
-      batch_id: null,
-      quantity: item.quantity,
-      unit_price: item.unit_price,
-      tax_rate: item.tax_percent,
-      total: item.quantity * item.unit_price * (1 + item.tax_percent / 100),
-      delivery_challan_item_id: null,
-      make_id: item.make_id,
-      make_name: item.make_name,
-    })));
+    // A Sales Order requires an approved Delivery Challan before an invoice can be created.
+    // Query approved Delivery Challans for this SO and auto-select them.
+    try {
+      const { data: dcs, error: dcError } = await supabase
+        .from('delivery_challans')
+        .select('id, challan_number, approval_status')
+        .eq('sales_order_id', salesOrderId)
+        .eq('approval_status', 'approved');
+
+      if (dcError) throw dcError;
+
+      const dcIds = (dcs || []).map((d: any) => d.id);
+      if (dcIds.length === 0) {
+        showToast({
+          type: 'error',
+          title: 'No Delivery Challan',
+          message: 'This Sales Order has no approved Delivery Challans to invoice. Every invoice line requires a source Delivery Challan.',
+        });
+        setItems([{
+          product_id: '',
+          batch_id: null,
+          quantity: 1,
+          unit_price: 0,
+          tax_rate: 11,
+          total: 0,
+        }]);
+        setSelectedDCIds([]);
+        return;
+      }
+
+      await ensureLinkedDCOptionsVisible(dcIds);
+      setSelectedDCIds(dcIds);
+      await loadItemsFromSelectedDCs(dcIds);
+    } catch (error: any) {
+      console.error('Error loading Delivery Challans for Sales Order:', error);
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: `Failed to load Delivery Challans for Sales Order: ${error.message || 'Unknown error'}`,
+      });
+    }
   };
 
   const loadPendingDCOptions = async (customerId: string) => {
@@ -1056,7 +1148,14 @@ export function Sales() {
       notes: `Created from Delivery Challan: ${data.challanNumber}`,
     });
 
+    if (data.customerId) {
+      await loadPendingDCOptions(data.customerId);
+      await loadCustomerSalesOrders(data.customerId);
+      await loadPendingChallans(data.customerId);
+    }
+
     if (data.challanId) {
+      await ensureLinkedDCOptionsVisible([data.challanId]);
       setSelectedDCIds([data.challanId]);
       const { data: sourceChallan } = await supabase
         .from('delivery_challans')
@@ -1065,34 +1164,18 @@ export function Sales() {
         .maybeSingle();
       setSelectedSOId(sourceChallan?.sales_order_id || null);
       setSoAutoLinked(Boolean(sourceChallan?.sales_order_id));
+      if (sourceChallan?.sales_order_id) {
+        const { data: linkedSO } = await supabase
+          .from('sales_orders')
+          .select('po_number')
+          .eq('id', sourceChallan.sales_order_id)
+          .maybeSingle();
+        if (linkedSO?.po_number) {
+          setFormData(prev => ({ ...prev, po_number: linkedSO.po_number }));
+        }
+      }
+      await loadItemsFromSelectedDCs([data.challanId], data.customerId);
     }
-
-    if (data.customerId) {
-      await loadPendingChallans(data.customerId);
-    }
-
-    const mappedItems: InvoiceItem[] = data.items.map((item: any) => {
-      const batch = batches.find(b => b.id === item.batch_id);
-      const costPerUnit = batch ? (batch.import_price + batch.duty_charges + batch.freight_charges + batch.other_charges) / (batch as any).import_quantity : 0;
-      const suggestedPrice = costPerUnit * 1.25;
-
-      return {
-        product_id: item.product_id,
-        batch_id: item.batch_id,
-        quantity: item.quantity,
-        unit_price: Math.round(suggestedPrice),
-        tax_rate: 11,
-        total: 0,
-        delivery_challan_item_id: item.id || null, // Link to DC item
-        make_id: item.batches?.make_id || batch?.make_id || null,
-        make_name: item.batches?.product_sources?.supplier_name || batch?.product_sources?.supplier_name || null,
-      };
-    });
-
-    setItems(mappedItems.map(item => ({
-      ...item,
-      total: calculateItemTotal(item)
-    })));
 
     setModalOpen(true);
   };
@@ -1140,17 +1223,26 @@ export function Sales() {
 
     const { data, error } = await supabase
       .from('delivery_challan_items')
-      .select('id, challan_id, delivery_challans(id, sales_order_id, challan_number)')
+      .select('id, challan_id, delivery_challans(id, sales_order_id, challan_number, sales_orders(id, po_number))')
       .in('id', dcItemIds);
     if (error) throw error;
 
-    const rows = (data || []).map((row: any) => ({
-      challanId: row.challan_id as string,
-      salesOrderId: Array.isArray(row.delivery_challans) ? row.delivery_challans[0]?.sales_order_id : row.delivery_challans?.sales_order_id,
-    }));
+    const rows = (data || []).map((row: any) => {
+      const dc = Array.isArray(row.delivery_challans) ? row.delivery_challans[0] : row.delivery_challans;
+      const so = Array.isArray(dc?.sales_orders) ? dc?.sales_orders[0] : dc?.sales_orders;
+      return {
+        challanId: row.challan_id as string,
+        salesOrderId: dc?.sales_order_id as string | undefined,
+        poNumber: so?.po_number as string | undefined,
+      };
+    });
     const resolvedChallanIds = [...new Set(rows.map(row => row.challanId).filter(Boolean))];
     const resolvedSoIds = [...new Set(rows.map(row => row.salesOrderId).filter(Boolean))];
+    const resolvedPos = [...new Set(rows.map(row => row.poNumber).filter((po): po is string => Boolean(po && po.trim())))];
     if (resolvedSoIds.length > 1) {
+      if (resolvedPos.length > 1) {
+        throw new Error(`The selected Delivery Challans belong to different Sales Orders with conflicting PO numbers (${resolvedPos.join(', ')}). Resolve the conflict before saving this invoice.`);
+      }
       throw new Error('The selected Delivery Challans belong to different Sales Orders. Resolve the conflict before saving this invoice.');
     }
     return {
