@@ -83,3 +83,17 @@ test('sales expenses remain resolved through Delivery Challan ownership', () => 
   assert.match(linked, /delivery_challan_item_id/);
   assert.match(linked, /delivery_challans/);
 });
+
+test('DC hydration replaces obsolete placeholder and unlinked manual items', () => {
+  assert.match(
+    sales,
+    /const retained = previous\.filter\(item => Boolean\(item\.delivery_challan_item_id\)\);/,
+    'Must only retain items with valid delivery_challan_item_id when loading DC items'
+  );
+  assert.doesNotMatch(
+    sales,
+    /previous\.filter\(item => \(item\.product_id && item\.product_id\.trim\(\) !== ''\) \|\| item\.delivery_challan_item_id\)/,
+    'Must not retain unlinked product lines when authoritative DC items are loaded'
+  );
+});
+

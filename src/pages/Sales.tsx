@@ -391,7 +391,9 @@ export function Sales() {
           const additions = dcItems
             .filter(item => !existingDcItemIds.has(item.delivery_challan_item_id))
             .map(item => ({ ...item, total: calculateItemTotal(item) }));
-          const retained = previous.filter(item => (item.product_id && item.product_id.trim() !== '') || item.delivery_challan_item_id);
+          // Retain only authoritative DC items. Obsolete placeholder or unlinked
+          // manual rows without delivery_challan_item_id must not be mixed into an SO/DC-derived invoice.
+          const retained = previous.filter(item => Boolean(item.delivery_challan_item_id));
           return additions.length > 0 ? [...retained, ...additions] : (retained.length > 0 ? retained : additions);
         });
       }
@@ -1007,8 +1009,20 @@ export function Sales() {
       });
     });
 
-    const manualItems = items.filter(item => !item.delivery_challan_item_id);
-    setItems([...dcItems, ...manualItems]);
+    if (dcItems.length > 0) {
+      setItems(dcItems);
+    } else {
+      const manualItems = items.filter(item => !item.delivery_challan_item_id);
+      setItems(manualItems.length > 0 ? manualItems : [{
+        product_id: '',
+        batch_id: null,
+        quantity: 1,
+        unit_price: 0,
+        tax_rate: 11,
+        total: 0,
+        delivery_challan_item_id: null
+      }]);
+    }
   };
 
   const addManualItem = () => {
