@@ -38,8 +38,8 @@ test('DC navigation and single-DC selection populate header source state', () =>
 
 test('DC-linked Sales Order PO number is carried into invoice creation', () => {
   assert.match(sales, /from\('sales_orders'\)/);
-  assert.match(sales, /select\('po_number'\)/);
-  assert.match(sales, /setFormData\(prev => \(\{ \.\.\.prev, po_number: linkedSO\.po_number \}\)\)/);
+  assert.match(sales, /select\('customer_po_number'\)/);
+  assert.match(sales, /setFormData\(prev => \(\{ \.\.\.prev, po_number: linkedSO\.customer_po_number \}\)\)/);
 });
 
 test('Sales Order selection carries PO number and requires Delivery Challans', () => {
@@ -47,8 +47,7 @@ test('Sales Order selection carries PO number and requires Delivery Challans', (
     sales.indexOf('const handleSalesOrderSelect ='),
     sales.indexOf('const loadPendingDCOptions =', sales.indexOf('const handleSalesOrderSelect =')),
   );
-  assert.match(soSelect, /salesOrder\?\.po_number/);
-  assert.match(soSelect, /setFormData\(prev => \(\{ \.\.\.prev, po_number: salesOrder\.po_number/);
+  assert.match(soSelect, /salesOrder\?\.customer_po_number/);
   assert.match(soSelect, /from\('delivery_challans'\)/);
   assert.match(soSelect, /eq\('sales_order_id', salesOrderId\)/);
   assert.match(soSelect, /eq\('approval_status', 'approved'\)/);
@@ -56,14 +55,21 @@ test('Sales Order selection carries PO number and requires Delivery Challans', (
 });
 
 test('Sales Order without a PO leaves manual invoice entry available', () => {
-  assert.match(sales, /if \(linkedSO\?\.po_number\)/);
+  assert.match(sales, /if \(linkedSO\?\.customer_po_number\)/);
   assert.match(sales, /po_number: ''/);
+});
+
+test('Delivery Challan items inherit agreed unit price and customer PO from linked SO', () => {
+  assert.match(sales, /sales_orders\(id, so_number, customer_po_number, sales_order_items\(id, product_id, unit_price, tax_percent\)\)/);
+  assert.match(sales, /sales_order_items\(id, unit_price, tax_percent, product_id\)/);
+  assert.match(sales, /soItem\?\.unit_price != null/);
+  assert.match(sales, /unitPrice = Number\(soItem\.unit_price\)/);
 });
 
 test('conflicting Sales Orders are surfaced without guessing', () => {
   assert.match(sales, /different Sales Orders/);
   assert.match(sales, /resolvedSoIds\.length > 1/);
-  assert.match(sales, /conflicting PO numbers/);
+  assert.match(sales, /conflicting customer PO numbers/);
 });
 
 test('editing preserves source links through the canonical atomic update path', () => {
