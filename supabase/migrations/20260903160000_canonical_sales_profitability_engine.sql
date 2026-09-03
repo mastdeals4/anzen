@@ -227,17 +227,14 @@ BEGIN
       AND si.invoice_date <= p_end_date
       AND COALESCE(si.is_draft, false) = false
   ),
-  all_dc_lines AS (
+  dc_revenue_totals AS (
     SELECT
-      dci.challan_id AS dc_id,
-      SUM(sii.quantity * sii.unit_price) AS total_dc_sales,
-      SUM(sii.quantity) AS total_dc_qty
-    FROM public.sales_invoice_items sii
-    JOIN public.sales_invoices si ON si.id = sii.invoice_id
-    JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
-    WHERE dci.challan_id IN (SELECT DISTINCT dc_id FROM line_sources WHERE dc_id IS NOT NULL)
-      AND COALESCE(si.is_draft, false) = false
-    GROUP BY dci.challan_id
+      dc_id,
+      SUM(line_gross_sales) AS total_dc_sales,
+      SUM(quantity) AS total_dc_qty
+    FROM line_sources
+    WHERE dc_id IS NOT NULL
+    GROUP BY dc_id
   ),
   approved_dc_expenses AS (
     SELECT
@@ -246,7 +243,7 @@ BEGIN
     FROM public.finance_expenses
     WHERE expense_category IN ('delivery_sales', 'loading_sales')
       AND approval_status = 'approved'
-      AND delivery_challan_id IN (SELECT DISTINCT dc_id FROM line_sources WHERE dc_id IS NOT NULL)
+      AND delivery_challan_id IS NOT NULL
     GROUP BY delivery_challan_id
   ),
   lines_with_expense AS (
@@ -267,17 +264,17 @@ BEGIN
       ROUND(ls.quantity * COALESCE(public.effective_sales_cogs_unit_cost(ls.batch_id), 0), 2) AS line_cost,
       COALESCE(
         CASE
-          WHEN adl.total_dc_sales > 0
-            THEN ROUND(de.total_expense * (ls.line_gross_sales / adl.total_dc_sales), 2)
-          WHEN adl.total_dc_qty > 0
-            THEN ROUND(de.total_expense * (ls.quantity / adl.total_dc_qty), 2)
+          WHEN dt.total_dc_sales > 0
+            THEN ROUND(de.total_expense * (ls.line_gross_sales / dt.total_dc_sales), 2)
+          WHEN dt.total_dc_qty > 0
+            THEN ROUND(de.total_expense * (ls.quantity / dt.total_dc_qty), 2)
           ELSE 0
         END,
         0
       ) AS line_sales_expense
     FROM line_sources ls
     LEFT JOIN public.batches b ON b.id = ls.batch_id
-    LEFT JOIN all_dc_lines adl ON adl.dc_id = ls.dc_id
+    LEFT JOIN dc_revenue_totals dt ON dt.dc_id = ls.dc_id
     LEFT JOIN approved_dc_expenses de ON de.dc_id = ls.dc_id
   ),
   batch_summaries AS (

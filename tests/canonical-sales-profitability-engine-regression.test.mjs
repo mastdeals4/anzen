@@ -148,3 +148,22 @@ test('mathematical canonical model maintains exact reconciliation', () => {
 
   assert.ok(Math.abs((profit1 + profit2) - totalProfit) < 0.05, 'Line profits sum exactly to batch total');
 });
+
+test('delta migration 20260903161000 reconciles product_batches DC revenue scope', () => {
+  const deltaFile = resolve(
+    root,
+    'supabase/migrations/20260903161000_reconcile_product_batches_dc_expense_scope.sql'
+  );
+  const sql = readFileSync(deltaFile, 'utf8');
+  assert.match(
+    sql,
+    /all_dc_lines AS/i,
+    'Must define all_dc_lines to capture total DC revenue for multi-item DCs'
+  );
+  assert.match(
+    sql,
+    /CREATE OR REPLACE FUNCTION public\.get_sales_profitability_product_batches/i,
+    'Must update get_sales_profitability_product_batches'
+  );
+});
+
