@@ -1322,15 +1322,20 @@ export function Sales() {
         // Filter and map only valid items (with product_id)
         const invoiceItemsData = items
           .filter(item => item.product_id && item.product_id.trim() !== '')
-          .map(item => ({
-            invoice_id: invoice.id,
-            product_id: item.product_id,
-            batch_id: item.batch_id,
-            quantity: item.quantity,
-            unit_price: item.unit_price,
-            tax_rate: item.tax_rate,
-            delivery_challan_item_id: item.delivery_challan_item_id || null,
-          }));
+          .map(item => {
+            if (!item.delivery_challan_item_id) {
+              throw new Error('Every invoice line must have a source Delivery Challan item. Select the Delivery Challan item again before saving.');
+            }
+
+            return {
+              product_id: item.product_id,
+              batch_id: item.batch_id,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              tax_rate: item.tax_rate,
+              delivery_challan_item_id: item.delivery_challan_item_id,
+            };
+          });
 
         if (invoiceItemsData.length === 0) throw new Error('Invoice product rows were empty; no invoice was created.');
 

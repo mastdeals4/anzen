@@ -15,6 +15,17 @@ test('Sales Invoice derives header SO/DC links from authoritative item links', (
 test('new invoices retain item-level Delivery Challan item IDs', () => {
   assert.match(sales, /delivery_challan_item_id: item\.delivery_challan_item_id \|\| null/);
   assert.match(sales, /delivery_challan_item_id: \(item as any\)\.id \|\| null/);
+  assert.match(sales, /Every invoice line must have a source Delivery Challan item/);
+});
+
+test('new invoice item payload does not read an invoice header before atomic creation', () => {
+  const creation = sales.slice(
+    sales.indexOf('// Filter and map only valid items (with product_id)'),
+    sales.indexOf("supabase.rpc('create_sales_invoice_atomic'"),
+  );
+
+  assert.doesNotMatch(creation, /invoice_id:\s*invoice\.id/);
+  assert.match(creation, /delivery_challan_item_id: item\.delivery_challan_item_id/);
 });
 
 test('DC navigation and single-DC selection populate header source state', () => {
