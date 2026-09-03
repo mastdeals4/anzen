@@ -5,6 +5,8 @@ import { useFinance } from '../../contexts/FinanceContext';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatNumber } from '../../utils/currency';
 
+import { CanonicalSalesProfitReport } from './CanonicalSalesProfitReport';
+
 type DateRange = { startDate: string; endDate: string };
 type Tab = 'sales-profit' | 'monthly' | 'product-perf' | 'customer' | 'expense-profit';
 
@@ -62,15 +64,8 @@ function useReport<T>(name: string, dateRange: DateRange) {
 
 function Toolbar({ onRefresh }: { onRefresh: () => void }) { return <div className="flex justify-end"><button onClick={onRefresh} className="inline-flex items-center gap-1.5 px-3 py-2 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"><RefreshCw className="w-3.5 h-3.5" />Refresh</button></div>; }
 
-function SalesProfitTab({ dateRange }: { dateRange: DateRange }) {
-  const { rows, loading, error, load } = useReport<ProductRow>('get_sales_profit_summary', dateRange);
-  const revenue = rows.reduce((sum, row) => sum + row.total_revenue, 0); const cogs = rows.reduce((sum, row) => sum + row.total_cogs, 0);
-  const profit = rows.reduce((sum, row) => sum + row.total_profit, 0); const costed = rows.reduce((sum, row) => sum + row.costed_lines, 0); const lines = rows.reduce((sum, row) => sum + row.total_lines, 0);
-  return <section className="space-y-4">
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4"><StatCard label="Revenue ex-PPN" value={formatCurrency(revenue)} /><StatCard label="COGS (costed lines)" value={formatCurrency(cogs)} /><StatCard label="Reliable Gross Profit" value={formatCurrency(profit)} /><StatCard label="Gross Margin" value={lines === costed && revenue > 0 ? `${formatNumber(profit / revenue * 100, 1)}%` : 'Partial coverage'} /><StatCard label="Cost Coverage" value={`${costed} / ${lines}`} sub="invoice lines" /></div>
-    <p className="text-xs text-gray-500">COGS uses each sold batch's effective historical cost: local purchase cost or allocated import landed cost. Lines with genuinely unknown cost are excluded from reliable gross-margin aggregation.</p><Toolbar onRefresh={load} />
-    {loading ? <Spinner /> : error ? <ReportError message={error} retry={load} /> : rows.length === 0 ? <Empty text="No posted invoice lines found for this period" /> : <div className="bg-white border border-gray-200 rounded-xl overflow-x-auto"><table className="w-full text-sm"><thead className="bg-gray-50 text-xs text-gray-500"><tr><th className="p-3 text-left">Product</th><th className="p-3 text-right">Quantity</th><th className="p-3 text-right">Revenue</th><th className="p-3 text-right">COGS</th><th className="p-3 text-right">Gross Profit</th><th className="p-3 text-right">Gross Margin</th><th className="p-3 text-right">Coverage</th></tr></thead><tbody>{rows.map(row => <tr key={row.product_id} className="border-t"><td className="p-3 font-medium">{row.product_name}<div className="text-xs text-gray-400">{row.product_code}</div></td><td className="p-3 text-right">{formatNumber(row.total_qty_sold, 3)} {row.product_unit}</td><td className="p-3 text-right">{formatCurrency(row.total_revenue)}</td><td className="p-3 text-right">{row.no_cost ? '—' : formatCurrency(row.total_cogs)}</td><td className="p-3 text-right font-semibold">{row.no_cost ? 'Cost unavailable' : formatCurrency(row.total_profit)}</td><td className="p-3 text-right"><Margin value={row.profit_pct} /></td><td className="p-3 text-right"><Coverage costed={row.costed_lines} total={row.total_lines} /></td></tr>)}</tbody></table></div>}
-  </section>;
+function SalesProfitTab({ dateRange: _dateRange }: { dateRange: DateRange }) {
+  return <CanonicalSalesProfitReport />;
 }
 
 function MonthlySalesTab({ dateRange }: { dateRange: DateRange }) {
