@@ -6,6 +6,10 @@
 -- operation_id unique constraint is the idempotency/business-event guard.
 ALTER TABLE public.purchase_invoice_receiving_allocations
   DROP CONSTRAINT IF EXISTS purchase_invoice_receiving_allocations_purchase_invoice_item_id_batch_id_status_key;
+-- PostgreSQL truncated the original identifier to 63 bytes in deployed schemas.
+-- Drop that canonical truncated name as well so partial receipts are allowed.
+ALTER TABLE public.purchase_invoice_receiving_allocations
+  DROP CONSTRAINT IF EXISTS purchase_invoice_receiving_al_purchase_invoice_item_id_batc_key;
 
 CREATE INDEX IF NOT EXISTS idx_pi_receiving_alloc_item_batch_status
   ON public.purchase_invoice_receiving_allocations(purchase_invoice_item_id, batch_id, status);

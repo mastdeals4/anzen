@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const batches = fs.readFileSync('src/pages/Batches.tsx', 'utf8');
 const purchase = fs.readFileSync('src/components/finance/PurchaseInvoiceManager.tsx', 'utf8');
 const migration = fs.readFileSync('supabase/migrations/20260902110000_purchase_invoice_true_receiving_quantity.sql', 'utf8');
+const hardening = fs.readFileSync('supabase/migrations/20260905110000_harden_multi_pi_receiving_allocations.sql', 'utf8');
 
 test('Inward Pending uses the server-side true receiving total, not allocations alone', () => {
   assert.match(batches, /rpc\('purchase_invoice_item_received_totals'/);
@@ -43,4 +44,9 @@ test('quantity reductions below true received quantity are blocked', () => {
 test('canonical operation idempotency remains intact', () => {
   assert.match(migration, /WHERE operation_id=p_operation_id/);
   assert.match(migration, /idempotent_retry/);
+});
+
+test('truncated legacy receiving uniqueness constraint is removed', () => {
+  assert.match(hardening, /DROP CONSTRAINT IF EXISTS purchase_invoice_receiving_al_purchase_invoice_item_id_batc_key/);
+  assert.match(hardening, /idx_pi_receiving_alloc_item_batch_status/);
 });
