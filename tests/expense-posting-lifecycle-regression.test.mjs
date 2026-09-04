@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../supabase/migrations_archive/20260830100000_effective_expense_posting_lifecycle.sql', import.meta.url),
+  new URL('../supabase/migrations/20260830100000_effective_expense_posting_lifecycle.sql', import.meta.url),
   'utf8',
 );
 const service = readFileSync(new URL('../src/services/expensePostingLifecycle.ts', import.meta.url), 'utf8');
@@ -16,7 +16,7 @@ const pphRegister = readFileSync(new URL('../src/components/finance/tax/PphRegis
 const taxPeriods = readFileSync(new URL('../src/components/finance/tax/TaxPeriodsPanel.tsx', import.meta.url), 'utf8');
 const importContainers = readFileSync(new URL('../src/pages/ImportContainers.tsx', import.meta.url), 'utf8');
 const reportRpc = readFileSync(
-  new URL('../supabase/migrations_archive/20260805184941_create_ca_report_journal_lines_rpc.sql', import.meta.url),
+  new URL('../supabase/migrations/20260805184941_create_ca_report_journal_lines_rpc.sql', import.meta.url),
   'utf8',
 );
 
