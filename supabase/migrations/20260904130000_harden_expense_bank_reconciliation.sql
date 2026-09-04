@@ -30,18 +30,19 @@ BEGIN
   SELECT pg_get_functiondef('public.link_bank_statement_line(uuid,text,uuid,text,numeric)'::regprocedure) INTO d;
   original := d;
 
-  d := replace(d,
-    '    IF v_expense.approval_status <> ''approved'' THEN\n      RAISE EXCEPTION ''Expense must be approved before bank allocation'';\n    END IF;',
-    '    IF v_expense.approval_status <> ''approved'' THEN\n      RAISE EXCEPTION ''Expense must be approved before bank allocation'';\n    END IF;\n    -- The obligation must exist by the bank transaction date. This prevents\n    -- allocating a statement line to a future-created/future-dated expense.\n    IF v_line.transaction_date < v_expense.expense_date\n       OR v_line.transaction_date < v_expense.created_at::date THEN\n      RAISE EXCEPTION ''Bank transaction date % precedes expense obligation date % (created %)'',\n        v_line.transaction_date, v_expense.expense_date, v_expense.created_at::date;\n    END IF;');
+  d := regexp_replace(d,
+    E'    IF v_expense.approval_status <> ''approved'' THEN\n      RAISE EXCEPTION ''Expense must be approved before bank allocation'';\n    END IF;',
+    E'    IF v_expense.approval_status <> ''approved'' THEN\n      RAISE EXCEPTION ''Expense must be approved before bank allocation'';\n    END IF;\n    -- Obligation must exist by the bank transaction date.\n    IF v_line.transaction_date < v_expense.expense_date OR v_line.transaction_date < v_expense.created_at::date THEN\n      RAISE EXCEPTION ''Bank transaction predates expense obligation'';\n    END IF;', '');
 
-  d := replace(d,
-    '    v_je := v_recognition_je;\n  ELSIF p_document_type=''receipt''',
-    '    v_je := v_recognition_je;\n    IF public.expense_recognition_has_direct_bank_settlement(p_document_id, v_recognition_je) THEN\n      RAISE EXCEPTION ''Expense uses legacy direct-bank recognition; controlled legacy handling is required before reconciliation'';\n    END IF;\n  ELSIF p_document_type=''receipt''');
+  d := regexp_replace(d,
+    E'    v_je := v_recognition_je;\n  ELSIF p_document_type=''receipt''',
+    E'    v_je := v_recognition_je;\n    IF public.expense_recognition_has_direct_bank_settlement(p_document_id, v_recognition_je) THEN\n      RAISE EXCEPTION ''Expense uses legacy direct-bank recognition; controlled legacy handling is required before reconciliation'';\n    END IF;\n  ELSIF p_document_type=''receipt''', '');
 
   -- Retrying an already-created allocation must never create another payment JE.
-  d := replace(d,
-    '  IF p_document_type=''expense'' THEN\n    v_rate:=CASE WHEN v_expense_currency=''IDR'' THEN 1 ELSE COALESCE(v_expense.exchange_rate,0) END;',
-    '  IF p_document_type=''expense'' THEN\n    IF EXISTS (SELECT 1 FROM public.bank_statement_allocations a\n+       WHERE a.bank_statement_line_id=p_bank_line_id AND a.document_type=''expense''\n+         AND a.document_id=p_document_id AND a.payment_kind=COALESCE(p_payment_kind,''supplier'')) THEN\n      RAISE EXCEPTION ''This expense allocation already exists; retry is idempotently rejected'';\n    END IF;\n    v_rate:=CASE WHEN v_expense_currency=''IDR'' THEN 1 ELSE COALESCE(v_expense.exchange_rate,0) END;');
+  -- Existing allocation uniqueness and amount guards remain authoritative.
+  d := regexp_replace(d,
+    E'  IF p_document_type=''expense'' THEN\n    v_rate:=',
+    E'  IF p_document_type=''expense'' THEN\n    IF EXISTS (SELECT 1 FROM public.bank_statement_allocations a WHERE a.bank_statement_line_id=p_bank_line_id AND a.document_type=''expense'' AND a.document_id=p_document_id AND a.payment_kind=COALESCE(p_payment_kind,''supplier'')) THEN\n      RAISE EXCEPTION ''This expense allocation already exists'';\n    END IF;\n    v_rate:=', '');
 
   IF d = original THEN
     RAISE EXCEPTION 'Unexpected link_bank_statement_line definition; safety migration not applied';
