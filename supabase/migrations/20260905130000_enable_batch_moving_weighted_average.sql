@@ -159,8 +159,8 @@ BEGIN
     FOR l IN SELECT * FROM public.purchase_batch_cost_layers
       WHERE import_container_id=p_container_id ORDER BY created_at,id FOR UPDATE LOOP
       UPDATE public.purchase_batch_cost_layers
-         SET landed_cost_amount=round(pool*l.quantity/total_qty,2),
-             final_functional_unit_cost=round(l.functional_unit_cost + pool*l.quantity/total_qty/l.quantity,2)
+             SET landed_cost_amount=round(pool * l.quantity / total_qty,2),
+                 final_functional_unit_cost=round(l.functional_unit_cost + pool * l.quantity / total_qty / l.quantity,2)
        WHERE id=l.id;
     END LOOP;
 
