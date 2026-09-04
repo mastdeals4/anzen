@@ -34,6 +34,7 @@ import {
 import { FinanceDocumentAttachments, uploadFinanceDocuments } from './FinanceDocumentAttachments';
 import { getPostedJournalsForExport, writeReconciliationWorkbook, type ReconciliationSummaryRow } from './reconciliationExport';
 import { ExpenseCategorySelect, groupExpenseCategories } from './ExpenseCategorySelect';
+import { normalizeExpenseBankLinks } from '../../utils/expenseBankLinks';
 
 // Tiny inline helper used inside the SAP header PPN cell — a 3-state
 // selector rendered as a right-side chip so it doesn't consume a column.
@@ -941,7 +942,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
     const patchLinks = (expense: FinanceExpense): FinanceExpense => {
       const links = linksByExpenseId.get(expense.id);
-      return links === undefined ? expense : { ...expense, bank_statement_lines: links };
+      return links === undefined ? expense : { ...expense, bank_statement_lines: normalizeExpenseBankLinks(links as any[]) as FinanceExpense['bank_statement_lines'] };
     };
 
     setExpenses(prev => prev.map(patchLinks));
@@ -2295,6 +2296,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     return `${day}/${month}/${year?.slice(-2)}`;
   };
 
+  // Canonical allocations supersede the legacy matched_* projection for
+  // display and payment totals. Keep each statement line exactly once.
+  const editingBankLines = normalizeExpenseBankLinks(editingExpense?.bank_statement_lines || []);
+
   return (
     <div className="space-y-4">
       {/* Compact single-strip header — KPIs + primary actions */}
@@ -3490,7 +3495,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
                         {/* Payment Summary */}
                         {(() => {
-                          const alreadyPaid = (editingExpense?.bank_statement_lines || []).reduce(
+                          const alreadyPaid = editingBankLines.reduce(
                             (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
                             0,
                           );
@@ -3543,7 +3548,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     const bc = totals.bankChargesAmount;
                     const payable = totals.netPayable;
                     const settlementAmount = totals.settlementAmount;
-                    const alreadyPaid = (editingExpense?.bank_statement_lines || []).reduce(
+                    const alreadyPaid = editingBankLines.reduce(
                       (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
                       0,
                     );
@@ -3664,8 +3669,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                   <BankTransactionLinkField
                     bankAccountId={formData.bank_account_id}
                     selectedTransactionId={selectedBankTransactionId}
-                    linkedTransaction={editingExpense?.bank_statement_lines?.[0] || null}
-                    linkedTransactions={editingExpense?.bank_statement_lines || []}
+                    linkedTransaction={editingBankLines[0] || null}
+                    linkedTransactions={editingBankLines}
                     currentExpenseId={editingExpense?.id}
                     documentDate={formData.expense_date}
                     documentOutstanding={calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })}
@@ -3675,8 +3680,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     disabledMessage="Bank transaction linking is available after expense approval."
                     canUnlink={canManage}
                     onSelect={async (transaction) => {
-                      const existingLines = editingExpense?.bank_statement_lines || [];
-                      if (editingExpense && existingLines.length > 0 && !existingLines.some((line) => line.id === transaction.id)) {
+                      const existingLines = editingBankLines;
+                      if (editingExpense && existingLines.length > 0 && !existingLines.some((line) => ((line as any).raw_line_id || line.id) === transaction.id)) {
                         const existingTotal = existingLines.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
                         const outstanding = Math.max(0, calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems }) - existingTotal);
                         const amount = Math.min(Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0), outstanding);
@@ -3692,7 +3697,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           0,
                           calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
                             - Number(editingExpense?.paid_amount || 0)
-                            + Number(editingExpense?.bank_statement_lines?.reduce(
+                            + Number(editingBankLines.reduce(
                               (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
                               0,
                             ) || 0),
@@ -3915,7 +3920,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         // Payment breakdown
         const allocs = viewingExpense.voucher_allocations || [];
-        const bslLines = viewingExpense.bank_statement_lines || [];
+        const bslLines = normalizeExpenseBankLinks(viewingExpense.bank_statement_lines || []);
         const hasPaymentBreakdown = allocs.length > 0 || bslLines.length > 0;
         const supplierPaid = viewingExpense.paid_amount ?? 0;
         const pphTarget = viewingExpense.pph_amount || 0;
