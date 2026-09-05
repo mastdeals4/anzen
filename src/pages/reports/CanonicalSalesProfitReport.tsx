@@ -39,16 +39,16 @@ export interface ProductProfitabilityRow {
   current_stock: number;
   sold_qty: number;
   gross_sales: number;
-  product_cost: number;
+  product_cost: number | null;
   sales_expense: number;
-  gross_profit: number;
-  profit_after_sales_expense: number;
-  avg_landed_cost: number;
+  gross_profit: number | null;
+  profit_after_sales_expense: number | null;
+  avg_landed_cost: number | null;
   avg_selling_price: number;
   sales_expense_per_unit: number;
   net_selling_price_per_unit: number;
-  profit_per_unit: number;
-  profit_margin_pct: number;
+  profit_per_unit: number | null;
+  profit_margin_pct: number | null;
   costed_lines: number;
   total_lines: number;
   has_unreported_cost: boolean;
@@ -78,17 +78,17 @@ export interface BatchProfitabilityRow {
   batch_number: string;
   current_stock: number;
   sold_qty: number;
-  cost_per_unit: number;
+  cost_per_unit: number | null;
   gross_sales: number;
-  product_cost: number;
+  product_cost: number | null;
   sales_expense: number;
-  gross_profit: number;
-  profit_after_sales_expense: number;
+  gross_profit: number | null;
+  profit_after_sales_expense: number | null;
   avg_selling_price: number;
   sales_expense_per_unit: number;
   net_selling_price_per_unit: number;
-  profit_per_unit: number;
-  profit_margin_pct: number;
+  profit_per_unit: number | null;
+  profit_margin_pct: number | null;
   is_imported: boolean;
   cost_breakdown: {
     is_imported: boolean;
@@ -117,13 +117,13 @@ export interface OrderSaleRow {
   quantity: number;
   selling_price: number;
   gross_sales: number;
-  unit_cost: number;
-  line_cost: number;
+  unit_cost: number | null;
+  line_cost: number | null;
   line_sales_expense: number;
   net_selling_realization: number;
-  gross_profit: number;
-  profit: number;
-  profit_margin_pct: number;
+  gross_profit: number | null;
+  profit: number | null;
+  profit_margin_pct: number | null;
   expenses: Array<{
     id: string;
     voucher_number: string;
@@ -536,7 +536,9 @@ export function CanonicalSalesProfitReport() {
                 </tr>
               ) : (
                 filteredProducts.map(p => {
-                  const isPositive = p.profit_after_sales_expense >= 0;
+                  const hasFullCostCoverage = p.costed_lines === p.total_lines;
+                  const hasPartialCostCoverage = p.costed_lines > 0 && !hasFullCostCoverage;
+                  const isPositive = (p.profit_after_sales_expense ?? 0) >= 0;
                   return (
                     <tr
                       key={p.product_id}
@@ -556,7 +558,7 @@ export function CanonicalSalesProfitReport() {
                         {formatNumber(p.sold_qty, 0)} {p.product_unit}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-700">
-                        {p.costed_lines === 0 ? <span className="text-amber-700">Cost unavailable</span> : formatCurrency(p.avg_landed_cost)}
+                        {p.costed_lines === 0 ? <span className="text-amber-700">Cost unavailable</span> : hasPartialCostCoverage ? <span className="text-amber-700">Partial coverage</span> : formatCurrency(p.avg_landed_cost)}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-900 font-medium">
                         {formatCurrency(p.avg_selling_price)}
@@ -568,15 +570,15 @@ export function CanonicalSalesProfitReport() {
                         {formatCurrency(p.net_selling_price_per_unit)}
                       </td>
                       <td className={`px-3 py-3 text-right font-medium ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
-                        {formatCurrency(p.profit_per_unit)}
+                        {hasFullCostCoverage ? formatCurrency(p.profit_per_unit) : '—'}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        {p.costed_lines > 0 && p.costed_lines < p.total_lines ? (
+                        {hasPartialCostCoverage ? (
                           <span className="text-xs text-amber-700 font-medium">Partial coverage</span>
                         ) : <MarginBadge pct={p.costed_lines === p.total_lines ? p.profit_margin_pct : null} />}
                       </td>
                       <td className={`px-4 py-3 text-right font-bold text-sm ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
-                        {formatCurrency(p.profit_after_sales_expense)}
+                        {hasFullCostCoverage ? formatCurrency(p.profit_after_sales_expense) : '—'}
                       </td>
                       <td className="px-3 py-3 text-center">
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 group-hover:underline">
@@ -711,7 +713,7 @@ export function CanonicalSalesProfitReport() {
               <div className="p-3 text-center">
                 <span className="text-gray-500 block">Avg Landed Cost</span>
                 <span className="font-bold text-gray-800 text-sm mt-0.5">
-                  {formatCurrency(selectedProduct.avg_landed_cost)}
+                  {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.avg_landed_cost) : 'Cost unavailable'}
                 </span>
               </div>
               <div className="p-3 text-center">
@@ -729,7 +731,7 @@ export function CanonicalSalesProfitReport() {
               <div className="p-3 text-center bg-blue-50/50">
                 <span className="text-blue-900 font-semibold block">Total Profit</span>
                 <span className={`font-bold text-sm mt-0.5 ${selectedProduct.profit_after_sales_expense >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                  {formatCurrency(selectedProduct.profit_after_sales_expense)}
+                  {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.profit_after_sales_expense) : '—'}
                 </span>
               </div>
             </div>
@@ -794,7 +796,7 @@ export function CanonicalSalesProfitReport() {
                             {formatNumber(b.sold_qty, 0)}
                           </td>
                           <td className="px-3 py-2.5 text-right text-gray-700 font-medium">
-                            {formatCurrency(b.cost_per_unit)}
+                            {b.cost_per_unit == null ? <span className="text-amber-700">Cost unavailable</span> : formatCurrency(b.cost_per_unit)}
                           </td>
                           <td className="px-3 py-2.5 text-right text-gray-900">
                             {formatCurrency(b.avg_selling_price)}
@@ -802,14 +804,14 @@ export function CanonicalSalesProfitReport() {
                           <td className="px-3 py-2.5 text-right text-amber-700">
                             {b.sales_expense > 0 ? formatCurrency(b.sales_expense_per_unit) : '—'}
                           </td>
-                          <td className={`px-3 py-2.5 text-right font-medium ${b.profit_after_sales_expense >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                            {formatCurrency(b.profit_per_unit)}
+                          <td className={`px-3 py-2.5 text-right font-medium ${(b.profit_after_sales_expense ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {b.profit_per_unit == null ? '—' : formatCurrency(b.profit_per_unit)}
                           </td>
                           <td className="px-3 py-2.5 text-right">
                             <MarginBadge pct={b.profit_margin_pct} />
                           </td>
-                          <td className={`px-3 py-2.5 text-right font-bold ${b.profit_after_sales_expense >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                            {formatCurrency(b.profit_after_sales_expense)}
+                          <td className={`px-3 py-2.5 text-right font-bold ${(b.profit_after_sales_expense ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {b.profit_after_sales_expense == null ? '—' : formatCurrency(b.profit_after_sales_expense)}
                           </td>
                           <td className="px-2 py-2.5 text-center">
                             <span className="text-blue-600 font-medium text-xs group-hover:underline inline-flex items-center">
@@ -882,7 +884,7 @@ export function CanonicalSalesProfitReport() {
                     <div className="bg-blue-50 p-2 rounded border border-blue-200 font-bold">
                       <span className="text-blue-700 block text-[10px]">Final Landed Cost/Unit</span>
                       <span className="text-blue-950 text-sm">
-                        {formatCurrency(selectedBatch.cost_per_unit)}
+                        {selectedBatch.cost_per_unit == null ? 'Cost unavailable' : formatCurrency(selectedBatch.cost_per_unit)}
                       </span>
                     </div>
                   </>
@@ -895,7 +897,7 @@ export function CanonicalSalesProfitReport() {
                     <div className="bg-blue-50 p-2 rounded border border-blue-200 font-bold col-span-2">
                       <span className="text-blue-700 block text-[10px]">Actual Local Purchase Cost/Unit</span>
                       <span className="text-blue-950 text-sm">
-                        {formatCurrency(selectedBatch.cost_per_unit)}
+                        {selectedBatch.cost_per_unit == null ? 'Cost unavailable' : formatCurrency(selectedBatch.cost_per_unit)}
                       </span>
                     </div>
                   </>
@@ -962,7 +964,7 @@ export function CanonicalSalesProfitReport() {
                             {formatCurrency(o.gross_sales)}
                           </td>
                           <td className="px-2 py-2.5 text-right text-gray-600">
-                            {formatCurrency(o.line_cost)}
+                            {o.line_cost == null ? <span className="text-amber-700">Cost unavailable</span> : formatCurrency(o.line_cost)}
                           </td>
                           <td className="px-2 py-2.5 text-right text-amber-700">
                             {o.line_sales_expense > 0 ? (
@@ -979,11 +981,11 @@ export function CanonicalSalesProfitReport() {
                           <td className="px-2 py-2.5 text-right text-gray-800">
                             {formatCurrency(o.net_selling_realization)}
                           </td>
-                          <td className={`px-3 py-2.5 text-right font-bold ${o.profit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                            {formatCurrency(o.profit)}
-                            <div className="text-[10px] font-normal text-gray-400">
+                          <td className={`px-3 py-2.5 text-right font-bold ${(o.profit ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {o.profit == null ? '—' : formatCurrency(o.profit)}
+                            {o.profit_margin_pct != null && <div className="text-[10px] font-normal text-gray-400">
                               {formatNumber(o.profit_margin_pct, 1)}%
-                            </div>
+                            </div>}
                           </td>
                         </tr>
                       ))}
