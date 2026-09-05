@@ -558,7 +558,7 @@ export function CanonicalSalesProfitReport() {
                         {formatNumber(p.sold_qty, 0)} {p.product_unit}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-700">
-                        {p.costed_lines === 0 ? <span className="text-amber-700">Cost unavailable</span> : hasPartialCostCoverage ? <span className="text-amber-700">Partial coverage</span> : formatCurrency(p.avg_landed_cost)}
+                        {p.costed_lines === 0 ? <span className="text-amber-700">Cost unavailable</span> : hasPartialCostCoverage ? <span className="text-amber-700">Known COGS {formatCurrency(p.product_cost ?? 0)}<br /><span className="text-[10px]">Partial coverage</span></span> : formatCurrency(p.avg_landed_cost)}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-900 font-medium">
                         {formatCurrency(p.avg_selling_price)}
@@ -713,7 +713,7 @@ export function CanonicalSalesProfitReport() {
               <div className="p-3 text-center">
                 <span className="text-gray-500 block">Avg Landed Cost</span>
                 <span className="font-bold text-gray-800 text-sm mt-0.5">
-                  {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.avg_landed_cost) : 'Cost unavailable'}
+                  {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.avg_landed_cost) : selectedProduct.costed_lines > 0 ? `Known COGS ${formatCurrency(selectedProduct.product_cost ?? 0)} · Partial coverage` : 'Cost unavailable'}
                 </span>
               </div>
               <div className="p-3 text-center">
