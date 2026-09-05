@@ -337,7 +337,7 @@ export function Sales() {
 
       // 4. Construct authoritative invoice items
       const dcItems: InvoiceItem[] = (dciData || [])
-        .map((item: any) => {
+        .map<InvoiceItem | null>((item: any) => {
           const dc = Array.isArray(item.delivery_challans) ? item.delivery_challans[0] : item.delivery_challans;
           const so = Array.isArray(dc?.sales_orders) ? dc?.sales_orders[0] : dc?.sales_orders;
           const soItem = Array.isArray(item.sales_order_items) ? item.sales_order_items[0] : item.sales_order_items;

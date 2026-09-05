@@ -611,7 +611,7 @@ export function CanonicalSalesProfitReport() {
                     <MarginBadge pct={company?.profit_margin_pct ?? null} />
                   </td>
                   <td className={`px-4 py-3 text-right text-sm ${(company?.profit_after_sales_expenses || 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                    {formatCurrency(filteredProducts.reduce((s, p) => s + p.profit_after_sales_expense, 0))}
+                    {formatCurrency(filteredProducts.reduce((s, p) => s + (p.profit_after_sales_expense ?? 0), 0))}
                   </td>
                   <td />
                 </tr>
@@ -730,7 +730,7 @@ export function CanonicalSalesProfitReport() {
               </div>
               <div className="p-3 text-center bg-blue-50/50">
                 <span className="text-blue-900 font-semibold block">Total Profit</span>
-                <span className={`font-bold text-sm mt-0.5 ${selectedProduct.profit_after_sales_expense >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                <span className={`font-bold text-sm mt-0.5 ${(selectedProduct.profit_after_sales_expense ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                   {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.profit_after_sales_expense) : '—'}
                 </span>
               </div>
