@@ -3087,6 +3087,9 @@ export function BankReconciliationEnhanced({
                           {line.allocations.map(allocation => (
                             <span key={allocation.id} className="text-xs text-gray-600">
                               → {allocation.document_type === 'expense' ? 'Expense' : allocation.document_type.replace('_', ' ')}: {allocation.label} ({formatCurrency(allocation.allocation_amount, line.currency)})
+                              {allocation.document_remaining !== undefined && allocation.document_remaining > 0.01 && (
+                                <span className="ml-1 text-amber-700">· Remaining {formatCurrency(allocation.document_remaining, line.currency)}</span>
+                              )}
                             </span>
                           ))}
                         </>
@@ -3104,8 +3107,8 @@ export function BankReconciliationEnhanced({
                         </>
                       )}
                       {line.status === 'unmatched' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                          <XCircle className="w-3 h-3" /> Unrecorded
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                          <XCircle className="w-3 h-3 text-gray-400" /> Unrecorded
                         </span>
                       )}
                     </div>
