@@ -53,11 +53,10 @@ type ExpenseJournalRow = {
 };
 
 // Production can deploy the UI before the lifecycle view migration. Keep the
-// canonical view path opt-in until that migration is deliberately enabled.
-// If an enabled environment is nevertheless missing the view, remember that
-// result so one PGRST205 cannot turn into a request loop.
+// canonical view path enabled by default, falling back gracefully if PGRST205
+// or a missing view error occurs.
 const LIFECYCLE_VIEW_ENABLED =
-  import.meta.env.VITE_EFFECTIVE_EXPENSE_LIFECYCLE_VIEW_ENABLED === 'true';
+  import.meta.env.VITE_EFFECTIVE_EXPENSE_LIFECYCLE_VIEW_ENABLED !== 'false';
 let lifecycleViewAvailability: 'unknown' | 'available' | 'missing' =
   LIFECYCLE_VIEW_ENABLED ? 'unknown' : 'missing';
 
@@ -83,7 +82,8 @@ function resolveFallbackState(
       journal.source_module === 'historical_salary_advance_repair'
       || (journal.source_module === 'historical_repair'
         && (journal.reference_number?.startsWith('HR-AP-')
-          || journal.reference_number?.startsWith('HR-CASH-')))
+          || journal.reference_number?.startsWith('HR-CASH-')
+          || journal.reference_number?.startsWith('HR-REC-')))
     ),
   );
   const activeOriginals = originals.filter(journal => !journal.is_reversed).sort(newestFirst);
