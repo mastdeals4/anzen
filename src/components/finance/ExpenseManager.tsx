@@ -2577,8 +2577,15 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 const postingState = expense.effective_posting_state || 'AMBIGUOUS';
                 const isCancelledPosting = postingState === 'REVERSED';
 
-                // Fix: Check reconciliation from actual bank_statement_lines relationship
-                const isReconciled = expense.bank_statement_lines && expense.bank_statement_lines.length > 0;
+                // Reconciliation state is amount-based: a single allocation does
+                // not imply that the expense is fully settled.
+                const reconciledAmount = (expense.bank_statement_lines || []).reduce(
+                  (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+                  0,
+                );
+                const reconciliationTotal = calculateCanonicalCashPayable(expense);
+                const isPartiallyReconciled = reconciledAmount > 0.01 && reconciledAmount < reconciliationTotal - 0.01;
+                const isReconciled = reconciledAmount >= reconciliationTotal - 0.01;
 
                 return (
                   <tr key={expense.id} className="hover:bg-blue-50/50 transition-colors">
@@ -2706,6 +2713,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         <span
                           className={`inline-flex items-center justify-center w-5 h-5 rounded-full ${isCancelledPosting ? 'bg-gray-100 text-gray-500' : 'bg-green-100 text-green-700'}`}
                           title={isCancelledPosting ? 'Cancelled' : 'Linked'}
+                        >
+                          <Link2 className="w-3 h-3" />
+                        </span>
+                      ) : isPartiallyReconciled ? (
+                        <span
+                          className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-100 text-yellow-700"
+                          title={`Partially linked · ${formatCurrency(Math.max(reconciliationTotal - reconciledAmount, 0), getExpenseCurrency(expense))} remaining`}
                         >
                           <Link2 className="w-3 h-3" />
                         </span>

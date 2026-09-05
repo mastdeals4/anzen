@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const migration = fs.readFileSync('supabase/migrations/20260905180000_allow_controlled_supplier_prepayment_reconciliation.sql', 'utf8');
 const ui = fs.readFileSync('src/components/finance/BankReconciliationEnhanced.tsx', 'utf8');
-const canonical = fs.readFileSync('supabase/migrations/20260903120000_fix_expense_partial_payment_accounting.sql', 'utf8');
+const canonical = fs.readFileSync('supabase/migrations/20260905140000_canonical_baseline.sql', 'utf8');
 
 test('controlled supplier prepayment allows early outgoing bank debit only', () => {
   assert.match(canonical, /_sec_check_finance_role/); // security control retained in existing function
