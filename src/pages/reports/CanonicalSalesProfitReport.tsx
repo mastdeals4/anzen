@@ -414,12 +414,12 @@ export function CanonicalSalesProfitReport() {
         {/* Product Cost */}
         <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
           <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
-            <TooltipHeader title="Product Cost" tooltip="Cost of goods sold based on each batch's actual landed cost (imports) or local purchase cost." />
+            <TooltipHeader title="Product Cost" tooltip="Posted COGS recorded in the sales invoice's GL 5100 journal." />
           </p>
           <p className="text-lg font-bold text-gray-800 mt-1">
             {formatCurrency(company?.product_cost || 0)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Authoritative batch costs</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Posted COGS (GL 5100)</p>
         </div>
 
         {/* Sales Expenses */}
@@ -556,7 +556,7 @@ export function CanonicalSalesProfitReport() {
                         {formatNumber(p.sold_qty, 0)} {p.product_unit}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-700">
-                        {formatCurrency(p.avg_landed_cost)}
+                        {p.costed_lines === 0 ? <span className="text-amber-700">Cost unavailable</span> : formatCurrency(p.avg_landed_cost)}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-900 font-medium">
                         {formatCurrency(p.avg_selling_price)}
@@ -571,7 +571,9 @@ export function CanonicalSalesProfitReport() {
                         {formatCurrency(p.profit_per_unit)}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        <MarginBadge pct={p.profit_margin_pct} />
+                        {p.costed_lines > 0 && p.costed_lines < p.total_lines ? (
+                          <span className="text-xs text-amber-700 font-medium">Partial coverage</span>
+                        ) : <MarginBadge pct={p.costed_lines === p.total_lines ? p.profit_margin_pct : null} />}
                       </td>
                       <td className={`px-4 py-3 text-right font-bold text-sm ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
                         {formatCurrency(p.profit_after_sales_expense)}
