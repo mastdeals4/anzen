@@ -73,51 +73,6 @@ function fmtDate(s: string) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-async function loadExpensePaymentDates(expenseIds: string[]): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
-  if (expenseIds.length === 0) return result;
-  const [allocRes, legacyRes] = await Promise.all([
-    supabase
-      .from('bank_statement_allocations')
-      .select('document_id, bank_statement_line_id')
-      .eq('document_type', 'expense')
-      .eq('payment_kind', 'supplier')
-      .in('document_id', expenseIds),
-    supabase
-      .from('bank_statement_lines')
-      .select('matched_expense_id, transaction_date')
-      .in('matched_expense_id', expenseIds)
-      .eq('payment_kind', 'supplier'),
-  ]);
-  const lineIds: string[] = [];
-  for (const a of (allocRes.data ?? []) as any[]) {
-    if (a.bank_statement_line_id) lineIds.push(a.bank_statement_line_id);
-  }
-  const lineDates = new Map<string, string>();
-  if (lineIds.length > 0) {
-    const { data } = await supabase
-      .from('bank_statement_lines')
-      .select('id, transaction_date')
-      .in('id', lineIds);
-    for (const l of (data ?? []) as any[]) {
-      lineDates.set(l.id, l.transaction_date);
-    }
-  }
-  for (const a of (allocRes.data ?? []) as any[]) {
-    const date = lineDates.get(a.bank_statement_line_id);
-    if (date) {
-      const existing = result.get(a.document_id);
-      if (!existing || date > existing) result.set(a.document_id, date);
-    }
-  }
-  for (const l of (legacyRes.data ?? []) as any[]) {
-    if (!l.matched_expense_id || !l.transaction_date) continue;
-    const existing = result.get(l.matched_expense_id);
-    if (!existing || l.transaction_date > existing) result.set(l.matched_expense_id, l.transaction_date);
-  }
-  return result;
-}
-
 async function loadPphDetail(row: Row): Promise<SourceLine[]> {
   const yr = row.fiscal_year;
   const mo = row.period_month;
@@ -142,26 +97,10 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
       .in('expense_category', ['pib_import', 'pph_import']),
   ]);
 
-  // The view (vw_canonical_tax_period_amounts) uses two date logics:
-  // - When paid_amount > 0.01 OR status in paid/filed/closed → stored pph_total,
-  //   which was computed by compute_period_ppn using get_expense_pph_period_date
-  //   (bank payment date → due_date → expense_date).
-  // - When open and unpaid → computed expense_pph using COALESCE(due_date, expense_date).
-  // The drill-down must use the SAME date logic as the view for each period.
-  const usesStoredTotal =
-    Number(row.pph_paid_total || 0) > 0.01 ||
-    ['paid', 'filed', 'closed'].includes(row.status);
-  const allExpenseIds = [
-    ...((feRes.data ?? []) as any[]).map(e => e.id),
-    ...((importRes.data ?? []) as any[]).map(e => e.id),
-  ];
-  const paymentDateMap = usesStoredTotal
-    ? await loadExpensePaymentDates(allExpenseIds)
-    : new Map<string, string>();
+  // PPh withholding is attributed to the expense/document calendar month.
+  // Due dates and payment dates are settlement terms, not the tax period.
   const periodDate = (expense: any): string =>
-    usesStoredTotal
-      ? (paymentDateMap.get(expense.id) ?? expense.due_date ?? expense.expense_date)
-      : (expense.due_date ?? expense.expense_date);
+    expense.expense_date;
   const isSelectedPeriod = (expense: any): boolean => {
     if (row.tax_type !== 'PPh_Unifikasi' && expense.pph_tax_period_id) return expense.pph_tax_period_id === row.tax_period_id;
     const date = periodDate(expense);
