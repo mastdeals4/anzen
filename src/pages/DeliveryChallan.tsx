@@ -454,13 +454,13 @@ export function DeliveryChallan() {
     }
   };
 
-  const getFIFOBatch = (productId: string) => {
+  const getFIFOBatch = (productId: string, makeId?: string | null) => {
     const productBatches = batches
-      .filter(b => b.product_id === productId && !isExpired(b.expiry_date) && getAvailableStock(b) > 0)
+      .filter(b => b.product_id === productId && (!makeId || b.make_id === makeId) && !isExpired(b.expiry_date) && getAvailableStock(b) > 0)
       .sort((a, b) => {
-        const dateA = new Date(a.import_date!).getTime();
-        const dateB = new Date(b.import_date!).getTime();
-        return dateA - dateB;
+        const ea = a.expiry_date ? new Date(a.expiry_date).getTime() : Number.MAX_SAFE_INTEGER;
+        const eb = b.expiry_date ? new Date(b.expiry_date).getTime() : Number.MAX_SAFE_INTEGER;
+        return ea - eb || (a.import_date ? new Date(a.import_date).getTime() : 0) - (b.import_date ? new Date(b.import_date).getTime() : 0);
       });
     return productBatches[0] || null;
   };
@@ -521,54 +521,96 @@ export function DeliveryChallan() {
           })) as SalesOrderItemSource[];
           setSalesOrderItemSources(normalizedSoItems);
           if (soItems && soItems.length > 0) {
-            const newItems = soItems.map(item => {
+            const newItems: ChallanItem[] = [];
+            const allocatedBatchUsage = new Map<string, number>();
+
+            for (const item of soItems) {
+              const remainingNeeded = Math.max(0, Number(item.quantity) - Number(item.delivered_quantity || 0));
+              let neededQty = remainingNeeded > 0 ? remainingNeeded : (parseFloat(String(item.quantity)) || 0);
+
               const productBatches = batches
                 .filter(b => {
-                    return b.product_id === item.product_id && (!item.make_id || b.make_id === item.make_id) && b.current_stock > 0 && !isExpired(b.expiry_date);
+                  return b.product_id === item.product_id && (!item.make_id || b.make_id === item.make_id) && !isExpired(b.expiry_date);
                 })
                 .sort((a, b) => {
                   const ea = a.expiry_date ? new Date(a.expiry_date).getTime() : Number.MAX_SAFE_INTEGER;
                   const eb = b.expiry_date ? new Date(b.expiry_date).getTime() : Number.MAX_SAFE_INTEGER;
-                  return ea - eb || new Date(a.import_date!).getTime() - new Date(b.import_date!).getTime();
+                  return ea - eb || (a.import_date ? new Date(a.import_date).getTime() : 0) - (b.import_date ? new Date(b.import_date).getTime() : 0);
                 });
-              const fifoBatch = productBatches[0] || null;
 
-              if (!fifoBatch) {
-                return {
+              let hasAllocated = false;
+              for (const batch of productBatches) {
+                if (neededQty <= 0) break;
+                const baseStock = getAvailableStock(batch);
+                const used = allocatedBatchUsage.get(batch.id) || 0;
+                const available = baseStock - used;
+                if (available <= 0) continue;
+
+                let packSize: number | null = null;
+                let packType: string | null = null;
+                let numberOfPacks: number | null = null;
+                let lineQty = 0;
+
+                if (batch.packaging_details) {
+                  const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)kg/i);
+                  if (match) {
+                    packType = match[2].toLowerCase();
+                    packSize = parseFloat(match[3]);
+                  }
+                }
+
+                if (packSize && packSize > 0) {
+                  const maxPacksInBatch = Math.floor(available / packSize);
+                  if (maxPacksInBatch <= 0) continue;
+                  const packsNeeded = Math.ceil(neededQty / packSize);
+                  numberOfPacks = Math.min(maxPacksInBatch, packsNeeded);
+                  lineQty = numberOfPacks * packSize;
+                } else {
+                  lineQty = Math.min(available, neededQty);
+                }
+
+                if (lineQty <= 0) continue;
+
+                allocatedBatchUsage.set(batch.id, used + lineQty);
+                neededQty = Math.max(0, neededQty - lineQty);
+                hasAllocated = true;
+
+                newItems.push({
+                  sales_order_item_id: item.id,
+                  product_id: item.product_id,
+                  batch_id: batch.id,
+                  quantity: lineQty,
+                  pack_size: packSize,
+                  pack_type: packType,
+                  number_of_packs: numberOfPacks || 1,
+                  products: item.products,
+                  batches: batch,
+                });
+              }
+
+              // If no stock was allocated for this SO item, add a placeholder row so user can see it
+              if (!hasAllocated) {
+                newItems.push({
                   sales_order_item_id: item.id,
                   product_id: item.product_id,
                   batch_id: '',
-                  quantity: parseFloat(String(item.quantity)) || 0,
+                  quantity: neededQty,
                   pack_size: null,
                   pack_type: null,
                   number_of_packs: null,
-                };
+                  products: item.products,
+                });
               }
+            }
 
-              let packSize = null;
-              let packType = null;
-              let numberOfPacks = null;
-
-              if (fifoBatch.packaging_details) {
-                const match = fifoBatch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)kg/i);
-                if (match) {
-                  numberOfPacks = parseInt(match[1], 10);
-                  packType = match[2].toLowerCase();
-                  packSize = parseFloat(match[3]);
-                }
-              }
-
-              return {
-                sales_order_item_id: item.id,
-                product_id: item.product_id,
-                batch_id: fifoBatch.id,
-                quantity: parseFloat(String(item.quantity)) || 0,
-                pack_size: packSize,
-                pack_type: packType,
-                number_of_packs: numberOfPacks || 1,
-              };
-            });
-            setItems(newItems);
+            setItems(newItems.length > 0 ? newItems : [{
+              product_id: '',
+              batch_id: '',
+              quantity: 0,
+              pack_size: null,
+              pack_type: null,
+              number_of_packs: null,
+            }]);
           }
         } catch (error) {
           console.error('Error loading SO items:', error);
@@ -628,6 +670,17 @@ export function DeliveryChallan() {
     const batch = batches.find(b => b.id === batchId);
     if (batch) {
       const newItems = [...items];
+      const currentItem = newItems[index];
+
+      // Auto-assign sales_order_item_id if missing but SO items are loaded
+      let soItemId = currentItem.sales_order_item_id;
+      if (!soItemId && formData.sales_order_id && salesOrderItemSources.length > 0) {
+        const matchingSource = salesOrderItemSources.find(s => s.product_id === batch.product_id && (!s.make_id || s.make_id === batch.make_id))
+          || salesOrderItemSources.find(s => s.product_id === batch.product_id);
+        if (matchingSource) {
+          soItemId = matchingSource.id;
+        }
+      }
 
       let packSize = null;
       let packType = null;
@@ -640,14 +693,40 @@ export function DeliveryChallan() {
           packType = match[2].toLowerCase();
           packSize = parseFloat(match[3]);
 
-          const availableStock = getAvailableStock(batch);
+          // Calculate available stock minus usage in other rows of this form
+          let usedInOtherRows = 0;
+          items.forEach((it, i) => {
+            if (i !== index && it.batch_id === batchId) {
+              usedInOtherRows += it.quantity || 0;
+            }
+          });
+          const availableStock = Math.max(0, getAvailableStock(batch) - usedInOtherRows);
 
           if (packSize && packSize > 0) {
-            // Calculate how many full packs can fit in available stock
             const maxPacks = Math.floor(availableStock / packSize);
 
-            // Default to 1 pack if available, otherwise 0 (will trigger validation)
-            numberOfPacks = maxPacks >= 1 ? 1 : 0;
+            // Determine needed quantity for this SO item
+            let neededQty = 0;
+            if (soItemId) {
+              const sourceItem = salesOrderItemSources.find(s => s.id === soItemId);
+              if (sourceItem) {
+                const totalTarget = Math.max(0, Number(sourceItem.quantity) - Number(sourceItem.delivered_quantity || 0));
+                let otherRowsQty = 0;
+                items.forEach((it, i) => {
+                  if (i !== index && it.sales_order_item_id === soItemId) {
+                    otherRowsQty += it.quantity || 0;
+                  }
+                });
+                neededQty = Math.max(0, totalTarget - otherRowsQty);
+              }
+            }
+
+            if (neededQty > 0) {
+              const neededPacks = Math.ceil(neededQty / packSize);
+              numberOfPacks = Math.min(maxPacks, neededPacks);
+            } else {
+              numberOfPacks = maxPacks >= 1 ? 1 : 0;
+            }
           } else {
             numberOfPacks = 1;
           }
@@ -658,6 +737,8 @@ export function DeliveryChallan() {
 
       newItems[index] = {
         ...newItems[index],
+        sales_order_item_id: soItemId,
+        product_id: batch.product_id,
         batch_id: batchId,
         pack_size: packSize,
         pack_type: packType,
@@ -682,8 +763,11 @@ export function DeliveryChallan() {
   };
 
   const addItem = () => {
+    // If there is an SO selected with source items, default sales_order_item_id and product_id to the first source
+    const defaultSource = salesOrderItemSources.length === 1 ? salesOrderItemSources[0] : null;
     setItems([...items, {
-      product_id: '',
+      sales_order_item_id: defaultSource?.id || null,
+      product_id: defaultSource?.product_id || '',
       batch_id: '',
       quantity: 0,
       pack_size: null,
@@ -814,6 +898,8 @@ export function DeliveryChallan() {
         .eq('sales_order_id', formData.sales_order_id);
       if (sourceItemsError) throw sourceItemsError;
       const sourceMap = new Map((sourceItems || []).map((row: any) => [row.id, row]));
+      const qtyBySoItem = new Map<string, number>();
+
       for (const item of items) {
         if (!item.sales_order_item_id || !sourceMap.has(item.sales_order_item_id)) {
           showToast({ type: 'error', title: 'Delivery Challan', message: 'Every item must come from the selected Sales Order.' });
@@ -824,8 +910,20 @@ export function DeliveryChallan() {
           showToast({ type: 'error', title: 'Delivery Challan', message: 'A selected product does not match its Sales Order item.' });
           return;
         }
-        if (item.quantity <= 0 || item.quantity > Number(source.quantity) - Number(source.delivered_quantity || 0) + 0.0001) {
-          showToast({ type: 'error', title: 'Delivery Challan', message: `Quantity for ${item.product_id} exceeds the remaining Sales Order quantity.` });
+        if (item.quantity <= 0) {
+          showToast({ type: 'error', title: 'Delivery Challan', message: 'Item quantity must be greater than zero.' });
+          return;
+        }
+        const prev = qtyBySoItem.get(item.sales_order_item_id) || 0;
+        qtyBySoItem.set(item.sales_order_item_id, prev + item.quantity);
+      }
+
+      for (const [soItemId, totalQty] of qtyBySoItem.entries()) {
+        const source = sourceMap.get(soItemId) as any;
+        const maxRemaining = Number(source.quantity) - Number(source.delivered_quantity || 0);
+        if (totalQty > maxRemaining + 0.0001) {
+          const prodName = products.find(p => p.id === source.product_id)?.product_name || 'Product';
+          showToast({ type: 'error', title: 'Delivery Challan', message: `Total quantity for ${prodName} (${totalQty}) exceeds the remaining Sales Order quantity (${maxRemaining}).` });
           return;
         }
       }
@@ -838,15 +936,15 @@ export function DeliveryChallan() {
         .eq('sales_order_id', formData.sales_order_id)
         .eq('status', 'active');
       if (reservationError) throw reservationError;
-      const mismatch = items.some(item => {
+
+      for (const [soItemId, totalQty] of qtyBySoItem.entries()) {
         const reserved = (activeReservations || [])
-          .filter((r: any) => r.sales_order_item_id === item.sales_order_item_id)
+          .filter((r: any) => r.sales_order_item_id === soItemId)
           .reduce((sum: number, r: any) => sum + Number(r.reserved_quantity), 0);
-        return reserved + 0.0001 < Number(item.quantity);
-      });
-      if (mismatch) {
-        showToast({ type: 'error', title: 'Delivery Challan', message: 'Delivery quantity exceeds the remaining Sales Order product reservation.' });
-        return;
+        if (reserved + 0.0001 < totalQty) {
+          showToast({ type: 'error', title: 'Delivery Challan', message: 'Delivery quantity exceeds the remaining Sales Order product reservation.' });
+          return;
+        }
       }
     }
 
@@ -1589,8 +1687,18 @@ export function DeliveryChallan() {
                         <SearchableSelect
                             value={item.product_id}
                             onChange={(value) => {
+                              const matchingSource = salesOrderItemSources.find(s => s.product_id === value);
                               const newItems = [...items];
-                              newItems[index] = { ...newItems[index], product_id: value, batch_id: '' };
+                              newItems[index] = {
+                                ...newItems[index],
+                                product_id: value,
+                                sales_order_item_id: matchingSource?.id || newItems[index].sales_order_item_id || null,
+                                batch_id: '',
+                                quantity: 0,
+                                pack_size: null,
+                                pack_type: null,
+                                number_of_packs: null,
+                              };
                               setItems(newItems);
                             }}
                             options={products.map(p => ({ value: p.id, label: p.product_name }))}
@@ -1601,7 +1709,7 @@ export function DeliveryChallan() {
                       </td>
                       <td className="px-2 py-1 text-gray-600">{selectedBatch?.product_sources?.supplier_name || 'Not recorded'}</td>
                       <td className="px-2 py-1">
-                        {!item.product_id ? <span className="text-gray-400">Select product first</span> : availableBatches.length > 0 ? <div className="flex items-center gap-1"><SearchableSelect value={item.batch_id} onChange={(value) => handleBatchChange(index, value)} options={availableBatches.map((b, idx) => ({ value: b.id, label: `${b.batch_number} (Avl: ${getAvailableStock(b) - (batchUsageInForm.get(b.id) || 0)}kg)${idx === 0 ? ' 🔄' : ''}` }))} placeholder="Select Batch" className="text-xs flex-1" required /><button type="button" onClick={() => { const fifoBatch = getFIFOBatch(item.product_id); if (fifoBatch) handleBatchChange(index, fifoBatch.id); }} className="shrink-0 text-[10px] text-blue-600 hover:text-blue-700 font-medium" title="Select oldest batch (FIFO)">FIFO</button></div> : <span className="text-red-600">No stock available</span>}
+                        {!item.product_id ? <span className="text-gray-400">Select product first</span> : availableBatches.length > 0 ? <div className="flex items-center gap-1"><SearchableSelect value={item.batch_id} onChange={(value) => handleBatchChange(index, value)} options={availableBatches.map((b, idx) => ({ value: b.id, label: `${b.batch_number} (Avl: ${getAvailableStock(b) - (batchUsageInForm.get(b.id) || 0)}kg)${idx === 0 ? ' 🔄' : ''}` }))} placeholder="Select Batch" className="text-xs flex-1" required /><button type="button" onClick={() => { const sourceMake = salesOrderItemSources.find(source => source.id === item.sales_order_item_id)?.make_id || null; const fifoBatch = getFIFOBatch(item.product_id, sourceMake); if (fifoBatch) handleBatchChange(index, fifoBatch.id); }} className="shrink-0 text-[10px] text-blue-600 hover:text-blue-700 font-medium" title="Select oldest batch (FIFO)">FIFO</button></div> : <span className="text-red-600">No stock available</span>}
                       </td>
                       <td className="px-2 py-1 text-gray-600">{selectedBatch?.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}</td>
                       <td className="px-2 py-1 text-gray-600 truncate max-w-36">{selectedBatch?.packaging_details || '—'}</td>
