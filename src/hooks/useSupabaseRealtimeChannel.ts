@@ -20,6 +20,35 @@ export interface RealtimeChannelOptions {
 // subscription that replaced it.
 const activeChannels = new Map<string, { token: symbol; channel: ReturnType<typeof supabase.channel> }>();
 
+function safeRemoveChannel(chan: ReturnType<typeof supabase.channel>): void {
+  try {
+    // If the channel is currently in the handshake / joining phase, removing it immediately
+    // aborts the browser's underlying WebSocket while readyState is still CONNECTING,
+    // producing the console error "WebSocket is closed before the connection is established".
+    // Wait until it is connected or times out before gracefully removing it.
+    const state = (chan as unknown as { state?: string }).state;
+    if (state === 'joining') {
+      let cleaned = false;
+      const doClean = () => {
+        if (cleaned) return;
+        cleaned = true;
+        try { supabase.removeChannel(chan); } catch { /* ignore */ }
+      };
+      const fallbackTimer = setTimeout(doClean, 1200);
+      chan.subscribe((status) => {
+        if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          clearTimeout(fallbackTimer);
+          doClean();
+        }
+      });
+    } else {
+      supabase.removeChannel(chan);
+    }
+  } catch {
+    // ignore teardown errors
+  }
+}
+
 /**
  * Stable, StrictMode-safe realtime subscription.
  *  - Channel created once per (channelName + table + filter + enabled) change.
@@ -51,9 +80,7 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
     const token = Symbol(channelName);
     const existingEntry = activeChannels.get(channelName);
     if (existingEntry) {
-      // Best-effort removal: supabase.removeChannel accepts channel objects,
-      // but getChannels() lets us find by topic.
-      supabase.removeChannel(existingEntry.channel);
+      safeRemoveChannel(existingEntry.channel);
       activeChannels.delete(channelName);
     }
 
@@ -74,7 +101,7 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
     const subscribe = () => {
       if (disposed || subscribing) return;
       subscribing = true;
-      if (channel) supabase.removeChannel(channel);
+      if (channel) safeRemoveChannel(channel);
       channel = supabase.channel(channelName);
 
       // The postgres_changes typings are permissive; cast to any to satisfy
@@ -98,11 +125,19 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
       activeChannels.set(channelName, { token, channel });
     };
 
-    subscribe();
+    // Debounce subscription by 150ms. In React StrictMode in development, components
+    // mount and unmount synchronously in 0ms; a short delay prevents creating and
+    // immediately aborting WebSocket connections.
+    const timer = setTimeout(() => {
+      if (!disposed) {
+        subscribe();
+      }
+    }, 150);
 
     return () => {
       disposed = true;
-      if (channel) supabase.removeChannel(channel);
+      clearTimeout(timer);
+      if (channel) safeRemoveChannel(channel);
       const current = activeChannels.get(channelName);
       if (current?.token === token) activeChannels.delete(channelName);
     };

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Search, SlidersHorizontal, Save } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
@@ -83,7 +83,7 @@ export function FinanceExceptionCorrectionDashboard({ canManage }: {
   const [taxCodes, setTaxCodes] = useState<TaxOption[]>([]);
   const [suppliers, setSuppliers] = useState<PartyOption[]>([]);
   const [customers, setCustomers] = useState<PartyOption[]>([]);
-  const [batchRepairAttempted, setBatchRepairAttempted] = useState(false);
+  const batchRepairAttemptedRef = useRef(false);
   const [repairSummary, setRepairSummary] = useState<{ total_scanned: number; automatically_repaired: number; skipped: number } | null>(null);
 
   const filter = useCallback((key: string) => searchParams.get(key) || '', [searchParams]);
@@ -117,14 +117,19 @@ export function FinanceExceptionCorrectionDashboard({ canManage }: {
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    if (!canManage || batchRepairAttempted) return;
-    setBatchRepairAttempted(true);
+    if (!canManage || batchRepairAttemptedRef.current) return;
+    batchRepairAttemptedRef.current = true;
     void supabase.rpc('repair_all_posted_fund_transfers').then(({ data, error: repairError }) => {
-      if (repairError) { setError(repairError.message); return; }
-      setRepairSummary(data as { total_scanned: number; automatically_repaired: number; skipped: number });
-      return load();
+      if (repairError) {
+        console.warn('[FinanceExceptionCorrectionDashboard] Fund transfer repair audit notice:', repairError);
+        return;
+      }
+      if (data) {
+        setRepairSummary(data as { total_scanned: number; automatically_repaired: number; skipped: number });
+        void load();
+      }
     });
-  }, [batchRepairAttempted, canManage, load]);
+  }, [canManage, load]);
 
   const filteredRows = useMemo(() => {
     const search = filter('search').toLowerCase();
