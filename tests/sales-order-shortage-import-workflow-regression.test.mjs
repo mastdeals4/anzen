@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync('supabase/migrations/20260903170000_restore_so_shortage_import_workflow.sql', 'utf8');
+const baseMigrationPath = fs.existsSync('supabase/migrations/20260903170000_restore_so_shortage_import_workflow.sql')
+  ? 'supabase/migrations/20260903170000_restore_so_shortage_import_workflow.sql'
+  : 'supabase/migrations_archive/20260903170000_restore_so_shortage_import_workflow.sql';
+const migration = fs.readFileSync(baseMigrationPath, 'utf8');
+const bugfixMigrationPath = 'supabase/migrations/20260907140000_fix_so_approval_reservation_shortage_bug.sql';
+const bugfixMigration = fs.existsSync(bugfixMigrationPath) ? fs.readFileSync(bugfixMigrationPath, 'utf8') : '';
 const salesOrders = fs.readFileSync('src/pages/SalesOrders.tsx', 'utf8');
 
 test('reconcile_so_product_reservation_v2 handles shortage without raising fatal exception', () => {
@@ -31,4 +36,9 @@ test('SalesOrders frontend handles shortage warning and import requirements mess
   assert.match(salesOrders, /approve_sales_order_product_reservation_v2/);
   assert.match(salesOrders, /Order approved with stock shortage/);
   assert.match(salesOrders, /Import requirements have been created automatically/);
+});
+
+test('reconcile_so_product_reservation_v2 includes pending_approval in bugfix migration', () => {
+  assert.ok(bugfixMigration.length > 0, 'Bugfix migration exists');
+  assert.match(bugfixMigration, /'pending_approval',\s*'approved'/);
 });
