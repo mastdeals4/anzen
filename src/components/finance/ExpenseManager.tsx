@@ -151,7 +151,7 @@ interface FinanceExpense {
   exchange_rate?: number | null;
   bank_account_currency?: string | null;
   payment_currency?: string | null;
-  approval_status: 'pending_approval' | 'approved' | 'rejected';
+  approval_status: 'pending_approval' | 'approved' | 'rejected' | 'cancelled';
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
@@ -2027,7 +2027,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     if (approvalFilter === 'approved') {
       if (exp.effective_posting_state !== 'ACTIVE' && exp.effective_posting_state !== 'REPLACED') return false;
     } else if (approvalFilter === 'pending_approval') {
-      if (exp.approval_status !== 'pending_approval') return false;
+      if (exp.approval_status !== 'pending_approval' || exp.effective_posting_state === 'REVERSED') return false;
     }
 
     if (normalizedSearch) {

@@ -5,6 +5,7 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { X, FileText, Truck, DollarSign, Wallet } from 'lucide-react';
 import { formatCurrency, resolveTransactionCurrency } from '../utils/currency';
 import { useSupabaseRealtimeChannel } from '../hooks/useSupabaseRealtimeChannel';
+import { getEffectiveExpensePostingStates } from '../services/expensePostingLifecycle';
 
 interface PendingApproval {
   id: string;
@@ -92,11 +93,25 @@ export function ApprovalNotifications() {
         date: ch.challan_date,
       }));
 
-      expRes.data?.forEach(e => approvals.push({
-        id: e.id, type: 'expense', number: e.voucher_number || '—',
-        description: e.description || 'Expense',
-        amount: e.amount, currency: resolveTransactionCurrency(e), date: e.expense_date,
-      }));
+      const rawExpenses = expRes.data || [];
+      const expenseLifecycleMap = rawExpenses.length > 0
+        ? await getEffectiveExpensePostingStates(rawExpenses.map(e => e.id))
+        : new Map();
+
+      rawExpenses
+        .filter(e => {
+          const lifecycle = expenseLifecycleMap.get(e.id);
+          if (lifecycle && (lifecycle.effective_posting_state === 'REVERSED' || lifecycle.effective_posting_state === 'REPLACED' || lifecycle.document_approval_status === 'cancelled')) {
+            return false;
+          }
+          return true;
+        })
+        .slice(0, 5)
+        .forEach(e => approvals.push({
+          id: e.id, type: 'expense', number: e.voucher_number || '—',
+          description: e.description || 'Expense',
+          amount: e.amount, currency: resolveTransactionCurrency(e), date: e.expense_date,
+        }));
 
       pcRes.data?.forEach(pc => approvals.push({
         id: pc.id, type: 'petty_cash', number: pc.transaction_number,

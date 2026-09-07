@@ -110,9 +110,9 @@ export function Dashboard() {
           .select('id', { count: 'exact', head: true })
           .eq('approval_status', 'pending_approval'),
         supabase
-          .from('finance_expenses')
-          .select('id', { count: 'exact', head: true })
-          .eq('approval_status', 'pending_approval'),
+          .from('effective_expense_posting_state')
+          .select('expense_id', { count: 'exact', head: true })
+          .eq('effective_posting_state', 'PENDING'),
         supabase
           .from('petty_cash_transactions')
           .select('id', { count: 'exact', head: true })

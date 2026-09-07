@@ -111,7 +111,7 @@ function resolveFallbackState(
     effectivePostingState = 'ACTIVE';
   } else if (reversedOriginal && replacement) {
     effectivePostingState = 'REPLACED';
-  } else if (reversedOriginal) {
+  } else if (reversedOriginal || expense.approval_status === 'cancelled') {
     effectivePostingState = 'REVERSED';
   } else if (expense.approval_status === 'rejected') {
     effectivePostingState = 'REJECTED';
