@@ -85,6 +85,7 @@ interface SalesOrder {
   subtotal_amount: number;
   tax_amount: number;
   total_amount: number;
+  commercial_usd_to_idr_rate?: number | null;
   created_by: string;
   created_at: string;
   inquiry_id?: string | null;

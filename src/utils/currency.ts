@@ -103,15 +103,18 @@ export const parseIndonesianMoneyInput = (draft: string, decimal = true): number
   const compact = draft.replace(/\s/g, '');
   if (compact === '') return 0;
 
-  const pattern = decimal ? /^-?[\d.]*,?\d*$/ : /^-?[\d.]*$/;
+  if (compact.indexOf('-', 1) !== -1) return null;
+  const pattern = decimal ? /^-?[\d.,]*$/ : /^-?[\d.]*$/;
   if (!pattern.test(compact) || !/\d/.test(compact)) return null;
-  if ((compact.match(/,/g) ?? []).length > 1) return null;
 
-  const normalized = decimal
-    ? compact.replace(/\./g, '').replace(',', '.')
-    : compact.replace(/\./g, '');
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  const commaCount = (compact.match(/,/g) ?? []).length;
+  const dotCount = (compact.match(/\./g) ?? []).length;
+  if (commaCount > 1 && dotCount === 0) return null;
+  if (commaCount > 1 && dotCount > 1) return null;
+
+  const parsed = parseIndonesianNumber(compact);
+  if (!Number.isFinite(parsed)) return null;
+  return decimal ? parsed : Math.round(parsed);
 };
 
 /**
@@ -135,36 +138,35 @@ export const parseIndonesianNumber = (value: string | number | null | undefined)
   // Count dots and commas to determine format
   const dotCount = (cleaned.match(/\./g) || []).length;
   const commaCount = (cleaned.match(/,/g) || []).length;
+  const lastDot = cleaned.lastIndexOf('.');
+  const lastComma = cleaned.lastIndexOf(',');
 
-  // Indonesian format: 1.000.000,50 (multiple dots, one comma at end)
-  if (dotCount > 1 || (dotCount >= 1 && commaCount === 1)) {
-    // Remove thousand separators (dots)
+  if (dotCount > 0 && commaCount > 0) {
+    if (lastDot < lastComma) {
+      // Indonesian format: 1.000.000,50 (dot for thousands, comma for decimal)
+      cleaned = cleaned.replace(/\./g, '').replace(/,/g, '.');
+    } else {
+      // English format: 1,000,000.50 (comma for thousands, dot for decimal)
+      cleaned = cleaned.replace(/,/g, '');
+    }
+  } else if (dotCount > 1) {
+    // Multiple dots: 1.000.000 -> thousands separators
     cleaned = cleaned.replace(/\./g, '');
-    // Convert comma to decimal point
-    cleaned = cleaned.replace(/,/g, '.');
-  }
-  // English with commas as thousands: 1,000,000.50
-  else if (commaCount > 1 || (commaCount >= 1 && dotCount === 1)) {
-    // Remove thousand separators (commas)
+  } else if (commaCount > 1) {
+    // Multiple commas: 1,000,000 -> thousands separators
     cleaned = cleaned.replace(/,/g, '');
-    // Dot is already decimal point
-  }
-  // Single separator - need to determine if it's thousands or decimal
-  else if (dotCount === 1 && commaCount === 0) {
+  } else if (dotCount === 1 && commaCount === 0) {
     const parts = cleaned.split('.');
-    // If no decimal part or decimal part is exactly 3 digits, it's likely thousands
-    // e.g., "20.000" or "20.000" - treat as 20000
-    if (parts[1].length === 3) {
+    // If decimal part is exactly 3 digits and preceded by 1-3 digits, treat as thousands separator (e.g. 20.000)
+    // Note: if user types "15019.50" or "0.85" or "15.5", it stays as decimal
+    if (parts[1].length === 3 && parts[0].length >= 1 && parts[0].length <= 3) {
       cleaned = cleaned.replace(/\./g, '');
     }
-    // Otherwise it's a decimal: "20.5" stays as 20.5
-  }
-  else if (commaCount === 1 && dotCount === 0) {
+  } else if (commaCount === 1 && dotCount === 0) {
     const parts = cleaned.split(',');
-    // Mirror the single-dot rule: exactly 3 digits after a single comma is a
-    // thousands separator ("187,500" → 187500); anything else is an
-    // Indonesian decimal ("187,50" → 187.5).
-    if (parts[1].length === 3) {
+    // If preceded by 1-3 digits and exactly 3 digits after, treat as thousands (e.g. 187,500)
+    // Otherwise it's an Indonesian decimal (e.g. 15019,50 or 0,85 or 15,5)
+    if (parts[1].length === 3 && parts[0].length >= 1 && parts[0].length <= 3) {
       cleaned = cleaned.replace(/,/g, '');
     } else {
       cleaned = cleaned.replace(/,/g, '.');

@@ -12,9 +12,14 @@ const validCases = [
   ['0,50', 0.50],
   ['100,25', 100.25],
   [',50', 0.50],
-  // A trailing comma must remain a valid intermediate typing state.
+  ['.50', 0.50],
+  ['15019.50', 15019.50],
+  ['15.019,50', 15019.50],
+  ['15019,50', 15019.50],
+  // Intermediate typing states: trailing comma or dot
   ['55.359.075,', 55359075],
   ['100,', 100],
+  ['15019.', 15019],
 ];
 
 for (const [input, expected] of validCases) {

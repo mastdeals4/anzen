@@ -17,6 +17,8 @@ import {
 interface MoneyInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'inputMode'> {
   value: number | null | undefined;
   onChange: (n: number) => void;
+  /** Currency code, e.g. 'IDR' or 'USD'. Defaults to 'IDR'. */
+  currency?: string;
   /** Show empty instead of zero. Default true. */
   hideZero?: boolean;
   /** Allow an Indonesian decimal comma. Currency inputs default to true. */
@@ -33,9 +35,17 @@ function displayValue(
   decimal: boolean,
   minimumFractionDigits: number,
   maximumFractionDigits: number,
+  currency: string = 'IDR',
 ): string {
   const numeric = Number(value ?? 0);
   if (!Number.isFinite(numeric) || (hideZero && numeric === 0)) return '';
+  if (currency.toUpperCase() === 'USD') {
+    if (!decimal) return numeric.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    return numeric.toLocaleString('en-US', {
+      minimumFractionDigits,
+      maximumFractionDigits,
+    });
+  }
   return formatIndonesianMoneyInput(numeric, decimal, minimumFractionDigits, maximumFractionDigits);
 }
 
@@ -49,6 +59,7 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
   {
     value,
     onChange,
+    currency = 'IDR',
     hideZero = true,
     decimal = true,
     minimumFractionDigits = 2,
@@ -69,6 +80,7 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
     decimal,
     minimumFractionDigits,
     maximumFractionDigits,
+    currency,
   ));
 
   const clamp = (amount: number): number => {
@@ -82,9 +94,9 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
 
   useEffect(() => {
     if (!focusedRef.current) {
-      setDraft(displayValue(value, hideZero, decimal, minimumFractionDigits, maximumFractionDigits));
+      setDraft(displayValue(value, hideZero, decimal, minimumFractionDigits, maximumFractionDigits, currency));
     }
-  }, [value, hideZero, decimal, minimumFractionDigits, maximumFractionDigits]);
+  }, [value, hideZero, decimal, minimumFractionDigits, maximumFractionDigits, currency]);
 
   const commitDraft = (nextDraft: string, normalizeDisplay: boolean) => {
     const parsed = parseIndonesianMoneyInput(nextDraft, decimal);
@@ -92,7 +104,7 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
     const normalized = clamp(parsed);
     onChange(normalized);
     if (normalizeDisplay) {
-      setDraft(displayValue(normalized, hideZero, decimal, minimumFractionDigits, maximumFractionDigits));
+      setDraft(displayValue(normalized, hideZero, decimal, minimumFractionDigits, maximumFractionDigits, currency));
     }
     return true;
   };
@@ -111,7 +123,7 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
       onBlur={(event) => {
         focusedRef.current = false;
         if (!commitDraft(draft, true)) {
-          setDraft(displayValue(value, hideZero, decimal, minimumFractionDigits, maximumFractionDigits));
+          setDraft(displayValue(value, hideZero, decimal, minimumFractionDigits, maximumFractionDigits, currency));
         }
         onBlur?.(event);
       }}
@@ -122,11 +134,13 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
         let parsed = parseIndonesianNumber(pasted);
         if (!decimal) parsed = Math.round(parsed);
         const normalized = clamp(parsed);
-        setDraft(formatIndonesianMoneyInput(
+        setDraft(displayValue(
           normalized,
+          hideZero,
           decimal,
           minimumFractionDigits,
           maximumFractionDigits,
+          currency,
         ));
         onChange(normalized);
       }}

@@ -4,9 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Plus, Trash2, X, FileText } from 'lucide-react';
 import { SearchableSelect } from './SearchableSelect';
+import { MoneyInput } from './MoneyInput';
 import { showToast } from './ToastNotification';
 import { showConfirm } from './ConfirmDialog';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
+import { parseIndonesianNumber } from '../utils/currency';
 
 interface Customer {
   id: string;
@@ -306,6 +308,28 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
 
+    // Smart exchange rate handling:
+    if (formData.currency === 'IDR') {
+      if (field === 'unit_price') {
+        const unitPrice = Number(value) || 0;
+        const quotedUsd = Number(newItems[index].quoted_usd_unit_price) || 0;
+        if (unitPrice > 0 && quotedUsd > 0) {
+          const calculatedRate = Math.round((unitPrice / quotedUsd) * 10000) / 10000;
+          setFormData(prev => ({ ...prev, commercial_usd_to_idr_rate: calculatedRate }));
+        }
+      } else if (field === 'quoted_usd_unit_price') {
+        const quotedUsd = Number(value) || 0;
+        const currentUnitPrice = Number(newItems[index].unit_price) || 0;
+        if (quotedUsd > 0 && currentUnitPrice > 0) {
+          const calculatedRate = Math.round((currentUnitPrice / quotedUsd) * 10000) / 10000;
+          setFormData(prev => ({ ...prev, commercial_usd_to_idr_rate: calculatedRate }));
+        } else if (quotedUsd > 0 && currentUnitPrice === 0 && formData.commercial_usd_to_idr_rate && formData.commercial_usd_to_idr_rate > 0) {
+          const calculatedPrice = Math.round(quotedUsd * formData.commercial_usd_to_idr_rate * 100) / 100;
+          newItems[index].unit_price = calculatedPrice;
+        }
+      }
+    }
+
     const item = newItems[index];
     const subtotal = item.quantity * item.unit_price;
     const discountAmount = item.discount_percent > 0
@@ -323,6 +347,36 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
     };
 
     setItems(newItems);
+  };
+
+  const handleRateChange = (rate: number | null) => {
+    const rateVal = rate && rate > 0 ? rate : null;
+    setFormData(prev => ({ ...prev, commercial_usd_to_idr_rate: rateVal }));
+
+    if (formData.currency === 'IDR' && rateVal && rateVal > 0) {
+      setItems(prevItems =>
+        prevItems.map(item => {
+          if (item.quoted_usd_unit_price && item.quoted_usd_unit_price > 0) {
+            const unit_price = Math.round(item.quoted_usd_unit_price * rateVal * 100) / 100;
+            const subtotal = item.quantity * unit_price;
+            const discountAmount = item.discount_percent > 0
+              ? (subtotal * item.discount_percent) / 100
+              : item.discount_amount;
+            const afterDiscount = subtotal - discountAmount;
+            const taxAmount = (afterDiscount * item.tax_percent) / 100;
+            const lineTotal = afterDiscount + taxAmount;
+            return {
+              ...item,
+              unit_price,
+              discount_amount: discountAmount,
+              tax_amount: taxAmount,
+              line_total: lineTotal,
+            };
+          }
+          return item;
+        })
+      );
+    }
   };
 
   const addItem = () => {
@@ -734,15 +788,23 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
         </div>
 
         <div className="md:col-span-3">
-          <label className="block text-xs font-medium text-gray-700 mb-0.5">USD → IDR rate (historical, optional)</label>
-          <input
-            type="number"
-            min="0"
-            step="0.000001"
-            value={formData.commercial_usd_to_idr_rate ?? ''}
-            onChange={(e) => setFormData({ ...formData, commercial_usd_to_idr_rate: e.target.value === '' ? null : Number(e.target.value) })}
+          <label className="block text-xs font-medium text-gray-700 mb-0.5">
+            Exchange Rate (USD → IDR)
+            {formData.commercial_usd_to_idr_rate ? (
+              <span className="ml-1 text-[10px] font-normal text-blue-600">
+                (1 USD = Rp {formData.commercial_usd_to_idr_rate.toLocaleString('id-ID', { maximumFractionDigits: 2 })})
+              </span>
+            ) : null}
+          </label>
+          <MoneyInput
+            value={formData.commercial_usd_to_idr_rate}
+            onChange={(val) => handleRateChange(val > 0 ? val : null)}
+            currency="IDR"
+            decimal={true}
+            minimumFractionDigits={0}
+            maximumFractionDigits={4}
+            placeholder={formData.currency === 'IDR' ? 'e.g. 17.670 (auto-calculated from USD & IDR)' : 'Not required for USD'}
             className="w-full border rounded-md px-2 py-1.5 text-sm"
-            placeholder={formData.currency === 'IDR' ? 'Required only when IDR derives from USD' : 'Not required for USD'}
           />
         </div>
 
@@ -868,8 +930,30 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
                     />
                   </td>
                   <td className="px-2 py-1 align-top"><input type="text" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const val = e.target.value; handleItemChange(index, 'quantity', val === '' ? 0 : (parseFloat(val) || 0)); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" required /></td>
-                  <td className="px-2 py-1 align-top"><input type="text" value={item.unit_price === 0 ? '' : item.unit_price} onChange={(e) => { const val = e.target.value; handleItemChange(index, 'unit_price', val === '' ? 0 : (parseFloat(val) || 0)); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
-                  <td className="px-2 py-1 align-top"><input type="number" min="0" step="0.000001" value={item.quoted_usd_unit_price ?? ''} onChange={(e) => handleItemChange(index, 'quoted_usd_unit_price', e.target.value === '' ? null : Number(e.target.value))} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="—" /></td>
+                  <td className="px-2 py-1 align-top">
+                    <MoneyInput
+                      value={item.unit_price}
+                      onChange={(val) => handleItemChange(index, 'unit_price', val)}
+                      currency={formData.currency}
+                      decimal={true}
+                      minimumFractionDigits={2}
+                      maximumFractionDigits={2}
+                      placeholder="0,00"
+                      className="w-full border rounded px-2 py-1 text-xs text-right"
+                    />
+                  </td>
+                  <td className="px-2 py-1 align-top">
+                    <MoneyInput
+                      value={item.quoted_usd_unit_price}
+                      onChange={(val) => handleItemChange(index, 'quoted_usd_unit_price', val > 0 ? val : null)}
+                      currency="USD"
+                      decimal={true}
+                      minimumFractionDigits={2}
+                      maximumFractionDigits={6}
+                      placeholder="—"
+                      className="w-full border rounded px-2 py-1 text-xs text-right"
+                    />
+                  </td>
                   <td className="px-2 py-1 align-top"><input type="text" value={item.discount_percent === 0 ? '' : item.discount_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'discount_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
                   <td className="px-2 py-1 align-top"><input type="text" value={item.tax_percent === 0 ? '' : item.tax_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'tax_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
                   <td className="px-2 py-1 align-top"><input type="date" value={item.item_delivery_date} onChange={(e) => handleItemChange(index, 'item_delivery_date', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
