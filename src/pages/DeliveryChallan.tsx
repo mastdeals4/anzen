@@ -66,9 +66,9 @@ interface ChallanItem {
   number_of_packs: number | null;
   products?: {
     product_name: string;
-    product_code: string;
+    product_code?: string;
     unit: string;
-  };
+  } | null;
   batches?: {
     batch_number: string;
     expiry_date: string | null;
@@ -520,11 +520,11 @@ export function DeliveryChallan() {
             products: Array.isArray(item.products) ? (item.products[0] || null) : item.products,
           })) as SalesOrderItemSource[];
           setSalesOrderItemSources(normalizedSoItems);
-          if (soItems && soItems.length > 0) {
+          if (normalizedSoItems && normalizedSoItems.length > 0) {
             const newItems: ChallanItem[] = [];
             const allocatedBatchUsage = new Map<string, number>();
 
-            for (const item of soItems) {
+            for (const item of normalizedSoItems) {
               const remainingNeeded = Math.max(0, Number(item.quantity) - Number(item.delivered_quantity || 0));
               let neededQty = remainingNeeded > 0 ? remainingNeeded : (parseFloat(String(item.quantity)) || 0);
 
