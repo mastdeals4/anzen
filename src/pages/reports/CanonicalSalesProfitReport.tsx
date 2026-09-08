@@ -499,7 +499,7 @@ export function CanonicalSalesProfitReport() {
         {/* Sales Expenses */}
         <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
           <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
-            <TooltipHeader title="Sales Expenses" tooltip="Attributable delivery and loading charges from finance expenses allocated to Delivery Challans." />
+            <TooltipHeader title="Sales Expenses" tooltip="Attributable sales expenses (delivery, loading, commission/marketing) from finance expenses allocated to Delivery Challans." />
           </p>
           <p className="text-lg font-bold text-amber-700 mt-1">
             {formatCurrency(company?.sales_expenses || 0)}
@@ -582,7 +582,7 @@ export function CanonicalSalesProfitReport() {
                   <TooltipHeader title="Avg Selling Price" tooltip="Weighted average realized selling price: SUM(qty × price) / SUM(qty)." />
                 </th>
                 <th className="px-3 py-3 text-right">
-                  <TooltipHeader title="Sales Exp / Unit" tooltip="Allocated delivery and loading expense per sold unit." />
+                  <TooltipHeader title="Sales Exp / Unit" tooltip="Allocated sales expense (delivery, loading, commission) per sold unit." />
                 </th>
                 <th className="px-3 py-3 text-right">
                   <TooltipHeader title="Net Realization" tooltip="Avg Selling Price minus Sales Expense per unit." />
