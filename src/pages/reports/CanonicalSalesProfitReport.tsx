@@ -432,52 +432,29 @@ export function CanonicalSalesProfitReport() {
   const company = data?.company;
 
   return (
-    <div className="space-y-6">
-      {/* ─── Top Header & Date Filter ─── */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Sales Profitability Report</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Comprehensive management profitability tracking actual gross sales, batch landed costs, and delivery expenses.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 self-start md:self-auto">
-            <button
-              onClick={() => setShowExportModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-300 rounded-lg hover:bg-emerald-100 shadow-sm transition"
-              title="Export complete drill-down report to Excel"
-            >
-              <Download className="w-3.5 h-3.5 text-emerald-700" />
-              Export to Excel
-            </button>
-            <button
-              onClick={loadSummary}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-          </div>
-        </div>
+    <div className="space-y-3">
+      {/* ─── Compact Header & Date Filter Bar ─── */}
+      <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h1 className="text-base font-bold text-gray-900 tracking-tight leading-none whitespace-nowrap">
+            Sales Profitability
+          </h1>
 
-        {/* Date Filter Bar */}
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+          {/* Date Presets */}
           <div className="inline-flex rounded-lg bg-gray-100 p-0.5 text-xs font-medium text-gray-600">
             {[
               { id: 'this_month', label: 'This Month' },
               { id: 'last_month', label: 'Last Month' },
-              { id: 'this_quarter', label: 'This Quarter' },
-              { id: 'this_year', label: 'This Year (2026)' },
-              { id: 'last_year', label: 'Last Year (2025)' },
+              { id: 'this_quarter', label: 'Quarter' },
+              { id: 'this_year', label: 'Year (2026)' },
+              { id: 'last_year', label: '2025' },
               { id: 'all_time', label: 'All Time' },
               { id: 'custom', label: 'Custom' },
             ].map(p => (
               <button
                 key={p.id}
                 onClick={() => handlePresetChange(p.id)}
-                className={`px-3 py-1.5 rounded-md transition ${
+                className={`px-2.5 py-1 rounded-md transition text-[11px] ${
                   datePreset === p.id ? 'bg-white text-gray-900 shadow-sm font-semibold' : 'hover:text-gray-900'
                 }`}
               >
@@ -486,7 +463,8 @@ export function CanonicalSalesProfitReport() {
             ))}
           </div>
 
-          <div className="flex items-center gap-2 ml-auto text-xs">
+          {/* Date Picker */}
+          <div className="flex items-center gap-1.5 text-xs bg-gray-50 border border-gray-200 px-2 py-1 rounded-md">
             <Calendar className="w-3.5 h-3.5 text-gray-400" />
             <input
               type="date"
@@ -495,9 +473,9 @@ export function CanonicalSalesProfitReport() {
                 setStartDate(e.target.value);
                 setDatePreset('custom');
               }}
-              className="px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 text-xs"
+              className="bg-transparent border-0 p-0 text-xs text-gray-700 w-24 focus:ring-0"
             />
-            <span className="text-gray-400">to</span>
+            <span className="text-gray-400 text-[10px]">—</span>
             <input
               type="date"
               value={endDate}
@@ -505,107 +483,125 @@ export function CanonicalSalesProfitReport() {
                 setEndDate(e.target.value);
                 setDatePreset('custom');
               }}
-              className="px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 text-xs"
+              className="bg-transparent border-0 p-0 text-xs text-gray-700 w-24 focus:ring-0"
             />
           </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2 self-end md:self-auto">
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-300 rounded-lg hover:bg-emerald-100 shadow-sm transition"
+            title="Export Sales Profitability Report to Excel"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-700" />
+            Export to Excel
+          </button>
+          <button
+            onClick={loadSummary}
+            disabled={loading}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm">
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs">
           <p className="font-semibold">Failed to load profitability data</p>
-          <p className="text-xs mt-1">{error}</p>
+          <p className="mt-0.5">{error}</p>
         </div>
       )}
 
-      {/* ─── Company Summary KPIs ─── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* ─── Compact Company Summary KPIs ─── */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
         {/* Gross Sales */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
+        <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+          <p className="text-[11px] text-gray-500 font-medium flex items-center justify-between">
             <TooltipHeader title="Gross Sales" tooltip="Total realized sales revenue from finalized sales invoices (ex-PPN)." />
+            <span className="text-[10px] text-gray-400">{company?.order_count || 0} inv</span>
           </p>
-          <p className="text-lg font-bold text-gray-900 mt-1">
+          <p className="text-sm lg:text-base font-bold text-gray-900 mt-0.5 leading-tight">
             {formatCurrency(company?.gross_sales || 0)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">{company?.order_count || 0} invoices</p>
         </div>
 
         {/* Product Cost */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
+        <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+          <p className="text-[11px] text-gray-500 font-medium flex items-center justify-between">
             <TooltipHeader title="Product Cost" tooltip="Posted COGS recorded in the sales invoice's GL 5100 journal." />
+            <span className="text-[10px] text-gray-400">GL 5100</span>
           </p>
-          <p className="text-lg font-bold text-gray-800 mt-1">
+          <p className="text-sm lg:text-base font-bold text-gray-800 mt-0.5 leading-tight">
             {formatCurrency(company?.product_cost || 0)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Posted COGS (GL 5100)</p>
         </div>
 
         {/* Sales Expenses */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
-            <TooltipHeader title="Sales Expenses" tooltip="Attributable sales expenses (delivery, loading, commission/marketing) from finance expenses allocated to Delivery Challans." />
+        <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+          <p className="text-[11px] text-gray-500 font-medium flex items-center justify-between">
+            <TooltipHeader title="Sales Expenses" tooltip="Attributable sales expenses (delivery, loading, commission/marketing) allocated to Delivery Challans." />
+            <span className="text-[10px] text-gray-400 truncate">Delivery/Sales</span>
           </p>
-          <p className="text-lg font-bold text-amber-700 mt-1">
+          <p className="text-sm lg:text-base font-bold text-amber-700 mt-0.5 leading-tight">
             {formatCurrency(company?.sales_expenses || 0)}
-          </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
-            Allocated: {formatCurrency((company?.sales_expenses || 0) - (company?.unallocated_sales_expenses || 0))} · Unallocated: {formatCurrency(company?.unallocated_sales_expenses || 0)}
           </p>
         </div>
 
         {/* Gross Profit */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
+        <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+          <p className="text-[11px] text-gray-500 font-medium flex items-center justify-between">
             <TooltipHeader title="Gross Profit" tooltip="Gross Sales minus Product Cost." />
+            <span className="text-[10px] text-gray-400">Pre-exp</span>
           </p>
-          <p className={`text-lg font-bold mt-1 ${(company?.gross_profit || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+          <p className={`text-sm lg:text-base font-bold mt-0.5 leading-tight ${(company?.gross_profit || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
             {formatCurrency(company?.gross_profit || 0)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Before sales expenses</p>
         </div>
 
         {/* Profit After Sales Expenses — Highlight KPI */}
-        <div className="bg-blue-50/60 border-2 border-blue-500 rounded-xl p-4 shadow-sm">
-          <p className="text-xs font-semibold text-blue-900 flex items-center gap-1">
-            <TooltipHeader title="Profit After Sales Expenses" tooltip="Primary bottom line: Gross Sales minus Product Cost minus Attributable Sales Expenses." />
+        <div className="bg-emerald-50/70 border-2 border-emerald-500 rounded-lg px-3 py-2 shadow-sm">
+          <p className="text-[11px] font-semibold text-emerald-900 flex items-center justify-between">
+            <TooltipHeader title="Profit After Expenses" tooltip="Primary bottom line: Gross Sales minus Product Cost minus Attributable Sales Expenses." />
+            <span className="text-[10px] text-emerald-700 font-medium">Net</span>
           </p>
-          <p className={`text-xl font-extrabold mt-1 ${(company?.profit_after_sales_expenses || 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+          <p className={`text-sm lg:text-base font-extrabold mt-0.5 leading-tight ${(company?.profit_after_sales_expenses || 0) >= 0 ? 'text-emerald-800' : 'text-red-600'}`}>
             {formatCurrency(company?.profit_after_sales_expenses || 0)}
           </p>
-          <p className="text-[11px] text-blue-700 font-medium mt-0.5">Realized net profit</p>
         </div>
 
         {/* Profit Margin % */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
-            <TooltipHeader title="Profit Margin" tooltip="Profit After Sales Expenses divided by Gross Sales × 100." />
-          </p>
-          <div className="mt-2">
+        <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-gray-500 font-medium">
+              <TooltipHeader title="Profit Margin" tooltip="Profit After Sales Expenses divided by Gross Sales × 100." />
+            </p>
+            <p className="text-[10px] text-gray-400 mt-0.5">{formatNumber(company?.total_qty_sold || 0, 0)} units sold</p>
+          </div>
+          <div>
             <MarginBadge pct={company?.profit_margin_pct ?? null} />
           </div>
-          <p className="text-[11px] text-gray-400 mt-1">{formatNumber(company?.total_qty_sold || 0, 0)} units sold</p>
         </div>
       </div>
 
       {/* ─── Main Product Profitability Table ─── */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/50">
-          <div>
-            <h2 className="text-base font-bold text-gray-900">Product Profitability</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Click any product row to drill down into its individual batches, landed costs, and customer orders.
-            </p>
+        <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between gap-3 bg-gray-50/70">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Product Profitability</h2>
+            <span className="text-[11px] text-gray-400 font-normal">({filteredProducts.length} items)</span>
           </div>
-          <div className="relative w-full sm:w-64">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <div className="relative w-56">
+            <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search product..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
+              className="w-full pl-8 pr-3 py-1 border border-gray-300 rounded-md text-xs focus:ring-1 focus:ring-blue-500 bg-white"
             />
           </div>
         </div>

@@ -96,6 +96,47 @@ const tabs: { id: Tab; label: string; icon: typeof TrendingUp }[] = [
 ];
 
 export function Reports() {
-  const { dateRange } = useFinance(); const [activeTab, setActiveTab] = useState<Tab>('sales-profit');
-  return <Layout><div className="space-y-5"><div className="flex items-center gap-3"><div className="p-2 bg-blue-50 rounded-lg"><BarChart2 className="w-5 h-5 text-blue-600" /></div><div><h1 className="text-xl font-bold text-gray-900">Reports</h1><p className="text-sm text-gray-400 mt-0.5">{dateRange.startDate} — {dateRange.endDate} · Operational management reporting</p></div></div><div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit overflow-x-auto max-w-full">{tabs.map(tab => { const Icon = tab.icon; return <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${activeTab === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><Icon className="w-4 h-4" />{tab.label}</button>; })}</div>{activeTab === 'sales-profit' && <SalesProfitTab dateRange={dateRange} />}{activeTab === 'monthly' && <MonthlySalesTab dateRange={dateRange} />}{activeTab === 'product-perf' && <ProductPerformanceTab dateRange={dateRange} />}{activeTab === 'customer' && <CustomerSalesTab dateRange={dateRange} />}{activeTab === 'expense-profit' && <ExpenseVsProfitTab dateRange={dateRange} />}</div></Layout>;
+  const { dateRange } = useFinance();
+  const [activeTab, setActiveTab] = useState<Tab>('sales-profit');
+  return (
+    <Layout>
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-gray-200 rounded-xl px-4 py-2.5 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+              <BarChart2 className="w-4 h-4" />
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-gray-900 leading-tight">Reports</h1>
+              <p className="text-[11px] text-gray-400">Operational management reporting</p>
+            </div>
+          </div>
+          <div className="flex gap-1 bg-gray-100 p-0.5 rounded-lg overflow-x-auto max-w-full">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap transition ${
+                    activeTab === tab.id
+                      ? 'bg-white text-gray-900 shadow-sm font-semibold'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {activeTab === 'sales-profit' && <SalesProfitTab dateRange={dateRange} />}
+        {activeTab === 'monthly' && <MonthlySalesTab dateRange={dateRange} />}
+        {activeTab === 'product-perf' && <ProductPerformanceTab dateRange={dateRange} />}
+        {activeTab === 'customer' && <CustomerSalesTab dateRange={dateRange} />}
+        {activeTab === 'expense-profit' && <ExpenseVsProfitTab dateRange={dateRange} />}
+      </div>
+    </Layout>
+  );
 }
