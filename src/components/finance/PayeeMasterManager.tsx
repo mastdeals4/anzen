@@ -1,10 +1,13 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../ToastNotification';
 import {
   Users, Plus, Search, Edit2, CheckCircle, XCircle,
-  Building2, CreditCard, Shield, AlertTriangle
+  Building2, CreditCard, Shield, AlertTriangle,
+  UploadCloud, FileText, Image as ImageIcon, Trash2, Eye, Download, Paperclip, ExternalLink, Loader2
 } from 'lucide-react';
+import { uploadFinanceDocuments } from './FinanceDocumentAttachments';
+import { openStorageDocument, downloadStorageDocument } from '../../utils/signedUrlCache';
 
 export type PayeeBusinessRole =
   | 'sales_commission_recipient'
@@ -38,6 +41,7 @@ export interface Payee {
   email: string | null;
   address: string | null;
   notes: string | null;
+  document_urls?: string[] | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -91,6 +95,9 @@ export function PayeeMasterManager({ canManage }: Props) {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingPayee, setEditingPayee] = useState<Payee | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const [formData, setFormData] = useState({
     payee_code: '',
@@ -108,6 +115,7 @@ export function PayeeMasterManager({ canManage }: Props) {
     email: '',
     address: '',
     notes: '',
+    document_urls: [] as string[],
     is_active: true,
   });
 
@@ -115,6 +123,41 @@ export function PayeeMasterManager({ canManage }: Props) {
     loadPayees();
     loadTaxCodes();
   }, []);
+
+  // Global paste handler for easy screenshot / file pasting (Ctrl+V / Cmd+V)
+  useEffect(() => {
+    if (!modalOpen) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          const file = items[i].getAsFile();
+          if (file) {
+            const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+            const filename = `ktp_paste_${Date.now()}_${i + 1}.${ext}`;
+            const renamed = new File([file], filename, { type: file.type });
+            files.push(renamed);
+          }
+        }
+      }
+
+      if (files.length > 0) {
+        e.preventDefault();
+        setPendingFiles(prev => [...prev, ...files]);
+        showToast({
+          type: 'success',
+          title: 'Document captured from clipboard',
+          message: `${files.length} file(s) attached. Click 'Save Changes' to store permanently.`,
+        });
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [modalOpen]);
 
   const loadTaxCodes = async () => {
     const { data, error } = await supabase
@@ -157,6 +200,7 @@ export function PayeeMasterManager({ canManage }: Props) {
     const defaultCode = generateNextPayeeCode();
     const defaultTaxCode = taxCodes.find(tc => tc.code === 'PPH21-NE')?.id || '';
     setEditingPayee(null);
+    setPendingFiles([]);
     setFormData({
       payee_code: defaultCode,
       full_name: '',
@@ -173,6 +217,7 @@ export function PayeeMasterManager({ canManage }: Props) {
       email: '',
       address: '',
       notes: '',
+      document_urls: [],
       is_active: true,
     });
     setModalOpen(true);
@@ -180,6 +225,7 @@ export function PayeeMasterManager({ canManage }: Props) {
 
   const openEditModal = (p: Payee) => {
     setEditingPayee(p);
+    setPendingFiles([]);
     setFormData({
       payee_code: p.payee_code,
       full_name: p.full_name,
@@ -196,6 +242,7 @@ export function PayeeMasterManager({ canManage }: Props) {
       email: p.email || '',
       address: p.address || '',
       notes: p.notes || '',
+      document_urls: p.document_urls || [],
       is_active: p.is_active,
     });
     setModalOpen(true);
@@ -237,48 +284,65 @@ export function PayeeMasterManager({ canManage }: Props) {
       return;
     }
 
-    const payload = {
-      payee_code: formData.payee_code.trim(),
-      full_name: formData.full_name.trim(),
-      business_role: formData.business_role,
-      tax_classification: formData.tax_classification,
-      nik: cleanNik || null,
-      npwp: formData.npwp.trim() || null,
-      ptkp_status: formData.ptkp_status,
-      default_pph_code_id: formData.default_pph_code_id || null,
-      bank_name: formData.bank_name.trim() || null,
-      bank_account_number: formData.bank_account_number.trim() || null,
-      bank_account_holder: formData.bank_account_holder.trim() || null,
-      phone: formData.phone.trim() || null,
-      email: formData.email.trim() || null,
-      address: formData.address.trim() || null,
-      notes: formData.notes.trim() || null,
-      is_active: formData.is_active,
-    };
+    setIsSaving(true);
+    try {
+      let finalDocUrls = [...(formData.document_urls || [])];
+      if (pendingFiles.length > 0) {
+        showToast({ type: 'info', title: 'Uploading documents', message: `Uploading ${pendingFiles.length} document(s)...` });
+        const uploadedUrls = await uploadFinanceDocuments(pendingFiles, 'payees');
+        finalDocUrls = [...finalDocUrls, ...uploadedUrls];
+      }
 
-    if (editingPayee) {
-      const { error } = await supabase
-        .from('finance_payees')
-        .update(payload)
-        .eq('id', editingPayee.id);
-      if (error) {
-        showToast({ type: 'error', title: 'Update failed', message: error.message });
+      const payload = {
+        payee_code: formData.payee_code.trim(),
+        full_name: formData.full_name.trim(),
+        business_role: formData.business_role,
+        tax_classification: formData.tax_classification,
+        nik: cleanNik || null,
+        npwp: formData.npwp.trim() || null,
+        ptkp_status: formData.ptkp_status,
+        default_pph_code_id: formData.default_pph_code_id || null,
+        bank_name: formData.bank_name.trim() || null,
+        bank_account_number: formData.bank_account_number.trim() || null,
+        bank_account_holder: formData.bank_account_holder.trim() || null,
+        phone: formData.phone.trim() || null,
+        email: formData.email.trim() || null,
+        address: formData.address.trim() || null,
+        notes: formData.notes.trim() || null,
+        document_urls: finalDocUrls,
+        is_active: formData.is_active,
+      };
+
+      if (editingPayee) {
+        const { error } = await supabase
+          .from('finance_payees')
+          .update(payload)
+          .eq('id', editingPayee.id);
+        if (error) {
+          showToast({ type: 'error', title: 'Update failed', message: error.message });
+        } else {
+          showToast({ type: 'success', title: 'Payee updated', message: `Payee ${payload.payee_code} saved successfully with ${finalDocUrls.length} document(s).` });
+          setModalOpen(false);
+          setPendingFiles([]);
+          loadPayees();
+        }
       } else {
-        showToast({ type: 'success', title: 'Payee updated', message: `Payee ${payload.payee_code} saved successfully.` });
-        setModalOpen(false);
-        loadPayees();
+        const { error } = await supabase
+          .from('finance_payees')
+          .insert(payload);
+        if (error) {
+          showToast({ type: 'error', title: 'Creation failed', message: error.message });
+        } else {
+          showToast({ type: 'success', title: 'Payee created', message: `Payee ${payload.payee_code} created successfully.` });
+          setModalOpen(false);
+          setPendingFiles([]);
+          loadPayees();
+        }
       }
-    } else {
-      const { error } = await supabase
-        .from('finance_payees')
-        .insert(payload);
-      if (error) {
-        showToast({ type: 'error', title: 'Creation failed', message: error.message });
-      } else {
-        showToast({ type: 'success', title: 'Payee created', message: `Payee ${payload.payee_code} created successfully.` });
-        setModalOpen(false);
-        loadPayees();
-      }
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Upload failed', message: err.message || 'Failed to upload attachments' });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -302,6 +366,23 @@ export function PayeeMasterManager({ canManage }: Props) {
       return matchesSearch && matchesRole && matchesStatus;
     });
   }, [payees, search, roleFilter, statusFilter]);
+
+function isImageUrl(url: string): boolean {
+  if (!url) return false;
+  const clean = url.split('?')[0].toLowerCase();
+  return clean.endsWith('.png') || clean.endsWith('.jpg') || clean.endsWith('.jpeg') || clean.endsWith('.webp') || clean.endsWith('.gif') || clean.endsWith('.svg');
+}
+
+function getDocDisplayName(url: string, index: number): string {
+  if (!url) return `Document ${index + 1}`;
+  try {
+    const raw = decodeURIComponent(url.split('/').pop()?.split('?')[0] || '');
+    const cleaned = raw.replace(/^\d+_[a-f0-9-]+_/, '');
+    return cleaned || `Document ${index + 1}`;
+  } catch {
+    return `Document ${index + 1}`;
+  }
+}
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -394,6 +475,7 @@ export function PayeeMasterManager({ canManage }: Props) {
                   <th className="px-4 py-3">Tax Classification</th>
                   <th className="px-4 py-3">Tax ID (NIK / NPWP)</th>
                   <th className="px-4 py-3">Bank Details</th>
+                  <th className="px-4 py-3">KYC / Docs</th>
                   <th className="px-4 py-3">Status</th>
                   {canManage && <th className="px-4 py-3 text-right">Actions</th>}
                 </tr>
@@ -443,6 +525,21 @@ export function PayeeMasterManager({ canManage }: Props) {
                             <div className="text-gray-400 truncate max-w-[150px]">a.n. {p.bank_account_holder}</div>
                           )}
                         </div>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {p.document_urls && p.document_urls.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(p)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors border border-indigo-200/60"
+                          title="Click to view and manage attached documents"
+                        >
+                          <Paperclip className="w-3.5 h-3.5" />
+                          <span>{p.document_urls.length} doc{p.document_urls.length > 1 ? 's' : ''}</span>
+                        </button>
                       ) : (
                         <span className="text-xs text-gray-400">—</span>
                       )}
@@ -743,20 +840,250 @@ export function PayeeMasterManager({ canManage }: Props) {
                 </div>
               </div>
 
+              {/* Section 5: Attachments & Identity Verification (KTP, NPWP, Bank Book, Contract) */}
+              <div className="space-y-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                      <Paperclip className="w-3.5 h-3.5 text-indigo-600" />
+                      5. Identity Documents & Attachments (KTP, NPWP, Bank Book)
+                    </h3>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Attach photo or PDF of payee's KTP, NPWP, passbook, or agreement for compliance records.
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-indigo-700 font-medium bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                    {(formData.document_urls?.length || 0) + pendingFiles.length} file(s)
+                  </span>
+                </div>
+
+                {/* Dropzone & Paste Box */}
+                <div
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    const droppedFiles = Array.from(e.dataTransfer.files);
+                    if (droppedFiles.length > 0) {
+                      setPendingFiles(prev => [...prev, ...droppedFiles]);
+                    }
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                  }}
+                  className={`border-2 border-dashed rounded-xl p-5 text-center transition-all ${
+                    isDragging
+                      ? 'border-indigo-500 bg-indigo-50/70 scale-[0.99]'
+                      : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50/60'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    id="payee-doc-upload"
+                    multiple
+                    accept="image/*,.pdf,.doc,.docx"
+                    className="hidden"
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.files || []);
+                      if (selected.length > 0) {
+                        setPendingFiles(prev => [...prev, ...selected]);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                  <div
+                    className="flex flex-col items-center justify-center gap-2 cursor-pointer"
+                    onClick={() => document.getElementById('payee-doc-upload')?.click()}
+                  >
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-full shadow-xs">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-semibold text-gray-800 hover:text-indigo-600">
+                        Click to browse
+                      </span>
+                      <span className="text-xs text-gray-500"> or drag & drop files here</span>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 text-[11px] text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg font-medium border border-indigo-100">
+                      <span>💡 Fast upload: Copy any image & press</span>
+                      <kbd className="px-1.5 py-0.5 bg-white border border-gray-300 rounded text-[10px] font-mono shadow-xs text-gray-700">Ctrl+V</kbd>
+                      <span>or</span>
+                      <kbd className="px-1.5 py-0.5 bg-white border border-gray-300 rounded text-[10px] font-mono shadow-xs text-gray-700">⌘V</kbd>
+                      <span>to paste directly!</span>
+                    </div>
+                    <p className="text-[10px] text-gray-400">
+                      Supports JPG, PNG, WEBP, and PDF files
+                    </p>
+                  </div>
+                </div>
+
+                {/* Attached & Pending Files Grid */}
+                {((formData.document_urls && formData.document_urls.length > 0) || pendingFiles.length > 0) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {/* Existing Saved Documents */}
+                    {formData.document_urls?.map((url, idx) => {
+                      const isImg = isImageUrl(url);
+                      const name = getDocDisplayName(url, idx);
+                      return (
+                        <div
+                          key={url}
+                          className="group relative flex items-center gap-3 p-2.5 rounded-xl border border-gray-200 bg-white hover:border-indigo-200 hover:shadow-xs transition-all"
+                        >
+                          {/* Thumbnail / Icon */}
+                          <div
+                            className="w-12 h-12 rounded-lg bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center border border-gray-100 cursor-pointer"
+                            onClick={() => openStorageDocument(url)}
+                            title="Click to view full size"
+                          >
+                            {isImg ? (
+                              <img
+                                src={url}
+                                alt={name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                onError={(e) => {
+                                  // fallback if public url doesn't render directly
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <FileText className="w-6 h-6 text-red-500" />
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => openStorageDocument(url)}
+                              className="text-xs font-medium text-gray-800 truncate block text-left hover:text-indigo-600 w-full"
+                              title={name}
+                            >
+                              {name}
+                            </button>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
+                                Saved
+                              </span>
+                              {isImg && <span className="text-[10px] text-gray-400">Image</span>}
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => openStorageDocument(url)}
+                              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                              title="View Document"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadStorageDocument(url, name)}
+                              className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors"
+                              title="Download"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  document_urls: prev.document_urls?.filter(u => u !== url) || [],
+                                }));
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                              title="Remove"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Pending Uploads (Pasted / Dropped) */}
+                    {pendingFiles.map((file, idx) => {
+                      const isImg = file.type.startsWith('image/');
+                      let objectUrl: string | null = null;
+                      try {
+                        objectUrl = isImg ? URL.createObjectURL(file) : null;
+                      } catch {
+                        objectUrl = null;
+                      }
+                      return (
+                        <div
+                          key={`${file.name}-${idx}`}
+                          className="group relative flex items-center gap-3 p-2.5 rounded-xl border border-indigo-200 bg-indigo-50/40 hover:shadow-xs transition-all"
+                        >
+                          {/* Thumbnail / Icon */}
+                          <div className="w-12 h-12 rounded-lg bg-indigo-100/50 overflow-hidden shrink-0 flex items-center justify-center border border-indigo-100">
+                            {isImg && objectUrl ? (
+                              <img
+                                src={objectUrl}
+                                alt={file.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <FileText className="w-6 h-6 text-indigo-500" />
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-indigo-900 truncate" title={file.name}>
+                              {file.name}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] font-medium text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded">
+                                Ready to upload ({(file.size / 1024).toFixed(0)} KB)
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Remove Pending */}
+                          <div className="flex items-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPendingFiles(prev => prev.filter((_, i) => i !== idx));
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                              title="Cancel this file"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Actions */}
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-sm transition-colors"
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium rounded-lg shadow-sm transition-colors"
                 >
-                  {editingPayee ? 'Save Changes' : 'Create Payee'}
+                  {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isSaving ? 'Uploading & Saving...' : (editingPayee ? 'Save Changes' : 'Create Payee')}
                 </button>
               </div>
             </form>
