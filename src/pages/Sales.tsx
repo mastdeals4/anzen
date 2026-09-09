@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Pencil as Edit, Trash2, FileText, Eye, FileX } from 'lucide-react';
+import { Plus, Pencil as Edit, Trash2, FileText, Eye, FileX, Lock } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -61,6 +61,12 @@ interface SalesInvoice {
     challan_number: string;
     challan_date: string;
   }>;
+  is_draft?: boolean;
+  journal_entry_id?: string | null;
+}
+
+function isPostedInvoice(invoice: SalesInvoice): boolean {
+  return !invoice.is_draft || Boolean(invoice.journal_entry_id) || invoice.payment_status === 'paid' || Number(invoice.paid_amount || 0) > 0;
 }
 
 interface SOItemOption {
@@ -1520,6 +1526,14 @@ export function Sales() {
   }, [navigationData, clearNavigationData]);
 
   const handleEdit = async (invoice: SalesInvoice) => {
+    if (isPostedInvoice(invoice)) {
+      showToast({
+        type: 'warning',
+        title: 'Invoice Posted',
+        message: 'Financially posted invoices cannot be edited directly. Please use Credit Notes for adjustments or returns.',
+      });
+      return;
+    }
     setEditingInvoice(invoice);
     setFormData({
       invoice_number: invoice.invoice_number,
@@ -1568,6 +1582,15 @@ export function Sales() {
   };
 
   const handleDelete = async (id: string) => {
+    const targetInvoice = invoices.find(inv => inv.id === id);
+    if (targetInvoice && isPostedInvoice(targetInvoice)) {
+      showToast({
+        type: 'warning',
+        title: 'Invoice Posted',
+        message: 'Financially posted invoices cannot be deleted. Adjustments must be made via Credit Notes.',
+      });
+      return;
+    }
     if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this invoice?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
@@ -1828,20 +1851,32 @@ export function Sales() {
               </button>
               {canManage && (
                 <>
-                  <button
-                    onClick={() => handleEdit(invoice)}
-                    className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                    title={t('common.edit')}
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(invoice.id)}
-                    className="p-1 text-red-600 hover:bg-red-50 rounded"
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {!isPostedInvoice(invoice) ? (
+                    <>
+                      <button
+                        onClick={() => handleEdit(invoice)}
+                        className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                        title={t('common.edit')}
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(invoice.id)}
+                        className="p-1 text-red-600 hover:bg-red-50 rounded"
+                        title={t('common.delete')}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded cursor-help"
+                      title="Financially posted invoice — direct editing locked. Use Credit Notes for adjustments."
+                    >
+                      <Lock className="w-3 h-3 text-gray-400" />
+                      Posted
+                    </span>
+                  )}
                 </>
               )}
             </div>

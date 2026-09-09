@@ -11,7 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, Eye, Pencil as Edit, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Trash2, Eye, Pencil as Edit, FileText, CheckCircle, XCircle, Lock, RotateCcw } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -783,6 +783,14 @@ export function DeliveryChallan() {
   };
 
   const handleEdit = async (challan: DeliveryChallan) => {
+    if (challan.approval_status === 'approved') {
+      showToast({
+        type: 'warning',
+        title: 'Approved DC Locked',
+        message: 'Approved Delivery Challans cannot be edited directly because inventory has already been posted. To correct, an admin must cancel/reverse this DC.',
+      });
+      return;
+    }
     // Load full challan with sales_order_id
     const { data: fullChallan } = await supabase
       .from('delivery_challans')
@@ -1097,6 +1105,15 @@ export function DeliveryChallan() {
   };
 
   const handleDelete = async (id: string) => {
+    const challan = challans.find(c => c.id === id);
+    if (challan?.approval_status === 'approved') {
+      showToast({
+        type: 'warning',
+        title: 'Approved DC Locked',
+        message: 'Approved Delivery Challans cannot be deleted directly. Use admin cancellation/reversal to reverse inventory movements.',
+      });
+      return;
+    }
     if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this delivery challan? This will revert the linked Sales Order status.', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
@@ -1261,14 +1278,14 @@ export function DeliveryChallan() {
       label: 'Status / Approval',
       render: (value: any, challan: DeliveryChallan) => {
         const statusColors = {
-          pending_approval: 'bg-yellow-100 text-yellow-800',
-          approved: 'bg-green-100 text-green-800',
-          rejected: 'bg-red-100 text-red-800'
+          pending_approval: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+          approved: 'bg-green-100 text-green-800 border border-green-300',
+          rejected: 'bg-red-100 text-red-800 border border-red-300'
         };
         const statusLabels = {
-          pending_approval: 'Pending Approval',
-          approved: 'Approved',
-          rejected: 'Rejected'
+          pending_approval: 'Draft / Pending',
+          approved: 'Approved (Stock Posted)',
+          rejected: 'Cancelled / Rejected'
         };
         return (
           <div className="flex items-center justify-center gap-2">
@@ -1446,23 +1463,46 @@ export function DeliveryChallan() {
                     <FileText className="w-4 h-4" />
                   </button>}
                   {/* Approved DCs are immutable; use the canonical reversal path. */}
-                  {challan.approval_status !== 'approved' && (
+                  {challan.approval_status !== 'approved' ? (
                     <>
                       <button
                         onClick={() => handleEdit(challan)}
                         className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                        title="Edit Challan"
+                        title="Edit Draft Challan"
                       >
                         <Edit className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDelete(challan.id)}
                         className="p-1 text-red-600 hover:bg-red-50 rounded"
-                        title="Delete Challan"
+                        title="Delete Draft Challan"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded cursor-help"
+                        title="Approved DC has posted physical stock and is immutable."
+                      >
+                        <Lock className="w-3 h-3 text-emerald-600" />
+                        Approved
+                      </span>
+                      {profile?.role === 'admin' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChallanToReject(challan.id);
+                            setShowRejectModal(true);
+                          }}
+                          className="p-1 text-amber-600 hover:bg-amber-50 rounded transition-colors"
+                          title="Admin Correction: Cancel/Reverse approved DC (restores stock)"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </>
               )}
@@ -1476,7 +1516,7 @@ export function DeliveryChallan() {
             setModalOpen(false);
             resetForm();
           }}
-          title={editingChallan ? `Edit DC - ${formData.challan_number}` : `Create DC - ${formData.challan_number}`}
+          title={editingChallan?.approval_status === 'approved' ? `Delivery Challan (Approved & Locked) - ${formData.challan_number}` : editingChallan ? `Edit Draft DC - ${formData.challan_number}` : `Create DC - ${formData.challan_number}`}
           size="xl"
           maxWidth="max-w-[90vw]"
         >
@@ -1607,7 +1647,7 @@ export function DeliveryChallan() {
             <div className="border-t pt-3 mt-3">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold text-gray-700">Items to Dispatch</h3>
-                {(editingChallan?.approval_status !== 'approved' || profile?.role === 'admin') && (
+                {editingChallan?.approval_status !== 'approved' && (
                   <button
                     type="button"
                     onClick={addItem}

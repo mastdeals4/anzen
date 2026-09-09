@@ -89,7 +89,7 @@ export function Dashboard() {
         deliveryAlerts,
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('products').select('id, min_stock_level, current_stock').eq('is_active', true),
+        supabase.from('inventory_v1_stock_summary').select('product_id, min_stock_level, total_current_stock, available_quantity'),
         supabase.from('customers').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase
           .from('sales_invoices')
@@ -131,10 +131,15 @@ export function Dashboard() {
       ]);
 
       const lowStockCount = productsWithStockResult.data?.filter(p =>
-        p.min_stock_level > 0 && p.current_stock < p.min_stock_level
+        (Number(p.min_stock_level) || 0) > 0 &&
+        Number(p.available_quantity ?? p.total_current_stock ?? 0) < Number(p.min_stock_level)
       ).length || 0;
 
-      const batchesResult = await supabase.from('batches').select('current_stock, expiry_date').eq('is_active', true);
+      const batchesResult = await supabase
+        .from('batches')
+        .select('current_stock, expiry_date')
+        .eq('is_active', true)
+        .gt('current_stock', 0);
 
       const thirtyDaysFromNow = new Date();
       thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);

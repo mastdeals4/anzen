@@ -4,6 +4,7 @@ import {
   Calendar,
   ChevronDown,
   ChevronRight,
+  Download,
   HelpCircle,
   Info,
   Layers,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatNumber } from '../../utils/currency';
+import { ExportSalesProfitModal } from '../../components/ExportSalesProfitModal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,8 @@ export interface ProductProfitabilityRow {
   product_code: string;
   product_unit: string;
   current_stock: number;
+  reserved_stock?: number;
+  available_stock?: number;
   sold_qty: number;
   gross_sales: number;
   product_cost: number | null;
@@ -243,18 +247,50 @@ export function CanonicalSalesProfitReport() {
   const [loadingModalBatches, setLoadingModalBatches] = useState(false);
   const [modalExpandedBatchId, setModalExpandedBatchId] = useState<string | null>(null);
 
+  // Excel Export Modal state
+  const [showExportModal, setShowExportModal] = useState(false);
+
   // Load summary data
   const loadSummary = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const { data: res, error: rpcErr } = await supabase.rpc('get_sales_profitability_summary', {
-        p_start_date: startDate,
-        p_end_date: endDate,
-      });
+      const [{ data: res, error: rpcErr }, { data: stockData, error: stockErr }] = await Promise.all([
+        supabase.rpc('get_sales_profitability_summary', {
+          p_start_date: startDate,
+          p_end_date: endDate,
+        }),
+        supabase
+          .from('inventory_v1_stock_summary')
+          .select('product_id, total_current_stock, reserved_stock, available_quantity'),
+      ]);
 
       if (rpcErr) throw rpcErr;
-      setData(res as ProfitabilitySummaryResponse);
+      if (stockErr) console.warn('Could not load inventory_v1_stock_summary:', stockErr);
+
+      const stockMap = new Map<string, { current: number; reserved: number; available: number }>();
+      (stockData || []).forEach((row: any) => {
+        stockMap.set(row.product_id, {
+          current: Number(row.total_current_stock ?? 0),
+          reserved: Number(row.reserved_stock ?? 0),
+          available: Number(row.available_quantity ?? 0),
+        });
+      });
+
+      const rawSummary = res as ProfitabilitySummaryResponse;
+      if (rawSummary?.products) {
+        rawSummary.products = rawSummary.products.map(p => {
+          const canonical = stockMap.get(p.product_id);
+          return {
+            ...p,
+            current_stock: canonical ? canonical.current : Number(p.current_stock || 0),
+            reserved_stock: canonical ? canonical.reserved : 0,
+            available_stock: canonical ? canonical.available : Number(p.current_stock || 0),
+          };
+        });
+      }
+
+      setData(rawSummary);
     } catch (err: any) {
       console.error('Error loading sales profitability summary:', err);
       setError(err.message || 'Failed to load profitability summary');
@@ -406,14 +442,24 @@ export function CanonicalSalesProfitReport() {
               Comprehensive management profitability tracking actual gross sales, batch landed costs, and delivery expenses.
             </p>
           </div>
-          <button
-            onClick={loadSummary}
-            disabled={loading}
-            className="self-start md:self-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <button
+              onClick={() => setShowExportModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-300 rounded-lg hover:bg-emerald-100 shadow-sm transition"
+              title="Export complete drill-down report to Excel"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-700" />
+              Export to Excel
+            </button>
+            <button
+              onClick={loadSummary}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Date Filter Bar */}
@@ -570,7 +616,7 @@ export function CanonicalSalesProfitReport() {
               <tr>
                 <th className="px-4 py-3 min-w-[200px]">Product</th>
                 <th className="px-3 py-3 text-right">
-                  <TooltipHeader title="Current Stock" tooltip="Total physical stock currently available across active warehouse batches." />
+                  <TooltipHeader title="Stock (Cur / Res / Avail)" tooltip="Canonical inventory: Current physical stock, active order reservations, and net available stock." />
                 </th>
                 <th className="px-3 py-3 text-right">
                   <TooltipHeader title="Sold Qty" tooltip="Total quantity sold on finalized invoices in the selected date range." />
@@ -637,7 +683,14 @@ export function CanonicalSalesProfitReport() {
                           <div className="text-[11px] text-gray-400 pl-5">{p.product_code || '—'}</div>
                         </td>
                         <td className="px-3 py-3 text-right font-medium text-gray-700">
-                          {formatNumber(p.current_stock, 0)} {p.product_unit}
+                          <div className="font-semibold text-gray-900">
+                            {formatNumber(p.current_stock, 0)} {p.product_unit}
+                          </div>
+                          <div className="text-[11px] text-gray-500 whitespace-nowrap mt-0.5">
+                            <span className="text-amber-700 font-medium">Res: {formatNumber(p.reserved_stock || 0, 0)}</span>
+                            <span className="mx-1 text-gray-300">|</span>
+                            <span className="text-emerald-700 font-medium">Avail: {formatNumber(p.available_stock ?? (p.current_stock - (p.reserved_stock || 0)), 0)}</span>
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-right font-semibold text-gray-900">
                           {formatNumber(p.sold_qty, 0)} {p.product_unit}
@@ -756,7 +809,7 @@ export function CanonicalSalesProfitReport() {
                                     <thead className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
                                       <tr>
                                         <th className="px-3 py-2.5">Batch Number</th>
-                                        <th className="px-3 py-2.5 text-right">Current Stock</th>
+                                        <th className="px-3 py-2.5 text-right">Batch Physical Stock</th>
                                         <th className="px-3 py-2.5 text-right">Sold Qty</th>
                                         <th className="px-3 py-2.5 text-right">Landed Cost/Unit</th>
                                         <th className="px-3 py-2.5 text-right">Avg Sell Price</th>
@@ -997,7 +1050,12 @@ export function CanonicalSalesProfitReport() {
                 <tr>
                   <td className="px-4 py-3">TOTAL ({filteredProducts.length} products)</td>
                   <td className="px-3 py-3 text-right">
-                    {formatNumber(filteredProducts.reduce((s, p) => s + p.current_stock, 0), 0)}
+                    <div>{formatNumber(filteredProducts.reduce((s, p) => s + p.current_stock, 0), 0)}</div>
+                    <div className="text-[10px] font-normal text-gray-500 whitespace-nowrap">
+                      <span className="text-amber-700">Res: {formatNumber(filteredProducts.reduce((s, p) => s + (p.reserved_stock || 0), 0), 0)}</span>
+                      <span className="mx-1 text-gray-300">|</span>
+                      <span className="text-emerald-700">Avail: {formatNumber(filteredProducts.reduce((s, p) => s + (p.available_stock ?? p.current_stock), 0), 0)}</span>
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-right">
                     {formatNumber(filteredProducts.reduce((s, p) => s + p.sold_qty, 0), 0)}
@@ -1109,11 +1167,23 @@ export function CanonicalSalesProfitReport() {
             </div>
 
             {/* Product Summary Ribbon */}
-            <div className="grid grid-cols-2 sm:grid-cols-6 divide-x divide-gray-200 border-b border-gray-200 bg-white text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-8 divide-x divide-gray-200 border-b border-gray-200 bg-white text-xs">
               <div className="p-3 text-center">
                 <span className="text-gray-500 block">Current Stock</span>
                 <span className="font-bold text-gray-900 text-sm mt-0.5">
                   {formatNumber(selectedProduct.current_stock, 0)} {selectedProduct.product_unit}
+                </span>
+              </div>
+              <div className="p-3 text-center">
+                <span className="text-amber-600 block font-medium">Reserved</span>
+                <span className="font-bold text-amber-700 text-sm mt-0.5">
+                  {formatNumber(selectedProduct.reserved_stock || 0, 0)} {selectedProduct.product_unit}
+                </span>
+              </div>
+              <div className="p-3 text-center">
+                <span className="text-emerald-600 block font-medium">Available</span>
+                <span className="font-bold text-emerald-700 text-sm mt-0.5">
+                  {formatNumber(selectedProduct.available_stock ?? selectedProduct.current_stock, 0)} {selectedProduct.product_unit}
                 </span>
               </div>
               <div className="p-3 text-center">
@@ -1183,7 +1253,7 @@ export function CanonicalSalesProfitReport() {
                     <thead className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
                       <tr>
                         <th className="px-3 py-2.5">Batch Number</th>
-                        <th className="px-3 py-2.5 text-right">Current Stock</th>
+                        <th className="px-3 py-2.5 text-right">Batch Physical Stock</th>
                         <th className="px-3 py-2.5 text-right">Sold Qty</th>
                         <th className="px-3 py-2.5 text-right">Landed Cost/Unit</th>
                         <th className="px-3 py-2.5 text-right">Avg Sell Price</th>
@@ -1414,6 +1484,14 @@ export function CanonicalSalesProfitReport() {
           </div>
         </div>
       )}
+
+      {/* Export to Excel Modal */}
+      <ExportSalesProfitModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        currentStartDate={startDate}
+        currentEndDate={endDate}
+      />
     </div>
   );
 }
