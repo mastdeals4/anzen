@@ -78,6 +78,7 @@ interface JournalEntryViewerEnhancedProps {
 const sourceModuleKey: Record<string, string> = {
   sales_invoice: 'journalSales',
   sales_invoice_cogs: 'journalSales',
+  sales_invoice_cogs_adjustment: 'journalSales',
   purchase_invoice: 'purchase',
   receipt: 'receipt',
   payment: 'payment',
@@ -95,6 +96,7 @@ const sourceFilters = [
   { value: 'all', label: 'All Sources' },
   { value: 'sales_invoice', label: 'Sales Invoices' },
   { value: 'sales_invoice_cogs', label: 'COGS' },
+  { value: 'sales_invoice_cogs_adjustment', label: 'COGS Adjustments' },
   { value: 'purchase_invoice', label: 'Purchase Invoices' },
   { value: 'receipt', label: 'Receipts' },
   { value: 'payment', label: 'Payments' },
