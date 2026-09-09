@@ -1,10 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Download } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { formatFinancePeriod } from '../../../utils/financePeriod';
 import { useFinance } from '../../../contexts/FinanceContext';
 import { StatCard, StatCardGrid, SectionCard, StatusChip, EmptyState, taxPaymentBusinessStatus } from './TaxUI';
 import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../../../services/expensePostingLifecycle';
+import { showToast } from '../../ToastNotification';
 
 type PphType = 'PPh21' | 'PPh22' | 'PPh23' | 'PPh4(2)' | 'PPh_Unifikasi';
 
@@ -41,6 +43,10 @@ interface SourceLine {
   doc_date: string;
   period_date: string;
   party: string;
+  party_type?: 'Staff' | 'Payee' | 'Supplier' | 'Other';
+  raw_nik?: string | null;
+  raw_npwp?: string | null;
+  gross_amount?: number;
   description: string | null;
   pph_code: string | null;
   pph_amount: number;
@@ -81,10 +87,6 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
   const yr = row.fiscal_year;
   const mo = row.period_month;
   const startDate = `${yr}-${String(mo).padStart(2,'0')}-01`;
-  // Last day of the calendar month. new Date(yr, mo, 0) is correct locally
-  // (mo is 1-indexed here; day 0 rolls back to the previous month's last
-  // day), but toISOString() converts to UTC and drops a day in +XX
-  // timezones, so we construct the string directly to stay TZ-safe.
   const lastDay = new Date(yr, mo, 0).getDate();
   const endDate = `${yr}-${String(mo).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
 
@@ -93,18 +95,18 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
       .from('finance_expenses')
       .select('id, voucher_number, expense_date, due_date, amount, pph_amount, pph_dpp_amount, tax_period_id, pph_tax_period_id, description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name, npwp), staff:staff_id(full_name, nik, npwp), payees:payee_id(full_name, nik, npwp, business_role)')
       .gt('pph_amount', 0),
-    // Import PPh 22: pib_import (pib_pph_amount) + pph_import (whole amount).
-    // Mirrors compute_period_ppn's import branch. Always PPh22.
     supabase
       .from('finance_expenses')
       .select('id, voucher_number, expense_date, due_date, amount, pib_pph_amount, tax_period_id, pph_tax_period_id, description, expense_category, approval_status, suppliers:supplier_id(company_name, npwp)')
       .in('expense_category', ['pib_import', 'pph_import']),
   ]);
 
+  if (feRes.error) {
+    console.error('Failed to load expense PPh detail:', feRes.error);
+  }
+
   // PPh withholding is attributed to the expense/document calendar month.
-  // Due dates and payment dates are settlement terms, not the tax period.
-  const periodDate = (expense: any): string =>
-    expense.expense_date;
+  const periodDate = (expense: any): string => expense.expense_date;
   const isSelectedPeriod = (expense: any): boolean => {
     if (row.tax_type !== 'PPh_Unifikasi' && expense.pph_tax_period_id) return expense.pph_tax_period_id === row.tax_period_id;
     const date = periodDate(expense);
@@ -116,8 +118,10 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
     ...((importRes.data ?? []) as any[]),
   ];
   const expenseStates = await getEffectiveExpensePostingStates(allExpenseSources.map(expense => expense.id));
-  const isEffectiveExpense = (expense: any) =>
-    isEffectiveExpensePosting(expenseStates.get(expense.id)?.effective_posting_state);
+  const isEffectiveExpense = (expense: any) => {
+    if (expense.approval_status === 'approved') return true;
+    return isEffectiveExpensePosting(expenseStates.get(expense.id)?.effective_posting_state);
+  };
   const expenseData = ((feRes.data ?? []) as any[]).filter(isEffectiveExpense).filter(isSelectedPeriod);
   const importData = ((importRes.data ?? []) as any[]).filter(isEffectiveExpense).filter(isSelectedPeriod);
 
@@ -148,19 +152,25 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
 
   const expenses: SourceLine[] = expenseData
     .filter(r => {
-      // Import categories are handled by the import branch below; exclude here
-      // to avoid double-counting (matches the engine's NOT IN import guard).
       if (r.expense_category === 'pib_import' || r.expense_category === 'pph_import') return false;
       const codeType = r.pph_code?.tax_type ?? null;
       return pphType === 'PPh_Unifikasi' || codeType === pphType;
     })
     .map(r => {
-      const party = r.payees?.full_name ?? r.suppliers?.company_name ?? r.staff?.full_name ?? '—';
-      const rawNpwp = r.payees?.npwp ?? r.suppliers?.npwp ?? r.staff?.npwp ?? null;
+      const party = r.payees?.full_name ?? r.staff?.full_name ?? r.suppliers?.company_name ?? '—';
+      const partyType: SourceLine['party_type'] = r.payees ? 'Payee' : r.staff ? 'Staff' : r.suppliers ? 'Supplier' : 'Other';
+      const rawNpwp = r.payees?.npwp ?? r.staff?.npwp ?? r.suppliers?.npwp ?? null;
       const rawNik = r.payees?.nik ?? r.staff?.nik ?? null;
       const taxId = rawNpwp || rawNik || null;
       const taxIdStatus: 'NPWP' | 'NIK' | 'Missing' = rawNpwp ? 'NPWP' : rawNik ? 'NIK' : 'Missing';
       const filingReady = !!taxId;
+      const gross = Number(r.amount || 0);
+      const codeType = r.pph_code?.tax_type ?? pphType;
+      let dpp = r.pph_dpp_amount ? Number(r.pph_dpp_amount) : gross;
+      if (!r.pph_dpp_amount && (codeType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee')) {
+        dpp = Math.round(gross * 0.5);
+      }
+
       return {
         module: 'expense' as const,
         id: r.id,
@@ -168,14 +178,18 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         doc_date: r.expense_date,
         period_date: periodDate(r),
         party,
+        party_type: partyType,
+        raw_nik: rawNik,
+        raw_npwp: rawNpwp,
+        gross_amount: gross,
         party_tax_id: taxId,
         tax_id_status: taxIdStatus,
         filing_ready: filingReady,
-        dpp_amount: r.pph_dpp_amount ? Number(r.pph_dpp_amount) : Math.round(Number(r.amount || 0) * 0.5),
+        dpp_amount: dpp,
         description: r.description,
         pph_code: r.pph_code?.code ?? null,
         pph_amount: Number(r.pph_amount),
-        tax_type: r.pph_code?.tax_type ?? pphType,
+        tax_type: codeType,
         source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
         is_official: r.approval_status === 'approved',
         tax_period_id: r.pph_tax_period_id ?? null,
@@ -200,6 +214,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
           const taxId = r.suppliers?.npwp ?? null;
           const taxIdStatus: 'NPWP' | 'NIK' | 'Missing' = taxId ? 'NPWP' : 'Missing';
           const filingReady = !!taxId;
+          const gross = Number(r.amount || 0);
           return {
             module: 'import' as const,
             id: r.id,
@@ -207,10 +222,14 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
             doc_date: r.expense_date,
             period_date: periodDate(r),
             party,
+            party_type: 'Supplier' as const,
+            raw_nik: null,
+            raw_npwp: taxId,
+            gross_amount: gross,
             party_tax_id: taxId,
             tax_id_status: taxIdStatus,
             filing_ready: filingReady,
-            dpp_amount: Number(r.amount || 0),
+            dpp_amount: gross,
             description: r.description,
             pph_code: 'PPh22 Import',
             pph_amount: amt,
@@ -248,6 +267,124 @@ function consolidateRows(rows: Row[]): Row[] {
   return [...grouped.values()].sort((a, b) => b.fiscal_year - a.fiscal_year || b.period_month - a.period_month);
 }
 
+function exportPphReturnExcel(row: Row, lines: SourceLine[]) {
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Withholding Schedule
+  const detailData = lines.map((l, idx) => ({
+    'No': idx + 1,
+    'No Bukti / Voucher': l.doc_number,
+    'Tanggal Transaksi': l.doc_date,
+    'Masa Pajak': formatFinancePeriod(row.fiscal_year, row.period_month),
+    'Jenis PPh': l.tax_type,
+    'Kode Objek Pajak': l.pph_code || '—',
+    'Nama Penerima Penghasilan': l.party,
+    'Kategori Penerima': l.party_type || '—',
+    'Jenis Identitas': l.tax_id_status || 'Missing',
+    'Nomor NIK (KTP/Akte)': l.raw_nik || '',
+    'Nomor NPWP': l.raw_npwp || '',
+    'Penghasilan Bruto (Rp)': Number(l.gross_amount || 0),
+    'Dasar Pengenaan Pajak / DPP (Rp)': Number(l.dpp_amount || 0),
+    'Jumlah PPh Dipotong (Rp)': Number(l.pph_amount || 0),
+    'Jumlah Netto Dibayarkan (Rp)': Number((l.gross_amount || 0) - (l.pph_amount || 0)),
+    'Metode Pembayaran': l.payment_method || '—',
+    'No Jurnal Akuntansi': l.journal_reference || '—',
+    'Status Dokumen': l.source_status,
+    'Kesiapan Filing e-Bupot': l.filing_ready ? 'READY' : '⚠️ BUTUH NIK/NPWP',
+    'Keterangan / Keperluan': l.description || '',
+  }));
+
+  const wsDetail = XLSX.utils.json_to_sheet(detailData);
+  wsDetail['!cols'] = [
+    { wch: 5 },  // No
+    { wch: 16 }, // Voucher
+    { wch: 14 }, // Date
+    { wch: 12 }, // Period
+    { wch: 10 }, // Tax Type
+    { wch: 14 }, // Tax Code
+    { wch: 28 }, // Party Name
+    { wch: 16 }, // Party Category
+    { wch: 14 }, // ID Type
+    { wch: 20 }, // NIK
+    { wch: 20 }, // NPWP
+    { wch: 18 }, // Gross
+    { wch: 18 }, // DPP
+    { wch: 18 }, // PPh
+    { wch: 18 }, // Net
+    { wch: 16 }, // Payment Method
+    { wch: 16 }, // Journal
+    { wch: 12 }, // Status
+    { wch: 22 }, // Filing Status
+    { wch: 30 }, // Description
+  ];
+  XLSX.utils.book_append_sheet(wb, wsDetail, 'Bukti_Potong_Detail');
+
+  // Sheet 2: Summary / Rekapitulasi Masa Pajak
+  const summaryData = [
+    { 'Keterangan': 'Masa Pajak', 'Nilai': formatFinancePeriod(row.fiscal_year, row.period_month) },
+    { 'Keterangan': 'Jenis Pajak Penghasilan', 'Nilai': row.tax_type },
+    { 'Keterangan': 'Status Masa Pajak', 'Nilai': row.status },
+    { 'Keterangan': 'Jumlah Bukti Transaksi', 'Nilai': lines.length },
+    { 'Keterangan': 'Total Penghasilan Bruto (Rp)', 'Nilai': lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0) },
+    { 'Keterangan': 'Total DPP (Rp)', 'Nilai': lines.reduce((s, l) => s + Number(l.dpp_amount || 0), 0) },
+    { 'Keterangan': 'Total PPh Dipotong (Rp)', 'Nilai': Number(row.pph_total || 0) },
+    { 'Keterangan': 'Total PPh Sudah Disetor (Rp)', 'Nilai': Number(row.pph_paid_total || 0) },
+    { 'Keterangan': 'Sisa PPh Kurang Bayar (Rp)', 'Nilai': Number(row.pph_outstanding || 0) },
+    { 'Keterangan': 'Kelebihan Bayar / Kompensasi (Rp)', 'Nilai': Number(row.pph_overpaid || 0) },
+    { 'Keterangan': 'Batas Waktu Penyetoran (Payment Due)', 'Nilai': row.payment_due_date || '—' },
+    { 'Keterangan': 'Batas Waktu Pelaporan (Filing Due)', 'Nilai': row.filing_due_date || '—' },
+  ];
+  const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+  wsSummary['!cols'] = [{ wch: 36 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Rekap_Masa_Pajak');
+
+  const filename = `PPh_${row.tax_type}_${formatFinancePeriod(row.fiscal_year, row.period_month).replace(/\s+/g, '_')}_CA_Package.xlsx`;
+  XLSX.writeFile(wb, filename);
+
+  showToast({
+    type: 'success',
+    title: 'CA Package Exported',
+    message: `${filename} downloaded with ${lines.length} withholding records.`,
+  });
+}
+
+function exportEBupotCsv(row: Row, lines: SourceLine[]) {
+  const missing = lines.filter(d => !d.filing_ready);
+  if (missing.length > 0) {
+    showToast({
+      type: 'warning',
+      title: 'e-Bupot Warning: Missing NIK/NPWP',
+      message: `${missing.length} record(s) lack NIK/NPWP. Exported file marked for review before final submission.`,
+    });
+  }
+
+  const rows = [
+    ['Document No', 'Document Date', 'Tax Period', 'Party / Payee', 'Party Category', 'Tax ID Type', 'Tax ID (NIK/NPWP)', 'PPh Code', 'DPP Amount', 'PPh Withheld', 'Net Amount', 'Filing Status'],
+    ...lines.map(d => [
+      d.doc_number,
+      d.doc_date,
+      formatFinancePeriod(row.fiscal_year, row.period_month),
+      `"${d.party.replace(/"/g, '""')}"`,
+      d.party_type || '—',
+      d.tax_id_status || 'Missing',
+      `'${d.party_tax_id || ''}`,
+      d.pph_code || '',
+      d.dpp_amount || 0,
+      d.pph_amount,
+      (d.gross_amount || 0) - d.pph_amount,
+      d.filing_ready ? 'READY' : 'MISSING_ID',
+    ])
+  ];
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ebupot_withholding_${row.tax_type}_${row.fiscal_year}_${String(row.period_month).padStart(2, '0')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 interface Props {
   onOpenExpense?: (id: string) => void;
   onOpenPayment?: (id: string) => void;
@@ -265,6 +402,8 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
   const [periods, setPeriods] = useState<TaxPeriodOption[]>([]);
   const [editingPeriodId, setEditingPeriodId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [exportingPeriodId, setExportingPeriodId] = useState<string | null>(null);
+  const [exportingAll, setExportingAll] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -360,18 +499,132 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
     }
   }
 
+  async function handleExportRow(r: Row) {
+    setExportingPeriodId(r.tax_period_id);
+    try {
+      let lines = detail;
+      if (expandedId !== r.tax_period_id || !lines) {
+        lines = await loadPphDetail(r);
+      }
+      const official = lines.filter(l => l.is_official);
+      exportPphReturnExcel(r, official.length > 0 ? official : lines);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Export Failed', message: err.message || 'Failed to export' });
+    } finally {
+      setExportingPeriodId(null);
+    }
+  }
+
+  async function handleExportAll() {
+    if (filtered.length === 0) return;
+    setExportingAll(true);
+    try {
+      showToast({ type: 'info', title: 'Preparing Export', message: `Compiling data for ${filtered.length} period(s)...` });
+      const allLinesByPeriod: { row: Row; lines: SourceLine[] }[] = [];
+      for (const r of filtered) {
+        const lines = await loadPphDetail(r);
+        allLinesByPeriod.push({ row: r, lines: lines.filter(l => l.is_official) });
+      }
+
+      const wb = XLSX.utils.book_new();
+
+      // Master Register Sheet
+      const masterRows: any[] = [];
+      allLinesByPeriod.forEach(({ row, lines }) => {
+        lines.forEach((l, idx) => {
+          masterRows.push({
+            'No': masterRows.length + 1,
+            'Masa Pajak': formatFinancePeriod(row.fiscal_year, row.period_month),
+            'No Bukti / Voucher': l.doc_number,
+            'Tanggal Transaksi': l.doc_date,
+            'Jenis PPh': l.tax_type,
+            'Kode Objek Pajak': l.pph_code || '—',
+            'Nama Penerima Penghasilan': l.party,
+            'Kategori Penerima': l.party_type || '—',
+            'Jenis Identitas': l.tax_id_status || 'Missing',
+            'Nomor NIK (KTP/Akte)': l.raw_nik || '',
+            'Nomor NPWP': l.raw_npwp || '',
+            'Penghasilan Bruto (Rp)': Number(l.gross_amount || 0),
+            'Dasar Pengenaan Pajak / DPP (Rp)': Number(l.dpp_amount || 0),
+            'Jumlah PPh Dipotong (Rp)': Number(l.pph_amount || 0),
+            'Jumlah Netto Dibayarkan (Rp)': Number((l.gross_amount || 0) - (l.pph_amount || 0)),
+            'Metode Pembayaran': l.payment_method || '—',
+            'No Jurnal Akuntansi': l.journal_reference || '—',
+            'Status Dokumen': l.source_status,
+            'Kesiapan Filing e-Bupot': l.filing_ready ? 'READY' : '⚠️ BUTUH NIK/NPWP',
+            'Keterangan': l.description || '',
+          });
+        });
+      });
+
+      const wsMaster = XLSX.utils.json_to_sheet(masterRows);
+      wsMaster['!cols'] = [
+        { wch: 5 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 14 },
+        { wch: 28 }, { wch: 16 }, { wch: 14 }, { wch: 20 }, { wch: 20 },
+        { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
+        { wch: 12 }, { wch: 22 }, { wch: 30 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsMaster, 'All_Withholdings');
+
+      // Periods Summary Sheet
+      const summaryRows = filtered.map(r => ({
+        'Period': formatFinancePeriod(r.fiscal_year, r.period_month),
+        'Jenis Pajak': r.tax_type,
+        'Status Masa': r.status,
+        'Total PPh Dipotong (Rp)': Number(r.pph_total || 0),
+        'Total Disetor (Rp)': Number(r.pph_paid_total || 0),
+        'Sisa Kurang Bayar (Rp)': Number(r.pph_outstanding || 0),
+        'Lebih Bayar (Rp)': Number(r.pph_overpaid || 0),
+        'Batas Setor': r.payment_due_date || '—',
+        'Batas Lapor': r.filing_due_date || '—',
+      }));
+      const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+      wsSummary['!cols'] = [
+        { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 20 },
+        { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 14 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Rekap_Semua_Masa');
+
+      const filename = `Consolidated_PPh_${pphTabLabel(active).replace(/\s+/g, '_')}_CA_Package.xlsx`;
+      XLSX.writeFile(wb, filename);
+
+      showToast({
+        type: 'success',
+        title: 'Master CA Package Exported',
+        message: `${filename} downloaded with ${masterRows.length} transactions across ${filtered.length} periods.`,
+      });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Export Failed', message: err.message || 'Failed to export' });
+    } finally {
+      setExportingAll(false);
+    }
+  }
+
   return (
     <div className="space-y-2">
-      <div className="flex gap-1.5 flex-wrap">
-        {TABS.map(t => (
-          <button
-            key={t}
-            onClick={() => setActive(t)}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md border transition ${active === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50 border-gray-200'}`}
-          >
-            {pphTabLabel(t)}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex gap-1.5 flex-wrap">
+          {TABS.map(t => (
+            <button
+              key={t}
+              onClick={() => setActive(t)}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md border transition ${active === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50 border-gray-200'}`}
+            >
+              {pphTabLabel(t)}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          disabled={exportingAll || filtered.length === 0}
+          onClick={handleExportAll}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg shadow-xs transition disabled:opacity-50"
+          title="Export all periods in current view to a consolidated CA Excel workbook"
+        >
+          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+          <span>{exportingAll ? 'Preparing Export...' : `Export All ${pphTabLabel(active)} (.xlsx)`}</span>
+        </button>
       </div>
 
       {!loading && filtered.length > 0 && (
@@ -407,6 +660,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                 <th className="text-right px-2.5 py-1.5">Overpaid / Credit</th>
                 <th className="text-left px-2.5 py-1.5">Payment Due</th>
                 <th className="text-left px-2.5 py-1.5">Filing Due</th>
+                <th className="text-center px-2.5 py-1.5 w-24">CA Export</th>
               </tr>
             </thead>
             <tbody>
@@ -445,50 +699,45 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                       <td className="px-2.5 py-1.5 text-right tabular-nums font-semibold text-blue-700">{fmt(r.pph_overpaid)}</td>
                       <td className="px-2.5 py-1.5 whitespace-nowrap">{r.payment_due_date ?? '—'}</td>
                       <td className="px-2.5 py-1.5 whitespace-nowrap">{r.filing_due_date ?? '—'}</td>
+                      <td className="px-2.5 py-1.5 text-center" onClick={e => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          disabled={exportingPeriodId === r.tax_period_id}
+                          onClick={() => void handleExportRow(r)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition disabled:opacity-50"
+                          title="Export CA Tax Package (.xlsx) for this period"
+                        >
+                          <FileSpreadsheet className="w-3 h-3 text-emerald-600" />
+                          <span>{exportingPeriodId === r.tax_period_id ? '...' : 'Excel'}</span>
+                        </button>
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr key={`${r.tax_period_id}-detail`} className="bg-blue-50/30">
-                        <td colSpan={11} className="px-6 pb-4 pt-2">
+                        <td colSpan={12} className="px-6 pb-4 pt-2">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
                               Source Documents — {pphTabLabel(active)} withheld in {formatFinancePeriod(r.fiscal_year, r.period_month)}
                             </h4>
                             {officialDetail.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const missing = officialDetail.filter(d => !d.filing_ready);
-                                  if (missing.length > 0) {
-                                    alert(`e-Bupot 21 Export Blocked:\n${missing.length} record(s) (${missing.map(m => m.doc_number).join(', ')}) lack valid NIK/NPWP identity numbers.\n\nPer DJP compliance regulations, e-Bupot withholding returns strictly require a verified NIK or NPWP for every withholding certificate.`);
-                                    return;
-                                  }
-                                  const rows = [
-                                    ['Document No', 'Document Date', 'Tax Period', 'Party / Payee', 'Tax ID Type', 'Tax ID (NIK/NPWP)', 'PPh Code', 'DPP Amount', 'PPh Withheld'],
-                                    ...officialDetail.map(d => [
-                                      d.doc_number,
-                                      d.doc_date,
-                                      formatFinancePeriod(r.fiscal_year, r.period_month),
-                                      `"${d.party.replace(/"/g, '""')}"`,
-                                      d.tax_id_status || 'Missing',
-                                      `'${d.party_tax_id || ''}`,
-                                      d.pph_code || '',
-                                      d.dpp_amount || 0,
-                                      d.pph_amount,
-                                    ])
-                                  ];
-                                  const csv = rows.map(r => r.join(',')).join('\n');
-                                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                                  const url = URL.createObjectURL(blob);
-                                  const a = document.createElement('a');
-                                  a.href = url;
-                                  a.download = `ebupot_withholding_${r.fiscal_year}_${String(r.period_month).padStart(2, '0')}.csv`;
-                                  a.click();
-                                  URL.revokeObjectURL(url);
-                                }}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-blue-700 bg-white border border-blue-300 rounded hover:bg-blue-50 transition"
-                              >
-                                <Download className="w-3.5 h-3.5" /> Export e-Bupot Return
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => exportPphReturnExcel(r, officialDetail)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded shadow-xs transition"
+                                  title="Export complete CA Tax Package Excel Workbook"
+                                >
+                                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" /> Export CA Package (.xlsx)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => exportEBupotCsv(r, officialDetail)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-blue-700 bg-white hover:bg-blue-50 border border-blue-300 rounded transition"
+                                  title="Export DJP-compliant e-Bupot CSV"
+                                >
+                                  <Download className="w-3.5 h-3.5" /> Export e-Bupot CSV
+                                </button>
+                              </div>
                             )}
                           </div>
                           {detailLoading ? (
@@ -521,6 +770,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                   <th className="text-left py-1 pr-3">PPh Period Date</th>
                                   <th className="text-left py-1 pr-3">Tax Period</th>
                                   <th className="text-left py-1 pr-3">Party / Payee</th>
+                                  <th className="text-left py-1 pr-3">Category</th>
                                   <th className="text-left py-1 pr-3">Tax ID / Status</th>
                                   <th className="text-left py-1 pr-3">Readiness</th>
                                   <th className="text-left py-1 pr-3">PPh Code</th>
@@ -568,9 +818,13 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                       )}
                                     </td>
                                     <td className="py-1.5 pr-3 max-w-[140px] truncate text-gray-800 font-medium" title={l.party}>{l.party}</td>
+                                    <td className="py-1.5 pr-3 whitespace-nowrap text-gray-500">{l.party_type || '—'}</td>
                                     <td className="py-1.5 pr-3 whitespace-nowrap">
                                       {l.party_tax_id ? (
-                                        <span className="font-mono text-[11px] text-gray-700">{l.party_tax_id}</span>
+                                        <div className="font-mono text-[11px] text-gray-700">
+                                          <span className="text-[9px] text-gray-400 mr-1">{l.tax_id_status}:</span>
+                                          {l.party_tax_id}
+                                        </div>
                                       ) : (
                                         <span className="text-[10px] text-amber-700 bg-amber-50 px-1 py-0.5 rounded font-medium">No NIK/NPWP</span>
                                       )}
@@ -579,7 +833,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                       {l.filing_ready ? (
                                         <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-medium">Ready</span>
                                       ) : (
-                                        <span className="text-[10px] text-red-700 bg-red-50 px-1.5 py-0.5 rounded font-medium">Blocked</span>
+                                        <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-medium">Need ID</span>
                                       )}
                                     </td>
                                     <td className="py-1.5 pr-3">
@@ -603,7 +857,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                   </tr>
                                 ))}
                                 <tr className="font-semibold border-t-2 border-gray-300 bg-gray-50">
-                                  <td colSpan={13} className="py-1.5 pr-3 text-right text-xs text-gray-500">Total {pphTabLabel(active)} Withheld</td>
+                                  <td colSpan={14} className="py-1.5 pr-3 text-right text-xs text-gray-500">Total {pphTabLabel(active)} Withheld</td>
                                   <td className="py-1.5 text-right font-mono text-orange-700">
                                     Rp {fmt(detailTotal)}
                                   </td>

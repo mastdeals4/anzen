@@ -8,10 +8,11 @@ import { SectionCard, EmptyState } from './TaxUI';
 import { formatFinancePeriod, formatFinancePeriodValue } from '../../../utils/financePeriod';
 
 type ReportId =
+  | 'pph_register'
+  | 'pph_summary'
   | 'input_ppn'
   | 'output_ppn'
   | 'ppn_payable'
-  | 'pph_register'
   | 'tax_payments'
   | 'outstanding'
   | 'monthly_summary'
@@ -25,15 +26,16 @@ interface Report {
 }
 
 const REPORTS: Report[] = [
-  { id: 'input_ppn',       label: 'Input PPN Register',   description: 'PPN Masukan from purchase invoices & expenses' },
-  { id: 'output_ppn',      label: 'Output PPN Register',  description: 'PPN Keluaran from sales invoices with Faktur Pajak' },
-  { id: 'ppn_payable',     label: 'PPN Payable Report',   description: 'Input vs Output vs Carry Forward per period' },
-  { id: 'pph_register',    label: 'PPh Register',         description: 'PPh 21/22/23/4(2)/Unifikasi withholdings' },
-  { id: 'tax_payments',    label: 'Tax Payment Register', description: 'All remittances with NTPN / Billing Code / Bank' },
-  { id: 'outstanding',     label: 'Outstanding Tax',      description: 'Unpaid balances by period + due date' },
-  { id: 'monthly_summary', label: 'Monthly Tax Summary',  description: 'Consolidated PPN + PPh per month' },
-  { id: 'faktur_register', label: 'Faktur Pajak Register', description: 'All Faktur Pajak issued with status' },
-  { id: 'audit_trail',     label: 'Tax Audit Trail',      description: 'audit_logs entries for tax mutations' },
+  { id: 'pph_register',    label: 'PPh Withholding Register (Detailed)', description: 'Itemized PPh 21/22/23/4(2) with Payee/Staff NIK, NPWP, DPP & Net' },
+  { id: 'pph_summary',     label: 'PPh Monthly Summary',                 description: 'Consolidated PPh totals, remittances, and balance per period' },
+  { id: 'input_ppn',       label: 'Input PPN Register',                  description: 'PPN Masukan from purchase invoices & expenses' },
+  { id: 'output_ppn',      label: 'Output PPN Register',                 description: 'PPN Keluaran from sales invoices with Faktur Pajak' },
+  { id: 'ppn_payable',     label: 'PPN Payable Report',                  description: 'Input vs Output vs Carry Forward per period' },
+  { id: 'tax_payments',    label: 'Tax Payment Register',                description: 'All remittances with NTPN / Billing Code / Bank' },
+  { id: 'outstanding',     label: 'Outstanding Tax',                     description: 'Unpaid balances by period + due date' },
+  { id: 'monthly_summary', label: 'Monthly Tax Summary',                 description: 'Consolidated PPN + PPh per month' },
+  { id: 'faktur_register', label: 'Faktur Pajak Register',                description: 'All Faktur Pajak issued with status' },
+  { id: 'audit_trail',     label: 'Tax Audit Trail',                     description: 'audit_logs entries for tax mutations' },
 ];
 
 interface Row { [k: string]: string | number | null; }
@@ -127,6 +129,106 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
       }));
     }
     case 'pph_register': {
+      const [feRes, importRes] = await Promise.all([
+        supabase
+          .from('finance_expenses')
+          .select(`
+            id, voucher_number, expense_date, amount, pph_amount, pph_dpp_amount, 
+            tax_period_id, pph_tax_period_id, description, payment_method, expense_category, approval_status,
+            pph_code:pph_code_id(code, tax_type, rate),
+            suppliers:supplier_id(company_name, npwp),
+            staff:staff_id(full_name, employee_code, nik, npwp),
+            payees:payee_id(full_name, nik, npwp, business_role)
+          `)
+          .gte('expense_date', startDate)
+          .lte('expense_date', endDate)
+          .gt('pph_amount', 0)
+          .order('expense_date', { ascending: false }),
+        supabase
+          .from('finance_expenses')
+          .select(`
+            id, voucher_number, expense_date, amount, pib_pph_amount, 
+            tax_period_id, pph_tax_period_id, description, expense_category, approval_status,
+            suppliers:supplier_id(company_name, npwp)
+          `)
+          .in('expense_category', ['pib_import', 'pph_import'])
+          .gte('expense_date', startDate)
+          .lte('expense_date', endDate)
+          .order('expense_date', { ascending: false }),
+      ]);
+
+      const expenses = (feRes.data ?? []).map((r: any) => {
+        const d = String(r.expense_date ?? '');
+        const periodLabel = d ? formatFinancePeriod(Number(d.slice(0,4)), Number(d.slice(5,7))) : '';
+        const partyName = r.payees?.full_name ?? r.staff?.full_name ?? r.suppliers?.company_name ?? '—';
+        const partyType = r.payees ? 'Payee / Individual' : r.staff ? 'Staff / Employee' : r.suppliers ? 'Supplier' : 'Other';
+        const nik = r.payees?.nik ?? r.staff?.nik ?? null;
+        const npwp = r.payees?.npwp ?? r.staff?.npwp ?? r.suppliers?.npwp ?? null;
+        const idStatus = npwp ? 'NPWP' : nik ? 'NIK' : 'Missing';
+        const gross = Number(r.amount || 0);
+        const pph = Number(r.pph_amount || 0);
+        const pphType = r.pph_code?.tax_type || 'PPh21';
+        let dpp = r.pph_dpp_amount ? Number(r.pph_dpp_amount) : gross;
+        if (!r.pph_dpp_amount && (pphType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee')) {
+          dpp = Math.round(gross * 0.5);
+        }
+        const net = gross - pph;
+        const pphCode = r.pph_code?.code || '—';
+
+        return {
+          'Period': periodLabel,
+          'Voucher No': r.voucher_number || '—',
+          'Date': r.expense_date || '—',
+          'Tax Type': pphType,
+          'Tax Code': pphCode,
+          'Recipient Name': partyName,
+          'Recipient Type': partyType,
+          'ID Type': idStatus,
+          'NIK (Citizen ID)': nik || '',
+          'NPWP (Tax ID)': npwp || '',
+          'Gross Amount (Rp)': gross,
+          'DPP (Rp)': dpp,
+          'PPh Withheld (Rp)': pph,
+          'Net Paid (Rp)': net,
+          'Payment Method': r.payment_method || '—',
+          'Status': r.approval_status === 'approved' ? 'Approved' : 'Pending',
+          'Filing Readiness': (npwp || nik) ? 'Ready' : '⚠️ Missing NIK/NPWP',
+          'Notes': r.description || '',
+        };
+      });
+
+      const imports = (importRes.data ?? []).map((r: any) => {
+        const d = String(r.expense_date ?? '');
+        const periodLabel = d ? formatFinancePeriod(Number(d.slice(0,4)), Number(d.slice(5,7))) : '';
+        const gross = Number(r.amount || 0);
+        const pph = r.expense_category === 'pib_import' ? Number(r.pib_pph_amount || 0) : gross;
+        const net = gross - pph;
+        const npwp = r.suppliers?.npwp || null;
+        return {
+          'Period': periodLabel,
+          'Voucher No': r.voucher_number || '—',
+          'Date': r.expense_date || '—',
+          'Tax Type': 'PPh22',
+          'Tax Code': 'PPh22 Import',
+          'Recipient Name': r.suppliers?.company_name || '—',
+          'Recipient Type': 'Supplier / Bea Cukai',
+          'ID Type': npwp ? 'NPWP' : 'Missing',
+          'NIK (Citizen ID)': '',
+          'NPWP (Tax ID)': npwp || '',
+          'Gross Amount (Rp)': gross,
+          'DPP (Rp)': gross,
+          'PPh Withheld (Rp)': pph,
+          'Net Paid (Rp)': net,
+          'Payment Method': '—',
+          'Status': r.approval_status === 'approved' ? 'Approved' : 'Pending',
+          'Filing Readiness': npwp ? 'Ready' : '⚠️ Missing NIK/NPWP',
+          'Notes': r.description || '',
+        };
+      });
+
+      return [...expenses, ...imports];
+    }
+    case 'pph_summary': {
       const startYM = startDate.slice(0, 7); // "YYYY-MM"
       const endYM   = endDate.slice(0, 7);
       const { data } = await supabase
@@ -137,7 +239,6 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
         .order('fiscal_year', { ascending: false })
         .order('period_month', { ascending: false })
         .order('tax_type');
-      // Client-side narrow to exact month range (year filter above is coarse)
       const rows = ((data ?? []) as Row[]).filter(r => {
         const ym = `${r.fiscal_year}-${String(r.period_month).padStart(2, '0')}`;
         return ym >= startYM && ym <= endYM;

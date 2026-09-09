@@ -31,6 +31,7 @@ interface Staff {
   default_gl_code: string | null;
   default_gl_name: string | null;
   default_gl_account_id?: string | null;
+  nik: string | null;
   npwp: string | null;
   monthly_salary: number;
   salary_type: 'monthly' | 'daily' | 'hourly';
@@ -67,6 +68,7 @@ export function StaffMasterManager({ canManage }: Props) {
     default_gl_code: '',
     default_gl_name: '',
     default_gl_account_id: '',
+    nik: '',
     npwp: '',
     monthly_salary: 0,
     salary_type: 'monthly' as Staff['salary_type'],
@@ -145,7 +147,7 @@ export function StaffMasterManager({ canManage }: Props) {
     setForm({
       full_name: '', employee_code: '', department: '',
       default_gl_code: '', default_gl_name: '', default_gl_account_id: '',
-      npwp: '', status: 'active', notes: '',
+      nik: '', npwp: '', status: 'active', notes: '',
       monthly_salary: 0, salary_type: 'monthly', pph21_applicable: false,
       pph21_method: 'percentage', pph21_percentage: 0, default_payment_method: 'bank_transfer',
       document_urls: [],
@@ -162,6 +164,7 @@ export function StaffMasterManager({ canManage }: Props) {
       default_gl_code: r.default_gl_code || '',
       default_gl_name: r.default_gl_name || '',
       default_gl_account_id: r.default_gl_account_id || '',
+      nik: r.nik || '',
       npwp: r.npwp || '',
       monthly_salary: Number(r.monthly_salary || 0),
       salary_type: r.salary_type || 'monthly',
@@ -198,6 +201,7 @@ export function StaffMasterManager({ canManage }: Props) {
         department: form.department.trim() || null,
         // Server derives the legacy display code/name from this canonical FK.
         default_gl_account_id: form.default_gl_account_id || null,
+        nik: form.nik.trim() || null,
         npwp: form.npwp.trim() || null,
         monthly_salary: form.monthly_salary,
         salary_type: form.salary_type,
@@ -290,7 +294,16 @@ export function StaffMasterManager({ canManage }: Props) {
           { header: 'Department', cell: (row) => row.department || '—' },
           { header: 'Monthly Salary', align: 'right', cell: (row) => <span className="font-mono">Rp {Number(row.monthly_salary || 0).toLocaleString('id-ID')}</span> },
           { header: 'Default GL', cell: (row) => <span className="font-mono">{row.default_gl_code ? `${row.default_gl_code}${row.default_gl_name ? ` — ${row.default_gl_name}` : ''}` : '—'}</span> },
-          { header: 'NPWP', cell: (row) => <span className="font-mono">{row.npwp || '—'}</span> },
+          {
+            header: 'Tax ID (NIK/NPWP)',
+            cell: (row) => (
+              <div className="text-xs font-mono">
+                {row.nik && <div><span className="text-[10px] text-gray-400">NIK: </span>{row.nik}</div>}
+                {row.npwp && <div className="text-gray-600"><span className="text-[10px] text-gray-400">NPWP: </span>{row.npwp}</div>}
+                {!row.nik && !row.npwp && <span className="text-gray-400">—</span>}
+              </div>
+            ),
+          },
           {
             header: 'KYC / Docs',
             align: 'center',
@@ -412,15 +425,30 @@ export function StaffMasterManager({ canManage }: Props) {
               </SapField>
             </SapRow>
             <SapRow>
-              <SapField label="Salary GL" span={8}>
+              <SapField label="Salary GL" span={12}>
                 <select value={form.default_gl_account_id} onChange={e => setForm({ ...form, default_gl_account_id: e.target.value })} className={SAP_INPUT}>
                   <option value="">Default — 6100 Salaries & Wages</option>
                   {coaAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}
                 </select>
               </SapField>
-              <SapField label="NPWP" span={4}>
-                <input value={form.npwp} onChange={e => setForm({ ...form, npwp: e.target.value })}
-                  className={SAP_INPUT + ' !font-mono'} />
+            </SapRow>
+            <SapRow>
+              <SapField label="NIK / KTP No (16 digits)" span={6}>
+                <input
+                  value={form.nik}
+                  onChange={e => setForm({ ...form, nik: e.target.value })}
+                  placeholder="16-digit Citizen ID (KTP / Akte)"
+                  maxLength={16}
+                  className={SAP_INPUT + ' !font-mono'}
+                />
+              </SapField>
+              <SapField label="NPWP (Tax ID)" span={6}>
+                <input
+                  value={form.npwp}
+                  onChange={e => setForm({ ...form, npwp: e.target.value })}
+                  placeholder="15 or 16-digit NPWP"
+                  className={SAP_INPUT + ' !font-mono'}
+                />
               </SapField>
             </SapRow>
             <SapRow>
