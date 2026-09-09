@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { formatFinancePeriod } from '../../../utils/financePeriod';
 import { useFinance } from '../../../contexts/FinanceContext';
@@ -54,6 +54,10 @@ interface SourceLine {
   source_status: string;
   is_official: boolean;
   tax_period_id: string | null;
+  party_tax_id?: string | null;
+  tax_id_status?: 'NPWP' | 'NIK' | 'Missing';
+  dpp_amount?: number | null;
+  filing_ready?: boolean;
 }
 
 interface TaxPeriodOption {
@@ -87,13 +91,13 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
   const [feRes, importRes] = await Promise.all([
     supabase
       .from('finance_expenses')
-      .select('id, voucher_number, expense_date, due_date, pph_amount, tax_period_id, pph_tax_period_id, description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name), staff:staff_id(full_name)')
+      .select('id, voucher_number, expense_date, due_date, amount, pph_amount, pph_dpp_amount, tax_period_id, pph_tax_period_id, description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name, npwp), staff:staff_id(full_name, nik, npwp), payees:payee_id(full_name, nik, npwp, business_role)')
       .gt('pph_amount', 0),
     // Import PPh 22: pib_import (pib_pph_amount) + pph_import (whole amount).
     // Mirrors compute_period_ppn's import branch. Always PPh22.
     supabase
       .from('finance_expenses')
-      .select('id, voucher_number, expense_date, due_date, amount, pib_pph_amount, tax_period_id, pph_tax_period_id, description, expense_category, approval_status, suppliers:supplier_id(company_name)')
+      .select('id, voucher_number, expense_date, due_date, amount, pib_pph_amount, tax_period_id, pph_tax_period_id, description, expense_category, approval_status, suppliers:supplier_id(company_name, npwp)')
       .in('expense_category', ['pib_import', 'pph_import']),
   ]);
 
@@ -150,24 +154,36 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
       const codeType = r.pph_code?.tax_type ?? null;
       return pphType === 'PPh_Unifikasi' || codeType === pphType;
     })
-    .map(r => ({
-      module: 'expense' as const,
-      id: r.id,
-      doc_number: r.voucher_number ?? '—',
-      doc_date: r.expense_date,
-      period_date: periodDate(r),
-      party: r.suppliers?.company_name ?? r.staff?.full_name ?? '—',
-      description: r.description,
-      pph_code: r.pph_code?.code ?? null,
-      pph_amount: Number(r.pph_amount),
-      tax_type: r.pph_code?.tax_type ?? pphType,
-      source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
-      is_official: r.approval_status === 'approved',
-      tax_period_id: r.pph_tax_period_id ?? null,
-      payment_method: r.payment_method,
-      recon_status: null,
-      ...journalFields(r.id),
-    }));
+    .map(r => {
+      const party = r.payees?.full_name ?? r.suppliers?.company_name ?? r.staff?.full_name ?? '—';
+      const rawNpwp = r.payees?.npwp ?? r.suppliers?.npwp ?? r.staff?.npwp ?? null;
+      const rawNik = r.payees?.nik ?? r.staff?.nik ?? null;
+      const taxId = rawNpwp || rawNik || null;
+      const taxIdStatus: 'NPWP' | 'NIK' | 'Missing' = rawNpwp ? 'NPWP' : rawNik ? 'NIK' : 'Missing';
+      const filingReady = !!taxId;
+      return {
+        module: 'expense' as const,
+        id: r.id,
+        doc_number: r.voucher_number ?? '—',
+        doc_date: r.expense_date,
+        period_date: periodDate(r),
+        party,
+        party_tax_id: taxId,
+        tax_id_status: taxIdStatus,
+        filing_ready: filingReady,
+        dpp_amount: r.pph_dpp_amount ? Number(r.pph_dpp_amount) : Math.round(Number(r.amount || 0) * 0.5),
+        description: r.description,
+        pph_code: r.pph_code?.code ?? null,
+        pph_amount: Number(r.pph_amount),
+        tax_type: r.pph_code?.tax_type ?? pphType,
+        source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
+        is_official: r.approval_status === 'approved',
+        tax_period_id: r.pph_tax_period_id ?? null,
+        payment_method: r.payment_method,
+        recon_status: null,
+        ...journalFields(r.id),
+      };
+    });
 
   // Import PPh 22 — only relevant to the PPh22 and consolidated tabs.
   const imports: SourceLine[] = (pphType === 'PPh22' || pphType === 'PPh_Unifikasi')
@@ -179,24 +195,34 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
           return { r, amt };
         })
         .filter(({ amt }) => amt > 0)
-        .map(({ r, amt }) => ({
-          module: 'import' as const,
-          id: r.id,
-          doc_number: r.voucher_number ?? '—',
-          doc_date: r.expense_date,
-          period_date: periodDate(r),
-          party: r.suppliers?.company_name ?? '—',
-          description: r.description,
-          pph_code: 'PPh22 Import',
-          pph_amount: amt,
-          tax_type: 'PPh22',
-          source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
-          is_official: r.approval_status === 'approved',
-          tax_period_id: r.pph_tax_period_id ?? null,
-          payment_method: null,
-          recon_status: null,
-          ...journalFields(r.id),
-        }))
+        .map(({ r, amt }) => {
+          const party = r.suppliers?.company_name ?? '—';
+          const taxId = r.suppliers?.npwp ?? null;
+          const taxIdStatus: 'NPWP' | 'NIK' | 'Missing' = taxId ? 'NPWP' : 'Missing';
+          const filingReady = !!taxId;
+          return {
+            module: 'import' as const,
+            id: r.id,
+            doc_number: r.voucher_number ?? '—',
+            doc_date: r.expense_date,
+            period_date: periodDate(r),
+            party,
+            party_tax_id: taxId,
+            tax_id_status: taxIdStatus,
+            filing_ready: filingReady,
+            dpp_amount: Number(r.amount || 0),
+            description: r.description,
+            pph_code: 'PPh22 Import',
+            pph_amount: amt,
+            tax_type: 'PPh22',
+            source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
+            is_official: r.approval_status === 'approved',
+            tax_period_id: r.pph_tax_period_id ?? null,
+            payment_method: null,
+            recon_status: null,
+            ...journalFields(r.id),
+          };
+        })
     : [];
 
   return [...expenses, ...imports].sort((a, b) =>
@@ -423,9 +449,48 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                     {isOpen && (
                       <tr key={`${r.tax_period_id}-detail`} className="bg-blue-50/30">
                         <td colSpan={11} className="px-6 pb-4 pt-2">
-                          <h4 className="text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">
-                            Source Documents — {pphTabLabel(active)} withheld in {formatFinancePeriod(r.fiscal_year, r.period_month)}
-                          </h4>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                              Source Documents — {pphTabLabel(active)} withheld in {formatFinancePeriod(r.fiscal_year, r.period_month)}
+                            </h4>
+                            {officialDetail.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const missing = officialDetail.filter(d => !d.filing_ready);
+                                  if (missing.length > 0) {
+                                    alert(`e-Bupot 21 Export Blocked:\n${missing.length} record(s) (${missing.map(m => m.doc_number).join(', ')}) lack valid NIK/NPWP identity numbers.\n\nPer DJP compliance regulations, e-Bupot withholding returns strictly require a verified NIK or NPWP for every withholding certificate.`);
+                                    return;
+                                  }
+                                  const rows = [
+                                    ['Document No', 'Document Date', 'Tax Period', 'Party / Payee', 'Tax ID Type', 'Tax ID (NIK/NPWP)', 'PPh Code', 'DPP Amount', 'PPh Withheld'],
+                                    ...officialDetail.map(d => [
+                                      d.doc_number,
+                                      d.doc_date,
+                                      formatFinancePeriod(r.fiscal_year, r.period_month),
+                                      `"${d.party.replace(/"/g, '""')}"`,
+                                      d.tax_id_status || 'Missing',
+                                      `'${d.party_tax_id || ''}`,
+                                      d.pph_code || '',
+                                      d.dpp_amount || 0,
+                                      d.pph_amount,
+                                    ])
+                                  ];
+                                  const csv = rows.map(r => r.join(',')).join('\n');
+                                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = `ebupot_withholding_${r.fiscal_year}_${String(r.period_month).padStart(2, '0')}.csv`;
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-blue-700 bg-white border border-blue-300 rounded hover:bg-blue-50 transition"
+                              >
+                                <Download className="w-3.5 h-3.5" /> Export e-Bupot Return
+                              </button>
+                            )}
+                          </div>
                           {detailLoading ? (
                             <p className="text-xs text-gray-500">Loading source documents…</p>
                           ) : officialDetail.length === 0 && Number(r.pph_total || 0) > 0 ? (
@@ -455,8 +520,9 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                   <th className="text-left py-1 pr-3">Document Date</th>
                                   <th className="text-left py-1 pr-3">PPh Period Date</th>
                                   <th className="text-left py-1 pr-3">Tax Period</th>
-                                  <th className="text-left py-1 pr-3">Employee / Supplier</th>
-                                  <th className="text-left py-1 pr-3">Description</th>
+                                  <th className="text-left py-1 pr-3">Party / Payee</th>
+                                  <th className="text-left py-1 pr-3">Tax ID / Status</th>
+                                  <th className="text-left py-1 pr-3">Readiness</th>
                                   <th className="text-left py-1 pr-3">PPh Code</th>
                                   <th className="text-left py-1 pr-3">Posting Date</th>
                                   <th className="text-left py-1 pr-3">Journal Ref</th>
@@ -501,8 +567,21 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                         </select>
                                       )}
                                     </td>
-                                    <td className="py-1.5 pr-3 max-w-[140px] truncate text-gray-700" title={l.party}>{l.party}</td>
-                                    <td className="py-1.5 pr-3 max-w-[180px] truncate text-gray-500" title={l.description ?? undefined}>{l.description ?? '—'}</td>
+                                    <td className="py-1.5 pr-3 max-w-[140px] truncate text-gray-800 font-medium" title={l.party}>{l.party}</td>
+                                    <td className="py-1.5 pr-3 whitespace-nowrap">
+                                      {l.party_tax_id ? (
+                                        <span className="font-mono text-[11px] text-gray-700">{l.party_tax_id}</span>
+                                      ) : (
+                                        <span className="text-[10px] text-amber-700 bg-amber-50 px-1 py-0.5 rounded font-medium">No NIK/NPWP</span>
+                                      )}
+                                    </td>
+                                    <td className="py-1.5 pr-3 whitespace-nowrap">
+                                      {l.filing_ready ? (
+                                        <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-medium">Ready</span>
+                                      ) : (
+                                        <span className="text-[10px] text-red-700 bg-red-50 px-1.5 py-0.5 rounded font-medium">Blocked</span>
+                                      )}
+                                    </td>
                                     <td className="py-1.5 pr-3">
                                       {l.pph_code
                                         ? <span className="font-mono text-blue-700">{l.pph_code}</span>
@@ -524,7 +603,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                   </tr>
                                 ))}
                                 <tr className="font-semibold border-t-2 border-gray-300 bg-gray-50">
-                                  <td colSpan={12} className="py-1.5 pr-3 text-right text-xs text-gray-500">Total {pphTabLabel(active)} Withheld</td>
+                                  <td colSpan={13} className="py-1.5 pr-3 text-right text-xs text-gray-500">Total {pphTabLabel(active)} Withheld</td>
                                   <td className="py-1.5 text-right font-mono text-orange-700">
                                     Rp {fmt(detailTotal)}
                                   </td>

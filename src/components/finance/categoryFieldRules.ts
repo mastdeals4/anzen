@@ -27,6 +27,7 @@ export type FieldFlag = 'show' | 'hide' | 'optional';
 
 export interface CategoryFieldRules {
   supplier: FieldFlag;        // top-line Supplier picker
+  payee: FieldFlag;           // Payee Master picker
   staff: FieldFlag;           // Staff Master picker (Salary / Staff Welfare / etc.)
   utility: FieldFlag;         // Utility Master picker
   container: FieldFlag;       // Import container picker
@@ -35,6 +36,11 @@ export interface CategoryFieldRules {
   billingMonth: FieldFlag;    // Utility billing month
   reference: FieldFlag;       // Payment reference input
   bankCharges: FieldFlag;     // Utility bank charges
+  salesInvoice: FieldFlag;    // Sales Invoice picker (for sales commissions)
+  workingDays: FieldFlag;     // Working days input (for casual workers)
+  providerTypeToggle: boolean;// Corporate (Badan) vs Individual (Orang Pribadi) toggle
+  payeeRoleFilter?: string;   // Filter payees by business role
+  payeeLabel?: string;        // User-facing label for the payee field
 }
 
 /**
@@ -42,15 +48,19 @@ export interface CategoryFieldRules {
  * Every category overrides only what it needs.
  */
 const DEFAULT: CategoryFieldRules = {
-  supplier:     'show',
-  staff:        'hide',
-  utility:      'hide',
-  container:    'hide',
-  brokerLines:  'hide',
-  salaryMonth:  'hide',
-  billingMonth: 'hide',
-  reference:    'show',
-  bankCharges:  'hide',
+  supplier:           'show',
+  payee:              'hide',
+  staff:              'hide',
+  utility:            'hide',
+  container:          'hide',
+  brokerLines:        'hide',
+  salaryMonth:        'hide',
+  billingMonth:       'hide',
+  reference:          'show',
+  bankCharges:        'hide',
+  salesInvoice:       'hide',
+  workingDays:        'hide',
+  providerTypeToggle: false,
 };
 
 const STAFF_RULES: CategoryFieldRules = {
@@ -71,6 +81,37 @@ const IMPORT_BROKER_RULES: CategoryFieldRules = {
   ...DEFAULT,
   container:   'show',
   brokerLines: 'show',
+};
+
+const MARKETING_COMMISSION_RULES: CategoryFieldRules = {
+  ...DEFAULT,
+  supplier:         'hide',
+  payee:            'show',
+  salesInvoice:     'show',
+  payeeRoleFilter:  'sales_commission_recipient',
+  payeeLabel:       'Sales Commission Payee',
+};
+
+const CASUAL_LABOR_RULES: CategoryFieldRules = {
+  ...DEFAULT,
+  supplier:         'hide',
+  payee:            'show',
+  workingDays:      'show',
+  payeeRoleFilter:  'warehouse_labor',
+  payeeLabel:       'Casual Worker / Payee',
+};
+
+const PROFESSIONAL_SERVICES_RULES: CategoryFieldRules = {
+  ...DEFAULT,
+  providerTypeToggle: true,
+  payeeLabel:         'Individual Consultant / Payee',
+};
+
+const RENT_RULES: CategoryFieldRules = {
+  ...DEFAULT,
+  providerTypeToggle: true,
+  payeeRoleFilter:    'property_owner',
+  payeeLabel:         'Property Owner / Landlord',
 };
 
 /**
@@ -102,6 +143,11 @@ const IMPORT_BROKER_CATEGORIES = new Set([
   'import_broker',
 ]);
 
+const RENT_CATEGORIES = new Set([
+  'warehouse_rent',
+  'office_rent',
+]);
+
 /**
  * Resolve the field-visibility rules for a given expense category.
  * Empty / unknown category returns DEFAULT so the form still renders.
@@ -109,8 +155,13 @@ const IMPORT_BROKER_CATEGORIES = new Set([
 export function getCategoryFieldRules(category: string | null | undefined): CategoryFieldRules {
   const c = (category ?? '').trim();
   if (!c) return DEFAULT;
+  if (c === 'marketing_advertising') return MARKETING_COMMISSION_RULES;
+  if (c === 'non_permanent_employee_fee') return CASUAL_LABOR_RULES;
+  if (c === 'professional_services') return PROFESSIONAL_SERVICES_RULES;
+  if (RENT_CATEGORIES.has(c)) return RENT_RULES;
   if (STAFF_CATEGORIES.has(c)) return STAFF_RULES;
   if (UTILITY_CATEGORIES.has(c)) return UTILITY_RULES;
   if (IMPORT_BROKER_CATEGORIES.has(c)) return IMPORT_BROKER_RULES;
   return DEFAULT;
 }
+

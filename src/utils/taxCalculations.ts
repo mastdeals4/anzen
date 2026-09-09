@@ -39,7 +39,7 @@ export const DOCUMENT_TYPE_GROUPS: Record<DocumentType, string[]> = {
   'Operating Expense':                ['warehouse_rent', 'bank_charges', 'office_admin', 'office_shifting_renovation', 'other'],
   'Utility':                          ['utilities'],
   'Staff Expense':                    ['salary', 'staff_overtime', 'staff_welfare', 'travel_conveyance', 'non_permanent_employee_fee'],
-  'Sales & Distribution':             ['delivery_sales', 'loading_sales', 'other_sales'],
+  'Sales & Distribution':             ['marketing_advertising', 'delivery_sales', 'loading_sales', 'other_sales'],
   'Professional Services':            ['professional_services'],
   'Import / Customs Broker Invoice':  ['import_broker'],
   'Fixed Asset':                      ['fixed_asset'],
@@ -80,11 +80,11 @@ export interface TaxFieldConfig {
 }
 
 export const DOCUMENT_TYPE_TAX_CONFIG: Record<DocumentType, TaxFieldConfig> = {
-  'Operating Expense':               { ppn: true,  pph23: false, pph21: false, stamp: true,  pib: false, brokerItems: false },
+  'Operating Expense':               { ppn: true,  pph23: true,  pph21: false, stamp: true,  pib: false, brokerItems: false },
   'Utility':                         { ppn: true,  pph23: true,  pph21: false, stamp: false, pib: false, brokerItems: false },
   'Staff Expense':                   { ppn: false, pph23: false, pph21: true,  stamp: false, pib: false, brokerItems: false },
-  'Sales & Distribution':            { ppn: false, pph23: false, pph21: false, stamp: false, pib: false, brokerItems: false },
-  'Professional Services':           { ppn: true,  pph23: true,  pph21: false, stamp: true,  pib: false, brokerItems: false },
+  'Sales & Distribution':            { ppn: false, pph23: false, pph21: true,  stamp: false, pib: false, brokerItems: false },
+  'Professional Services':           { ppn: true,  pph23: true,  pph21: true,  stamp: true,  pib: false, brokerItems: false },
   'Import / Customs Broker Invoice': { ppn: true,  pph23: true,  pph21: false, stamp: true,  pib: false, brokerItems: true  },
   'Fixed Asset':                     { ppn: true,  pph23: false, pph21: false, stamp: false, pib: false, brokerItems: false },
   'PIB':                             { ppn: false, pph23: false, pph21: false, stamp: false, pib: true,  brokerItems: false },
@@ -283,6 +283,262 @@ export function calculatePPh(
 ): number {
   if (dppAmount <= 0 || ratePercent <= 0) return 0;
   return Math.round(dppAmount * ratePercent / 100);
+}
+
+// ---------------------------------------------------------------------------
+// PPh Calculation Regimes & Multi-Bracket Engine
+// ---------------------------------------------------------------------------
+
+export type PphCalculationRegime =
+  | 'pasal17_dpp50'          // Bukan Pegawai / Tenaga Ahli (DPP 50%, Article 17 marginal progressive brackets)
+  | 'ter_harian_lepas'       // Pegawai Tidak Tetap / Harian Lepas (PP 58/2023 & PMK 168/2023)
+  | 'pph_final_4_2'          // PPh Final Pasal 4 Ayat (2) - 10% on Gross Rent
+  | 'standard_fixed'         // Standard fixed percentage on Gross (e.g. PPh 23 2%, PPh 22 2.5%)
+  | 'manual';                // Manual accountant override
+
+/**
+ * Article 17 Indonesian Individual Income Tax Brackets (UU HPP / Harmonized Tax Law).
+ * Applies to cumulative DPP (taxable base) within a calendar year.
+ */
+export interface Article17Bracket {
+  ceiling: number;
+  rate: number;
+}
+
+export const ARTICLE_17_BRACKETS: readonly Article17Bracket[] = [
+  { ceiling: 60_000_000, rate: 0.05 },       // 0 - 60M: 5%
+  { ceiling: 250_000_000, rate: 0.15 },      // 60M - 250M: 15%
+  { ceiling: 500_000_000, rate: 0.25 },      // 250M - 500M: 25%
+  { ceiling: 5_000_000_000, rate: 0.30 },    // 500M - 5B: 30%
+  { ceiling: Infinity, rate: 0.35 },         // > 5B: 35%
+] as const;
+
+/**
+ * Bukan Pegawai / Tenaga Ahli (Sales commission recipients, consultants, notaries):
+ *   - DPP = 50% of Gross Amount (PP 58/2023 / PMK 168/2023 Pasal 12).
+ *   - Tax calculated cumulatively across Article 17 brackets.
+ *   - Correctly splits marginal amounts when a payment crosses bracket boundaries.
+ */
+export function calculatePPh21NonEmployeeCumulative(
+  gross: number,
+  priorCumulativeDpp = 0,
+): {
+  dppRatio: number;
+  dppAmount: number;
+  pphAmount: number;
+  effectiveRateOnGross: number;
+  effectiveRateOnDpp: number;
+  newCumulativeDpp: number;
+} {
+  if (gross <= 0) {
+    return {
+      dppRatio: 0.5,
+      dppAmount: 0,
+      pphAmount: 0,
+      effectiveRateOnGross: 0,
+      effectiveRateOnDpp: 0,
+      newCumulativeDpp: priorCumulativeDpp,
+    };
+  }
+
+  const dppAmount = Math.round(gross * 0.5);
+  const startDpp = Math.max(0, priorCumulativeDpp);
+  const endDpp = startDpp + dppAmount;
+
+  let totalTax = 0;
+  let lowerBound = 0;
+
+  for (const b of ARTICLE_17_BRACKETS) {
+    const upperBound = b.ceiling;
+    // Overlap between [startDpp, endDpp] and [lowerBound, upperBound]
+    const taxableInBracket = Math.max(0, Math.min(endDpp, upperBound) - Math.max(startDpp, lowerBound));
+    if (taxableInBracket > 0) {
+      totalTax += taxableInBracket * b.rate;
+    }
+    lowerBound = upperBound;
+    if (endDpp <= upperBound) break;
+  }
+
+  const pphAmount = Math.round(totalTax);
+  const effectiveRateOnGross = gross > 0 ? Number(((pphAmount / gross) * 100).toFixed(2)) : 0;
+  const effectiveRateOnDpp = dppAmount > 0 ? Number(((pphAmount / dppAmount) * 100).toFixed(2)) : 0;
+
+  return {
+    dppRatio: 0.5,
+    dppAmount,
+    pphAmount,
+    effectiveRateOnGross,
+    effectiveRateOnDpp,
+    newCumulativeDpp: endDpp,
+  };
+}
+
+/**
+ * Pegawai Tidak Tetap / Harian Lepas (Warehouse casual labor, temporary crew):
+ * Under PP 58/2023 & PMK 168/2023 Pasal 13:
+ *   - Daily wage = gross / workingDays.
+ *   - Daily wage <= Rp 450.000: 0% tax (Non-taxable / Bebas Pajak).
+ *   - Daily wage > Rp 450.000 and <= Rp 2.500.000: 0.5% TER Harian on gross.
+ *   - Daily wage > Rp 2.500.000: 5% rate.
+ */
+export function calculatePPh21CasualLabor(
+  gross: number,
+  workingDays = 1,
+): {
+  dppRatio: number;
+  dppAmount: number;
+  pphAmount: number;
+  effectiveRateOnGross: number;
+  dailyWage: number;
+} {
+  if (gross <= 0) {
+    return { dppRatio: 1.0, dppAmount: 0, pphAmount: 0, effectiveRateOnGross: 0, dailyWage: 0 };
+  }
+  const days = Math.max(1, workingDays);
+  const dailyWage = Math.round(gross / days);
+
+  if (dailyWage <= 450_000) {
+    return {
+      dppRatio: 1.0,
+      dppAmount: gross,
+      pphAmount: 0,
+      effectiveRateOnGross: 0,
+      dailyWage,
+    };
+  } else if (dailyWage <= 2_500_000) {
+    const pphAmount = Math.round(gross * 0.005); // 0.5% TER Harian
+    return {
+      dppRatio: 1.0,
+      dppAmount: gross,
+      pphAmount,
+      effectiveRateOnGross: 0.5,
+      dailyWage,
+    };
+  } else {
+    const pphAmount = Math.round(gross * 0.05);
+    return {
+      dppRatio: 1.0,
+      dppAmount: gross,
+      pphAmount,
+      effectiveRateOnGross: 5.0,
+      dailyWage,
+    };
+  }
+}
+
+/**
+ * PPh Final Pasal 4 Ayat (2) - Sewa Tanah / Bangunan:
+ *   - DPP = 100% of gross rental amount.
+ *   - Fixed statutory rate = 10%.
+ */
+export function calculatePPhFinal4_2(gross: number): {
+  dppRatio: number;
+  dppAmount: number;
+  pphAmount: number;
+  effectiveRateOnGross: number;
+} {
+  if (gross <= 0) {
+    return { dppRatio: 1.0, dppAmount: 0, pphAmount: 0, effectiveRateOnGross: 0 };
+  }
+  const pphAmount = Math.round(gross * 0.10);
+  return {
+    dppRatio: 1.0,
+    dppAmount: gross,
+    pphAmount,
+    effectiveRateOnGross: 10.0,
+  };
+}
+
+export interface TaxCalculationResult {
+  regime: PphCalculationRegime;
+  dppRatio: number;
+  dppAmount: number;
+  pphRate: number;
+  pphAmount: number;
+}
+
+/**
+ * Canonical calculator for expense PPh withholding.
+ * Authoritative: Uses selected tax code and payee classification to determine regime.
+ */
+export function computeExpensePPh(params: {
+  grossAmount: number;
+  taxCode?: { code: string; tax_type: string; rate: number } | null;
+  payeeClassification?: string | null;
+  regimeOverride?: PphCalculationRegime | null;
+  workingDays?: number;
+  priorCumulativeDpp?: number;
+}): TaxCalculationResult {
+  const { grossAmount, taxCode, payeeClassification, regimeOverride, workingDays = 1, priorCumulativeDpp = 0 } = params;
+
+  if (!taxCode || grossAmount <= 0) {
+    return {
+      regime: 'standard_fixed',
+      dppRatio: 1.0,
+      dppAmount: grossAmount,
+      pphRate: 0,
+      pphAmount: 0,
+    };
+  }
+
+  let regime: PphCalculationRegime = regimeOverride || 'standard_fixed';
+  if (!regimeOverride) {
+    if (taxCode.code === 'PPH21-NE' || payeeClassification === 'bukan_pegawai_komisi' || payeeClassification === 'tenaga_ahli' || payeeClassification === 'bukan_pegawai_imbalan') {
+      regime = 'pasal17_dpp50';
+    } else if (taxCode.code === 'PPH21-TT' || payeeClassification === 'pegawai_tidak_tetap') {
+      regime = 'ter_harian_lepas';
+    } else if (taxCode.code === 'PPH4(2)' || payeeClassification === 'pemilik_sewa_op') {
+      regime = 'pph_final_4_2';
+    } else if (taxCode.tax_type === 'PPh21') {
+      regime = 'pasal17_dpp50';
+    } else {
+      regime = 'standard_fixed';
+    }
+  }
+
+  if (regime === 'pasal17_dpp50') {
+    const res = calculatePPh21NonEmployeeCumulative(grossAmount, priorCumulativeDpp);
+    return {
+      regime: 'pasal17_dpp50',
+      dppRatio: res.dppRatio,
+      dppAmount: res.dppAmount,
+      pphRate: res.effectiveRateOnGross,
+      pphAmount: res.pphAmount,
+    };
+  }
+
+  if (regime === 'ter_harian_lepas') {
+    const res = calculatePPh21CasualLabor(grossAmount, workingDays);
+    return {
+      regime: 'ter_harian_lepas',
+      dppRatio: res.dppRatio,
+      dppAmount: res.dppAmount,
+      pphRate: res.effectiveRateOnGross,
+      pphAmount: res.pphAmount,
+    };
+  }
+
+  if (regime === 'pph_final_4_2') {
+    const res = calculatePPhFinal4_2(grossAmount);
+    return {
+      regime: 'pph_final_4_2',
+      dppRatio: res.dppRatio,
+      dppAmount: res.dppAmount,
+      pphRate: res.effectiveRateOnGross,
+      pphAmount: res.pphAmount,
+    };
+  }
+
+  // Standard fixed rate (PPh 23 2%, PPh 23 15%, PPh 22 2.5%, etc.)
+  const rate = Number(taxCode.rate) || 0;
+  const pphAmount = Math.round((grossAmount * rate) / 100);
+  return {
+    regime: 'standard_fixed',
+    dppRatio: 1.0,
+    dppAmount: grossAmount,
+    pphRate: rate,
+    pphAmount,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +759,7 @@ export const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
   delivery_sales:             'Delivery / Sales Dist.',
   loading_sales:              'Loading (Sales)',
   other_sales:                'Other Sales Cost',
+  marketing_advertising:      'Sales Commission / Marketing',
   salary:                     'Salary / Gaji',
   staff_overtime:             'Staff Overtime',
   staff_welfare:              'Staff Welfare / Kesejahteraan',

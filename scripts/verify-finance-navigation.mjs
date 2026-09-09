@@ -10,7 +10,7 @@ const expectedMenuItems = [
   'ledger', 'journal_register', 'bank_ledger', 'party_ledger', 'bank_recon',
   'ca_reports', 'trial_balance', 'pnl', 'balance_sheet', 'receivables', 'payables',
   'ageing', 'tax', 'integrity_monitor', 'exception_correction',
-  'coa', 'suppliers', 'banks', 'staff_master', 'utility_master',
+  'coa', 'expense_categories', 'suppliers', 'banks', 'staff_master', 'payee_master', 'utility_master',
 ];
 
 const menuBlock = financeSource.match(/const getFinanceMenu[\s\S]*?function FinanceContent/)?.[0] || '';

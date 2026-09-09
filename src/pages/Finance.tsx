@@ -34,18 +34,19 @@ const CAReports = lazy(() => import('../components/finance/CAReports').then(m =>
 const GeneralJournalEntry = lazy(() => import('../components/finance/GeneralJournalEntry').then(m => ({ default: m.GeneralJournalEntry })));
 const IntegrityMonitor = lazy(() => import('../components/finance/IntegrityMonitor').then(m => ({ default: m.IntegrityMonitor })));
 const FinanceExceptionCorrectionDashboard = lazy(() => import('../components/finance/FinanceExceptionCorrectionDashboard').then(m => ({ default: m.FinanceExceptionCorrectionDashboard })));
+const PayeeMasterManager = lazy(() => import('../components/finance/PayeeMasterManager').then(m => ({ default: m.PayeeMasterManager })));
 
 type FinanceTab =
   | 'purchase' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
   | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon'
   | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports' | 'integrity_monitor' | 'exception_correction'
-  | 'coa' | 'expense_categories' | 'customers' | 'suppliers' | 'products' | 'banks' | 'staff_master' | 'utility_master';
+  | 'coa' | 'expense_categories' | 'customers' | 'suppliers' | 'products' | 'banks' | 'staff_master' | 'utility_master' | 'payee_master';
 
 const FINANCE_TABS: readonly FinanceTab[] = [
   'purchase', 'receipt', 'payment', 'journal', 'contra', 'expenses', 'petty_cash',
   'ledger', 'journal_register', 'bank_ledger', 'party_ledger', 'bank_recon',
   'trial_balance', 'pnl', 'balance_sheet', 'receivables', 'payables', 'ageing', 'tax', 'ca_reports', 'integrity_monitor', 'exception_correction',
-  'coa', 'expense_categories', 'customers', 'suppliers', 'products', 'banks', 'staff_master', 'utility_master',
+  'coa', 'expense_categories', 'customers', 'suppliers', 'products', 'banks', 'staff_master', 'utility_master', 'payee_master',
 ];
 const DEFAULT_FINANCE_TAB: FinanceTab = 'purchase';
 
@@ -57,6 +58,7 @@ const FINANCE_ROUTE_BY_TAB: Record<FinanceTab, string> = {
   payables: 'payables', ageing: 'ageing', tax: 'tax', ca_reports: 'ca-reports', integrity_monitor: 'integrity-monitor',
   exception_correction: 'exception-correction', coa: 'chart-of-accounts', customers: 'customers', suppliers: 'suppliers',
   products: 'products', banks: 'banks', staff_master: 'staff-master', utility_master: 'utility-master', expense_categories: 'expense-categories',
+  payee_master: 'payees',
 };
 
 const FINANCE_TAB_BY_ROUTE = Object.fromEntries(
@@ -125,6 +127,7 @@ const getFinanceMenu = (t: TFunction): MenuGroup[] => [
       { id: 'suppliers', label: t.finance.suppliers },
       { id: 'banks', label: t.finance.banks },
       { id: 'staff_master', label: 'Staff Master' },
+      { id: 'payee_master', label: 'Payee Master' },
       { id: 'utility_master', label: 'Utility Master' },
     ]
   }
@@ -489,6 +492,8 @@ function FinanceContent() {
         return <BankAccountsManager canManage={canManage} />;
       case 'staff_master':
         return <StaffMasterManager canManage={canManage} />;
+      case 'payee_master':
+        return <PayeeMasterManager canManage={canManage} />;
       case 'utility_master':
         return <UtilityMasterManager canManage={canManage} />;
       default:

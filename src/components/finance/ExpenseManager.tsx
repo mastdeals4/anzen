@@ -126,6 +126,9 @@ import {
   brokerLineTotal,
   computeBrokerLinePpn,
   getDueDateFromTerms,
+  computeExpensePPh,
+  formatIDR,
+  type PphCalculationRegime,
 } from '../../utils/taxCalculations';
 
 const SALARY_PERIOD_OPTIONS = salaryPeriodOptions();
@@ -159,6 +162,13 @@ interface FinanceExpense {
   // New supplier invoice fields
   supplier_id?: string | null;
   staff_id?: string | null;
+  payee_id?: string | null;
+  linked_sales_invoice_id?: string | null;
+  pph_calculation_regime?: string | null;
+  pph_dpp_ratio?: number | null;
+  pph_dpp_amount?: number | null;
+  pph_rate?: number | null;
+  is_tax_manual_override?: boolean | null;
   invoice_number?: string | null;
   due_date?: string | null;
   paid_amount?: number | null;
@@ -203,6 +213,8 @@ interface FinanceExpense {
     payment_vouchers?: { voucher_number: string; payment_date: string } | null;
   }> | null;
   suppliers?: { id: string; company_name: string } | null;
+  payees?: { id: string; payee_code: string; full_name: string; business_role: string; tax_classification: string; nik: string | null; npwp: string | null } | null;
+  sales_invoices?: { id: string; invoice_number: string } | null;
   posting_lifecycle?: EffectiveExpensePostingState | null;
   effective_posting_state?: ExpensePostingState;
 }
@@ -520,6 +532,31 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     monthly_salary: number;
   }>>([]);
   const [utilityRoster, setUtilityRoster] = useState<Array<{ id: string; provider_name: string; utility_type: string; supplier_id: string | null; default_gl_code: string | null }>>([]);
+  const [payeeRoster, setPayeeRoster] = useState<Array<{
+    id: string;
+    payee_code: string;
+    full_name: string;
+    business_role: string;
+    tax_classification: string;
+    nik: string | null;
+    npwp: string | null;
+    bank_name: string | null;
+    bank_account_number: string | null;
+    bank_account_holder: string | null;
+    default_pph_code_id: string | null;
+    is_active: boolean;
+  }>>([]);
+  const [salesInvoices, setSalesInvoices] = useState<Array<{
+    id: string;
+    invoice_number: string;
+    invoice_date: string;
+    delivery_challan_number: string | null;
+    linked_challan_ids: string[] | null;
+    total_amount: number;
+    customers: { company_name: string } | null;
+  }>>([]);
+  const [providerType, setProviderType] = useState<'corporate' | 'individual'>('corporate');
+  const [workingDays, setWorkingDays] = useState<number>(1);
   const [selectedStaffId, setSelectedStaffId] = useState<string>('');
   const [salaryAdvances, setSalaryAdvances] = useState<Array<{
     advance_id: string;
@@ -602,6 +639,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     fixed_asset_account_id: '',
     // Task 5: Utility-only optional bank charges paid alongside the utility bill.
     bank_charges_amount: 0,
+    payee_id: '',
+    linked_sales_invoice_id: '',
+    pph_calculation_regime: '',
+    pph_dpp_ratio: 1.0,
+    pph_dpp_amount: 0,
+    pph_rate: 0,
+    is_tax_manual_override: false,
   });
 
   useEffect(() => {
@@ -1161,6 +1205,25 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           .order('provider_name');
         if (utl) setUtilityRoster(utl);
       }
+      if (payeeRoster.length === 0) {
+        const { data: payees } = await supabase
+          .from('finance_payees')
+          .select('id, payee_code, full_name, business_role, tax_classification, nik, npwp, bank_name, bank_account_number, bank_account_holder, default_pph_code_id, is_active')
+          .eq('is_active', true)
+          .order('full_name');
+        if (payees) setPayeeRoster(payees);
+      }
+      if (salesInvoices.length === 0) {
+        const { data: si } = await supabase
+          .from('sales_invoices')
+          .select('id, invoice_number, invoice_date, delivery_challan_number, linked_challan_ids, total_amount, customers(company_name)')
+          .order('invoice_number', { ascending: false })
+          .limit(100);
+        if (si) setSalesInvoices(si.map((inv: any) => ({
+          ...inv,
+          customers: Array.isArray(inv.customers) ? inv.customers[0] || null : inv.customers,
+        })));
+      }
     } catch (error: any) {
       console.error('Error loading data:', error.message);
       alert('Failed to load expenses');
@@ -1326,10 +1389,17 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         document_urls: allDocumentUrls,
         // Main invoice supplier. NEVER derived from broker_items[i].supplier_id
         // — broker line suppliers are used ONLY for tax invoice / PPN register.
-        supplier_id: formData.supplier_id || null,
+        supplier_id: (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? null : (formData.supplier_id || null),
         // Staff FK (salary / overtime / welfare / advance) — the description
         // prefix stays for ledger traceability, but the FK is authoritative.
         staff_id: rules.staff === 'show' ? (selectedStaffId || null) : null,
+        payee_id: (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? (formData.payee_id || null) : null,
+        linked_sales_invoice_id: rules.salesInvoice === 'show' ? (formData.linked_sales_invoice_id || null) : null,
+        pph_calculation_regime: formData.pph_calculation_regime || null,
+        pph_dpp_ratio: formData.pph_dpp_ratio != null ? formData.pph_dpp_ratio : null,
+        pph_dpp_amount: formData.pph_dpp_amount != null ? formData.pph_dpp_amount : null,
+        pph_rate: formData.pph_rate != null ? formData.pph_rate : null,
+        is_tax_manual_override: !!formData.is_tax_manual_override,
         invoice_number: formData.invoice_number || null,
         due_date: formData.due_date || null,
         // Broker items (only for import_broker). Per-line supplier_id inside these
@@ -1609,7 +1679,17 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       stamp_duty_amount: expense.stamp_duty_amount ?? 0,
       fixed_asset_account_id: expense.fixed_asset_account_id ?? '',
       bank_charges_amount: expense.bank_charges_amount ?? 0,
+      payee_id: expense.payee_id ?? '',
+      linked_sales_invoice_id: expense.linked_sales_invoice_id ?? '',
+      pph_calculation_regime: expense.pph_calculation_regime ?? '',
+      pph_dpp_ratio: expense.pph_dpp_ratio ?? (expense.pph_amount ? 0.5 : 1.0),
+      pph_dpp_amount: expense.pph_dpp_amount ?? (expense.pph_amount ? Math.round(expense.amount * 0.5) : 0),
+      pph_rate: expense.pph_rate ?? 0,
+      is_tax_manual_override: expense.is_tax_manual_override ?? false,
     });
+
+    setProviderType(expense.payee_id ? 'individual' : 'corporate');
+    setWorkingDays(1);
 
     // An existing allocation is displayed by BankTransactionLinkField; it is
     // not a newly selected bank line. Preloading it here made Update call the
@@ -1882,7 +1962,16 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       stamp_duty_amount: 0,
       fixed_asset_account_id: '',
       bank_charges_amount: 0,
+      payee_id: '',
+      linked_sales_invoice_id: '',
+      pph_calculation_regime: '',
+      pph_dpp_ratio: 1.0,
+      pph_dpp_amount: 0,
+      pph_rate: 0,
+      is_tax_manual_override: false,
     });
+    setProviderType('corporate');
+    setWorkingDays(1);
   };
 
   // Handle supplier selection — auto-fills category, due_date, tax fields
@@ -1917,6 +2006,82 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       }
       return { ...prev, ...updates };
     });
+  };
+
+  // Handle payee selection — recommends default tax code and recalculates PPh
+  const handlePayeeSelect = (payeeId: string) => {
+    const payee = payeeRoster.find(p => p.id === payeeId) ?? null;
+    let defaultCodeId = payee?.default_pph_code_id || '';
+    if (!defaultCodeId) {
+      if (payee?.tax_classification === 'pegawai_tidak_tetap') {
+        defaultCodeId = taxCodes.find(tc => tc.code === 'PPH21-TT')?.id || '';
+      } else if (payee?.tax_classification === 'pemilik_sewa_op') {
+        defaultCodeId = taxCodes.find(tc => tc.code === 'PPH4(2)')?.id || '';
+      } else {
+        defaultCodeId = taxCodes.find(tc => tc.code === 'PPH21-NE')?.id || '';
+      }
+    }
+    const tc = taxCodes.find(t => t.id === defaultCodeId) || null;
+    const calc = computeExpensePPh({
+      grossAmount: formData.amount,
+      taxCode: tc,
+      payeeClassification: payee?.tax_classification,
+      workingDays,
+    });
+    setFormData(prev => ({
+      ...prev,
+      payee_id: payeeId,
+      supplier_id: '',
+      pph_code_id: tc ? tc.id : prev.pph_code_id,
+      pph_amount: calc.pphAmount,
+      pph_dpp_ratio: calc.dppRatio,
+      pph_dpp_amount: calc.dppAmount,
+      pph_rate: calc.pphRate,
+      pph_calculation_regime: calc.regime,
+      is_tax_manual_override: false,
+    }));
+    setSelectedSupplier(null);
+  };
+
+  // Handle sales invoice selection — links invoice and auto-resolves Delivery Challan
+  const handleSalesInvoiceSelect = (invoiceId: string) => {
+    const inv = salesInvoices.find(si => si.id === invoiceId) ?? null;
+    let resolvedDcId = '';
+    if (inv) {
+      if (inv.linked_challan_ids && inv.linked_challan_ids.length > 0) {
+        resolvedDcId = inv.linked_challan_ids[0];
+      } else if (inv.delivery_challan_number) {
+        const matchingDc = challans.find(c => c.challan_number === inv.delivery_challan_number);
+        if (matchingDc) resolvedDcId = matchingDc.id;
+      }
+    }
+    setFormData(prev => ({
+      ...prev,
+      linked_sales_invoice_id: invoiceId,
+      delivery_challan_id: resolvedDcId || prev.delivery_challan_id,
+    }));
+  };
+
+  // Handle authoritative tax code change — dynamically recalculates with selected regime
+  const handleTaxCodeChange = (codeId: string) => {
+    const tc = taxCodes.find(t => t.id === codeId) || null;
+    const currentPayee = payeeRoster.find(p => p.id === formData.payee_id) || null;
+    const calc = computeExpensePPh({
+      grossAmount: formData.amount,
+      taxCode: tc,
+      payeeClassification: currentPayee?.tax_classification,
+      workingDays,
+    });
+    setFormData(prev => ({
+      ...prev,
+      pph_code_id: codeId,
+      pph_amount: calc.pphAmount,
+      pph_dpp_ratio: calc.dppRatio,
+      pph_dpp_amount: calc.dppAmount,
+      pph_rate: calc.pphRate,
+      pph_calculation_regime: calc.regime,
+      is_tax_manual_override: false,
+    }));
   };
 
   // Quick Add Supplier handler
@@ -2634,6 +2799,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           let partyName = '';
                           if (rules.staff === 'show' && expense.staff_id) {
                             partyName = staffRoster.find(s => s.id === expense.staff_id)?.full_name || '';
+                          } else if (expense.payee_id) {
+                            partyName = payeeRoster.find(p => p.id === expense.payee_id)?.full_name || (expense as any).payees?.full_name || '';
                           } else if (expense.suppliers) {
                             partyName = expense.suppliers.company_name;
                           }
@@ -2936,15 +3103,47 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       />
                     </SapField>
                     <SapField
-                      label={rules.staff === 'show' ? 'Staff' : rules.utility === 'show' ? 'Utility' : (isBroker ? 'Broker' : 'Supplier')}
-                      required={rules.staff === 'show' || rules.utility === 'show' || rules.supplier === 'show'}
+                      label={
+                        rules.staff === 'show' ? 'Staff'
+                        : rules.utility === 'show' ? 'Utility'
+                        : (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual'))
+                          ? (rules.payeeLabel || 'Payee')
+                          : (isBroker ? 'Broker' : 'Supplier')
+                      }
+                      required={rules.staff === 'show' || rules.utility === 'show' || rules.supplier === 'show' || rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')}
                       span={3}
-                      right={selectedSupplier && rules.staff !== 'show' && rules.utility !== 'show' ? (
-                        <div className="flex gap-1 text-[9px] shrink-0">
-                          {selectedSupplier.pkp_status && <span className="px-1 py-0.5 bg-green-100 text-green-700 rounded font-medium">PKP</span>}
-                          {selectedSupplier.payment_terms_days ? <span className="px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">N{selectedSupplier.payment_terms_days}</span> : null}
-                        </div>
-                      ) : null}>
+                      right={
+                        rules.providerTypeToggle ? (
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProviderType('corporate');
+                                setFormData(prev => ({ ...prev, payee_id: '' }));
+                              }}
+                              className={`px-1.5 py-0.5 text-[9px] font-semibold rounded ${providerType === 'corporate' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                            >
+                              Corporate (Badan)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProviderType('individual');
+                                setFormData(prev => ({ ...prev, supplier_id: '' }));
+                                setSelectedSupplier(null);
+                              }}
+                              className={`px-1.5 py-0.5 text-[9px] font-semibold rounded ${providerType === 'individual' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                            >
+                              Individual (Orang Pribadi)
+                            </button>
+                          </div>
+                        ) : selectedSupplier && rules.staff !== 'show' && rules.utility !== 'show' && rules.payee !== 'show' ? (
+                          <div className="flex gap-1 text-[9px] shrink-0">
+                            {selectedSupplier.pkp_status && <span className="px-1 py-0.5 bg-green-100 text-green-700 rounded font-medium">PKP</span>}
+                            {selectedSupplier.payment_terms_days ? <span className="px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">N{selectedSupplier.payment_terms_days}</span> : null}
+                          </div>
+                        ) : null
+                      }>
                       {rules.staff === 'show' ? (
                         <SearchableSelect
                           value={selectedStaffId}
@@ -2955,10 +3154,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                               ...prev,
                               supplier_id: '',
                               ...(prev.expense_category === 'salary' && staff
-                                // Fresh staff selection: gross from Staff Master and a
-                                // clean PPh21 override so the canonical calculator
-                                // repopulates from the new staff's configuration
-                                // instead of carrying the previous staff's value.
                                 ? { amount: Number(staff.monthly_salary) || 0, pph_amount: 0 }
                                 : {}),
                             }));
@@ -2979,6 +3174,24 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           options={[{ value: '', label: '— None —' }, ...utilityRoster.map(u => ({ value: u.id, label: `${u.provider_name} · ${u.utility_type}` }))]}
                           placeholder="Search utility..."
                         />
+                      ) : (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? (
+                        <SearchableSelect
+                          value={formData.payee_id}
+                          onChange={(val) => handlePayeeSelect(val)}
+                          options={[
+                            { value: '', label: '— Select Payee —' },
+                            ...(rules.payeeRoleFilter
+                              ? payeeRoster.filter(p => p.business_role === rules.payeeRoleFilter).length > 0
+                                ? payeeRoster.filter(p => p.business_role === rules.payeeRoleFilter)
+                                : payeeRoster
+                              : payeeRoster
+                            ).map((p) => ({
+                              value: p.id,
+                              label: `${p.full_name}${p.business_role ? ` (${p.business_role.replace(/_/g, ' ')})` : ''}${p.nik || p.npwp ? ` · ${p.npwp || p.nik}` : ' · No NIK/NPWP'}`,
+                            }))
+                          ]}
+                          placeholder="Search payee..."
+                        />
                       ) : (
                         <SearchableSelect
                           value={formData.supplier_id}
@@ -2989,6 +3202,55 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         />
                       )}
                     </SapField>
+                    {rules.salesInvoice === 'show' && (
+                      <SapField label="Linked Sales Invoice" span={3}>
+                        <SearchableSelect
+                          value={formData.linked_sales_invoice_id}
+                          onChange={(val) => handleSalesInvoiceSelect(val)}
+                          options={[
+                            { value: '', label: '— None —' },
+                            ...salesInvoices.map(si => ({
+                              value: si.id,
+                              label: `${si.invoice_number} · ${si.customers?.company_name || 'Customer'} · ${formatIDR(si.total_amount)}`,
+                            }))
+                          ]}
+                          placeholder="Search sales invoice..."
+                        />
+                      </SapField>
+                    )}
+                    {rules.workingDays === 'show' && (
+                      <SapField label="Working Days (for TER)" span={3}>
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={workingDays}
+                          onChange={(e) => {
+                            const days = Math.max(1, parseInt(e.target.value) || 1);
+                            setWorkingDays(days);
+                            if (formData.pph_code_id && !formData.is_tax_manual_override) {
+                              const tc = taxCodes.find(t => t.id === formData.pph_code_id);
+                              const currentPayee = payeeRoster.find(p => p.id === formData.payee_id);
+                              const calc = computeExpensePPh({
+                                grossAmount: formData.amount,
+                                taxCode: tc,
+                                payeeClassification: currentPayee?.tax_classification,
+                                workingDays: days,
+                              });
+                              setFormData(prev => ({
+                                ...prev,
+                                pph_amount: calc.pphAmount,
+                                pph_dpp_ratio: calc.dppRatio,
+                                pph_dpp_amount: calc.dppAmount,
+                                pph_rate: calc.pphRate,
+                                pph_calculation_regime: calc.regime,
+                              }));
+                            }
+                          }}
+                          className={SAP_INPUT + ' !text-right !font-mono'}
+                        />
+                      </SapField>
+                    )}
                   </SapRow>
 
                   {/* ── Row B: Period (conditional — salary / billing month only) ── */}
@@ -3047,7 +3309,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
                   {/* ── Row C: Amount · DPP · PPN · PPh · PPh Code · Stamp · Bank Chg · Container · DC · Asset ── */}
                   <SapRow>
-                    <SapField label={`${isBroker ? 'Broker Invoice Amount' : formData.expense_category === 'salary' ? 'Gross Salary Amount' : 'Amount'} (${expenseFormCurrency})`} required span={3}>
+                     <SapField label={`${isBroker ? 'Broker Invoice Amount' : formData.expense_category === 'salary' ? 'Gross Salary Amount' : 'Amount'} (${expenseFormCurrency})`} required span={3}>
                       <MoneyInput value={formData.amount} required placeholder="0.00"
                         onChange={(amt) => {
                           setFormData(prev => {
@@ -3055,9 +3317,37 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                             const rate = prev.ppn_rate || 11;
                             const ppn = !isBroker && mode === 'standard' && selectedSupplier?.pkp_status
                               ? Math.round(amt * rate / 100) : prev.ppn_amount;
-                            const tc = prev.pph_code_id ? taxCodes.find(t => t.id === prev.pph_code_id) : null;
-                            const pph = tc ? Math.round(amt * tc.rate / 100) : prev.pph_amount;
-                            return { ...prev, amount: amt, ppn_amount: ppn, pph_amount: pph };
+                            let pph = prev.pph_amount;
+                            let dppAmt = prev.pph_dpp_amount;
+                            let dppRatio = prev.pph_dpp_ratio;
+                            let pphRate = prev.pph_rate;
+                            let regime = prev.pph_calculation_regime;
+
+                            if (prev.pph_code_id && !prev.is_tax_manual_override) {
+                              const tc = taxCodes.find(t => t.id === prev.pph_code_id) || null;
+                              const currentPayee = payeeRoster.find(p => p.id === prev.payee_id) || null;
+                              const calc = computeExpensePPh({
+                                grossAmount: amt,
+                                taxCode: tc,
+                                payeeClassification: currentPayee?.tax_classification,
+                                workingDays,
+                              });
+                              pph = calc.pphAmount;
+                              dppAmt = calc.dppAmount;
+                              dppRatio = calc.dppRatio;
+                              pphRate = calc.pphRate;
+                              regime = calc.regime;
+                            }
+                            return {
+                              ...prev,
+                              amount: amt,
+                              ppn_amount: ppn,
+                              pph_amount: pph,
+                              pph_dpp_amount: dppAmt,
+                              pph_dpp_ratio: dppRatio,
+                              pph_rate: pphRate,
+                              pph_calculation_regime: regime,
+                            };
                           });
                         }}
                         className={SAP_INPUT + ' !text-right !font-mono !font-semibold'} />
@@ -3152,7 +3442,12 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     {supportsPph && (
                       <SapField label={category?.taxBehavior === 'salary' ? 'PPh 21' : 'PPh Withheld'} span={3}>
                         <MoneyInput value={formData.pph_amount} placeholder="0.00"
-                          onChange={(v) => setFormData({ ...formData, pph_amount: v })}
+                          onChange={(v) => setFormData(prev => ({
+                            ...prev,
+                            pph_amount: v,
+                            is_tax_manual_override: true,
+                            pph_calculation_regime: 'manual',
+                          }))}
                           className={SAP_INPUT + ' !text-right !font-mono text-orange-700'} />
                       </SapField>
                     )}
@@ -3160,17 +3455,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       <SapField label="PPh Code" span={3}>
                         <SearchableSelect
                           value={formData.pph_code_id}
-                          onChange={(val) => {
-                            const tc = taxCodes.find(t => t.id === val);
-                            setFormData(prev => ({
-                              ...prev,
-                              pph_code_id: val,
-                              pph_amount: !val ? 0 : (tc && tc.rate > 0) ? Math.round(prev.amount * tc.rate / 100) : prev.pph_amount,
-                            }));
-                          }}
+                          onChange={(val) => handleTaxCodeChange(val)}
                           options={[{ value: '', label: 'None' }, ...taxCodes.map(tc => ({
                             value: tc.id,
-                            label: tc.tax_type === 'PPh21' ? `${tc.code} (Manual)` : `${tc.code} — ${tc.rate}%`,
+                            label: tc.code === 'PPH21-NE' ? 'PPH21-NE — Bukan Pegawai (DPP 50% / Ps 17)'
+                              : tc.code === 'PPH21-TT' ? 'PPH21-TT — Pegawai Tidak Tetap (TER Harian)'
+                              : tc.code === 'PPH4(2)' ? 'PPH4(2) — Final 10%'
+                              : `${tc.code} — ${tc.rate}%`,
                           }))]}
                           placeholder="None"
                         />
@@ -3221,6 +3512,29 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       </SapField>
                     )}
                   </SapRow>
+
+                  {(formData.pph_amount > 0 || !!formData.pph_code_id) && (
+                    <div className="my-1.5 flex flex-wrap items-center gap-2 text-xs bg-orange-50 border border-orange-200 rounded px-2.5 py-1 text-orange-900">
+                      <span className="font-semibold uppercase tracking-wide text-[10px] text-orange-800">
+                        {formData.pph_calculation_regime === 'pasal17_dpp50'
+                          ? 'Pasal 17 DPP 50% (Bukan Pegawai / Tenaga Ahli)'
+                          : formData.pph_calculation_regime === 'ter_harian_lepas'
+                            ? 'TER Harian (Pegawai Tidak Tetap)'
+                            : formData.pph_calculation_regime === 'pph_final_4_2'
+                              ? 'PPh Final 4(2) 10% (Sewa OP)'
+                              : 'PPh Withholding'}
+                      </span>
+                      <span>•</span>
+                      <span>DPP: <strong className="font-mono">{formatCurrency(formData.pph_dpp_amount || Math.round(formData.amount * (formData.pph_dpp_ratio || 1)), expenseFormCurrency)}</strong> ({Math.round((formData.pph_dpp_ratio || 1) * 100)}%)</span>
+                      <span>•</span>
+                      <span>Effective Rate: <strong className="font-mono">{formData.pph_rate || 0}%</strong></span>
+                      <span>•</span>
+                      <span>Withheld: <strong className="font-mono text-orange-700">{formatCurrency(formData.pph_amount, expenseFormCurrency)}</strong></span>
+                      {formData.is_tax_manual_override && (
+                        <span className="ml-auto text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded font-semibold">Manual Override</span>
+                      )}
+                    </div>
+                  )}
 
                   {/* ── Row E: Description (full width) ── */}
                   <SapRow>
@@ -4012,6 +4326,14 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     <span className="ml-1.5 text-[12px] font-medium text-gray-800">{viewingExpense.suppliers.company_name}</span>
                   </div>
                 )}
+                {viewingExpense.payee_id && (
+                  <div>
+                    <span className="text-[9px] uppercase font-medium text-gray-400">Payee</span>
+                    <span className="ml-1.5 text-[12px] font-medium text-purple-800">
+                      {payeeRoster.find(p => p.id === viewingExpense.payee_id)?.full_name || (viewingExpense as any).payees?.full_name || 'Individual Payee'}
+                    </span>
+                  </div>
+                )}
                 {staffName && (
                   <div>
                     <span className="text-[9px] uppercase font-medium text-gray-400">Employee</span>
@@ -4047,6 +4369,22 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                   <div>
                     <div className="text-[9px] uppercase font-medium text-gray-400">Supplier</div>
                     <div className="text-[12px] font-medium text-gray-800">{viewingExpense.suppliers.company_name}</div>
+                  </div>
+                )}
+                {viewingExpense.payee_id && (
+                  <div>
+                    <div className="text-[9px] uppercase font-medium text-gray-400">Payee</div>
+                    <div className="text-[12px] font-medium text-purple-800">
+                      {payeeRoster.find(p => p.id === viewingExpense.payee_id)?.full_name || (viewingExpense as any).payees?.full_name || 'Individual Payee'}
+                    </div>
+                  </div>
+                )}
+                {viewingExpense.linked_sales_invoice_id && (
+                  <div>
+                    <div className="text-[9px] uppercase font-medium text-gray-400">Sales Invoice</div>
+                    <div className="text-[12px] font-medium text-blue-800 font-mono">
+                      {salesInvoices.find(si => si.id === viewingExpense.linked_sales_invoice_id)?.invoice_number || (viewingExpense as any).sales_invoices?.invoice_number || 'Linked Invoice'}
+                    </div>
                   </div>
                 )}
                 {staffName && (
