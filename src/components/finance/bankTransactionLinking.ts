@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import { linkBankStatementLine, unlinkBankStatementLine } from '../../services/financeCommands';
+import { fetchInBatches } from '../../utils/batchQuery';
 
 export const FINANCE_RECONCILIATION_REFRESH_EVENT = 'finance:reconciliation-refresh';
 
@@ -128,12 +129,14 @@ export async function loadUnmatchedDebitBankTransactions({
   const allocatedByLine = new Map<string, number>();
   const allocationCountByLine = new Map<string, number>();
   if (lineIds.length > 0) {
-    const { data: allocations, error: allocationError } = await supabase
-      .from('bank_statement_allocations')
-      .select('bank_statement_line_id, allocation_amount')
-      .in('bank_statement_line_id', lineIds);
-    if (allocationError) throw allocationError;
-    for (const allocation of allocations || []) {
+    const allocations = await fetchInBatches<{ bank_statement_line_id: string; allocation_amount: number }>(
+      lineIds,
+      batchIds => supabase
+        .from('bank_statement_allocations')
+        .select('bank_statement_line_id, allocation_amount')
+        .in('bank_statement_line_id', batchIds)
+    );
+    for (const allocation of allocations) {
       allocatedByLine.set(
         allocation.bank_statement_line_id,
         (allocatedByLine.get(allocation.bank_statement_line_id) || 0) + Number(allocation.allocation_amount || 0),

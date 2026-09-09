@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFinance } from '../../contexts/FinanceContext';
 import { sanitizeCsvCell } from '../../utils/csvSafe';
+import { fetchInBatches } from '../../utils/batchQuery';
 import { FinancialReports } from './FinancialReports';
 import { TaxReportsPanel } from './tax/TaxReportsPanel';
 
@@ -221,17 +222,23 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
 
     if (error) throw error;
     const journalIds = Array.from(new Set((lines || []).map((line: any) => line.journal_entry_id).filter(Boolean)));
-    const { data: allocations, error: allocationError } = journalIds.length
-      ? await supabase.from('bank_statement_allocations')
-          .select('journal_entry_id, bank_statement_line_id, allocation_amount')
-          .in('journal_entry_id', journalIds)
-      : { data: [], error: null };
-    if (allocationError) throw allocationError;
+    const allocations = journalIds.length
+      ? await fetchInBatches<any>(
+          journalIds,
+          batch => supabase.from('bank_statement_allocations')
+            .select('journal_entry_id, bank_statement_line_id, allocation_amount')
+            .in('journal_entry_id', batch)
+        )
+      : [];
     const statementIds = Array.from(new Set((allocations || []).map((a: any) => a.bank_statement_line_id).filter(Boolean)));
-    const { data: statements, error: statementError } = statementIds.length
-      ? await supabase.from('bank_statement_lines').select('id, transaction_date, transaction_hash, debit_amount, credit_amount').in('id', statementIds)
-      : { data: [], error: null };
-    if (statementError) throw statementError;
+    const statements = statementIds.length
+      ? await fetchInBatches<any>(
+          statementIds,
+          batch => supabase.from('bank_statement_lines')
+            .select('id, transaction_date, transaction_hash, debit_amount, credit_amount')
+            .in('id', batch)
+        )
+      : [];
     const statementMap = new Map((statements || []).map((s: any) => [s.id, s]));
     const reportingDates = new Map<string, string>();
     const canonicalMovement = new Map<string, { debit: number; credit: number }>();

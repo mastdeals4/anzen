@@ -6,6 +6,7 @@ import { MoneyInput } from '../MoneyInput';
 import { useFinance } from '../../contexts/FinanceContext';
 import { getSignedUrlCached } from '../../utils/signedUrlCache';
 import { formatCurrency } from '../../utils/currency';
+import { fetchInBatches } from '../../utils/batchQuery';
 
 interface BankAccount {
   id: string;
@@ -155,11 +156,14 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
           .eq('journal_entries.is_posted', true)
           .eq('journal_entries.is_reversed', false);
         const journalIds = Array.from(new Set((glLines || []).map((line: any) => line.journal_entry_id).filter(Boolean)));
-        const { data: economicDates } = journalIds.length
-          ? await supabase.from('bank_statement_allocations')
-              .select('journal_entry_id, bank_statement_lines!inner(transaction_date)')
-              .in('journal_entry_id', journalIds)
-          : { data: [] as any[] };
+        const economicDates = journalIds.length
+          ? await fetchInBatches<any>(
+              journalIds,
+              batch => supabase.from('bank_statement_allocations')
+                .select('journal_entry_id, bank_statement_lines!inner(transaction_date)')
+                .in('journal_entry_id', batch)
+            )
+          : [];
         const canonicalBankDate = new Map<string, string>();
         (economicDates || []).forEach((row: any) => {
           const date = row.bank_statement_lines?.transaction_date;
@@ -233,19 +237,25 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       // retained only as a compatibility fallback for genuinely unallocated
       // statement lines.
       const lineIds = (bankLines || []).map((line: any) => line.id);
-      const { data: allocations } = lineIds.length
-        ? await supabase.from('bank_statement_allocations')
-            .select('bank_statement_line_id, document_type, document_id, journal_entry_id, allocation_amount, payment_kind')
-            .in('bank_statement_line_id', lineIds)
-        : { data: [] as any[] };
+      const allocations = lineIds.length
+        ? await fetchInBatches<any>(
+            lineIds,
+            batch => supabase.from('bank_statement_allocations')
+              .select('bank_statement_line_id, document_type, document_id, journal_entry_id, allocation_amount, payment_kind')
+              .in('bank_statement_line_id', batch)
+          )
+        : [];
       const allocationRows = allocations || [];
       const allocationJournalIds = Array.from(new Set(allocationRows.map((a: any) => a.journal_entry_id).filter(Boolean)));
-      const { data: linkedBankLines } = allocationJournalIds.length
-        ? await supabase.from('journal_entry_lines')
-            .select('journal_entry_id, debit, credit, transaction_debit, transaction_credit')
-            .eq('account_id', selectedBankData?.coa_id || '')
-            .in('journal_entry_id', allocationJournalIds)
-        : { data: [] as any[] };
+      const linkedBankLines = allocationJournalIds.length
+        ? await fetchInBatches<any>(
+            allocationJournalIds,
+            batch => supabase.from('journal_entry_lines')
+              .select('journal_entry_id, debit, credit, transaction_debit, transaction_credit')
+              .eq('account_id', selectedBankData?.coa_id || '')
+              .in('journal_entry_id', batch)
+          )
+        : [];
       const ledgerByJournal = new Map<string, { debit: number; credit: number }>();
       (linkedBankLines || []).forEach((line: any) => {
         const useTransaction = selectedBankData?.currency === 'USD';
@@ -264,13 +274,34 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const allocationPettyIds = allocationRows.filter((a: any) => a.document_type === 'petty_cash').map((a: any) => a.document_id);
       const allocationTaxIds = allocationRows.filter((a: any) => a.document_type === 'tax_payment').map((a: any) => a.document_id);
       const [canonicalExp, canonicalRec, canonicalPay, canonicalEntry, canonicalFund, canonicalPetty, canonicalTax] = await Promise.all([
-        allocationExpenseIds.length ? supabase.from('finance_expenses').select('id, voucher_number').in('id', allocationExpenseIds).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, x.voucher_number]))) : Promise.resolve({} as Record<string,string>),
-        allocationReceiptIds.length ? supabase.from('receipt_vouchers').select('id, voucher_number').in('id', allocationReceiptIds).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, x.voucher_number]))) : Promise.resolve({} as Record<string,string>),
-        allocationPaymentIds.length ? supabase.from('payment_vouchers').select('id, voucher_number').in('id', allocationPaymentIds).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, x.voucher_number]))) : Promise.resolve({} as Record<string,string>),
-        allocationEntryIds.length ? supabase.from('journal_entries').select('id, reference_number, entry_number').in('id', allocationEntryIds.filter(Boolean)).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, x.reference_number || x.entry_number]))) : Promise.resolve({} as Record<string,string>),
-        allocationFundIds.length ? supabase.from('fund_transfers').select('id, transfer_number').in('id', allocationFundIds).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, x.transfer_number]))) : Promise.resolve({} as Record<string,string>),
-        allocationPettyIds.length ? supabase.from('petty_cash_transactions').select('id, description').in('id', allocationPettyIds).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, x.description || 'Petty Cash']))) : Promise.resolve({} as Record<string,string>),
-        allocationTaxIds.length ? supabase.from('tax_payments').select('id, tax_type, payment_date').in('id', allocationTaxIds).then(r => Object.fromEntries((r.data || []).map((x: any) => [x.id, `${x.tax_type} ${x.payment_date}`]))) : Promise.resolve({} as Record<string,string>),
+        allocationExpenseIds.length
+          ? fetchInBatches<any>(allocationExpenseIds, b => supabase.from('finance_expenses').select('id, voucher_number').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.id, x.voucher_number])))
+          : Promise.resolve({} as Record<string, string>),
+        allocationReceiptIds.length
+          ? fetchInBatches<any>(allocationReceiptIds, b => supabase.from('receipt_vouchers').select('id, voucher_number').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.id, x.voucher_number])))
+          : Promise.resolve({} as Record<string, string>),
+        allocationPaymentIds.length
+          ? fetchInBatches<any>(allocationPaymentIds, b => supabase.from('payment_vouchers').select('id, voucher_number').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.id, x.voucher_number])))
+          : Promise.resolve({} as Record<string, string>),
+        allocationEntryIds.length
+          ? fetchInBatches<any>(allocationEntryIds.filter(Boolean), b => supabase.from('journal_entries').select('id, reference_number, entry_number').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.id, x.reference_number || x.entry_number])))
+          : Promise.resolve({} as Record<string, string>),
+        allocationFundIds.length
+          ? fetchInBatches<any>(allocationFundIds, b => supabase.from('fund_transfers').select('id, transfer_number').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.id, x.transfer_number])))
+          : Promise.resolve({} as Record<string, string>),
+        allocationPettyIds.length
+          ? fetchInBatches<any>(allocationPettyIds, b => supabase.from('petty_cash_transactions').select('id, description').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.description || 'Petty Cash'])))
+          : Promise.resolve({} as Record<string, string>),
+        allocationTaxIds.length
+          ? fetchInBatches<any>(allocationTaxIds, b => supabase.from('tax_payments').select('id, tax_type, payment_date').in('id', b))
+              .then(rows => Object.fromEntries(rows.map((x: any) => [x.id, `${x.tax_type} ${x.payment_date}`])))
+          : Promise.resolve({} as Record<string, string>),
       ]);
       const canonicalRef = (a: any) => a.document_type === 'expense' ? canonicalExp[a.document_id]
         : a.document_type === 'receipt' ? canonicalRec[a.document_id]
