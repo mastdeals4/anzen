@@ -110,23 +110,28 @@ BEGIN
   IF TG_OP='UPDATE' AND OLD.approval_status='approved' AND v_active_count<>1 THEN
     RAISE EXCEPTION 'Approved expense % must have exactly one active journal before edit',NEW.id;
   END IF;
+  IF v_journal_id IS NOT NULL THEN
+    PERFORM 1 FROM public.journal_entries WHERE id=v_journal_id FOR UPDATE;
+    DELETE FROM public.journal_entry_lines WHERE journal_entry_id=v_journal_id;
+  END IF;
 
-  IF NEW.payment_method='outstanding' THEN
+  IF NEW.payment_method='cash' THEN
+    SELECT id INTO v_payment_account_id FROM public.chart_of_accounts WHERE code='1101' LIMIT 1;
+  ELSIF NEW.payment_method='petty_cash' THEN
+    SELECT id INTO v_payment_account_id FROM public.chart_of_accounts WHERE code='1102' LIMIT 1;
+  ELSIF NEW.payment_method = 'bank_transfer' THEN
+    SELECT id INTO v_payment_account_id FROM public.chart_of_accounts WHERE code='2110' LIMIT 1;
+  ELSIF NEW.payment_method IS NOT NULL AND NEW.bank_account_id IS NOT NULL THEN
+    SELECT coa_id INTO v_payment_account_id FROM public.bank_accounts WHERE id=NEW.bank_account_id;
+  ELSIF NEW.payment_method IS NULL OR NEW.payment_method = 'outstanding' THEN
     IF NEW.expense_category='salary' THEN
       SELECT id INTO v_payment_account_id FROM public.chart_of_accounts WHERE code='2120' LIMIT 1;
-      IF v_payment_account_id IS NULL THEN RAISE EXCEPTION 'Salaries Payable account 2120 is missing'; END IF;
     ELSE
       SELECT id INTO v_payment_account_id FROM public.chart_of_accounts WHERE code='2110' LIMIT 1;
-      IF v_payment_account_id IS NULL THEN RAISE EXCEPTION 'Accounts Payable account 2110 is missing'; END IF;
     END IF;
-  ELSE
-    IF NEW.bank_account_id IS NULL THEN
-      RAISE EXCEPTION 'A paid expense requires bank_account_id';
-    END IF;
-    SELECT coa_id INTO v_payment_account_id FROM public.bank_accounts WHERE id=NEW.bank_account_id;
-    IF v_payment_account_id IS NULL THEN
-      RAISE EXCEPTION 'The selected bank account has no linked Chart of Accounts mapping';
-    END IF;
+  END IF;
+  IF v_payment_account_id IS NULL THEN
+    RAISE EXCEPTION 'Cannot post expense %: the selected payment/AP account is not configured',NEW.id;
   END IF;
 
   IF NEW.expense_category='pib_import' THEN
