@@ -605,7 +605,7 @@ export function BankReconciliationEnhanced({
         const { data: page, error } = await supabase
           .from('bank_statement_lines')
           // perf: projected columns (was select('*'))
-          .select('id, bank_account_id, transaction_date, description, reference, currency, debit_amount, credit_amount, running_balance, reconciliation_status, manually_unlinked, notes, matched_expense_id, matched_receipt_id, matched_payment_id, matched_fund_transfer_id, matched_entry_id, matched_petty_cash_id, matched_tax_payment_id')
+          .select('id, bank_account_id, transaction_date, description, reference, currency, debit_amount, credit_amount, running_balance, reconciliation_status, matching_status, manually_unlinked, notes, matched_expense_id, matched_receipt_id, matched_payment_id, matched_fund_transfer_id, matched_entry_id, matched_petty_cash_id, matched_tax_payment_id')
           .eq('bank_account_id', selectedBank)
           .gte('transaction_date', dateRange.start)
           .lt('transaction_date', endDateStr)
@@ -625,7 +625,7 @@ export function BankReconciliationEnhanced({
       ) {
         const { data: focusedLine, error: focusedLineError } = await supabase
           .from('bank_statement_lines')
-          .select('id, bank_account_id, transaction_date, description, reference, currency, debit_amount, credit_amount, running_balance, reconciliation_status, manually_unlinked, notes, matched_expense_id, matched_receipt_id, matched_payment_id, matched_fund_transfer_id, matched_entry_id, matched_petty_cash_id, matched_tax_payment_id')
+          .select('id, bank_account_id, transaction_date, description, reference, currency, debit_amount, credit_amount, running_balance, reconciliation_status, matching_status, manually_unlinked, notes, matched_expense_id, matched_receipt_id, matched_payment_id, matched_fund_transfer_id, matched_entry_id, matched_petty_cash_id, matched_tax_payment_id')
           .eq('id', initialStatementLineId)
           .eq('bank_account_id', selectedBank)
           .maybeSingle();
@@ -769,9 +769,15 @@ export function BankReconciliationEnhanced({
       const lines: StatementLine[] = data.map(row => {
         const allocations = allocationMap.get(row.id) || [];
         const bankAmount = bankStatementLineAmount(row.debit_amount, row.credit_amount);
-        const allocatedAmount = allocations.reduce((sum, allocation) => sum + allocation.allocation_amount, 0);
+        const isDirectRecorded =
+          !row.manually_unlinked &&
+          Boolean(row.matched_entry_id) &&
+          (row.matching_status === 'confirmed' || row.reconciliation_status === 'recorded');
+        const allocatedAmount = allocations.length > 0
+          ? allocations.reduce((sum, allocation) => sum + allocation.allocation_amount, 0)
+          : (isDirectRecorded ? bankAmount : 0);
         const remainingAmount = Math.max(0, bankAmount - allocatedAmount);
-        const status = canonicalBankReconciliationStatus(bankAmount, allocatedAmount);
+        const status = canonicalBankReconciliationStatus(bankAmount, allocatedAmount, BANK_ALLOCATION_EPSILON, isDirectRecorded);
         const firstExpense = allocations.find(a => a.document_type === 'expense');
         const firstReceipt = allocations.find(a => a.document_type === 'receipt');
         const firstPayment = allocations.find(a => a.document_type === 'payment');
@@ -827,13 +833,35 @@ export function BankReconciliationEnhanced({
               : undefined,
           };
         });
+
+        if (labeledAllocations.length === 0 && isDirectRecorded && row.matched_entry_id) {
+          const directJournal = entryMap.get(row.matched_entry_id);
+          labeledAllocations.push({
+            id: `journal-${row.matched_entry_id}`,
+            document_type: 'journal',
+            document_id: row.matched_entry_id,
+            journal_entry_id: row.matched_entry_id,
+            allocation_amount: bankAmount,
+            payment_kind: 'journal',
+            label: directJournal?.entry_number
+              ? (row.notes ? `${directJournal.entry_number} · ${row.notes}` : directJournal.entry_number)
+              : (row.notes || 'Journal Entry'),
+            counterparty: undefined,
+            document_total: bankAmount,
+            document_remaining: 0,
+            journal_status: directJournal
+              ? (directJournal.is_reversed ? 'Reversed' : directJournal.is_posted ? 'Posted' : 'Unposted')
+              : 'Posted',
+          });
+        }
+
         const expenseId = firstExpense?.document_id || null;
         const receiptId = firstReceipt?.document_id || null;
         const paymentId = firstPayment?.document_id || null;
         const fundId = firstFund?.document_id || null;
         const pettyId = firstPetty?.document_id || null;
         const taxId = firstTax?.document_id || null;
-        const journalId = firstJournal?.document_id || null;
+        const journalId = firstJournal?.document_id || (isDirectRecorded ? row.matched_entry_id : null);
         return {
           id: row.id,
           date: row.transaction_date,
@@ -2620,6 +2648,7 @@ export function BankReconciliationEnhanced({
   const filteredLines = statementLines.filter(line => {
     if (activeFilter === 'all') return true;
     if (activeFilter === 'unmatched' && line.status === 'partially_reconciled') return true;
+    if (activeFilter === 'matched') return line.status === 'matched' || line.status === 'recorded';
     return line.status === activeFilter;
   });
 
@@ -3079,7 +3108,7 @@ export function BankReconciliationEnhanced({
                   </td>
                   <td className="px-1.5 py-1">
                     <div className="flex flex-col gap-1">
-                      {line.status === 'matched' && (
+                      {(line.status === 'matched' || line.status === 'recorded') && (
                         <>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
                             <CheckCircle2 className="w-3 h-3" /> Recorded

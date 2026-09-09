@@ -20,6 +20,8 @@ export interface BankTransactionLine {
   matched_fund_transfer_id?: string | null;
   matched_tax_payment_id?: string | null;
   reconciliation_status?: string | null;
+  matching_status?: string | null;
+  manually_unlinked?: boolean | null;
   isLinked?: boolean;
   allocatedAmount?: number;
   allocationCount?: number;
@@ -66,14 +68,15 @@ export function bankStatementLineAmount(debit?: number | null, credit?: number |
 }
 
 /**
- * Linked / partial / unlinked from bank_statement_allocations only.
- * Legacy matched_* FKs, reconciliation_status, and manually_unlinked are ignored.
+ * Linked / partial / unlinked from bank_statement_allocations or direct confirmed recorded entry.
  */
 export function canonicalBankReconciliationStatus(
   bankAmount: number,
   allocatedAmount: number,
   epsilon: number = BANK_ALLOCATION_EPSILON,
+  isDirectRecorded: boolean = false,
 ): CanonicalBankReconStatus {
+  if (isDirectRecorded) return 'matched';
   const bank = Number(bankAmount) || 0;
   const allocated = Number(allocatedAmount) || 0;
   if (allocated <= epsilon) return 'unmatched';
@@ -82,6 +85,13 @@ export function canonicalBankReconciliationStatus(
 }
 
 export function isAvailableTransaction(line: BankTransactionLine) {
+  if (
+    !line.manually_unlinked &&
+    Boolean(line.matched_entry_id) &&
+    (line.matching_status === 'confirmed' || line.reconciliation_status === 'recorded')
+  ) {
+    return false;
+  }
   const bankAmount = bankStatementLineAmount(line.debit_amount, line.credit_amount);
   const allocatedAmount = Number(line.allocatedAmount || 0);
   const remainingAmount = line.remainingAmount ?? Math.max(0, bankAmount - allocatedAmount);
@@ -115,6 +125,8 @@ export async function loadUnmatchedDebitBankTransactions({
       matched_fund_transfer_id,
       matched_tax_payment_id,
       reconciliation_status,
+      matching_status,
+      manually_unlinked,
       bank_accounts(bank_name, account_name, account_number, alias, currency)
     `)
     .eq('bank_account_id', bankAccountId);
