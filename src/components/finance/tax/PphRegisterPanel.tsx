@@ -93,11 +93,11 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
   const [feRes, importRes] = await Promise.all([
     supabase
       .from('finance_expenses')
-      .select('id, voucher_number, expense_date, due_date, amount, pph_amount, pph_dpp_amount, tax_period_id, pph_tax_period_id, description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name, npwp), staff:staff_id(full_name, nik, npwp), payees:payee_id(full_name, nik, npwp, business_role)')
+      .select('id, voucher_number, expense_date, due_date, amount, pph_amount, pph_dpp_amount, tax_period_id, pph_tax_period_id, pph_period:pph_tax_period_id(id, fiscal_year, period_month, tax_type), description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name, npwp), staff:staff_id(full_name, nik, npwp), payees:payee_id(full_name, nik, npwp, business_role)')
       .gt('pph_amount', 0),
     supabase
       .from('finance_expenses')
-      .select('id, voucher_number, expense_date, due_date, amount, pib_pph_amount, tax_period_id, pph_tax_period_id, description, expense_category, approval_status, suppliers:supplier_id(company_name, npwp)')
+      .select('id, voucher_number, expense_date, due_date, amount, pib_pph_amount, tax_period_id, pph_tax_period_id, pph_period:pph_tax_period_id(id, fiscal_year, period_month, tax_type), description, expense_category, approval_status, suppliers:supplier_id(company_name, npwp)')
       .in('expense_category', ['pib_import', 'pph_import']),
   ]);
 
@@ -105,10 +105,18 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
     console.error('Failed to load expense PPh detail:', feRes.error);
   }
 
-  // PPh withholding is attributed to the expense/document calendar month.
+  // PPh withholding is attributed to the assigned period if explicitly set, or the expense calendar month.
   const periodDate = (expense: any): string => expense.expense_date;
   const isSelectedPeriod = (expense: any): boolean => {
-    if (row.tax_type !== 'PPh_Unifikasi' && expense.pph_tax_period_id) return expense.pph_tax_period_id === row.tax_period_id;
+    if (expense.pph_tax_period_id) {
+      if (row.tax_type === 'PPh_Unifikasi') {
+        if (expense.pph_period) {
+          return expense.pph_period.fiscal_year === yr && expense.pph_period.period_month === mo;
+        }
+      } else {
+        return expense.pph_tax_period_id === row.tax_period_id;
+      }
+    }
     const date = periodDate(expense);
     return date >= startDate && date <= endDate;
   };
