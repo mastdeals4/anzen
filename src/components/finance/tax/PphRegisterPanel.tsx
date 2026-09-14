@@ -239,10 +239,10 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
             filing_ready: filingReady,
             dpp_amount: gross,
             description: r.description,
-            pph_code: 'PPh22 Import',
+            pph_code: 'PPh22 Import (Prepaid)',
             pph_amount: amt,
             tax_type: 'PPh22',
-            source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
+            source_status: r.approval_status === 'approved' ? 'Paid at Customs' : 'Pending Approval',
             is_official: r.approval_status === 'approved',
             tax_period_id: r.pph_tax_period_id ?? null,
             payment_method: null,
@@ -412,6 +412,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
   const [reloadKey, setReloadKey] = useState(0);
   const [exportingPeriodId, setExportingPeriodId] = useState<string | null>(null);
   const [exportingAll, setExportingAll] = useState(false);
+  const [importAdvanceData, setImportAdvanceData] = useState<{ expense_date: string; pph22_amount: number }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -433,6 +434,26 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
         const sourceRows = (data as Row[] | null) ?? [];
         setRows(active === 'PPh_Unifikasi' ? consolidateRows(sourceRows) : sourceRows);
         setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [active, reloadKey]);
+
+  useEffect(() => {
+    if (active !== 'PPh22' && active !== 'PPh_Unifikasi') {
+      setImportAdvanceData([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('vw_pph22_advance_tax_report')
+        .select('expense_date, pph22_amount');
+      if (!cancelled && data) {
+        setImportAdvanceData((data as any[]).map(d => ({
+          expense_date: d.expense_date,
+          pph22_amount: Number(d.pph22_amount || 0),
+        })));
       }
     })();
     return () => { cancelled = true; };
@@ -469,6 +490,19 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
     }),
     { total: 0, paid: 0, outstanding: 0, overpaid: 0 },
   ), [filtered]);
+
+  const importAdvanceTaxTotal = useMemo(() => {
+    if ((active !== 'PPh22' && active !== 'PPh_Unifikasi') || importAdvanceData.length === 0) return 0;
+    const activePeriodKeys = new Set(filtered.map(r => `${r.fiscal_year}-${r.period_month}`));
+    return importAdvanceData
+      .filter(d => {
+        const dt = new Date(d.expense_date);
+        const yr = dt.getFullYear();
+        const mo = dt.getMonth() + 1;
+        return activePeriodKeys.has(`${yr}-${mo}`);
+      })
+      .reduce((sum, d) => sum + d.pph22_amount, 0);
+  }, [active, importAdvanceData, filtered]);
 
   async function saveDocumentPeriod(line: SourceLine, periodId: string) {
     const source = 'finance_expense_pph';
@@ -636,12 +670,51 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
       </div>
 
       {!loading && filtered.length > 0 && (
-        <StatCardGrid cols={4}>
-          <StatCard label={`Total ${pphTabLabel(active)} Withheld`} value={totals.total} tone="orange" hint="Across periods in range" />
-          <StatCard label="Paid to Tax Office" value={totals.paid} tone="green" />
-          <StatCard label="Outstanding" value={totals.outstanding} tone="red" hint="Not yet remitted" />
-          <StatCard label="Overpaid / Credit" value={totals.overpaid} tone="blue" hint="Not allocated to another period" />
-        </StatCardGrid>
+        <div className="space-y-3">
+          {active === 'PPh22' && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
+                    <span className="text-xs font-bold text-emerald-900 uppercase tracking-wide">
+                      Prepaid Import PPh 22 (Pajak Dibayar di Muka / Kredit Pajak)
+                    </span>
+                    <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-200/70 px-1.5 py-0.5 rounded">
+                      COA 1155
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-700">
+                    Paid directly to Customs / State Treasury via PIB bank clearance. Creditable against Annual Corporate Income Tax (SPT Tahunan PPh Badan Form 1771 Lampiran III). Not a monthly withholding liability and not payable to DJP.
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-[11px] text-emerald-700 font-medium">Prepaid Import Tax (In Range)</div>
+                  <div className="text-base font-bold text-emerald-900 font-mono">
+                    Rp {fmt(importAdvanceTaxTotal)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <StatCardGrid cols={4}>
+            <StatCard
+              label={active === 'PPh22' ? 'Withheld PPh 22 (Payable)' : `Total ${pphTabLabel(active)} Withheld`}
+              value={totals.total}
+              tone="orange"
+              hint={active === 'PPh22' ? 'Genuine withholding liability' : 'Across periods in range'}
+            />
+            <StatCard label="Paid to Tax Office" value={totals.paid} tone="green" hint="Remitted via Tax Payment NTPN" />
+            <StatCard
+              label="Outstanding"
+              value={totals.outstanding}
+              tone="red"
+              hint={active === 'PPh22' ? 'Unremitted withholding liability' : 'Not yet remitted'}
+            />
+            <StatCard label="Overpaid / Credit" value={totals.overpaid} tone="blue" hint="Not allocated to another period" />
+          </StatCardGrid>
+        </div>
       )}
 
       {loading ? (
@@ -683,8 +756,11 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                 const officialDetail = isOpen && detail ? detail.filter(line => line.is_official) : [];
                 const pendingDetail = isOpen && detail ? detail.filter(line => !line.is_official) : [];
                 const missingJournalDetail = officialDetail.filter(line => !line.journal_id);
-                const detailTotal = officialDetail.reduce((sum, line) => sum + line.pph_amount, 0);
-                const traceDifference = detailTotal - Number(r.pph_total || 0);
+                const withheldDetail = officialDetail.filter(line => line.module === 'expense');
+                const importDetail = officialDetail.filter(line => line.module === 'import');
+                const withheldTotal = withheldDetail.reduce((sum, line) => sum + line.pph_amount, 0);
+                const importTotal = importDetail.reduce((sum, line) => sum + line.pph_amount, 0);
+                const traceDifference = withheldTotal - Number(r.pph_total || 0);
                 return (
                   <Fragment key={r.tax_period_id}>
                     <tr
@@ -725,7 +801,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                         <td colSpan={12} className="px-6 pb-4 pt-2">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                              Source Documents — {pphTabLabel(active)} withheld in {formatFinancePeriod(r.fiscal_year, r.period_month)}
+                              Source Documents — {active === 'PPh22' ? `PPh 22 Documents in ${formatFinancePeriod(r.fiscal_year, r.period_month)}` : `${pphTabLabel(active)} withheld in ${formatFinancePeriod(r.fiscal_year, r.period_month)}`}
                             </h4>
                             {officialDetail.length > 0 && (
                               <div className="flex items-center gap-2">
@@ -785,7 +861,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                   <th className="text-left py-1 pr-3">Posting Date</th>
                                   <th className="text-left py-1 pr-3">Journal Ref</th>
                                   <th className="text-left py-1 pr-3">Status</th>
-                                  <th className="text-right py-1">PPh Withheld</th>
+                                  <th className="text-right py-1">{active === 'PPh22' ? 'Tax Amount' : 'PPh Withheld'}</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -794,10 +870,10 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                     <td className="py-1.5 pr-3">
                                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                                         l.module === 'expense' ? 'bg-orange-100 text-orange-700'
-                                          : 'bg-blue-100 text-blue-700'
+                                          : 'bg-emerald-100 text-emerald-800'
                                       }`}>
-                                        {l.module === 'expense' ? 'Expense'
-                                          : 'Import PPh22'}
+                                        {l.module === 'expense' ? 'Expense Withholding'
+                                          : 'Import PPh22 (Prepaid)'}
                                       </span>
                                     </td>
                                     <td className="py-1.5 pr-3 font-semibold">{l.tax_type}</td>
@@ -856,18 +932,36 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                         : '—'}
                                     </td>
                                     <td className="py-1.5 pr-3" title={`Journal: ${l.journal_status ?? '—'}`}>
-                                      <StatusChip status={businessStatus} />
+                                      {l.module === 'import' ? (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                                          Paid at Customs
+                                        </span>
+                                      ) : (
+                                        <StatusChip status={businessStatus} />
+                                      )}
                                       <div className="mt-0.5 text-[10px] text-gray-500">{l.source_status}</div>
                                     </td>
-                                    <td className="py-1.5 text-right font-mono font-semibold text-orange-700">
+                                    <td className={`py-1.5 text-right font-mono font-semibold ${l.module === 'import' ? 'text-emerald-800' : 'text-orange-700'}`}>
                                       Rp {fmt(l.pph_amount)}
                                     </td>
                                   </tr>
                                 ))}
+                                {importDetail.length > 0 && (
+                                  <tr className="font-semibold border-t border-gray-200 bg-emerald-50/50">
+                                    <td colSpan={14} className="py-1.5 pr-3 text-right text-xs text-emerald-800">
+                                      Total Import PPh 22 Paid at Customs (Creditable Advance Tax)
+                                    </td>
+                                    <td className="py-1.5 text-right font-mono text-emerald-800">
+                                      Rp {fmt(importTotal)}
+                                    </td>
+                                  </tr>
+                                )}
                                 <tr className="font-semibold border-t-2 border-gray-300 bg-gray-50">
-                                  <td colSpan={14} className="py-1.5 pr-3 text-right text-xs text-gray-500">Total {pphTabLabel(active)} Withheld</td>
+                                  <td colSpan={14} className="py-1.5 pr-3 text-right text-xs text-gray-500">
+                                    Total {pphTabLabel(active)} Withheld (Payable to Tax Office)
+                                  </td>
                                   <td className="py-1.5 text-right font-mono text-orange-700">
-                                    Rp {fmt(detailTotal)}
+                                    Rp {fmt(withheldTotal)}
                                   </td>
                                 </tr>
                               </tbody>
