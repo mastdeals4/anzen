@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync('supabase/migrations/20260903150000_fix_sales_profitability_effective_cogs.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations_archive/20260903150000_fix_sales_profitability_effective_cogs.sql', 'utf8');
 const reports = fs.readFileSync('src/pages/reports/Reports.tsx', 'utf8');
 
 test('sales profitability uses purchase cost for local batches and landed cost for imports', () => {

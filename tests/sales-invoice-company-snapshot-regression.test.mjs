@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const sales = fs.readFileSync('src/pages/Sales.tsx', 'utf8');
-const snapshotMigration = fs.readFileSync('supabase/migrations/20260827110000_enforce_canonical_new_document_snapshots.sql', 'utf8');
+const snapshotMigration = fs.readFileSync('supabase/migrations_archive/20260827110000_enforce_canonical_new_document_snapshots.sql', 'utf8');
 const invoiceDisplay = fs.readFileSync('src/utils/invoiceItemDisplay.ts', 'utf8');
 
 test('invoice creation refuses an empty product table and verifies inserted rows', () => {

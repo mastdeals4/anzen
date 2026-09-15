@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../supabase/migrations/20260903120000_fix_expense_partial_payment_accounting.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260903120000_fix_expense_partial_payment_accounting.sql', import.meta.url),
   'utf8',
 );
 

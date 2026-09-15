@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const lifecycle = readFileSync(new URL('../src/services/expensePostingLifecycle.ts', import.meta.url), 'utf8');
 const migration = readFileSync(
-  new URL('../supabase/migrations/20260830137000_normalize_historical_cash_expense_identity.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830137000_normalize_historical_cash_expense_identity.sql', import.meta.url),
   'utf8',
 );
 const bank = readFileSync(new URL('../src/components/finance/BankReconciliationEnhanced.tsx', import.meta.url), 'utf8');

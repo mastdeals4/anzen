@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const sql = fs.readFileSync('supabase/migrations/20260827130000_atomic_sales_invoice_creation.sql', 'utf8');
+const sql = fs.readFileSync('supabase/migrations_archive/20260827130000_atomic_sales_invoice_creation.sql', 'utf8');
 const sales = fs.readFileSync('src/pages/Sales.tsx', 'utf8');
 
 assert.match(sql, /CREATE OR REPLACE FUNCTION public\.create_sales_invoice_atomic/);

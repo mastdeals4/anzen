@@ -4,19 +4,19 @@ import test from 'node:test';
 
 const expenseUi = readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
 const normalization = readFileSync(
-  new URL('../supabase/migrations/20260830134000_normalize_current_expense_accounting_identity.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830134000_normalize_current_expense_accounting_identity.sql', import.meta.url),
   'utf8',
 );
 const tax = readFileSync(
-  new URL('../supabase/migrations/20260830133000_fix_pph_register_period_totals_status.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830133000_fix_pph_register_period_totals_status.sql', import.meta.url),
   'utf8',
 );
 const partyAndPettyCash = readFileSync(
-  new URL('../supabase/migrations/20260830135000_normalize_party_and_petty_cash_resolution.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830135000_normalize_party_and_petty_cash_resolution.sql', import.meta.url),
   'utf8',
 );
 const trialBalance = readFileSync(
-  new URL('../supabase/migrations/20260830136000_normalize_effective_trial_balance.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830136000_normalize_effective_trial_balance.sql', import.meta.url),
   'utf8',
 );
 

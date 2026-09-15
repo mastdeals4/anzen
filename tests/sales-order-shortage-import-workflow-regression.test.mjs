@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const baseMigrationPath = fs.existsSync('supabase/migrations/20260903170000_restore_so_shortage_import_workflow.sql')
-  ? 'supabase/migrations/20260903170000_restore_so_shortage_import_workflow.sql'
+const baseMigrationPath = fs.existsSync('supabase/migrations_archive/20260903170000_restore_so_shortage_import_workflow.sql')
+  ? 'supabase/migrations_archive/20260903170000_restore_so_shortage_import_workflow.sql'
   : 'supabase/migrations_archive/20260903170000_restore_so_shortage_import_workflow.sql';
 const migration = fs.readFileSync(baseMigrationPath, 'utf8');
 const bugfixMigrationPath = 'supabase/migrations/20260907140000_fix_so_approval_reservation_shortage_bug.sql';

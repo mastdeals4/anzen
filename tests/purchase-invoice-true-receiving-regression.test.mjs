@@ -4,8 +4,8 @@ import fs from 'node:fs';
 
 const batches = fs.readFileSync('src/pages/Batches.tsx', 'utf8');
 const purchase = fs.readFileSync('src/components/finance/PurchaseInvoiceManager.tsx', 'utf8');
-const migration = fs.readFileSync('supabase/migrations/20260902110000_purchase_invoice_true_receiving_quantity.sql', 'utf8');
-const hardening = fs.readFileSync('supabase/migrations/20260905110000_harden_multi_pi_receiving_allocations.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations_archive/20260902110000_purchase_invoice_true_receiving_quantity.sql', 'utf8');
+const hardening = fs.readFileSync('supabase/migrations_archive/20260905110000_harden_multi_pi_receiving_allocations.sql', 'utf8');
 
 test('Inward Pending uses the server-side true receiving total, not allocations alone', () => {
   assert.match(batches, /rpc\('purchase_invoice_item_received_totals'/);

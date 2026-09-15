@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const sql = fs.readFileSync('supabase/migrations/20260904120000_fix_purchase_invoice_canonical_fx.sql', 'utf8');
+const sql = fs.readFileSync('supabase/migrations_archive/20260904120000_fix_purchase_invoice_canonical_fx.sql', 'utf8');
 
 test('canonical save validates foreign PI FX and converts functional amounts once', () => {
   assert.match(sql, /v_currency = ''IDR'' THEN 1 ELSE NULLIF/);

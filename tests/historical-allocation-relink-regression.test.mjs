@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync(new URL('../supabase/migrations/20260826090000_safe_historical_bank_allocation_relink.sql', import.meta.url), 'utf8');
+const migration = fs.readFileSync(new URL('../supabase/migrations_archive/20260826090000_safe_historical_bank_allocation_relink.sql', import.meta.url), 'utf8');
 
 assert.match(migration, /relink_historical_bank_allocation/);
 assert.match(migration, /historical_allocation_relink_context_active/);

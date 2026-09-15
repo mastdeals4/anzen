@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const ui = fs.readFileSync('src/components/finance/BankReconciliationEnhanced.tsx', 'utf8');
 const migration = fs.readFileSync(
-  'supabase/migrations/20260902100000_guard_allocation_backed_bank_line_amount_edits.sql',
+  'supabase/migrations_archive/20260902100000_guard_allocation_backed_bank_line_amount_edits.sql',
   'utf8',
 );
 

@@ -5,11 +5,11 @@ const ui = fs.readFileSync(new URL('../src/components/finance/BankReconciliation
 const expenseUi = fs.readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
 const bankLedger = fs.readFileSync(new URL('../src/components/finance/BankLedger.tsx', import.meta.url), 'utf8');
 const journalUi = fs.readFileSync(new URL('../src/components/finance/JournalEntryViewerEnhanced.tsx', import.meta.url), 'utf8');
-const recognition = fs.readFileSync(new URL('../supabase/migrations/20260824110000_separate_expense_recognition_from_bank_payment.sql', import.meta.url), 'utf8');
-const payment = fs.readFileSync(new URL('../supabase/migrations/20260826110000_fix_discovered_bank_finance_logic.sql', import.meta.url), 'utf8');
-const advances = fs.readFileSync(new URL('../supabase/migrations/20260803150000_fix_salary_advance_gl_accounting.sql', import.meta.url), 'utf8');
-const advanceWorkflow = fs.readFileSync(new URL('../supabase/migrations/20260727160000_salary_advance_workflow.sql', import.meta.url), 'utf8');
-const bankJournal = fs.readFileSync(new URL('../supabase/migrations/20260726153000_finance_loan_capital_consolidation.sql', import.meta.url), 'utf8');
+const recognition = fs.readFileSync(new URL('../supabase/migrations_archive/20260824110000_separate_expense_recognition_from_bank_payment.sql', import.meta.url), 'utf8');
+const payment = fs.readFileSync(new URL('../supabase/migrations_archive/20260826110000_fix_discovered_bank_finance_logic.sql', import.meta.url), 'utf8');
+const advances = fs.readFileSync(new URL('../supabase/migrations_archive/20260803150000_fix_salary_advance_gl_accounting.sql', import.meta.url), 'utf8');
+const advanceWorkflow = fs.readFileSync(new URL('../supabase/migrations_archive/20260727160000_salary_advance_workflow.sql', import.meta.url), 'utf8');
+const bankJournal = fs.readFileSync(new URL('../supabase/migrations_archive/20260726153000_finance_loan_capital_consolidation.sql', import.meta.url), 'utf8');
 
 // A successful zero-row query is distinct from a failed query. The UI must
 // preserve the error and render an alert instead of the empty-state copy.

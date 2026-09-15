@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../supabase/migrations/20260830133000_fix_pph_register_period_totals_status.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830133000_fix_pph_register_period_totals_status.sql', import.meta.url),
   'utf8',
 );
 const register = readFileSync(new URL('../src/components/finance/tax/PphRegisterPanel.tsx', import.meta.url), 'utf8');

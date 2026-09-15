@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 test('landed-cost capitalization policy is shared and excludes tax categories', () => {
-  const sql = fs.readFileSync('/Users/Kunal/Documents/anzen-main/supabase/migrations/20260904120000_unify_landed_cost_capitalization.sql', 'utf8');
+  const sql = fs.readFileSync('/Users/Kunal/Documents/anzen-main/supabase/migrations_archive/20260904120000_unify_landed_cost_capitalization.sql', 'utf8');
   assert.match(sql, /is_capitalizable_landed_cost_category/);
   assert.match(sql, /calculate_container_landed_cost_pool/);
   assert.match(sql, /auto_post_expense_accounting/);

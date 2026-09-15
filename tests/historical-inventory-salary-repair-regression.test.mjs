@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const migrationPath = new URL('../supabase/migrations/20260828100000_repair_cogs_inventory_salary_advance_history.sql', import.meta.url);
+const migrationPath = new URL('../supabase/migrations_archive/20260828100000_repair_cogs_inventory_salary_advance_history.sql', import.meta.url);
 const inventoryPath = new URL('../src/pages/Inventory.tsx', import.meta.url);
 const batchesPath = new URL('../src/pages/Batches.tsx', import.meta.url);
 

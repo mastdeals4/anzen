@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 test('multi-PI same-batch receiving preserves physical identity and PI cost layers', () => {
-  const sql = fs.readFileSync('/Users/Kunal/Documents/anzen-main/supabase/migrations/20260905100000_support_multi_pi_same_physical_batch.sql', 'utf8');
+  const sql = fs.readFileSync('/Users/Kunal/Documents/anzen-main/supabase/migrations_archive/20260905100000_support_multi_pi_same_physical_batch.sql', 'utf8');
   assert.match(sql, /purchase_batch_cost_layers/);
   assert.match(sql, /UNIQUE \(product_id,batch_number\)/);
   assert.match(sql, /import_quantity=import_quantity\+p_received_quantity/);

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const allocationMigration = fs.readFileSync(new URL('../supabase/migrations/20260812150000_bank_reconciliation_allocations.sql', import.meta.url), 'utf8');
+const allocationMigration = fs.readFileSync(new URL('../supabase/migrations_archive/20260812150000_bank_reconciliation_allocations.sql', import.meta.url), 'utf8');
 const paymentUi = fs.readFileSync(new URL('../src/components/finance/PaymentVoucherManager.tsx', import.meta.url), 'utf8');
 const receiptUi = fs.readFileSync(new URL('../src/components/finance/ReceiptVoucherManager.tsx', import.meta.url), 'utf8');
 const expenseUi = fs.readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
 const reconUi = fs.readFileSync(new URL('../src/components/finance/BankReconciliationEnhanced.tsx', import.meta.url), 'utf8');
-const advances = fs.readFileSync(new URL('../supabase/migrations/20260727160000_salary_advance_workflow.sql', import.meta.url), 'utf8');
+const advances = fs.readFileSync(new URL('../supabase/migrations_archive/20260727160000_salary_advance_workflow.sql', import.meta.url), 'utf8');
 
 assert.match(allocationMigration, /bank_statement_allocations/);
 assert.match(allocationMigration, /UNIQUE \(bank_statement_line_id, document_type, document_id, payment_kind\)/);

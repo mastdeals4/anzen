@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync('supabase/migrations/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations_archive/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', 'utf8');
 const frontend = fs.readFileSync('src/components/finance/ExpenseManager.tsx', 'utf8');
 
 class ExpensePosting {

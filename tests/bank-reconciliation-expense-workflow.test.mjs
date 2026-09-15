@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const bankFrontend = fs.readFileSync('src/components/finance/BankReconciliationEnhanced.tsx', 'utf8');
 const expenseFrontend = fs.readFileSync('src/components/finance/ExpenseManager.tsx', 'utf8');
-const cancellationMigration = fs.readFileSync('supabase/migrations/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', 'utf8');
+const cancellationMigration = fs.readFileSync('supabase/migrations_archive/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', 'utf8');
 
 const loadStatementLines = bankFrontend.slice(
   bankFrontend.indexOf('const loadStatementLines = async'),

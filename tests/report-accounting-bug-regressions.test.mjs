@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const payables = fs.readFileSync(new URL('../supabase/migrations/20260825210000_fix_outstanding_expense_bills_canonical_ap.sql', import.meta.url), 'utf8');
+const payables = fs.readFileSync(new URL('../supabase/migrations_archive/20260825210000_fix_outstanding_expense_bills_canonical_ap.sql', import.meta.url), 'utf8');
 const ledger = fs.readFileSync(new URL('../src/components/finance/BankLedger.tsx', import.meta.url), 'utf8');
 const reports = fs.readFileSync(new URL('../src/components/finance/FinancialReports.tsx', import.meta.url), 'utf8');
 

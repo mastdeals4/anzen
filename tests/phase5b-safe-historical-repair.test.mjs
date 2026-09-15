@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const migration = fs.readFileSync(
-  new URL('../supabase/migrations/20260825090000_phase5b_safe_historical_repair_context.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260825090000_phase5b_safe_historical_repair_context.sql', import.meta.url),
   'utf8',
 );
 

@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 const root = process.cwd();
 const migrationFile = resolve(
   root,
-  'supabase/migrations/20260903160000_canonical_sales_profitability_engine.sql'
+  'supabase/migrations_archive/20260903160000_canonical_sales_profitability_engine.sql'
 );
 const reportComponentFile = resolve(
   root,
@@ -152,7 +152,7 @@ test('mathematical canonical model maintains exact reconciliation', () => {
 test('delta migration 20260903161000 reconciles product_batches DC revenue scope', () => {
   const deltaFile = resolve(
     root,
-    'supabase/migrations/20260903161000_reconcile_product_batches_dc_expense_scope.sql'
+    'supabase/migrations_archive/20260903161000_reconcile_product_batches_dc_expense_scope.sql'
   );
   const sql = readFileSync(deltaFile, 'utf8');
   assert.match(

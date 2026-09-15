@@ -98,7 +98,7 @@ test('DC hydration replaces obsolete placeholder and unlinked manual items', () 
 });
 
 test('validate_sales_invoice_so_link explicitly casts linked_challan_ids to uuid[]', () => {
-  const migration = fs.readFileSync('supabase/migrations/20260903173000_fix_validate_sales_invoice_so_link_uuid_cast.sql', 'utf8');
+  const migration = fs.readFileSync('supabase/migrations_archive/20260903173000_fix_validate_sales_invoice_so_link_uuid_cast.sql', 'utf8');
   assert.match(
     migration,
     /WHERE dc\.id = ANY\(NEW\.linked_challan_ids::uuid\[\]\)/,
@@ -112,7 +112,7 @@ test('validate_sales_invoice_so_link explicitly casts linked_challan_ids to uuid
 });
 
 test('post_sales_invoice_cogs is SECURITY DEFINER with fixed search_path', () => {
-  const migration = fs.readFileSync('supabase/migrations/20260903174500_set_post_sales_invoice_cogs_security_definer.sql', 'utf8');
+  const migration = fs.readFileSync('supabase/migrations_archive/20260903174500_set_post_sales_invoice_cogs_security_definer.sql', 'utf8');
   assert.match(
     migration,
     /CREATE OR REPLACE FUNCTION public\.post_sales_invoice_cogs\(\)\s+RETURNS trigger\s+LANGUAGE plpgsql\s+SECURITY DEFINER\s+SET search_path = public, pg_temp/m,

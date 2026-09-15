@@ -3,19 +3,19 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../supabase/migrations/20260830130000_restore_simple_expense_bank_workflow.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830130000_restore_simple_expense_bank_workflow.sql', import.meta.url),
   'utf8',
 );
 const allocationValidationMigration = readFileSync(
-  new URL('../supabase/migrations/20260830131000_validate_expense_allocation_after_rebuild.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830131000_validate_expense_allocation_after_rebuild.sql', import.meta.url),
   'utf8',
 );
 const rebuildBeforeAllocationMigration = readFileSync(
-  new URL('../supabase/migrations/20260830132000_rebuild_expense_journal_before_bank_allocation.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830132000_rebuild_expense_journal_before_bank_allocation.sql', import.meta.url),
   'utf8',
 );
 const approvedEditMigration = readFileSync(
-  new URL('../supabase/migrations/20260830110000_atomic_approved_expense_edit.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830110000_atomic_approved_expense_edit.sql', import.meta.url),
   'utf8',
 );
 const expenseUi = readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
@@ -23,11 +23,11 @@ const bankUi = readFileSync(new URL('../src/components/finance/BankReconciliatio
 const commands = readFileSync(new URL('../src/services/financeCommands.ts', import.meta.url), 'utf8');
 const pettyCashUi = readFileSync(new URL('../src/components/finance/PettyCashManager.tsx', import.meta.url), 'utf8');
 const selfApprovalMigration = readFileSync(
-  new URL('../supabase/migrations/20260713120000_security_audit_2026_07_13_critical_high.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260713120000_security_audit_2026_07_13_critical_high.sql', import.meta.url),
   'utf8',
 );
 const separatedWorkflowMigration = readFileSync(
-  new URL('../supabase/migrations/20260902020000_separate_expense_save_and_bank_link.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260902020000_separate_expense_save_and_bank_link.sql', import.meta.url),
   'utf8',
 );
 

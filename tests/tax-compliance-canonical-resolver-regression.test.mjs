@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const sql = await readFile('supabase/migrations/20260830140000_set_based_canonical_tax_period_resolver.sql', 'utf8');
+const sql = await readFile('supabase/migrations_archive/20260830140000_set_based_canonical_tax_period_resolver.sql', 'utf8');
 const ui = await readFile('src/components/finance/tax/TaxUI.tsx', 'utf8');
 const calendar = await readFile('src/components/finance/tax/TaxCalendarPanel.tsx', 'utf8');
 const centre = await readFile('src/components/finance/TaxComplianceCentre.tsx', 'utf8');

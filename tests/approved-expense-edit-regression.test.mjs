@@ -3,17 +3,17 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  new URL('../supabase/migrations/20260830110000_atomic_approved_expense_edit.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830110000_atomic_approved_expense_edit.sql', import.meta.url),
   'utf8',
 );
 const expenseUi = readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
 const commands = readFileSync(new URL('../src/services/financeCommands.ts', import.meta.url), 'utf8');
 const cancellation = readFileSync(
-  new URL('../supabase/migrations/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260827160000_fix_expense_cancellation_uuid_and_audit.sql', import.meta.url),
   'utf8',
 );
 const journalIdentityFix = readFileSync(
-  new URL('../supabase/migrations/20260830120000_fix_approved_expense_edit_journal_identity.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260830120000_fix_approved_expense_edit_journal_identity.sql', import.meta.url),
   'utf8',
 );
 

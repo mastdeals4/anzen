@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const migration = await readFile('supabase/migrations/20260830138000_fix_import_broker_approval_trigger_order.sql', 'utf8');
+const migration = await readFile('supabase/migrations_archive/20260830138000_fix_import_broker_approval_trigger_order.sql', 'utf8');
 const purchaseInvoiceManager = await readFile('src/components/finance/PurchaseInvoiceManager.tsx', 'utf8');
 const signedUrlCache = await readFile('src/utils/signedUrlCache.ts', 'utf8');
 

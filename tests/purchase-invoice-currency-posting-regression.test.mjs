@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const sql = fs.readFileSync(new URL('../supabase/migrations/20260901120000_fix_purchase_invoice_currency_posting.sql', import.meta.url), 'utf8');
+const sql = fs.readFileSync(new URL('../supabase/migrations_archive/20260901120000_fix_purchase_invoice_currency_posting.sql', import.meta.url), 'utf8');
 
 test('purchase invoice posting converts foreign currency and preserves metadata', () => {
   assert.match(sql, /v_item\.line_total\*v_rate/);

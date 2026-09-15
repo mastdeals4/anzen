@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const sql = fs.readFileSync('supabase/migrations/20260905130000_enable_batch_moving_weighted_average.sql', 'utf8');
+const sql = fs.readFileSync('supabase/migrations_archive/20260905130000_enable_batch_moving_weighted_average.sql', 'utf8');
 
 test('moving weighted average formula is batch-level and preserves zero-stock reset', () => {
   assert.match(sql, /prior_qty := GREATEST\(COALESCE\(b\.current_stock,0\) - p_received_quantity, 0\)/);

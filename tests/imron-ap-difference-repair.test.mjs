@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const sql = fs.readFileSync(
-  'supabase/migrations/20260829100000_reclassify_imron_salary_advance_ap_difference.sql',
+  'supabase/migrations_archive/20260829100000_reclassify_imron_salary_advance_ap_difference.sql',
   'utf8',
 );
 

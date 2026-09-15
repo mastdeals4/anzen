@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync('supabase/migrations/20260904100000_guard_import_broker_pph_sync.sql', 'utf8');
-const canonical = fs.readFileSync('supabase/migrations/20260830138000_fix_import_broker_approval_trigger_order.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations_archive/20260904100000_guard_import_broker_pph_sync.sql', 'utf8');
+const canonical = fs.readFileSync('supabase/migrations_archive/20260830138000_fix_import_broker_approval_trigger_order.sql', 'utf8');
 
 test('generic PPh synchronizer skips import-broker expenses', () => {
   assert.match(migration, /IF NEW\.expense_category = 'import_broker' THEN\s+RETURN NEW;/);

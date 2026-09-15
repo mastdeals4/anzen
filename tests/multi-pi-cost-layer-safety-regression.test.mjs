@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync('supabase/migrations/20260905110000_harden_multi_pi_receiving_allocations.sql', 'utf8');
-const cogs = fs.readFileSync('supabase/migrations/20260903180000_standardize_batch_cost_semantics.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations_archive/20260905110000_harden_multi_pi_receiving_allocations.sql', 'utf8');
+const cogs = fs.readFileSync('supabase/migrations_archive/20260903180000_standardize_batch_cost_semantics.sql', 'utf8');
 
 test('partial receiving uses operation idempotency instead of item/batch uniqueness', () => {
   assert.match(migration, /DROP CONSTRAINT IF EXISTS purchase_invoice_receiving_allocations_purchase_invoice_item_id_batch_id_status_key/);

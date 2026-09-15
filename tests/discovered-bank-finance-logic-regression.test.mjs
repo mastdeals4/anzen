@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const migration = fs.readFileSync(new URL('../supabase/migrations/20260826110000_fix_discovered_bank_finance_logic.sql', import.meta.url), 'utf8');
+const migration = fs.readFileSync(new URL('../supabase/migrations_archive/20260826110000_fix_discovered_bank_finance_logic.sql', import.meta.url), 'utf8');
 const ledger = fs.readFileSync(new URL('../src/components/finance/BankLedger.tsx', import.meta.url), 'utf8');
-const rounding = fs.readFileSync(new URL('../supabase/migrations/20260616120000_invoice_rounding_tolerance.sql', import.meta.url), 'utf8');
-const relink = fs.readFileSync(new URL('../supabase/migrations/20260826090000_safe_historical_bank_allocation_relink.sql', import.meta.url), 'utf8');
+const rounding = fs.readFileSync(new URL('../supabase/migrations_archive/20260616120000_invoice_rounding_tolerance.sql', import.meta.url), 'utf8');
+const relink = fs.readFileSync(new URL('../supabase/migrations_archive/20260826090000_safe_historical_bank_allocation_relink.sql', import.meta.url), 'utf8');
 
 // Allocation relinks derive typed document identity from the target journal;
 // the legacy matched_* projection is therefore refreshed from the same row.

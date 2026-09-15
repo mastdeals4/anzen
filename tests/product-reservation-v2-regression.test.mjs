@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const sql = fs.readFileSync('supabase/migrations/20260827140000_product_so_reservation_dc_batch_allocation.sql','utf8');
-const productionMigration = fs.readFileSync('supabase/migrations/20260827150000_migrate_safe_product_reservations.sql','utf8');
-const finalHoldMigration = fs.readFileSync('supabase/migrations/20260827170000_finalize_hold_product_reservations.sql','utf8');
-const dcReapprovalGuardMigration = fs.readFileSync('supabase/migrations/20260827180000_block_reapproval_of_reversed_delivery_challan.sql','utf8');
+const sql = fs.readFileSync('supabase/migrations_archive/20260827140000_product_so_reservation_dc_batch_allocation.sql','utf8');
+const productionMigration = fs.readFileSync('supabase/migrations_archive/20260827150000_migrate_safe_product_reservations.sql','utf8');
+const finalHoldMigration = fs.readFileSync('supabase/migrations_archive/20260827170000_finalize_hold_product_reservations.sql','utf8');
+const dcReapprovalGuardMigration = fs.readFileSync('supabase/migrations_archive/20260827180000_block_reapproval_of_reversed_delivery_challan.sql','utf8');
 const dcUi = fs.readFileSync('src/pages/DeliveryChallan.tsx','utf8');
 const plan = JSON.parse(fs.readFileSync('audits/inventory/product-reservation-migration-plan-20260827.json','utf8'));
 

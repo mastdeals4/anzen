@@ -3,11 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const selectPolicy = readFileSync(
-  new URL('../supabase/migrations/20260902030000_allow_accounts_read_products.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260902030000_allow_accounts_read_products.sql', import.meta.url),
   'utf8',
 );
 const writePolicies = readFileSync(
-  new URL('../supabase/migrations/20260213023724_fix_products_rls_allow_warehouse_role.sql', import.meta.url),
+  new URL('../supabase/migrations_archive/20260213023724_fix_products_rls_allow_warehouse_role.sql', import.meta.url),
   'utf8',
 );
 

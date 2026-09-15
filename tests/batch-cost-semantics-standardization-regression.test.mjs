@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 test('migration 20260903180000 drops generated expressions and standardizes batch cost semantics', () => {
   const migration = fs.readFileSync(
-    '/Users/Kunal/Documents/anzen-main/supabase/migrations/20260903180000_standardize_batch_cost_semantics.sql',
+    '/Users/Kunal/Documents/anzen-main/supabase/migrations_archive/20260903180000_standardize_batch_cost_semantics.sql',
     'utf8'
   );
 
