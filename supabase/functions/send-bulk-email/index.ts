@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getGmailConnectionSecret } from "../_shared/gmailSecrets.ts";
+import { mirrorOutboundEmail, runOutboundReconciliationSweep } from "../_shared/enquiryIngestion.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -384,6 +385,8 @@ Deno.serve(async (req: Request) => {
       isHtml,
       attachments,
       attachmentUrls,
+      inquiryId,
+      additionalInquiryIds,
     } = body as Record<string, any>;
 
     void contactId;
@@ -659,6 +662,56 @@ Deno.serve(async (req: Request) => {
     }
 
     const result = await sendResponse.json();
+
+    // Canonical outbound mirror hook (additive secondary path; errors do not fail Gmail send)
+    let mirrorSucceeded = false;
+    try {
+      const mirrorRes = await mirrorOutboundEmail(supabase, {
+        messageId: result.id,
+        threadId: result.threadId || result.id,
+        fromEmail: connection.email_address,
+        toEmails: Array.isArray(toEmails) ? toEmails : [toEmails],
+        ccEmails: Array.isArray(cc) ? cc : [],
+        bccEmails: Array.isArray(bcc) ? bcc : [],
+        subject,
+        bodyText: isHtml ? null : emailBody,
+        bodyHtml: isHtml ? emailBody : null,
+        sentAt: new Date().toISOString(),
+        actorId: authUserId || null,
+        inquiryId: inquiryId || null,
+        additionalInquiryIds: additionalInquiryIds || null,
+      });
+      mirrorSucceeded = !!mirrorRes?.success;
+    } catch (mirrorErr) {
+      console.error("[Canonical Ingestion] Outbound mirror failed:", mirrorErr);
+    }
+
+    // Mandatory Safeguard 1: If canonical mirror failed, ensure a durable legacy footprint exists in crm_email_activities
+    if (!mirrorSucceeded) {
+      try {
+        const fallbackSentDate = new Date().toISOString();
+        const fallbackAttachments = fileAttachments.map((a: any) => a.storagePath || a.filename).filter(Boolean);
+        await supabase
+          .from("crm_email_activities")
+          .insert({
+            inquiry_id: inquiryId || null,
+            email_type: "sent",
+            from_email: connection.email_address,
+            to_email: Array.isArray(toEmails) ? toEmails : [toEmails],
+            cc_email: Array.isArray(cc) ? cc : [],
+            bcc_email: Array.isArray(bcc) ? bcc : [],
+            subject,
+            body: emailBody,
+            attachment_urls: fallbackAttachments.length > 0 ? fallbackAttachments : null,
+            sent_date: fallbackSentDate,
+            created_by: authUserId || null,
+            gmail_message_id: result.id,
+            gmail_thread_id: result.threadId || result.id,
+          });
+      } catch (fallbackErr) {
+        console.error("[Canonical Ingestion] Outbound legacy fallback activity logging failed:", fallbackErr);
+      }
+    }
 
     return new Response(
       JSON.stringify({

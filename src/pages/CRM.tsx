@@ -5,8 +5,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send, FolderOpen, Orbit } from 'lucide-react';
+import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send, FolderOpen, Orbit, SlidersHorizontal } from 'lucide-react';
 import { SalesTeam } from './SalesTeam';
+import { EnquiryControlCenter } from '../components/crm/enquiry-control-center';
 import { GmailBrowserInbox } from '../components/crm/GmailBrowserInbox';
 import { InquiryTableExcel } from '../components/crm/InquiryTableExcel';
 import { ReminderCalendar } from '../components/crm/ReminderCalendar';
@@ -106,7 +107,7 @@ export function CRM() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'work' | 'inquiry-360' | 'customer-360' | 'conversion-intelligence' | 'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'archive' | 'sales-team' | 'delivery-log' | 'documents'>('work');
+  const [activeTab, setActiveTab] = useState<'control-center' | 'work' | 'inquiry-360' | 'customer-360' | 'conversion-intelligence' | 'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'archive' | 'sales-team' | 'delivery-log' | 'documents'>('control-center');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
   // Prefill payload for creating a NEW inquiry (e.g. from AI Pricing "Create new
@@ -511,6 +512,7 @@ export function CRM() {
           <div className="border-b border-gray-200">
             <div className="flex overflow-x-auto">
               {([
+                ['control-center', SlidersHorizontal, 'Control Center', 'purple'],
                 ['work',        Clock,       "Today's Work",      'purple'],
                 ['inquiry-360', Orbit,       'Inquiry 360',       'purple'],
                 ['customer-360',Users,       'Customer 360',      'purple'],
@@ -557,6 +559,10 @@ export function CRM() {
                   {t('crm.retry')}
                 </button>
               </div>
+            )}
+
+            {activeTab === 'control-center' && (
+              <EnquiryControlCenter canManage={canManage} />
             )}
             
             {activeTab === 'inquiry-360' && (

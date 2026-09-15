@@ -5,3 +5,9 @@ node_modules
 dist
 .DS_Store
 **/.DS_Store
+
+# WhatsApp / OpenWA session credentials & tokens
+**/whatsapp-sessions/
+**/.openwa/
+**/openwa-session/
+*.session.data.json

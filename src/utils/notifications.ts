@@ -262,6 +262,16 @@ async function checkAndCreateTaxNotifications() {
   }
 }
 
+async function checkAndCreateEnquiryTaskReminders() {
+  try {
+    const { error } = await supabase.rpc('evaluate_enquiry_task_reminders');
+    if (error) throw error;
+  } catch (error) {
+    if (isNavigationAbort(error)) return;
+    console.error('Error evaluating enquiry task reminders:', error);
+  }
+}
+
 export async function initializeNotificationChecks() {
   if (notificationInterval) {
     clearInterval(notificationInterval);
@@ -272,6 +282,7 @@ export async function initializeNotificationChecks() {
   await checkAndCreateFollowUpNotifications();
   await checkAndCreateDeliveryDueNotifications();
   await checkAndCreateTaxNotifications();
+  await checkAndCreateEnquiryTaskReminders();
 
   notificationInterval = setInterval(async () => {
     await checkAndCreateLowStockNotifications();
@@ -279,5 +290,6 @@ export async function initializeNotificationChecks() {
     await checkAndCreateFollowUpNotifications();
     await checkAndCreateDeliveryDueNotifications();
     await checkAndCreateTaxNotifications();
+    await checkAndCreateEnquiryTaskReminders();
   }, 600000);
 }

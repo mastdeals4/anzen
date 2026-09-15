@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { requireRole } from "../_shared/security.ts";
 import { listGmailConnectionSecrets } from "../_shared/gmailSecrets.ts";
+import { mirrorInboundEmail, runInboundReconciliationSweep } from "../_shared/enquiryIngestion.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -151,6 +152,13 @@ Deno.serve(async (req: Request) => {
             .eq('id', connection.id);
         }
 
+        // 0. Durable anti-join reconciliation sweep to ensure zero-loss canonical mirroring
+        try {
+          await runInboundReconciliationSweep(supabase, 20);
+        } catch (sweepErr) {
+          console.error('[Canonical Ingestion] Pre-sync reconciliation sweep error:', sweepErr);
+        }
+
         const messagesResponse = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=is:unread`,
           {
@@ -169,7 +177,8 @@ Deno.serve(async (req: Request) => {
         const messageList = messagesData.messages || [];
         totalMessages += messageList.length;
 
-        const batchPromises = messageList.slice(0, 5).map(async (message: { id: string }) => {
+        // Process all messages returned up to maxResults=10 (avoid starvation from slice(0, 5))
+        const batchPromises = messageList.map(async (message: { id: string }) => {
           try {
             const messageResponse = await fetch(
               `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
@@ -260,6 +269,28 @@ Deno.serve(async (req: Request) => {
                 .eq('id', insertedEmail.id);
 
               console.log('Email marked as inquiry for manual review:', insertedEmail.id);
+            }
+
+            // Canonical mirror hook (additive secondary path; errors do not fail legacy insert)
+            try {
+              const toHeader = getHeader(headers, 'to');
+              const toList = toHeader ? toHeader.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+              await mirrorInboundEmail(supabase, {
+                messageId: messageData.id,
+                threadId: messageData.threadId,
+                fromEmail: fromEmail,
+                fromName: fromName,
+                toEmails: toList,
+                subject: subject,
+                bodyText: body,
+                bodyHtml: null,
+                receivedAt: receivedDate.toISOString(),
+                rawPayload: { internalDate: messageData.internalDate },
+                legacyInboxId: insertedEmail.id,
+                convertedToInquiry: insertedEmail.converted_to_inquiry || null,
+              });
+            } catch (mirrorErr) {
+              console.error(`[Canonical Ingestion] Mirror failed for message ${messageData.id}:`, mirrorErr);
             }
 
             return { processed: true, inquiry: isInquiry };

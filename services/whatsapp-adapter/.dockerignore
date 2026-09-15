@@ -1,0 +1,8 @@
+node_modules
+dist
+whatsapp-sessions
+.openwa
+openwa-session
+*.session.data.json
+.git
+.DS_Store
