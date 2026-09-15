@@ -130,6 +130,9 @@ export function TaxAttachments({ table, parentId, storagePrefix, allowedKinds, d
           .upload(path, file, { upsert: false, contentType: file.type });
         if (upErr) throw upErr;
 
+        const { data: authData } = await supabase.auth.getUser();
+        const currentUserId = authData?.user?.id || null;
+
         const { error: insErr } = await supabase.from(table).insert({
           [parentColumn]: parentId,
           file_url: path,
@@ -137,6 +140,7 @@ export function TaxAttachments({ table, parentId, storagePrefix, allowedKinds, d
           file_type: file.type,
           file_size: file.size,
           kind,
+          uploaded_by: currentUserId,
         });
         if (insErr) throw insErr;
       }
