@@ -5,7 +5,10 @@ import fs from 'node:fs';
 const customerValidation = fs.readFileSync('src/utils/customerValidation.ts', 'utf8');
 const customersPage = fs.readFileSync('src/pages/Customers.tsx', 'utf8');
 const dcPage = fs.readFileSync('src/pages/DeliveryChallan.tsx', 'utf8');
-const migration = fs.readFileSync('supabase/migrations/20260827090000_customer_identity_and_dc_source_traceability.sql', 'utf8');
+const migrationPath = fs.existsSync('supabase/migrations/20260827090000_customer_identity_and_dc_source_traceability.sql')
+  ? 'supabase/migrations/20260827090000_customer_identity_and_dc_source_traceability.sql'
+  : 'supabase/migrations_archive/20260827090000_customer_identity_and_dc_source_traceability.sql';
+const migration = fs.readFileSync(migrationPath, 'utf8');
 
 test('customer identity matching uses strong evidence and does not fuzzy-merge', () => {
   assert.match(customerValidation, /normalizeCustomerTaxId/);

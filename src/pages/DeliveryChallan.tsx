@@ -935,25 +935,6 @@ export function DeliveryChallan() {
           return;
         }
       }
-
-      // SO reservations are product-level. Batch is independently selected
-      // here and validated as physical stock at DC approval.
-      const { data: activeReservations, error: reservationError } = await supabase
-        .from('so_product_reservations')
-        .select('sales_order_item_id, reserved_quantity')
-        .eq('sales_order_id', formData.sales_order_id)
-        .eq('status', 'active');
-      if (reservationError) throw reservationError;
-
-      for (const [soItemId, totalQty] of qtyBySoItem.entries()) {
-        const reserved = (activeReservations || [])
-          .filter((r: any) => r.sales_order_item_id === soItemId)
-          .reduce((sum: number, r: any) => sum + Number(r.reserved_quantity), 0);
-        if (reserved + 0.0001 < totalQty) {
-          showToast({ type: 'error', title: 'Delivery Challan', message: 'Delivery quantity exceeds the remaining Sales Order product reservation.' });
-          return;
-        }
-      }
     }
 
     try {
