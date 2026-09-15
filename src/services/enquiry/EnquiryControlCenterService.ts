@@ -77,7 +77,6 @@ export class EnquiryControlCenterService {
         updated_at,
         user_profiles!assigned_to(id, full_name),
         crm_contacts!crm_contact_id(id, company_name, contact_person, email, phone),
-        customers!customer_id(id, company_name),
         enquiry_requests(
           id,
           category,
@@ -165,13 +164,12 @@ export class EnquiryControlCenterService {
 
       // Contact details resolution (prefer crm_contacts, fallback to row fields)
       const crmContact = row.crm_contacts;
-      const erpCustomer = row.customers;
 
       const customer: EnquiryCustomerSummary = {
         crmContactId: row.crm_contact_id || null,
         erpCustomerId: row.customer_id || null,
         companyName:
-          crmContact?.company_name || erpCustomer?.company_name || row.company_name || 'Unknown Company',
+          crmContact?.company_name || row.company_name || 'Unknown Company',
         contactPerson: crmContact?.contact_person || row.contact_person || null,
         contactEmail: crmContact?.email || row.contact_email || null,
         contactPhone: crmContact?.phone || row.contact_phone || null,
@@ -310,7 +308,6 @@ export class EnquiryControlCenterService {
         updated_at,
         user_profiles!assigned_to(id, full_name),
         crm_contacts!crm_contact_id(id, company_name, contact_person, email, phone),
-        customers!customer_id(id, company_name),
         enquiry_requests(
           id,
           category,
@@ -360,13 +357,12 @@ export class EnquiryControlCenterService {
     }));
 
     const crmContact = row.crm_contacts;
-    const erpCustomer = row.customers;
 
     const customer: EnquiryCustomerSummary = {
       crmContactId: row.crm_contact_id || null,
       erpCustomerId: row.customer_id || null,
       companyName:
-        crmContact?.company_name || erpCustomer?.company_name || row.company_name || 'Unknown Company',
+        crmContact?.company_name || row.company_name || 'Unknown Company',
       contactPerson: crmContact?.contact_person || row.contact_person || null,
       contactEmail: crmContact?.email || row.contact_email || null,
       contactPhone: crmContact?.phone || row.contact_phone || null,

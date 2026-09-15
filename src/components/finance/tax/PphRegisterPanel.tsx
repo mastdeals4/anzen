@@ -491,18 +491,32 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
     { total: 0, paid: 0, outstanding: 0, overpaid: 0 },
   ), [filtered]);
 
+  const importAdvanceByPeriod = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of importAdvanceData) {
+      if (!d.expense_date) continue;
+      const parts = d.expense_date.split('-');
+      const yr = Number(parts[0]);
+      const mo = Number(parts[1]);
+      if (!isNaN(yr) && !isNaN(mo)) {
+        const key = `${yr}-${mo}`;
+        map.set(key, (map.get(key) || 0) + d.pph22_amount);
+      }
+    }
+    return map;
+  }, [importAdvanceData]);
+
   const importAdvanceTaxTotal = useMemo(() => {
     if ((active !== 'PPh22' && active !== 'PPh_Unifikasi') || importAdvanceData.length === 0) return 0;
     const activePeriodKeys = new Set(filtered.map(r => `${r.fiscal_year}-${r.period_month}`));
-    return importAdvanceData
-      .filter(d => {
-        const dt = new Date(d.expense_date);
-        const yr = dt.getFullYear();
-        const mo = dt.getMonth() + 1;
-        return activePeriodKeys.has(`${yr}-${mo}`);
-      })
-      .reduce((sum, d) => sum + d.pph22_amount, 0);
-  }, [active, importAdvanceData, filtered]);
+    let sum = 0;
+    for (const [key, amt] of importAdvanceByPeriod.entries()) {
+      if (activePeriodKeys.has(key)) {
+        sum += amt;
+      }
+    }
+    return sum;
+  }, [active, importAdvanceByPeriod, filtered]);
 
   async function saveDocumentPeriod(line: SourceLine, periodId: string) {
     const source = 'finance_expense_pph';
@@ -699,20 +713,51 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
           )}
 
           <StatCardGrid cols={4}>
-            <StatCard
-              label={active === 'PPh22' ? 'Withheld PPh 22 (Payable)' : `Total ${pphTabLabel(active)} Withheld`}
-              value={totals.total}
-              tone="orange"
-              hint={active === 'PPh22' ? 'Genuine withholding liability' : 'Across periods in range'}
-            />
-            <StatCard label="Paid to Tax Office" value={totals.paid} tone="green" hint="Remitted via Tax Payment NTPN" />
-            <StatCard
-              label="Outstanding"
-              value={totals.outstanding}
-              tone="red"
-              hint={active === 'PPh22' ? 'Unremitted withholding liability' : 'Not yet remitted'}
-            />
-            <StatCard label="Overpaid / Credit" value={totals.overpaid} tone="blue" hint="Not allocated to another period" />
+            {active === 'PPh22' ? (
+              <>
+                <StatCard
+                  label="Prepaid Import PPh 22"
+                  value={importAdvanceTaxTotal}
+                  tone="green"
+                  hint="Debited to COA 1155 (Asset in range)"
+                />
+                <StatCard
+                  label="Annual Tax Credit (SPT Badan)"
+                  value={importAdvanceTaxTotal}
+                  tone="blue"
+                  hint="Form 1771 Lampiran III credit"
+                />
+                <StatCard
+                  label="Withheld PPh 22 (Payable)"
+                  value={totals.total}
+                  tone="orange"
+                  hint="Zero domestic withholding liability"
+                />
+                <StatCard
+                  label="Payable to DJP"
+                  value={totals.outstanding}
+                  tone="green"
+                  hint="Already paid at customs clearance"
+                />
+              </>
+            ) : (
+              <>
+                <StatCard
+                  label={`Total ${pphTabLabel(active)} Withheld`}
+                  value={totals.total}
+                  tone="orange"
+                  hint="Across periods in range"
+                />
+                <StatCard label="Paid to Tax Office" value={totals.paid} tone="green" hint="Remitted via Tax Payment NTPN" />
+                <StatCard
+                  label="Outstanding"
+                  value={totals.outstanding}
+                  tone="red"
+                  hint="Not yet remitted"
+                />
+                <StatCard label="Overpaid / Credit" value={totals.overpaid} tone="blue" hint="Not allocated to another period" />
+              </>
+            )}
           </StatCardGrid>
         </div>
       )}
@@ -735,7 +780,12 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                 <th className="w-6 px-2 py-1.5"></th>
                 <th className="text-left px-2.5 py-1.5">Period</th>
                 <th className="text-left px-2.5 py-1.5">Status</th>
-                <th className="text-right px-2.5 py-1.5">Total PPh</th>
+                {active === 'PPh22' && (
+                  <th className="text-right px-2.5 py-1.5 bg-emerald-50 text-emerald-900 font-semibold border-x border-emerald-200">
+                    Prepaid Import PPh 22 (COA 1155)
+                  </th>
+                )}
+                <th className="text-right px-2.5 py-1.5">{active === 'PPh22' ? 'Withheld PPh 22 (Liability)' : 'Total PPh'}</th>
                 <th className="text-right px-2.5 py-1.5">Paid</th>
                 <th className="text-right px-2.5 py-1.5">Outstanding</th>
                 <th className="text-right px-2.5 py-1.5">Overpaid / Credit</th>
@@ -775,6 +825,11 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                       <td className="px-2.5 py-1.5">
                         <StatusChip status={businessStatus} />
                       </td>
+                      {active === 'PPh22' && (
+                        <td className="px-2.5 py-1.5 text-right font-mono font-bold text-emerald-800 bg-emerald-50/40 border-x border-emerald-100">
+                          Rp {fmt(importAdvanceByPeriod.get(`${r.fiscal_year}-${r.period_month}`) || 0)}
+                        </td>
+                      )}
                       <td className="px-2.5 py-1.5 text-right tabular-nums">{fmt(r.pph_total)}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-green-700">{fmt(r.pph_paid_total)}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums font-semibold text-orange-700">
@@ -798,7 +853,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                     </tr>
                     {isOpen && (
                       <tr key={`${r.tax_period_id}-detail`} className="bg-blue-50/30">
-                        <td colSpan={12} className="px-6 pb-4 pt-2">
+                        <td colSpan={active === 'PPh22' ? 13 : 12} className="px-6 pb-4 pt-2">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
                               Source Documents — {active === 'PPh22' ? `PPh 22 Documents in ${formatFinancePeriod(r.fiscal_year, r.period_month)}` : `${pphTabLabel(active)} withheld in ${formatFinancePeriod(r.fiscal_year, r.period_month)}`}
@@ -967,7 +1022,11 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                               </tbody>
                             </table>
                             </>
-                          ) : null}
+                          ) : (
+                            <div className="py-2.5 text-center text-xs text-gray-500 italic">
+                              No {active === 'PPh22' ? 'PPh 22 documents' : `${pphTabLabel(active)} source documents`} recorded for {formatFinancePeriod(r.fiscal_year, r.period_month)}.
+                            </div>
+                          )}
 
                           {!detailLoading && pendingDetail.length > 0 && (
                             <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-3">

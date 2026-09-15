@@ -87,8 +87,8 @@ export const IndiaDailyWorkQueueModal: React.FC<IndiaDailyWorkQueueModalProps> =
             id,
             inquiry_number,
             product_name,
-            customer_name,
-            customers(company_name)
+            company_name,
+            crm_contacts:crm_contact_id(company_name)
           ),
           user_profiles:assigned_to(full_name)
         `)
@@ -140,7 +140,6 @@ export const IndiaDailyWorkQueueModal: React.FC<IndiaDailyWorkQueueModalProps> =
 
       for (const r of reqData || []) {
         const inq = (r as any).crm_inquiries;
-        const cust = inq?.customers;
         const profile = (r as any).user_profiles;
 
         let isOverdue = false;
@@ -166,7 +165,7 @@ export const IndiaDailyWorkQueueModal: React.FC<IndiaDailyWorkQueueModalProps> =
           id: r.id,
           inquiryId: r.inquiry_id,
           inquiryNumber: inq?.inquiry_number || 'INQ-UNKNOWN',
-          companyName: cust?.company_name || inq?.customer_name || 'Prospect Customer',
+          companyName: inq?.crm_contacts?.company_name || inq?.company_name || 'Prospect Customer',
           productName: inq?.product_name || 'General Product',
           requestCode: r.request_code,
           requestTitle: r.title,
