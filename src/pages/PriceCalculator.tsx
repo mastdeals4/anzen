@@ -4,6 +4,7 @@ import { Layout } from '../components/Layout';
 import {
   Calculator, Settings as SettingsIcon, DollarSign,
   ChevronDown, ChevronUp, Info, AlertTriangle, RefreshCw, TrendingDown, Database,
+  Copy, Check,
 } from 'lucide-react';
 import { ImportInfo } from '../components/ImportInfo';
 import { MoneyInput } from '../components/MoneyInput';
@@ -130,7 +131,7 @@ function PctField({ label, value, onChange }: { label: string; value: string; on
     <div className="flex flex-col">
       <label className={labelCls}>{label}</label>
       <div className="flex items-center">
-        <input
+        <input name="label" aria-label="{label}"
           type="number" step="any" min="0"
           className="w-full px-2.5 py-1.5 border border-gray-300 rounded-l-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
           value={value}
@@ -164,7 +165,7 @@ function InsuranceField({ section, inputs, setInput }: { section: string; inputs
         </button>
         {applyIns ? (
           <div className="flex items-center flex-1">
-            <input
+            <input name="inputs" aria-label="0"
               type="number" step="any" min="0"
               className="w-full px-2 py-1.5 border border-gray-300 rounded-l-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
               value={inputs[section].insurance_percent}
@@ -192,7 +193,7 @@ function FreightField({ section, inputs, setInput, mode }: { section: string; in
     <div className="flex flex-col">
       <label className={labelCls}>Freight</label>
       <div className="flex">
-        <select
+        <select name="freight" aria-label="Freight"
           className="px-2 py-1.5 border border-gray-300 rounded-l-md text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white flex-shrink-0"
           value={freightType}
           onChange={(e) => setInput(section, 'freight_type', e.target.value)}
@@ -202,7 +203,7 @@ function FreightField({ section, inputs, setInput, mode }: { section: string; in
           {mode === 'fcl' && <option value="usd_per_container">$/cont</option>}
         </select>
         {freightType === 'percent' ? (
-          <input
+          <input name="freight_value" aria-label="{placeholder}"
             type="number" step="any" min="0"
             className="w-full px-2 py-1.5 border border-l-0 border-r-0 border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
             value={freightValue}
@@ -296,6 +297,33 @@ export function PriceCalculator() {
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [fetchingINR, setFetchingINR] = useState(false);
+  const [copiedQuotePrice, setCopiedQuotePrice] = useState(false);
+
+  const handleCopyQuotePrice = useCallback((priceText: string) => {
+    if (!navigator.clipboard?.writeText) {
+      const textarea = document.createElement('textarea');
+      textarea.value = priceText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        setCopiedQuotePrice(true);
+        setTimeout(() => setCopiedQuotePrice(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy', err);
+      }
+      document.body.removeChild(textarea);
+      return;
+    }
+    navigator.clipboard.writeText(priceText).then(() => {
+      setCopiedQuotePrice(true);
+      setTimeout(() => setCopiedQuotePrice(false), 2000);
+    }).catch((err) => {
+      console.error('Failed to copy quote price to clipboard', err);
+    });
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -574,14 +602,14 @@ export function PriceCalculator() {
                     <PctField label="Import Duty" value={inputs.fcl.duty_percent}
                       onChange={(v) => setInput('fcl', 'duty_percent', v)} />
                     <Field label="Container">
-                      <select className={inputCls} value={inputs.fcl.container_type}
+                      <select name="inputs" aria-label="Inputs" className={inputCls} value={inputs.fcl.container_type}
                         onChange={(e) => setInput('fcl', 'container_type', e.target.value)}>
                         <option value="20ft">20ft Container</option>
                         <option value="40ft">40ft Container</option>
                       </select>
                     </Field>
                     <Field label="Packing Type">
-                      <select className={inputCls} value={inputs.fcl.packing_type}
+                      <select name="inputs" aria-label="Inputs" className={inputCls} value={inputs.fcl.packing_type}
                         onChange={(e) => setInput('fcl', 'packing_type', e.target.value)}>
                         {FCL_PACKING_OPTIONS.map(o => (
                           <option key={o.value} value={o.value}>{o.label}</option>
@@ -589,7 +617,7 @@ export function PriceCalculator() {
                       </select>
                     </Field>
                     <Field label="Selling Qty (kg)">
-                      <input type="number" step="any" className={inputCls} value={inputs.fcl.selling_quantity}
+                      <input name="inputs" aria-label="0" type="number" step="any" className={inputCls} value={inputs.fcl.selling_quantity}
                         onChange={(e) => setInput('fcl', 'selling_quantity', e.target.value)} placeholder="0" />
                     </Field>
                   </div>
@@ -615,16 +643,16 @@ export function PriceCalculator() {
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
                     <PurchasePriceField section="lcl" inputs={inputs} setInput={setInput} inrRate={inrRate} />
                     <Field label="Product Qty (kg)">
-                      <input type="number" step="any" className={inputCls} value={inputs.lcl.product_qty}
+                      <input name="inputs" aria-label="e.g. 100" type="number" step="any" className={inputCls} value={inputs.lcl.product_qty}
                         onChange={(e) => setInput('lcl', 'product_qty', e.target.value)} placeholder="e.g. 100" />
                     </Field>
                     <Field label="Total Shipment Qty (kg)">
-                      <input type="number" step="any" className={`${inputCls} ${!inputs.lcl.total_shipment_qty ? 'border-amber-400' : ''}`}
+                      <input name="inputs" aria-label="e.g. 5000" type="number" step="any" className={`${inputCls} ${!inputs.lcl.total_shipment_qty ? 'border-amber-400' : ''}`}
                         value={inputs.lcl.total_shipment_qty}
                         onChange={(e) => setInput('lcl', 'total_shipment_qty', e.target.value)} placeholder="e.g. 5000" />
                     </Field>
                     <Field label="Packing Type">
-                      <select className={inputCls} value={inputs.lcl.packing_type}
+                      <select name="inputs" aria-label="Inputs" className={inputCls} value={inputs.lcl.packing_type}
                         onChange={(e) => setInput('lcl', 'packing_type', e.target.value)}>
                         {LCL_PACKING_OPTIONS.map(o => (
                           <option key={o.value} value={o.value}>{o.label}</option>
@@ -665,7 +693,7 @@ export function PriceCalculator() {
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4 lg:grid-cols-4">
                     <PurchasePriceField section="air" inputs={inputs} setInput={setInput} inrRate={inrRate} />
                     <Field label="Shipment Weight (kg)">
-                      <input type="number" step="any" className={inputCls} value={inputs.air.weight}
+                      <input name="weight" aria-label="0" type="number" step="any" className={inputCls} value={inputs.air.weight}
                         onChange={(e) => setInput('air', 'weight', e.target.value)} placeholder="0" />
                     </Field>
                     <PctField label="India Margin" value={inputs.air.india_margin_percent}
@@ -741,7 +769,22 @@ export function PriceCalculator() {
                     <div className="bg-blue-600 rounded-xl px-3 py-3 shadow-md col-span-2 sm:col-span-1 lg:col-span-2 flex flex-col justify-between">
                       <div className="text-[10px] text-blue-100 font-semibold uppercase tracking-widest">Quote Price / kg</div>
                       <div className="mt-1">
-                        <div className="text-2xl font-extrabold text-white">${fmt2(result.final_price_per_kg_usd)}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-2xl font-extrabold text-white">${fmt2(result.final_price_per_kg_usd)}</div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyQuotePrice(`$${fmt2(result.final_price_per_kg_usd)}`)}
+                            title={copiedQuotePrice ? 'Copied' : 'Copy quote price'}
+                            aria-label="Copy quote price"
+                            className="inline-flex items-center justify-center p-1 rounded text-blue-200 hover:text-white hover:bg-blue-500/40 transition-colors focus:outline-none focus:ring-1 focus:ring-white/40"
+                          >
+                            {copiedQuotePrice ? (
+                              <Check className="w-4 h-4 text-emerald-300" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
                         <div className="text-sm font-semibold text-blue-100 mt-0.5">Rp {fmtIDR(result.final_price_per_kg_idr)}</div>
                         <WordsRow text={usdToWords(result.final_price_per_kg_usd)} />
                       </div>
@@ -839,20 +882,20 @@ export function PriceCalculator() {
               <p className="text-xs text-gray-400 mb-3">Controls how INR supplier prices are converted to USD. Effective Rate = Live Rate − Buffer.</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-3">
                 <Field label="INR/USD Mode">
-                  <select className={inputCls} value={config.general.inr_usd_mode}
+                  <select name="config" aria-label="Config" className={inputCls} value={config.general.inr_usd_mode}
                     onChange={(e) => updateConfig(['general', 'inr_usd_mode'], e.target.value)}>
                     <option value="manual">Manual Rate</option>
                     <option value="auto">Auto (Live − Buffer)</option>
                   </select>
                 </Field>
                 <Field label="Manual INR/USD Rate">
-                  <input type="number" step="0.01" className={inputCls}
+                  <input name="config" aria-label="Config" type="number" step="0.01" className={inputCls}
                     value={config.general.inr_usd_manual_rate}
                     onChange={(e) => updateConfig(['general', 'inr_usd_manual_rate'], parseFloat(e.target.value) || 0)}
                     disabled={config.general.inr_usd_mode !== 'manual'} />
                 </Field>
                 <Field label="Buffer (subtract from live)">
-                  <input type="number" step="0.01" className={inputCls}
+                  <input name="config" aria-label="Config" type="number" step="0.01" className={inputCls}
                     value={config.general.inr_usd_buffer}
                     onChange={(e) => updateConfig(['general', 'inr_usd_buffer'], parseFloat(e.target.value) || 0)} />
                 </Field>
@@ -886,7 +929,7 @@ export function PriceCalculator() {
               <div className="text-sm font-semibold text-gray-700 mb-3">USD / IDR FX Settings</div>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="FX Mode">
-                  <select className={inputCls} value={config.general.fx_mode}
+                  <select name="config" aria-label="Config" className={inputCls} value={config.general.fx_mode}
                     onChange={(e) => updateConfig(['general', 'fx_mode'], e.target.value)}>
                     <option value="auto">Auto (Live Rate)</option>
                     <option value="manual">Manual Rate</option>
@@ -895,7 +938,7 @@ export function PriceCalculator() {
                 <PctField label="FX Buffer (%)" value={String(config.general.fx_buffer_percent)}
                   onChange={(v) => updateConfig(['general', 'fx_buffer_percent'], parseFloat(v) || 0)} />
                 <Field label="Manual FX Rate (IDR)">
-                  <input type="number" step="1" className={inputCls} value={config.general.manual_fx_rate}
+                  <input name="config" aria-label="Config" type="number" step="1" className={inputCls} value={config.general.manual_fx_rate}
                     onChange={(e) => updateConfig(['general', 'manual_fx_rate'], parseFloat(e.target.value) || 0)}
                     disabled={config.general.fx_mode !== 'manual'} />
                 </Field>
@@ -914,7 +957,7 @@ export function PriceCalculator() {
                     </Field>
                     {FCL_PACKING_OPTIONS.map(opt => (
                       <Field key={opt.value} label={`${opt.label} (kg)`}>
-                        <input type="number" step="any" className={inputCls}
+                        <input name="config" aria-label="Config" type="number" step="any" className={inputCls}
                           value={config.fcl[ct].capacity[opt.value] ?? 0}
                           onChange={(e) => updateConfig(['fcl', ct, 'capacity', opt.value], parseFloat(e.target.value) || 0)} />
                       </Field>
@@ -934,7 +977,7 @@ export function PriceCalculator() {
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">W/M Rule</div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
                 <Field label="Min Chargeable (CBM)">
-                  <input type="number" step="any" className={inputCls} value={config.lcl.min_chargeable}
+                  <input name="config" aria-label="Config" type="number" step="any" className={inputCls} value={config.lcl.min_chargeable}
                     onChange={(e) => updateConfig(['lcl', 'min_chargeable'], parseFloat(e.target.value) || 0)} />
                 </Field>
               </div>
@@ -946,7 +989,7 @@ export function PriceCalculator() {
                     onChange={(amount) => updateConfig(['lcl', 'clearance_base'], amount)} />
                 </Field>
                 <Field label="Base Limit (CBM)">
-                  <input type="number" step="any" className={inputCls} value={config.lcl.clearance_base_limit_cbm}
+                  <input name="config" aria-label="Config" type="number" step="any" className={inputCls} value={config.lcl.clearance_base_limit_cbm}
                     onChange={(e) => updateConfig(['lcl', 'clearance_base_limit_cbm'], parseFloat(e.target.value) || 0)} />
                 </Field>
                 <Field label="Additional / CBM after limit (USD)">
@@ -990,12 +1033,12 @@ export function PriceCalculator() {
                     <div className="text-xs font-semibold text-gray-600 mb-2">{pk === 'mixed' ? 'Mixed Lot' : pk.replace(/_/g, ' ')}</div>
                     <div className="space-y-1.5">
                       <Field label="Weight (kg)">
-                        <input type="number" step="any" className={inputCls}
+                        <input name="config" aria-label="Config" type="number" step="any" className={inputCls}
                           value={config.lcl.packaging[pk]?.weight ?? 0}
                           onChange={(e) => updateConfig(['lcl', 'packaging', pk, 'weight'], parseFloat(e.target.value) || 0)} />
                       </Field>
                       <Field label="CBM per unit">
-                        <input type="number" step="0.001" className={inputCls}
+                        <input name="config" aria-label="Config" type="number" step="0.001" className={inputCls}
                           value={config.lcl.packaging[pk]?.cbm ?? 0}
                           onChange={(e) => updateConfig(['lcl', 'packaging', pk, 'cbm'], parseFloat(e.target.value) || 0)} />
                       </Field>
@@ -1015,7 +1058,7 @@ export function PriceCalculator() {
                     onChange={(amount) => updateConfig(['air', 'clearance_base'], amount)} />
                 </Field>
                 <Field label="Min Weight Threshold (kg)">
-                  <input type="number" step="any" className={inputCls} value={config.air.clearance_min_weight}
+                  <input name="clearance_min_weight" aria-label="Clearance Min Weight" type="number" step="any" className={inputCls} value={config.air.clearance_min_weight}
                     onChange={(e) => updateConfig(['air', 'clearance_min_weight'], parseFloat(e.target.value) || 0)} />
                 </Field>
                 <Field label="Rate / kg After Threshold (USD)">
