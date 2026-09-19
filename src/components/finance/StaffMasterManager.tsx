@@ -272,7 +272,7 @@ export function StaffMasterManager({ canManage }: Props) {
         <>
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
-          <input
+          <input name="search" aria-label="Search name / code / dept..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search name / code / dept..."
@@ -361,21 +361,21 @@ export function StaffMasterManager({ canManage }: Props) {
           <form id="staff-master-form" onSubmit={save} className="flex flex-col gap-3">
             <SapRow>
               <SapField label="Full Name" required span={8}>
-                <input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })}
+                <input name="full_name" aria-label="Full Name" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })}
                   className={SAP_INPUT} />
               </SapField>
               <SapField label="Emp Code" span={4}>
-                <input value={form.employee_code} onChange={e => setForm({ ...form, employee_code: e.target.value })}
+                <input name="employee_code" aria-label="Employee Code" value={form.employee_code} onChange={e => setForm({ ...form, employee_code: e.target.value })}
                   className={SAP_INPUT} />
               </SapField>
             </SapRow>
             <SapRow>
               <SapField label="Department" span={6}>
-                <input value={form.department} onChange={e => setForm({ ...form, department: e.target.value })}
+                <input name="department" aria-label="Department" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })}
                   className={SAP_INPUT} />
               </SapField>
               <SapField label="Status" span={6}>
-                <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as 'active' | 'inactive' })}
+                <select name="status" aria-label="Status" value={form.status} onChange={e => setForm({ ...form, status: e.target.value as 'active' | 'inactive' })}
                   className={SAP_INPUT}>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
@@ -389,14 +389,14 @@ export function StaffMasterManager({ canManage }: Props) {
                   className={SAP_INPUT + ' !text-right !font-mono'} />
               </SapField>
               <SapField label="Salary Type" required span={4}>
-                <select value={form.salary_type} onChange={e => setForm({ ...form, salary_type: e.target.value as Staff['salary_type'] })} className={SAP_INPUT}>
+                <select name="salary_type" aria-label="Salary Type" value={form.salary_type} onChange={e => setForm({ ...form, salary_type: e.target.value as Staff['salary_type'] })} className={SAP_INPUT}>
                   <option value="monthly">Monthly</option>
                   <option value="daily">Daily</option>
                   <option value="hourly">Hourly</option>
                 </select>
               </SapField>
               <SapField label="Default Payment" required span={4}>
-                <select value={form.default_payment_method} onChange={e => setForm({ ...form, default_payment_method: e.target.value as Staff['default_payment_method'] })} className={SAP_INPUT}>
+                <select name="default_payment_method" aria-label="Default Payment Method" value={form.default_payment_method} onChange={e => setForm({ ...form, default_payment_method: e.target.value as Staff['default_payment_method'] })} className={SAP_INPUT}>
                   <option value="bank_transfer">Bank Transfer</option>
                   <option value="cash">Cash</option>
                   <option value="check">Check</option>
@@ -407,26 +407,26 @@ export function StaffMasterManager({ canManage }: Props) {
             </SapRow>
             <SapRow>
               <SapField label="PPh21 Applicable" span={4}>
-                <select value={form.pph21_applicable ? 'yes' : 'no'} onChange={e => setForm({ ...form, pph21_applicable: e.target.value === 'yes' })} className={SAP_INPUT}>
+                <select name="pph21_applicable" aria-label="Pph21 Applicable" value={form.pph21_applicable ? 'yes' : 'no'} onChange={e => setForm({ ...form, pph21_applicable: e.target.value === 'yes' })} className={SAP_INPUT}>
                   <option value="no">No</option>
                   <option value="yes">Yes</option>
                 </select>
               </SapField>
               <SapField label="PPh21 Method" span={4}>
-                <select disabled={!form.pph21_applicable} value={form.pph21_method} onChange={e => setForm({ ...form, pph21_method: e.target.value as Staff['pph21_method'] })} className={SAP_INPUT}>
+                <select name="pph21_method" aria-label="Pph21 Method" disabled={!form.pph21_applicable} value={form.pph21_method} onChange={e => setForm({ ...form, pph21_method: e.target.value as Staff['pph21_method'] })} className={SAP_INPUT}>
                   <option value="percentage">Percentage</option>
                   <option value="manual">Manual per Salary</option>
                 </select>
               </SapField>
               <SapField label="PPh21 %" span={4}>
-                <input type="number" min="0" max="100" step="0.0001" disabled={!form.pph21_applicable || form.pph21_method !== 'percentage'}
+                <input name="pph21_percentage" aria-label="Pph21 Percentage" type="number" min="0" max="100" step="0.0001" disabled={!form.pph21_applicable || form.pph21_method !== 'percentage'}
                   value={form.pph21_percentage || ''} onChange={e => setForm({ ...form, pph21_percentage: Number(e.target.value) || 0 })}
                   className={SAP_INPUT + ' !text-right !font-mono'} />
               </SapField>
             </SapRow>
             <SapRow>
               <SapField label="Salary GL" span={12}>
-                <select value={form.default_gl_account_id} onChange={e => setForm({ ...form, default_gl_account_id: e.target.value })} className={SAP_INPUT}>
+                <select name="default_gl_account_id" aria-label="Default Gl Account Id" value={form.default_gl_account_id} onChange={e => setForm({ ...form, default_gl_account_id: e.target.value })} className={SAP_INPUT}>
                   <option value="">Default — 6100 Salaries & Wages</option>
                   {coaAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}
                 </select>
@@ -434,7 +434,7 @@ export function StaffMasterManager({ canManage }: Props) {
             </SapRow>
             <SapRow>
               <SapField label="NIK / KTP No (16 digits)" span={6}>
-                <input
+                <input name="nik" aria-label="16-digit Citizen ID (KTP / Akte)"
                   value={form.nik}
                   onChange={e => setForm({ ...form, nik: e.target.value })}
                   placeholder="16-digit Citizen ID (KTP / Akte)"
@@ -443,7 +443,7 @@ export function StaffMasterManager({ canManage }: Props) {
                 />
               </SapField>
               <SapField label="NPWP (Tax ID)" span={6}>
-                <input
+                <input name="npwp" aria-label="15 or 16-digit NPWP"
                   value={form.npwp}
                   onChange={e => setForm({ ...form, npwp: e.target.value })}
                   placeholder="15 or 16-digit NPWP"
@@ -453,7 +453,7 @@ export function StaffMasterManager({ canManage }: Props) {
             </SapRow>
             <SapRow>
               <SapField label="Notes" span={12}>
-                <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                <input name="notes" aria-label="Optional notes or remarks" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
                   placeholder="Optional notes or remarks"
                   className={SAP_INPUT} />
               </SapField>

@@ -259,13 +259,13 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
 
   return <div className="space-y-3">
     <div className="grid grid-cols-1 md:grid-cols-5 gap-2 bg-white border rounded-lg p-2">
-      <input className="border rounded px-2 py-1 text-sm" placeholder="Customer" value={filters.customer} onChange={(e) => setFilters({ ...filters, customer: e.target.value })} />
-      <input className="border rounded px-2 py-1 text-sm" placeholder="Product" value={filters.product} onChange={(e) => setFilters({ ...filters, product: e.target.value })} />
-      <select className="border rounded px-2 py-1 text-sm" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+      <input name="customer" aria-label="Customer" className="border rounded px-2 py-1 text-sm" placeholder="Customer" value={filters.customer} onChange={(e) => setFilters({ ...filters, customer: e.target.value })} />
+      <input name="product" aria-label="Product" className="border rounded px-2 py-1 text-sm" placeholder="Product" value={filters.product} onChange={(e) => setFilters({ ...filters, product: e.target.value })} />
+      <select name="status" aria-label="Status" className="border rounded px-2 py-1 text-sm" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
         <option value="all">All Status</option><option value="new">New</option><option value="in_progress">In Progress</option><option value="quoted">Quoted</option><option value="follow_up_due">Follow-up Due</option><option value="won">Won</option><option value="lost">Lost</option><option value="no_reply">No Reply</option>
       </select>
-      <input className="border rounded px-2 py-1 text-sm" placeholder="Assigned user id" value={filters.assigned} onChange={(e) => setFilters({ ...filters, assigned: e.target.value })} />
-      <input type="date" className="border rounded px-2 py-1 text-sm" value={filters.nextDate} onChange={(e) => setFilters({ ...filters, nextDate: e.target.value })} />
+      <input name="assigned" aria-label="Assigned user id" className="border rounded px-2 py-1 text-sm" placeholder="Assigned user id" value={filters.assigned} onChange={(e) => setFilters({ ...filters, assigned: e.target.value })} />
+      <input name="nextDate" aria-label="NextDate" type="date" className="border rounded px-2 py-1 text-sm" value={filters.nextDate} onChange={(e) => setFilters({ ...filters, nextDate: e.target.value })} />
     </div>
 
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">

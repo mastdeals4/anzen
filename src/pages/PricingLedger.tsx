@@ -116,7 +116,7 @@ export function PricingLedger() {
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <div className="relative flex-1 min-w-[180px] max-w-xs">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer, product, inquiry..."
+            <input name="search" aria-label="Search customer, product, inquiry..." value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer, product, inquiry..."
               className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           {['all', 'won', 'lost', 'pending'].map(s => (
@@ -135,7 +135,7 @@ export function PricingLedger() {
                 <button onClick={table.reset} className="text-[11px] text-blue-600 hover:underline mb-1">Reset widths</button>
                 {table.columns.map(column => (
                   <label key={column.key} className="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-700">
-                    <input type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
+                    <input name="column_visibility" aria-label="Toggle column visibility" type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
                     <span>{column.label}</span>
                   </label>
                 ))}
@@ -177,7 +177,7 @@ export function PricingLedger() {
                         {table.isVisible('target') && <td style={table.getCellStyle('target')} className="px-2 py-1 text-gray-500 border-r border-gray-200">{e.target_price ? `$${e.target_price}` : '-'}</td>}
                         {table.isVisible('competitor') && <td style={table.getCellStyle('competitor')} className="px-2 py-1 text-gray-500 border-r border-gray-200">{e.competitor_price ? `$${e.competitor_price}` : '-'}</td>}
                         {table.isVisible('status') && <td style={table.getCellStyle('status')} className="px-2 py-1 border-r border-gray-200">
-                          <select value={e.won_lost || 'pending'} onChange={ev => updateWonLost(e.id, ev.target.value)}
+                          <select name="field" aria-label="Field" value={e.won_lost || 'pending'} onChange={ev => updateWonLost(e.id, ev.target.value)}
                             disabled={!canEditLedgerOutcome}
                             className={`border-0 rounded px-1.5 py-0.5 text-[10px] font-medium focus:outline-none ${canEditLedgerOutcome ? 'cursor-pointer' : 'cursor-default'} ${wlm.color}`}>
                             <option value="pending">Pending</option>

@@ -482,12 +482,12 @@ export function GeneralJournalEntry({ canManage, onNavigateToLedger, initialEdit
           <div className="p-2 border-b border-gray-100">
             <SapRow>
               <SapField label="Date" required span={4}>
-                <input type="date" value={entryDate}
+                <input name="entry_date" aria-label="Entry Date" type="date" value={entryDate}
                   onChange={e => setEntryDate(e.target.value)}
                   className={SAP_INPUT} />
               </SapField>
               <SapField label="Narration" span={8}>
-                <input type="text" value={narration}
+                <input name="narration" aria-label="{t.finance.journalNarrationPlaceholder}" type="text" value={narration}
                   onChange={e => setNarration(e.target.value)}
                   placeholder={t.finance.journalNarrationPlaceholder}
                   className={SAP_INPUT} />
@@ -517,7 +517,7 @@ export function GeneralJournalEntry({ canManage, onNavigateToLedger, initialEdit
                         <div ref={searchRef} className="relative">
                           <div className="flex items-center border border-blue-400 rounded-lg bg-white shadow-sm">
                             <Search className="w-4 h-4 text-gray-400 ml-2 shrink-0" />
-                            <input
+                            <input name="search_term" aria-label="Search account..."
                               ref={searchInputRef}
                               type="text"
                               value={searchTerm}
@@ -579,7 +579,7 @@ export function GeneralJournalEntry({ canManage, onNavigateToLedger, initialEdit
                       )}
                     </td>
                     <td className="px-4 py-2">
-                      <input
+                      <input name="line" aria-label="Optional"
                         type="text"
                         value={line.description}
                         onChange={e => updateLine(idx, 'description', e.target.value)}

@@ -1897,7 +1897,7 @@ export function Sales() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">{t('sales.invoiceNumber')} *</label>
-                  <input
+                  <input name="t_sales_invoicenumber" aria-label="{t('sales.invoiceNumber')}"
                     type="text"
                     value={formData.invoice_number}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"
@@ -1908,7 +1908,7 @@ export function Sales() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Invoice Date *</label>
-                  <input
+                  <input name="invoice_date" aria-label="Invoice Date"
                     type="date"
                     value={formData.invoice_date}
                     onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
@@ -1918,7 +1918,7 @@ export function Sales() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Payment Terms *</label>
-                  <select
+                  <select name="payment_terms" aria-label="Payment Terms"
                     value={formData.payment_terms}
                     onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
@@ -1987,7 +1987,7 @@ export function Sales() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">PO Number</label>
-                  <input
+                  <input name="po_number" aria-label="PO Number"
                     type="text"
                     value={formData.po_number}
                     onChange={(e) => setFormData({ ...formData, po_number: e.target.value })}
@@ -2033,7 +2033,7 @@ export function Sales() {
                       </button>
                     </div>
                   ) : (
-                    <select
+                    <select name="s_o_id" aria-label="S O Id"
                       value={selectedSOId}
                       onChange={(e) => handleSalesOrderSelect(e.target.value)}
                       className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
@@ -2090,7 +2090,7 @@ export function Sales() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
-                  <input
+                  <input name="notes" aria-label="Notes"
                     type="text"
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -2165,7 +2165,7 @@ export function Sales() {
                       <div className="grid grid-cols-12 gap-2 items-end min-w-[700px]">
                         <div className="col-span-3">
                           <label className="block text-xs text-gray-600 mb-1">Product *</label>
-                          <select
+                          <select name="product" aria-label="Product"
                             value={item.product_id}
                             onChange={(e) => updateItemTotal(index, { ...item, product_id: e.target.value, batch_id: null })}
                             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
@@ -2184,7 +2184,7 @@ export function Sales() {
 
                         <div className="col-span-2">
                           <label className="block text-xs text-gray-600 mb-1">Batch</label>
-                          <select
+                          <select name="batch" aria-label="Batch"
                             value={item.batch_id || ''}
                             onChange={(e) => {
                               const batchId = e.target.value || null;
@@ -2210,7 +2210,7 @@ export function Sales() {
 
                       <div className="col-span-2">
                         <label className="block text-xs text-gray-600 mb-1">Quantity *</label>
-                        <input
+                        <input name="quantity" aria-label="Quantity"
                           type="number"
                           value={item.quantity === 0 ? '' : item.quantity}
                           onChange={(e) => updateItemTotal(index, { ...item, quantity: e.target.value === '' ? 1 : Number(e.target.value) })}
@@ -2236,7 +2236,7 @@ export function Sales() {
 
                       <div className="col-span-1">
                         <label className="block text-xs text-gray-600 mb-1">Tax %</label>
-                        <input
+                        <input name="tax" aria-label="Tax %"
                           type="number"
                           value={item.tax_rate === 0 ? '' : item.tax_rate}
                           onChange={(e) => updateItemTotal(index, { ...item, tax_rate: e.target.value === '' ? 0 : Number(e.target.value) })}
@@ -2249,7 +2249,7 @@ export function Sales() {
                       <div className="col-span-2 flex items-end gap-2">
                         <div className="flex-1">
                           <label className="block text-xs text-gray-600 mb-1">Total</label>
-                          <input
+                          <input name="total" aria-label="Total"
                             type="text"
                             value={(item.total || 0).toFixed(2)}
                             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"

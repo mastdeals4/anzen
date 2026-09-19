@@ -441,7 +441,7 @@ export default function StockRejections() {
         <div className="flex flex-col sm:flex-row gap-4 mb-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
+            <input name="search_term" aria-label="{t(searchRejections) || Search rejections...}"
               type="text"
               placeholder={t('searchRejections') || 'Search rejections...'}
               value={searchTerm}
@@ -449,7 +449,7 @@ export default function StockRejections() {
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
-          <select
+          <select name="status_filter" aria-label="Status Filter"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -583,7 +583,7 @@ export default function StockRejections() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('product') || 'Product'} *
                 </label>
-                <select
+                <select name="t_product_product" aria-label="{t('product') || 'Product'}"
                   value={formData.product_id}
                   onChange={(e) => handleProductChange(e.target.value)}
                   required
@@ -602,7 +602,7 @@ export default function StockRejections() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('batch') || 'Batch'} *
                 </label>
-                <select
+                <select name="t_batch_batch" aria-label="{t('batch') || 'Batch'}"
                   value={formData.batch_id}
                   onChange={(e) => setFormData({ ...formData, batch_id: e.target.value })}
                   required
@@ -622,7 +622,7 @@ export default function StockRejections() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('rejectionDate') || 'Rejection Date'} *
                 </label>
-                <input
+                <input name="t_rejectiondate_rejection_date" aria-label="{t('rejectionDate') || 'Rejection Date'}"
                   type="date"
                   value={formData.rejection_date}
                   onChange={(e) => setFormData({ ...formData, rejection_date: e.target.value })}
@@ -635,7 +635,7 @@ export default function StockRejections() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('quantityRejected') || 'Quantity Rejected (Kg)'} *
                 </label>
-                <input
+                <input name="t_quantityrejected_quantity_re" aria-label="{t('quantityRejected') || 'Quantity Rejected (Kg)'}"
                   type="number"
                   step="0.01"
                   value={formData.quantity_rejected || ''}
@@ -651,7 +651,7 @@ export default function StockRejections() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('rejectionReason') || 'Rejection Reason'} *
                 </label>
-                <select
+                <select name="t_rejectionreason_rejection_re" aria-label="{t('rejectionReason') || 'Rejection Reason'}"
                   value={formData.rejection_reason}
                   onChange={(e) => setFormData({ ...formData, rejection_reason: e.target.value })}
                   required
@@ -669,7 +669,7 @@ export default function StockRejections() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('disposition') || 'Disposition'}
                 </label>
-                <select
+                <select name="t_disposition_disposition" aria-label="{t('disposition') || 'Disposition'}"
                   value={formData.disposition}
                   onChange={(e) => setFormData({ ...formData, disposition: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -686,7 +686,7 @@ export default function StockRejections() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {t('rejectionDetails') || 'Rejection Details'} *
               </label>
-              <textarea
+              <textarea name="t_rejectiondetails_rejection_d" aria-label="{t('rejectionDetails') || 'Rejection Details'}"
                 value={formData.rejection_details}
                 onChange={(e) => setFormData({ ...formData, rejection_details: e.target.value })}
                 required
@@ -700,7 +700,7 @@ export default function StockRejections() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {t('inspectionReport') || 'Inspection Report'} (Optional)
               </label>
-              <textarea
+              <textarea name="t_inspectionreport_inspection_" aria-label="{t('inspectionReport') || 'Inspection Report'} (Optional)"
                 value={formData.inspection_report}
                 onChange={(e) => setFormData({ ...formData, inspection_report: e.target.value })}
                 rows={3}
@@ -717,7 +717,7 @@ export default function StockRejections() {
                 <label className="flex items-center justify-center px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 transition-colors">
                   <Camera className="w-5 h-5 mr-2 text-gray-400" />
                   <span className="text-sm text-gray-600">{t('uploadPhotos') || 'Upload Photos'}</span>
-                  <input
+                  <input name="file_upload" aria-label="Upload file"
                     type="file"
                     accept="image/*"
                     multiple

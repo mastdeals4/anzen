@@ -221,7 +221,7 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
     });
 
     if (error) throw error;
-    const journalIds = Array.from(new Set((lines || []).map((line: any) => line.journal_entry_id).filter(Boolean)));
+    const journalIds: string[] = Array.from(new Set((lines || []).map((line: any) => line.journal_entry_id).filter(Boolean) as string[]));
     const allocations = journalIds.length
       ? await fetchInBatches<any>(
           journalIds,
@@ -812,7 +812,7 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
         {selectedReport === 'bank_ledger' && (
           <div className="mb-4 flex items-center gap-2">
             <label className="text-sm font-medium text-slate-700">Bank Account:</label>
-            <select
+            <select name="bank_account" aria-label="Bank Account"
               value={selectedBankAccount}
               onChange={(e) => setSelectedBankAccount(e.target.value)}
               className="px-1.5 py-1 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"

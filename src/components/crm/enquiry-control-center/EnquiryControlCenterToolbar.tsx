@@ -33,7 +33,7 @@ export const EnquiryControlCenterToolbar: React.FC<EnquiryControlCenterToolbarPr
         <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400">
           <Search className="w-4 h-4" />
         </div>
-        <input
+        <input name="search" aria-label="Search enquiry #, company, or product..."
           type="text"
           value={search}
           onChange={e => onSearchChange(e.target.value)}
@@ -66,7 +66,7 @@ export const EnquiryControlCenterToolbar: React.FC<EnquiryControlCenterToolbarPr
         {/* Page Size Selector */}
         <div className="flex items-center gap-1.5">
           <span className="text-gray-400">Show:</span>
-          <select
+          <select name="page_size" aria-label="Page Size"
             value={pageSize}
             onChange={e => onPageSizeChange(Number(e.target.value))}
             className="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500"

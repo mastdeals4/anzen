@@ -666,7 +666,7 @@ export const EnquiryDetailDrawer: React.FC<EnquiryDetailDrawerProps> = ({
                 channel={item.channel}
                 senderAddress={item.senderAddress}
                 senderName={item.senderName}
-                onRefresh={handleRefresh}
+                onRefresh={refreshEnquiryData}
               />
             ))}
           </div>

@@ -221,7 +221,7 @@ export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourc
           <div>
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs font-medium text-gray-600 w-8">To:</label>
-              <input
+              <input name="to" aria-label="To"
                 type="text"
                 value={toEmail}
                 onChange={(e) => setToEmail(e.target.value)}
@@ -237,7 +237,7 @@ export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourc
           {showCc && (
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-gray-600 w-8">Cc:</label>
-              <input
+              <input name="cc" aria-label="Cc"
                 type="text"
                 value={ccEmail}
                 onChange={(e) => setCcEmail(e.target.value)}
@@ -251,7 +251,7 @@ export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourc
           {showBcc && (
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-gray-600 w-8">Bcc:</label>
-              <input
+              <input name="bcc" aria-label="Bcc"
                 type="text"
                 value={bccEmail}
                 onChange={(e) => setBccEmail(e.target.value)}
@@ -264,7 +264,7 @@ export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourc
           {/* Subject */}
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-gray-600 w-8">Subject:</label>
-            <input
+            <input name="subject" aria-label="Subject"
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}

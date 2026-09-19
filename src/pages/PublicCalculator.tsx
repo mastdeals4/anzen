@@ -128,7 +128,7 @@ function PctField({ label, value, onChange }: { label: string; value: string; on
     <div className="flex flex-col">
       <label className={labelCls}>{label}</label>
       <div className="flex items-center">
-        <input
+        <input name="label" aria-label="{label}"
           type="number" step="any" min="0"
           className="w-full px-2.5 py-1.5 border border-gray-300 rounded-l-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
           value={value} onChange={(e) => onChange(e.target.value)} placeholder="0"
@@ -160,7 +160,7 @@ function InsuranceField({ section, inputs, setInput }: { section: string; inputs
         </button>
         {applyIns ? (
           <div className="flex items-center flex-1">
-            <input
+            <input name="inputs" aria-label="0"
               type="number" step="any" min="0"
               className="w-full px-2 py-1.5 border border-gray-300 rounded-l-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
               value={inputs[section].insurance_percent}
@@ -188,7 +188,7 @@ function FreightField({ section, inputs, setInput, mode }: { section: string; in
     <div className="flex flex-col">
       <label className={labelCls}>Freight</label>
       <div className="flex">
-        <select
+        <select name="freight" aria-label="Freight"
           className="px-2 py-1.5 border border-gray-300 rounded-l-md text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white flex-shrink-0"
           value={freightType} onChange={(e) => setInput(section, 'freight_type', e.target.value)}
         >
@@ -197,7 +197,7 @@ function FreightField({ section, inputs, setInput, mode }: { section: string; in
           {mode === 'fcl' && <option value="usd_per_container">$/cont</option>}
         </select>
         {freightType === 'percent' ? (
-          <input
+          <input name="freight_value" aria-label="{placeholder}"
             type="number" step="any" min="0"
             className="w-full px-2 py-1.5 border border-l-0 border-r-0 border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
             value={freightValue} onChange={(e) => setInput(section, 'freight_value', e.target.value)} placeholder={placeholder}
@@ -525,14 +525,14 @@ export function PublicCalculator() {
                 <PctField label="Import Duty" value={inputs.fcl.duty_percent}
                   onChange={(v) => setInput('fcl', 'duty_percent', v)} />
                 <Field label="Container">
-                  <select className={inputCls} value={inputs.fcl.container_type}
+                  <select name="inputs" aria-label="Inputs" className={inputCls} value={inputs.fcl.container_type}
                     onChange={(e) => setInput('fcl', 'container_type', e.target.value)}>
                     <option value="20ft">20ft Container</option>
                     <option value="40ft">40ft Container</option>
                   </select>
                 </Field>
                 <Field label="Packing Type">
-                  <select className={inputCls} value={inputs.fcl.packing_type}
+                  <select name="inputs" aria-label="Inputs" className={inputCls} value={inputs.fcl.packing_type}
                     onChange={(e) => setInput('fcl', 'packing_type', e.target.value)}>
                     {FCL_PACKING_OPTIONS.map(o => (
                       <option key={o.value} value={o.value}>{o.label}</option>
@@ -540,7 +540,7 @@ export function PublicCalculator() {
                   </select>
                 </Field>
                 <Field label="Selling Qty (kg)">
-                  <input type="number" step="any" className={inputCls} value={inputs.fcl.selling_quantity}
+                  <input name="inputs" aria-label="0" type="number" step="any" className={inputCls} value={inputs.fcl.selling_quantity}
                     onChange={(e) => setInput('fcl', 'selling_quantity', e.target.value)} placeholder="0" />
                 </Field>
               </div>
@@ -566,16 +566,16 @@ export function PublicCalculator() {
               <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
                 <PurchasePriceField section="lcl" inputs={inputs} setInput={setInput} inrRate={inrRate} />
                 <Field label="Product Qty (kg)">
-                  <input type="number" step="any" className={inputCls} value={inputs.lcl.product_qty}
+                  <input name="inputs" aria-label="e.g. 100" type="number" step="any" className={inputCls} value={inputs.lcl.product_qty}
                     onChange={(e) => setInput('lcl', 'product_qty', e.target.value)} placeholder="e.g. 100" />
                 </Field>
                 <Field label="Total Shipment Qty (kg)">
-                  <input type="number" step="any" className={`${inputCls} ${!inputs.lcl.total_shipment_qty ? 'border-amber-400' : ''}`}
+                  <input name="inputs" aria-label="e.g. 5000" type="number" step="any" className={`${inputCls} ${!inputs.lcl.total_shipment_qty ? 'border-amber-400' : ''}`}
                     value={inputs.lcl.total_shipment_qty}
                     onChange={(e) => setInput('lcl', 'total_shipment_qty', e.target.value)} placeholder="e.g. 5000" />
                 </Field>
                 <Field label="Packing Type">
-                  <select className={inputCls} value={inputs.lcl.packing_type}
+                  <select name="inputs" aria-label="Inputs" className={inputCls} value={inputs.lcl.packing_type}
                     onChange={(e) => setInput('lcl', 'packing_type', e.target.value)}>
                     {LCL_PACKING_OPTIONS.map(o => (
                       <option key={o.value} value={o.value}>{o.label}</option>
@@ -616,7 +616,7 @@ export function PublicCalculator() {
               <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4 lg:grid-cols-4">
                 <PurchasePriceField section="air" inputs={inputs} setInput={setInput} inrRate={inrRate} />
                 <Field label="Shipment Weight (kg)">
-                  <input type="number" step="any" className={inputCls} value={inputs.air.weight}
+                  <input name="weight" aria-label="0" type="number" step="any" className={inputCls} value={inputs.air.weight}
                     onChange={(e) => setInput('air', 'weight', e.target.value)} placeholder="0" />
                 </Field>
                 <PctField label="India Margin" value={inputs.air.india_margin_percent}

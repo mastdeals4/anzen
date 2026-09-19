@@ -796,7 +796,7 @@ export default function SalesOrders() {
         <div className="p-2 border-b flex flex-col md:flex-row gap-2">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input
+            <input name="search_term" aria-label="Search by SO number, PO number, customer, or product..."
               type="text"
               placeholder="Search by SO number, PO number, customer, or product..."
               value={searchTerm}
@@ -804,7 +804,7 @@ export default function SalesOrders() {
               className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg"
             />
           </div>
-          <select
+          <select name="status_filter" aria-label="Status Filter"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="border rounded-lg px-3 py-1.5 text-sm"
@@ -1071,7 +1071,7 @@ export default function SalesOrders() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Rejection Reason <span className="text-red-500">*</span>
               </label>
-              <textarea
+              <textarea name="rejection_reason" aria-label="Enter reason for rejecting this sales order..."
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
                 rows={4}
@@ -1117,7 +1117,7 @@ export default function SalesOrders() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Archive Reason <span className="text-red-500">*</span>
               </label>
-              <textarea
+              <textarea name="archive_reason" aria-label="Enter reason for archiving this sales order (e.g., Completed and delivered, Cancelled by customer)..."
                 value={archiveReason}
                 onChange={(e) => setArchiveReason(e.target.value)}
                 rows={4}

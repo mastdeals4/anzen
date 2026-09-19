@@ -196,7 +196,7 @@ export const CreateTaskFromRequestModal: React.FC<CreateTaskFromRequestModalProp
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             Task Title <span className="text-rose-500">*</span>
           </label>
-          <input
+          <input name="title" aria-label="What action needs to be completed?"
             type="text"
             value={title}
             onChange={e => setTitle(e.target.value)}
@@ -211,7 +211,7 @@ export const CreateTaskFromRequestModal: React.FC<CreateTaskFromRequestModalProp
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             Action Instructions / Internal Notes
           </label>
-          <textarea
+          <textarea name="action_instructions_internal_n" aria-label="Action Instructions / Internal Notes"
             value={description}
             onChange={e => setDescription(e.target.value)}
             rows={3}
@@ -224,7 +224,7 @@ export const CreateTaskFromRequestModal: React.FC<CreateTaskFromRequestModalProp
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Priority</label>
-            <select
+            <select name="priority" aria-label="Priority"
               value={priority}
               onChange={e => setPriority(e.target.value as any)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-2 focus:ring-blue-500"
@@ -240,7 +240,7 @@ export const CreateTaskFromRequestModal: React.FC<CreateTaskFromRequestModalProp
             <label className="block text-xs font-semibold text-gray-700 mb-1">
               Deadline Date <span className="text-rose-500">*</span>
             </label>
-            <input
+            <input name="deadline_date" aria-label="Deadline Date"
               type="date"
               value={deadlineDate}
               onChange={e => setDeadlineDate(e.target.value)}
@@ -251,7 +251,7 @@ export const CreateTaskFromRequestModal: React.FC<CreateTaskFromRequestModalProp
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Time</label>
-            <input
+            <input name="time" aria-label="Time"
               type="time"
               value={deadlineTime}
               onChange={e => setDeadlineTime(e.target.value)}
@@ -275,7 +275,7 @@ export const CreateTaskFromRequestModal: React.FC<CreateTaskFromRequestModalProp
                     isSelected ? 'bg-blue-100 text-blue-900 font-medium' : 'hover:bg-gray-100 text-gray-700'
                   }`}
                 >
-                  <input
+                  <input name="checkbox" aria-label="Checkbox"
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => handleUserToggle(u.id)}

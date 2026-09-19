@@ -1144,7 +1144,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
         <div className="h-4 w-px bg-gray-300"></div>
 
-        <select
+        <select name="category_filter" aria-label="Category Filter"
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
           className="h-6 px-1.5 border border-gray-300 rounded text-[11px] bg-white"
@@ -1161,7 +1161,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
         <div className="relative">
           <Search className="absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
-          <input
+          <input name="search_query"
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -1417,7 +1417,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
         <form id="petty-cash-form" onSubmit={handleSubmit} className="flex flex-col gap-1.5" onPaste={handlePaste}>
           <SapRow>
             <SapField label="Type" required span={4}>
-              <select value={formData.transaction_type}
+              <select name="transaction_type" aria-label="Transaction Type" value={formData.transaction_type}
                 onChange={(e) => {
                   const transactionType = e.target.value as 'withdraw' | 'expense';
                   setFormData(prev => ({
@@ -1435,7 +1435,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
               </select>
             </SapField>
             <SapField label="Date" required span={4}>
-              <input type="date" value={formData.transaction_date}
+              <input name="transaction_date" aria-label="Transaction Date" type="date" value={formData.transaction_date}
                 onChange={(e) => setFormData({ ...formData, transaction_date: e.target.value })}
                 className={SAP_INPUT} required />
             </SapField>
@@ -1472,7 +1472,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
               <SapRow>
                 <SapField label={`Container${selectedCategory?.requiresContainer ? ' *' : ''}`} span={6}>
-                  <select value={formData.import_container_id}
+                  <select name="import_container_id" aria-label="Import Container Id" value={formData.import_container_id}
                     onChange={(e) => setFormData({ ...formData, import_container_id: e.target.value })}
                     className={SAP_INPUT} required={selectedCategory?.requiresContainer}>
                     <option value="">None</option>
@@ -1482,7 +1482,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                   </select>
                 </SapField>
                 <SapField label="DC (Sales)" span={6}>
-                  <select value={formData.delivery_challan_id}
+                  <select name="delivery_challan_id" aria-label="Delivery Challan Id" value={formData.delivery_challan_id}
                     onChange={(e) => setFormData({ ...formData, delivery_challan_id: e.target.value })}
                     className={SAP_INPUT}>
                     <option value="">None</option>
@@ -1497,12 +1497,12 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
               <SapRow>
                 <SapField label="Paid To" span={6}>
-                  <input type="text" value={formData.paid_to}
+                  <input name="paid_to" aria-label="Vendor/Supplier name" type="text" value={formData.paid_to}
                     onChange={(e) => setFormData({ ...formData, paid_to: e.target.value })}
                     className={SAP_INPUT} placeholder="Vendor/Supplier name" />
                 </SapField>
                 <SapField label="Paid By" span={6}>
-                  <input type="text" value={formData.paid_by_staff_name}
+                  <input name="paid_by_staff_name" aria-label="Staff member name" type="text" value={formData.paid_by_staff_name}
                     onChange={(e) => setFormData({ ...formData, paid_by_staff_name: e.target.value })}
                     className={SAP_INPUT} placeholder="Staff member name" />
                 </SapField>
@@ -1514,7 +1514,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
             <>
               <SapRow>
                 <SapField label="Source Type" required span={4}>
-                  <select
+                  <select name="inflow_source_type" aria-label="Inflow Source Type"
                     value={formData.inflow_source_type}
                     onChange={(e) => {
                       const sourceType = e.target.value as 'bank' | 'account';
@@ -1536,7 +1536,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                 </SapField>
                 {formData.inflow_source_type === 'bank' ? (
                   <SapField label="Source Bank" required span={8}>
-                    <select
+                    <select name="bank_account_id" aria-label="Bank Account Id"
                       value={formData.bank_account_id}
                       onChange={(e) => {
                         setFormData(prev => ({
@@ -1559,7 +1559,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                   </SapField>
                 ) : (
                   <SapField label="Offset GL Account" required span={8}>
-                    <select
+                    <select name="source_account_id" aria-label="Source Account Id"
                       value={formData.source_account_id}
                       onChange={(e) => setFormData(prev => ({ ...prev, source_account_id: e.target.value }))}
                       className={SAP_INPUT}
@@ -1599,12 +1599,12 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
               <SapRow>
                 <SapField label="Source Ref" span={6}>
-                  <input type="text" value={formData.source}
+                  <input name="source" aria-label="Check number, transfer ref" type="text" value={formData.source}
                     onChange={(e) => setFormData({ ...formData, source: e.target.value })}
                     className={SAP_INPUT} placeholder="Check number, transfer ref" />
                 </SapField>
                 <SapField label="Received By" span={6}>
-                  <input type="text" value={formData.received_by_staff_name}
+                  <input name="received_by_staff_name" aria-label="Staff member name" type="text" value={formData.received_by_staff_name}
                     onChange={(e) => setFormData({ ...formData, received_by_staff_name: e.target.value })}
                     className={SAP_INPUT} placeholder="Staff member name" />
                 </SapField>
@@ -1614,7 +1614,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
           <SapRow>
             <SapField label="Description" span={12}>
-              <input type="text" value={formData.description}
+              <input name="description" aria-label="Enter transaction details" type="text" value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className={SAP_INPUT} required placeholder="Enter transaction details" />
             </SapField>
@@ -2054,7 +2054,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Reason for cancelling posting <span className="text-red-500">*</span></label>
-              <textarea
+              <textarea name="cancel_posting_reason" aria-label="Reason (e.g. wrong amount entered, incorrect category)..."
                 value={cancelPostingReason}
                 onChange={e => setCancelPostingReason(e.target.value)}
                 rows={3}
@@ -2087,7 +2087,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
         <Modal isOpen={pcRejectionModalOpen} onClose={() => { setPcRejectionModalOpen(false); setPcRejectionReason(''); }} title="Reject Petty Cash Entry">
           <div className="space-y-2">
             <p className="text-sm text-gray-600">Please provide a reason for rejecting this petty cash entry.</p>
-            <textarea
+            <textarea name="pc_rejection_reason" aria-label="Reason for rejection..."
               value={pcRejectionReason}
               onChange={e => setPcRejectionReason(e.target.value)}
               rows={3}

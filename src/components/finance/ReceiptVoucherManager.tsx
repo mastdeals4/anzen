@@ -699,7 +699,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       <div className="flex items-center gap-2 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input
+          <input name="search_term" aria-label="Search receipts..."
             type="text"
             placeholder="Search receipts..."
             value={searchTerm}
@@ -793,7 +793,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
         <form id="receipt-voucher-form" onSubmit={handleSubmit} className="flex flex-col gap-1.5">
           <SapRow>
             <SapField label="Date" required span={4}>
-              <input type="date" required value={formData.voucher_date}
+              <input name="voucher_date" aria-label="Voucher Date" type="date" required value={formData.voucher_date}
                 onChange={(e) => setFormData({ ...formData, voucher_date: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
@@ -812,7 +812,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
               )}
             </SapField>
             <SapField label="Method" required span={4}>
-              <select required value={formData.payment_method}
+              <select name="payment_method" aria-label="Payment Method" required value={formData.payment_method}
                 onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
                 className={SAP_INPUT}>
                 <option value="cash">Cash</option>
@@ -833,7 +833,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
             {formData.payment_method !== 'cash' && (
               <>
                 <SapField label="Bank Account" span={4}>
-                  <select value={formData.bank_account_id}
+                  <select name="bank_account_id" aria-label="Bank Account Id" value={formData.bank_account_id}
                     onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
                     className={SAP_INPUT}>
                     <option value="">Select account</option>
@@ -845,7 +845,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                   </select>
                 </SapField>
                 <SapField label="Reference" span={4}>
-                  <input type="text" value={formData.reference_number}
+                  <input name="reference_number" aria-label="Check/Transfer reference" type="text" value={formData.reference_number}
                     onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
                     className={SAP_INPUT} placeholder="Check/Transfer reference" />
                 </SapField>
@@ -855,7 +855,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
 
           <SapRow>
             <SapField label="Description" span={12}>
-              <input type="text" value={formData.description}
+              <input name="description" aria-label="Receipt description..." type="text" value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className={SAP_INPUT} placeholder="Receipt description..." />
             </SapField>
@@ -1156,7 +1156,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Reason (optional)</label>
-              <textarea
+              <textarea name="reason_optional" aria-label="Reason (optional)"
                 value={cancelPostingReason}
                 onChange={(e) => setCancelPostingReason(e.target.value)}
                 rows={3}

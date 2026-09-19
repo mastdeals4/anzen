@@ -35,7 +35,7 @@ import {
 } from '../utils/customerValidation';
 import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
 
-interface Inquiry {
+export interface Inquiry {
   id: string;
   inquiry_number: string;
   inquiry_date: string;
@@ -52,6 +52,8 @@ interface Inquiry {
   mail_subject?: string | null;
   status: string;
   pipeline_status?: string;
+  assigned_to?: string | null;
+  next_follow_up?: string | null;
   priority: string;
   coa_sent: boolean;
   coa_sent_date: string | null;

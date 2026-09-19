@@ -768,7 +768,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Number *</label>
-              <input
+              <input name="payment_number" aria-label="Payment Number"
                 type="text"
                 value={formData.payment_number}
                 onChange={(e) => setFormData({ ...formData, payment_number: e.target.value })}
@@ -779,7 +779,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
-              <input
+              <input name="payment_date" aria-label="Payment Date"
                 type="date"
                 value={formData.payment_date}
                 onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
@@ -801,7 +801,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method *</label>
-              <select
+              <select name="payment_method" aria-label="Payment Method"
                 value={formData.payment_method}
                 onChange={(e) => setFormData({ ...formData, payment_method: e.target.value as any })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -818,7 +818,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
             {formData.payment_method !== 'cash' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Bank Account</label>
-                <select
+                <select name="bank_account" aria-label="Bank Account"
                   value={formData.bank_account_id}
                   onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -835,7 +835,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
-              <input
+              <input name="reference_number" aria-label="Reference Number"
                 type="text"
                 value={formData.reference_number}
                 onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
@@ -846,7 +846,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-              <textarea
+              <textarea name="notes" aria-label="Notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -870,7 +870,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
                   <div key={invoice.id} className="border rounded p-3 space-y-2">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3 flex-1">
-                        <input
+                        <input name="checkbox" aria-label="Checkbox"
                           type="checkbox"
                           checked={isSelected}
                           onChange={(e) => {

@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../../Modal';
 import { useAuth } from '../../../contexts/AuthContext';
 import { EnquiryRequestService } from '../../../services/enquiry/EnquiryRequestService';
-import { EnquiryRequestGridItem } from '../../../types/enquiry/controlCenter.types.ts';
-import { EnquiryRequestStatus, WaitingForParty } from '../../../types/enquiry/enquiryRequest.types';
+import { EnquiryRequestGridItem, EnquiryRequestStatus, WaitingForParty } from '../../../types/enquiry';
 import { showToast } from '../../ToastNotification';
 import { Loader2, CheckCircle, AlertTriangle, XCircle, ArrowRight } from 'lucide-react';
 
@@ -73,7 +72,6 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
         await EnquiryRequestService.resolveRequest({
           request_id: request.id,
           response_text: responseText.trim(),
-          summary: `Request resolved: ${responseText.trim().slice(0, 80)}`,
           actor: {
             actor_type: 'user',
             actor_id: user?.id || null,
@@ -82,8 +80,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
       } else if (status === 'CANCELLED') {
         await EnquiryRequestService.cancelRequest({
           request_id: request.id,
-          reason: cancelReason.trim(),
-          summary: `Request cancelled: ${cancelReason.trim()}`,
+          cancellation_reason: cancelReason.trim(),
           actor: {
             actor_type: 'user',
             actor_id: user?.id || null,
@@ -92,6 +89,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
       } else {
         await EnquiryRequestService.transitionState({
           request_id: request.id,
+          event_type: 'status_changed',
           new_status: status,
           new_waiting_for: waitingFor,
           current_issue: currentIssue.trim() || null,
@@ -144,7 +142,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             Request Status <span className="text-rose-500">*</span>
           </label>
-          <select
+          <select name="status" aria-label="Status"
             value={status}
             onChange={e => setStatus(e.target.value as any)}
             className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-xs bg-white font-medium focus:ring-2 focus:ring-blue-500"
@@ -168,7 +166,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
               <label className="block text-xs font-semibold text-rose-900 mb-1">
                 Current Operational Blocker / Issue <span className="text-rose-600">*</span>
               </label>
-              <textarea
+              <textarea name="issue" aria-label="e.g. 100 mesh unavailable; manufacturer offers 660 mesh only"
                 value={currentIssue}
                 onChange={e => setCurrentIssue(e.target.value)}
                 rows={2}
@@ -190,7 +188,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
               <label className="block text-xs font-semibold text-emerald-900 mb-1">
                 Resolution Details / Deliverable <span className="text-emerald-600">*</span>
               </label>
-              <textarea
+              <textarea name="response_text" aria-label="e.g. COA provided from manufacturer and confirmed compliant with USP specifications."
                 value={responseText}
                 onChange={e => setResponseText(e.target.value)}
                 rows={2}
@@ -212,7 +210,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
               <label className="block text-xs font-semibold text-gray-700 mb-1">
                 Cancellation Reason <span className="text-rose-500">*</span>
               </label>
-              <input
+              <input name="cancel_reason" aria-label="e.g. Customer cancelled inquiry; or sample no longer requested"
                 type="text"
                 value={cancelReason}
                 onChange={e => setCancelReason(e.target.value)}
@@ -229,7 +227,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
             {/* Waiting For */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">Waiting For</label>
-              <select
+              <select name="waiting_for" aria-label="Waiting For"
                 value={waitingFor}
                 onChange={e => setWaitingFor(e.target.value as any)}
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-2 focus:ring-blue-500"
@@ -245,7 +243,7 @@ export const TransitionRequestStateModal: React.FC<TransitionRequestStateModalPr
             {/* Next Action */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">Next Action</label>
-              <input
+              <input name="next_action" aria-label="Next Action"
                 type="text"
                 value={nextAction}
                 onChange={e => setNextAction(e.target.value)}

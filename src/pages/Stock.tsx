@@ -213,7 +213,7 @@ export function Stock() {
           <div className="p-2 border-b">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
+              <input name="search_term" aria-label="Search products..."
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}

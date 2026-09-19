@@ -47,11 +47,11 @@ export function FinanceButton({
 }
 
 export function FinanceInput({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`${INPUT} ${className}`} {...props} />;
+  return <input name="field" aria-label="Field" className={`${INPUT} ${className}`} {...props} />;
 }
 
 export function FinanceSelect({ className = '', ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={`${SELECT} ${className}`} {...props} />;
+  return <select name="field" aria-label="Field" className={`${SELECT} ${className}`} {...props} />;
 }
 
 export type FinanceStatus =

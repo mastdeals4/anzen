@@ -220,7 +220,7 @@ export function BankTransactionLinkField({
         <div className="space-y-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input
+            <input name="search_term" aria-label="Search date, amount, narration, reference, or bank..."
               autoFocus
               type="search"
               value={searchTerm}

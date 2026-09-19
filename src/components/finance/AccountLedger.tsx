@@ -415,7 +415,7 @@ export function AccountLedger({ initialCode, onCodeConsumed, onOpenJournal }: Ac
       <div className="flex items-center gap-1.5 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded flex-wrap">
         <div className="relative flex-1 min-w-[180px] max-w-sm">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input
+          <input name="search_term" aria-label="Search account..."
             type="text"
             placeholder="Search account..."
             value={searchTerm}
@@ -423,7 +423,7 @@ export function AccountLedger({ initialCode, onCodeConsumed, onOpenJournal }: Ac
             className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
           />
         </div>
-        <select
+        <select name="account" aria-label="Account"
           value={selectedAccount?.id || ''}
           onChange={(e) => {
             const account = accounts.find(a => a.id === e.target.value);

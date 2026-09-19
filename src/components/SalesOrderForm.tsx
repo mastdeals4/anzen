@@ -744,7 +744,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
 
         <div className="md:col-span-3">
           <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.customerPoNumber')} *</label>
-          <input
+          <input name="t_salesorders_customerponumber" aria-label="{t('salesOrders.customerPoNumber')}"
             type="text"
             value={formData.customer_po_number}
             onChange={(e) => setFormData({ ...formData, customer_po_number: e.target.value })}
@@ -755,7 +755,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
 
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.customerPoDate')} *</label>
-          <input
+          <input name="t_salesorders_customerpodate" aria-label="{t('salesOrders.customerPoDate')}"
             type="date"
             value={formData.customer_po_date}
             onChange={(e) => setFormData({ ...formData, customer_po_date: e.target.value })}
@@ -766,7 +766,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
 
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.soDate')}</label>
-          <input
+          <input name="t_salesorders_sodate" aria-label="{t('salesOrders.soDate')}"
             type="date"
             value={formData.so_date}
             onChange={(e) => setFormData({ ...formData, so_date: e.target.value })}
@@ -776,7 +776,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
 
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-gray-700 mb-0.5">Currency *</label>
-          <select
+          <select name="currency" aria-label="Currency"
             value={formData.currency}
             onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
             className="w-full border rounded-md px-2 py-1.5 text-sm"
@@ -810,7 +810,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
 
         <div className="md:col-span-2">
           <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.expectedDeliveryDate')}</label>
-          <input
+          <input name="t_salesorders_expecteddelivery" aria-label="{t('salesOrders.expectedDeliveryDate')}"
             type="date"
             value={formData.expected_delivery_date}
             onChange={(e) => setFormData({ ...formData, expected_delivery_date: e.target.value })}
@@ -837,7 +837,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
             </div>
           )}
           <div className="flex items-center gap-2">
-            <input
+            <input name="file_upload" aria-label="Upload file"
               type="file"
               accept=".pdf,.jpg,.jpeg,.png"
               onChange={(e) => setPoFile(e.target.files?.[0] || null)}
@@ -865,7 +865,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
 
       <div>
         <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.notes')}</label>
-        <textarea
+        <textarea name="t_salesorders_notes" aria-label="{t('salesOrders.notes')}"
           value={formData.notes}
           onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
           className="w-full border rounded-md px-2 py-1.5 text-sm"
@@ -929,7 +929,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
                       disabled={!item.product_id}
                     />
                   </td>
-                  <td className="px-2 py-1 align-top"><input type="text" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const val = e.target.value; handleItemChange(index, 'quantity', val === '' ? 0 : (parseFloat(val) || 0)); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" required /></td>
+                  <td className="px-2 py-1 align-top"><input name="quantity" aria-label="0" type="text" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const val = e.target.value; handleItemChange(index, 'quantity', val === '' ? 0 : (parseFloat(val) || 0)); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" required /></td>
                   <td className="px-2 py-1 align-top">
                     <MoneyInput
                       value={item.unit_price}
@@ -954,10 +954,10 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
                       className="w-full border rounded px-2 py-1 text-xs text-right"
                     />
                   </td>
-                  <td className="px-2 py-1 align-top"><input type="text" value={item.discount_percent === 0 ? '' : item.discount_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'discount_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
-                  <td className="px-2 py-1 align-top"><input type="text" value={item.tax_percent === 0 ? '' : item.tax_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'tax_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
-                  <td className="px-2 py-1 align-top"><input type="date" value={item.item_delivery_date} onChange={(e) => handleItemChange(index, 'item_delivery_date', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
-                  <td className="px-2 py-1 align-top"><input type="text" value={item.notes} onChange={(e) => handleItemChange(index, 'notes', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
+                  <td className="px-2 py-1 align-top"><input name="discount_percent" aria-label="0" type="text" value={item.discount_percent === 0 ? '' : item.discount_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'discount_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
+                  <td className="px-2 py-1 align-top"><input name="tax_percent" aria-label="0" type="text" value={item.tax_percent === 0 ? '' : item.tax_percent} onChange={(e) => { const val = e.target.value; const num = val === '' ? 0 : parseFloat(val); if (val === '' || (!isNaN(num) && num >= 0 && num <= 100)) handleItemChange(index, 'tax_percent', val === '' ? 0 : num); }} className="w-full border rounded px-2 py-1 text-xs text-right" placeholder="0" /></td>
+                  <td className="px-2 py-1 align-top"><input name="item_delivery_date" aria-label="Item Delivery Date" type="date" value={item.item_delivery_date} onChange={(e) => handleItemChange(index, 'item_delivery_date', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
+                  <td className="px-2 py-1 align-top"><input name="notes" aria-label="Notes" type="text" value={item.notes} onChange={(e) => handleItemChange(index, 'notes', e.target.value)} className="w-full border rounded px-2 py-1 text-xs" /></td>
                   <td className="px-2 py-1 text-right align-top font-medium whitespace-nowrap">{formatCurrency(item.line_total)}</td>
                   <td className="px-2 py-1 text-center align-top">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
                 </tr>

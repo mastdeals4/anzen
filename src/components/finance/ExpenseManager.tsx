@@ -43,7 +43,7 @@ function PpnModeToggle({ value, onChange }: {
   onChange: (mode: 'standard' | 'dpp_nilai_lain' | 'manual') => void;
 }) {
   return (
-    <select
+    <select name="value" aria-label="Value"
       value={value || 'standard'}
       onChange={(e) => onChange(e.target.value as 'standard' | 'dpp_nilai_lain' | 'manual')}
       title="PPN calculation mode"
@@ -72,7 +72,7 @@ function BrokerPpnRateSelector({ rate, isCustom, onChange }: {
     : 'custom';
   return (
     <div className="flex items-center gap-1 w-full">
-      <select
+      <select name="preset" aria-label="Preset"
         value={preset}
         onChange={(e) => {
           const v = e.target.value;
@@ -90,7 +90,7 @@ function BrokerPpnRateSelector({ rate, isCustom, onChange }: {
         <option value="custom">Custom</option>
       </select>
       {isCustom && (
-        <input
+        <input name="rate" aria-label="Custom %"
           type="number" min="0" max="100" step="0.5"
           value={rate === 0 ? '' : rate}
           onChange={(e) => {
@@ -2596,7 +2596,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           ))}
         </div>
 
-        <select
+        <select name="category_filter" aria-label="Category Filter"
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
           className="h-6 px-1.5 border border-gray-300 rounded text-[11px] bg-white"
@@ -2612,7 +2612,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         </select>
 
         {suppliers.length > 0 && (
-          <select
+          <select name="supplier_filter" aria-label="Supplier Filter"
             value={supplierFilter}
             onChange={(e) => setSupplierFilter(e.target.value)}
             className="h-6 px-1.5 border border-gray-300 rounded text-[11px] bg-white"
@@ -2627,7 +2627,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         <div className="relative">
           <Search className="absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
-          <input
+          <input name="search_query"
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -3055,7 +3055,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       label={rules.billingMonth === 'show' ? 'Billing Date' : 'Date'}
                       required span={3}
                     >
-                      <input type="date" value={formData.expense_date}
+                      <input name="expense_date" aria-label="Expense Date" type="date" value={formData.expense_date}
                         onChange={(e) => {
                           const d = e.target.value;
                           setFormData(prev => ({
@@ -3070,7 +3070,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       label={rules.billingMonth === 'show' ? 'Billing Reference' : 'Supplier Invoice Number'}
                       span={3}
                     >
-                      <input type="text" value={formData.invoice_number}
+                      <input name="invoice_number" aria-label="{rules.billingMonth === show ? Bill number / account ref : Enter invoice number}" type="text" value={formData.invoice_number}
                         onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
                         className={SAP_INPUT}
                         placeholder={rules.billingMonth === 'show' ? 'Bill number / account ref' : 'Enter invoice number'} />
@@ -3220,7 +3220,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     )}
                     {rules.workingDays === 'show' && (
                       <SapField label="Working Days (for TER)" span={3}>
-                        <input
+                        <input name="working_days" aria-label="Working Days"
                           type="number"
                           min="1"
                           max="31"
@@ -3258,7 +3258,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     <SapRow>
                       {rules.salaryMonth === 'show' ? (
                         <SapField label="Salary Month" required span={3}>
-                          <select value={normalizeSalaryPeriod(periodLabel || currentFinancePeriod())}
+                          <select name="normalize_salary_period" aria-label="Normalize Salary Period" value={normalizeSalaryPeriod(periodLabel || currentFinancePeriod())}
                             onChange={(e) => setPeriodLabel(e.target.value)}
                             className={SAP_INPUT}>
                             {SALARY_PERIOD_OPTIONS.map(({ value, label }) => (
@@ -3268,7 +3268,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         </SapField>
                       ) : (
                         <SapField label="Billing Month" required span={3}>
-                          <select value={normalizeSalaryPeriod(periodLabel || currentFinancePeriod())}
+                          <select name="normalize_salary_period" aria-label="Normalize Salary Period" value={normalizeSalaryPeriod(periodLabel || currentFinancePeriod())}
                             onChange={(e) => setPeriodLabel(e.target.value)}
                             className={SAP_INPUT} title="The month this bill covers">
                             {SALARY_PERIOD_OPTIONS.map(({ value, label }) => (
@@ -3539,7 +3539,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                   {/* ── Row E: Description (full width) ── */}
                   <SapRow>
                     <SapField label="Invoice Description" span={12}>
-                      <input type="text" value={formData.description}
+                      <input name="description" aria-label="Describe what this invoice covers..." type="text" value={formData.description}
                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                         className={SAP_INPUT} placeholder="Describe what this invoice covers..." />
                     </SapField>
@@ -3738,19 +3738,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                   </div>
                                   {/* Invoice No */}
                                   <div className="border-r border-gray-200">
-                                    <input type="text" value={item.invoice_number || ''}
+                                    <input name="invoice_number" aria-label="Enter invoice number" type="text" value={item.invoice_number || ''}
                                       onChange={(e) => updateLine(idx, { invoice_number: e.target.value })}
                                       className={cellInputCls} placeholder="Enter invoice number" />
                                   </div>
                                   {/* Tax Invoice # (Faktur Pajak) */}
                                   <div className="border-r border-gray-200">
-                                    <input type="text" value={item.tax_invoice_number || ''}
+                                    <input name="tax_invoice_number" aria-label="Faktur Pajak #" type="text" value={item.tax_invoice_number || ''}
                                       onChange={(e) => updateLine(idx, { tax_invoice_number: e.target.value })}
                                       className={cellInputCls} placeholder="Faktur Pajak #" title="Faktur Pajak number" />
                                   </div>
                                   {/* Invoice Date */}
                                   <div className="border-r border-gray-200">
-                                    <input type="date" value={item.invoice_date || ''}
+                                    <input name="invoice_date" aria-label="Invoice Date" type="date" value={item.invoice_date || ''}
                                       onChange={(e) => updateLine(idx, { invoice_date: e.target.value })}
                                       className={cellInputCls + ' font-mono'} title="Select invoice date" />
                                   </div>
@@ -3768,7 +3768,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                   </div>
                                   {/* PPN % — typing 11 → PPN Amt = DPP × 11% (Auto) */}
                                   <div className="border-r border-gray-200">
-                                    <input type="number" min="0" max="100" step="0.5"
+                                    <input name="rate_display" aria-label="0" type="number" min="0" max="100" step="0.5"
                                       value={rateDisplay === 0 ? '' : rateDisplay}
                                       onChange={(e) => {
                                         const rate = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
@@ -3939,7 +3939,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Method <span className="text-red-500">*</span></label>
-                  <select value={formData.payment_method ?? 'outstanding'}
+                  <select name="payment_method" aria-label="Payment Method" value={formData.payment_method ?? 'outstanding'}
                     onChange={(e) => {
                       const val = e.target.value === 'outstanding' ? null : e.target.value;
                       setFormData(prev => ({ ...prev, payment_method: val, bank_account_id: val ? prev.bank_account_id : '' }));
@@ -3963,7 +3963,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 {formData.payment_method !== null && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Bank Account <span className="text-red-500">*</span></label>
-                    <select value={formData.bank_account_id}
+                    <select name="bank_account_id" aria-label="Bank Account Id" value={formData.bank_account_id}
                       onChange={(e) => {
                         const bank = bankAccounts.find(item => item.id === e.target.value);
                         const currency = normalizeCurrency(bank?.currency) as 'IDR' | 'USD';
@@ -3982,7 +3982,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 {formData.payment_method === null && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Transaction Currency <span className="text-red-500">*</span></label>
-                    <select value={formData.transaction_currency}
+                    <select name="transaction_currency" aria-label="Transaction Currency" value={formData.transaction_currency}
                       onChange={(e) => setFormData({ ...formData,
                         transaction_currency: e.target.value as 'IDR' | 'USD',
                         exchange_rate: e.target.value === 'IDR' ? 1 : formData.exchange_rate })}
@@ -4082,7 +4082,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             <p className="text-xs text-gray-500">Minimum info. Fill full details in Suppliers Master later.</p>
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Company Name <span className="text-red-500">*</span></label>
-              <input type="text" value={quickAddSupplierName} autoFocus
+              <input name="quick_add_supplier_name" aria-label="e.g. PT. Mitra Logistik Indonesia" type="text" value={quickAddSupplierName} autoFocus
                 onChange={(e) => setQuickAddSupplierName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleQuickAddSupplier(); } }}
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded text-sm"
@@ -4090,7 +4090,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Supplier Type</label>
-              <select value={quickAddSupplierType}
+              <select name="supplier_type" aria-label="Supplier Type" value={quickAddSupplierType}
                 onChange={(e) => {
                   const st = e.target.value;
                   setQuickAddSupplierType(st);
@@ -4121,7 +4121,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
               </div>
               <div>
                 <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Payment Terms (days)</label>
-                <input type="number" min="0" value={quickAddSupplierTerms}
+                <input name="payment_terms_days" aria-label="Payment Terms (days)" type="number" min="0" value={quickAddSupplierTerms}
                   onChange={(e) => setQuickAddSupplierTerms(parseInt(e.target.value) || 0)}
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded text-sm" />
               </div>
@@ -4976,7 +4976,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             {!cancelPostingBlock && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-red-500">*</span></label>
-                <textarea
+                <textarea name="cancel_posting_reason" aria-label="Reason for cancelling posting..."
                   value={cancelPostingReason}
                   onChange={e => setCancelPostingReason(e.target.value)}
                   rows={3}
@@ -5026,7 +5026,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         <Modal isOpen={rejectionModalOpen} onClose={() => { setRejectionModalOpen(false); setRejectionReason(''); }} title="Reject Expense" size="sm">
           <div className="space-y-4">
             <p className="text-sm text-gray-600">Please provide a reason for rejecting this expense entry.</p>
-            <textarea
+            <textarea name="rejection_reason" aria-label="Reason for rejection..."
               value={rejectionReason}
               onChange={e => setRejectionReason(e.target.value)}
               rows={3}

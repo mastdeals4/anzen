@@ -182,7 +182,7 @@ export function UtilityMasterManager({ canManage }: Props) {
       <div className="flex items-center gap-1.5 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
-          <input
+          <input name="search" aria-label="Search provider / type / account..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search provider / type / account..."
@@ -248,11 +248,11 @@ export function UtilityMasterManager({ canManage }: Props) {
           <form onSubmit={save} className="flex flex-col gap-1.5">
             <SapRow>
               <SapField label="Provider" required span={8}>
-                <input required value={form.provider_name} onChange={e => setForm({ ...form, provider_name: e.target.value })}
+                <input name="provider_name" aria-label="Provider Name" required value={form.provider_name} onChange={e => setForm({ ...form, provider_name: e.target.value })}
                   className={SAP_INPUT} />
               </SapField>
               <SapField label="Type" span={4}>
-                <select value={form.utility_type} onChange={e => setForm({ ...form, utility_type: e.target.value })}
+                <select name="utility_type" aria-label="Utility Type" value={form.utility_type} onChange={e => setForm({ ...form, utility_type: e.target.value })}
                   className={SAP_INPUT}>
                   {UTILITY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
@@ -260,11 +260,11 @@ export function UtilityMasterManager({ canManage }: Props) {
             </SapRow>
             <SapRow>
               <SapField label="Acct #" span={6}>
-                <input value={form.account_number} onChange={e => setForm({ ...form, account_number: e.target.value })}
+                <input name="account_number" aria-label="Account Number" value={form.account_number} onChange={e => setForm({ ...form, account_number: e.target.value })}
                   className={SAP_INPUT + ' !font-mono'} />
               </SapField>
               <SapField label="Status" span={6}>
-                <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as 'active' | 'inactive' })}
+                <select name="status" aria-label="Status" value={form.status} onChange={e => setForm({ ...form, status: e.target.value as 'active' | 'inactive' })}
                   className={SAP_INPUT}>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
@@ -273,12 +273,12 @@ export function UtilityMasterManager({ canManage }: Props) {
             </SapRow>
             <SapRow>
               <SapField label="GL Code" span={4}>
-                <input value={form.default_gl_code} onChange={e => setForm({ ...form, default_gl_code: e.target.value })}
+                <input name="default_gl_code" aria-label="e.g. 6200" value={form.default_gl_code} onChange={e => setForm({ ...form, default_gl_code: e.target.value })}
                   placeholder="e.g. 6200"
                   className={SAP_INPUT + ' !font-mono'} />
               </SapField>
               <SapField label="GL Name" span={8}>
-                <input value={form.default_gl_name} onChange={e => setForm({ ...form, default_gl_name: e.target.value })}
+                <input name="default_gl_name" aria-label="Utilities Expense" value={form.default_gl_name} onChange={e => setForm({ ...form, default_gl_name: e.target.value })}
                   placeholder="Utilities Expense"
                   className={SAP_INPUT} />
               </SapField>
@@ -295,7 +295,7 @@ export function UtilityMasterManager({ canManage }: Props) {
             </SapRow>
             <SapRow>
               <SapField label="Notes" span={12}>
-                <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                <input name="notes" aria-label="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
                   className={SAP_INPUT} />
               </SapField>
             </SapRow>

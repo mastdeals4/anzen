@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import DOMPurify from 'dompurify';
-import { ChevronDown, ChevronUp } from 'lucide-react';
 
 interface EmailBodyViewerProps {
   htmlContent: string;
@@ -9,13 +8,10 @@ interface EmailBodyViewerProps {
 
 export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [iframeHeight, setIframeHeight] = useState(500);
-  const [quotedSectionsCollapsed, setQuotedSectionsCollapsed] = useState<Record<number, boolean>>({});
+  const [iframeHeight, setIframeHeight] = useState(250);
 
-  useEffect(() => {
-    if (!iframeRef.current || !htmlContent) return;
-
-    const iframe = iframeRef.current;
+  const fullHTML = useMemo(() => {
+    if (!htmlContent || htmlContent.trim() === '') return '';
 
     // Decode HTML entities to fix encoding issues
     const decodeHTML = (html: string): string => {
@@ -30,7 +26,7 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
 
     processedHTML = processedHTML.replace(
       /<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi,
-      (match, content, offset) => {
+      (match, content) => {
         const id = Math.random().toString(36).substr(2, 9);
         return `<div class="quoted-section" data-quote-id="${id}">
           <div class="quoted-toggle" onclick="toggleQuote('${id}')">
@@ -133,9 +129,17 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
           margin: 8px 0;
         }
 
+        p:first-child {
+          margin-top: 0;
+        }
+
+        p:last-child {
+          margin-bottom: 0;
+        }
+
         a {
           color: #1a73e8;
-          text-decoration: none;
+          text-decoration: underline;
         }
 
         a:hover {
@@ -168,23 +172,27 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
           color: #666;
         }
 
-        /* Quoted section styling */
+        /* Quoted sections (collapsed by default) */
         .quoted-section {
-          margin: 12px 0;
+          margin: 8px 0;
         }
 
         .quoted-toggle {
-          display: inline-block;
-          color: #1a73e8;
-          cursor: pointer;
-          font-size: 13px;
-          padding: 4px 8px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 2px 8px;
+          background: #f1f3f4;
+          border: 1px solid #dadce0;
           border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          color: #5f6368;
           user-select: none;
         }
 
         .quoted-toggle:hover {
-          background-color: #f0f0f0;
+          background: #e8eaed;
         }
 
         .toggle-icon {
@@ -193,10 +201,10 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
         }
 
         .quoted-content {
-          margin-top: 8px;
-          padding-left: 16px;
-          border-left: 4px solid #ccc;
-          color: #666;
+          margin: 8px 0 8px 16px;
+          padding-left: 12px;
+          border-left: 2px solid #dadce0;
+          color: #5f6368;
         }
 
         /* Headers */
@@ -233,7 +241,7 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
       </style>
     `;
 
-    const fullHTML = `
+    return `
       <!DOCTYPE html>
       <html>
         <head>
@@ -261,66 +269,35 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
         </body>
       </html>
     `;
-
-    // Use Blob with explicit UTF-8 encoding
-    const blob = new Blob([fullHTML], { type: 'text/html; charset=UTF-8' });
-    const blobURL = URL.createObjectURL(blob);
-    iframe.src = blobURL;
-
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!iframeDoc) return;
-
-    // Wait for iframe to load
-    const handleLoad = () => {
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!iframeDoc) return;
-
-        const measureHeight = () => {
-          const body = iframeDoc.body;
-          const html = iframeDoc.documentElement;
-          const height = Math.max(
-            body?.scrollHeight || 0,
-            body?.offsetHeight || 0,
-            html?.clientHeight || 0,
-            html?.scrollHeight || 0,
-            html?.offsetHeight || 0
-          );
-          setIframeHeight(Math.max(height + 20, 100));
-        };
-
-        // Initial measurement
-        measureHeight();
-
-        // Observe size changes
-        const resizeObserver = new ResizeObserver(measureHeight);
-        if (iframeDoc.body) {
-          resizeObserver.observe(iframeDoc.body);
-        }
-
-        // Remeasure after a delay to catch late-loading content
-        setTimeout(measureHeight, 150);
-
-        // Store cleanup in iframe data
-        (iframe as any).__cleanup = () => {
-          resizeObserver.disconnect();
-          URL.revokeObjectURL(blobURL);
-        };
-      } catch (e) {
-        console.error('Error measuring iframe height:', e);
-      }
-    };
-
-    iframe.addEventListener('load', handleLoad);
-
-    return () => {
-      iframe.removeEventListener('load', handleLoad);
-      if ((iframe as any).__cleanup) {
-        (iframe as any).__cleanup();
-      }
-      URL.revokeObjectURL(blobURL);
-    };
   }, [htmlContent]);
+
+  const measureHeight = useCallback(() => {
+    try {
+      const iframe = iframeRef.current;
+      if (!iframe) return;
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
+      const body = iframeDoc.body;
+      const html = iframeDoc.documentElement;
+      const height = Math.max(
+        body?.scrollHeight || 0,
+        body?.offsetHeight || 0,
+        html?.clientHeight || 0,
+        html?.scrollHeight || 0,
+        html?.offsetHeight || 0
+      );
+      if (height > 0) {
+        setIframeHeight(Math.max(height + 20, 100));
+      }
+    } catch {
+      // Ignore cross-origin access errors in sandboxed context
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(measureHeight, 150);
+    return () => clearTimeout(timer);
+  }, [fullHTML, measureHeight]);
 
   if (!htmlContent || htmlContent.trim() === '') {
     return (
@@ -334,13 +311,15 @@ export function EmailBodyViewer({ htmlContent, className = '' }: EmailBodyViewer
     <iframe
       ref={iframeRef}
       title="Email Content"
+      srcDoc={fullHTML}
+      onLoad={measureHeight}
       className={`w-full border-0 ${className}`}
       style={{
         height: `${iframeHeight}px`,
         minHeight: '100px',
         maxHeight: '800px',
       }}
-      sandbox="allow-same-origin"
+      sandbox="allow-scripts allow-popups"
       loading="lazy"
     />
   );

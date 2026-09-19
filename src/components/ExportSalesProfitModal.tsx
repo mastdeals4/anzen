@@ -234,7 +234,7 @@ export function ExportSalesProfitModal({
               {(exportMode === 'this_year' || exportMode === 'specific_month') && (
                 <div>
                   <label className="block text-[11px] font-medium text-gray-700 mb-1">Target Year</label>
-                  <select
+                  <select name="target_year" aria-label="Target Year"
                     value={selectedYear}
                     disabled={loading}
                     onChange={e => setSelectedYear(Number(e.target.value))}
@@ -253,7 +253,7 @@ export function ExportSalesProfitModal({
               {exportMode === 'specific_month' && (
                 <div>
                   <label className="block text-[11px] font-medium text-gray-700 mb-1">Target Month</label>
-                  <select
+                  <select name="target_month" aria-label="Target Month"
                     value={selectedMonth}
                     disabled={loading}
                     onChange={e => setSelectedMonth(Number(e.target.value))}
@@ -273,7 +273,7 @@ export function ExportSalesProfitModal({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[11px] font-medium text-gray-700 mb-1">Start Date</label>
-                    <input
+                    <input name="start_date" aria-label="Start Date"
                       type="date"
                       value={customStart}
                       disabled={loading}
@@ -283,7 +283,7 @@ export function ExportSalesProfitModal({
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium text-gray-700 mb-1">End Date</label>
-                    <input
+                    <input name="end_date" aria-label="End Date"
                       type="date"
                       value={customEnd}
                       disabled={loading}

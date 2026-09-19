@@ -691,22 +691,22 @@ export function PricingWorksheet() {
         </div>
 
         <div className="flex flex-wrap gap-2 items-center mb-2 bg-white border border-gray-200 rounded px-2.5 py-1.5">
-          <input value={search} onChange={e => setSearch(e.target.value)}
+          <input name="search" aria-label="Search inquiry, product, customer, spec, preferred make…" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search inquiry, product, customer, spec, preferred make…"
             className="flex-1 min-w-[200px] border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-          <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
+          <select name="customer_filter" aria-label="Customer Filter" value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
             className="border border-gray-200 rounded px-1.5 py-1 text-xs">
             <option value="all">All customers</option>
             {customerOptions.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value as typeof sourceFilter)}
+          <select name="source_filter" aria-label="Source Filter" value={sourceFilter} onChange={e => setSourceFilter(e.target.value as typeof sourceFilter)}
             className="border border-gray-200 rounded px-1.5 py-1 text-xs">
             <option value="all">All source status</option>
             <option value="received">Source price received</option>
             <option value="no_source">No source price</option>
             <option value="manual">Manual / waiting source</option>
           </select>
-          <select value={priceFilter} onChange={e => setPriceFilter(e.target.value as typeof priceFilter)}
+          <select name="price_filter" aria-label="Price Filter" value={priceFilter} onChange={e => setPriceFilter(e.target.value as typeof priceFilter)}
             className="border border-gray-200 rounded px-1.5 py-1 text-xs">
             <option value="all">All price</option>
             <option value="landed_missing">USD landed cost missing</option>
@@ -739,7 +739,7 @@ export function PricingWorksheet() {
                   <button onClick={table.reset} className="text-[11px] text-blue-600 hover:underline mb-1">Reset widths</button>
                   {table.columns.map(column => (
                     <label key={column.key} className="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-700">
-                      <input type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
+                      <input name="column_visibility" aria-label="Toggle column visibility" type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
                       <span>{column.label || 'Actions'}</span>
                     </label>
                   ))}
@@ -832,7 +832,7 @@ export function PricingWorksheet() {
                               </div>
                             ) : (
                               <div className="flex gap-1">
-                                <select
+                                <select name="india_price_currency" aria-label="India Price Currency"
                                   value={draft.india_price_currency}
                                   onChange={e => setDraft(inq.id, { india_price_currency: e.target.value })}
                                   className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14"
@@ -851,7 +851,7 @@ export function PricingWorksheet() {
                           </td>}
                           {table.isVisible('landed') && <td style={table.getCellStyle('landed')} className="px-2 py-1 border-r border-gray-200">
                             <div className="flex gap-1">
-                              <select value={draft.purchase_currency} onChange={e => setDraft(inq.id, { purchase_currency: e.target.value })}
+                              <select name="purchase_currency" aria-label="Purchase Currency" value={draft.purchase_currency} onChange={e => setDraft(inq.id, { purchase_currency: e.target.value })}
                                 className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14">
                                 {['USD', 'INR', 'CNY', 'IDR'].map(currency => <option key={currency}>{currency}</option>)}
                               </select>
@@ -862,7 +862,7 @@ export function PricingWorksheet() {
                           </td>}
                           {table.isVisible('quote') && <td style={table.getCellStyle('quote')} className="px-2 py-1 border-r border-gray-200">
                             <div className="flex gap-1">
-                              <select value={draft.offered_currency} onChange={e => setDraft(inq.id, { offered_currency: e.target.value })}
+                              <select name="offered_currency" aria-label="Offered Currency" value={draft.offered_currency} onChange={e => setDraft(inq.id, { offered_currency: e.target.value })}
                                 className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14">
                                 {['USD', 'IDR', 'INR', 'CNY'].map(currency => <option key={currency}>{currency}</option>)}
                               </select>
@@ -872,9 +872,9 @@ export function PricingWorksheet() {
                             </div>
                           </td>}
                           {table.isVisible('reference') && <td style={table.getCellStyle('reference')} className="px-2 py-1 border-r border-gray-200">
-                            <input value={draft.import_data_reference} onChange={e => setDraft(inq.id, { import_data_reference: e.target.value })}
+                            <input name="import_data_reference" aria-label="Import ref" value={draft.import_data_reference} onChange={e => setDraft(inq.id, { import_data_reference: e.target.value })}
                               placeholder="Import ref" className="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs mb-1 focus:bg-yellow-50" />
-                            <input value={draft.kunal_remark} onChange={e => setDraft(inq.id, { kunal_remark: e.target.value })}
+                            <input name="kunal_remark" aria-label="Remark" value={draft.kunal_remark} onChange={e => setDraft(inq.id, { kunal_remark: e.target.value })}
                               placeholder="Remark" className="w-32 border border-gray-300 rounded px-2 py-0.5 text-xs focus:bg-yellow-50" />
                           </td>}
                           {table.isVisible('actions') && <td style={table.getCellStyle('actions')} className="px-2 py-1 whitespace-nowrap">
@@ -987,31 +987,31 @@ export function PricingWorksheet() {
                                           className="text-blue-600 focus:ring-blue-500" />
                                         <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${SOURCE_COLOR[opt.source_type] || 'bg-gray-100 text-gray-600'}`}>{opt.source_type}</span>
                                       </label>
-                                      <select value={opt.source_type} onChange={e => updateOption(opt, { source_type: e.target.value })} disabled={!isManager}
+                                      <select name="opt" aria-label="Opt" value={opt.source_type} onChange={e => updateOption(opt, { source_type: e.target.value })} disabled={!isManager}
                                         className="col-span-1 border border-gray-200 rounded px-1 py-0.5 text-xs">
                                         {['india', 'china', 'local'].map(source => <option key={source}>{source}</option>)}
                                       </select>
-                                      <input value={opt.offered_make || ''} list="make-suggestions"
+                                      <input name="opt" aria-label="Make" value={opt.offered_make || ''} list="make-suggestions"
                                         onChange={e => updateOption(opt, { offered_make: e.target.value })}
                                         onBlur={() => { resetMakeSuggestions(); loadMakeSuggestions().then(setMakeOptions); }} disabled={!isManager}
                                         placeholder="Make" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" />
                                       <div className="col-span-2 flex gap-1">
-                                        <select value={opt.source_currency} onChange={e => updateOption(opt, { source_currency: e.target.value })} disabled={!isManager}
+                                        <select name="opt" aria-label="Opt" value={opt.source_currency} onChange={e => updateOption(opt, { source_currency: e.target.value })} disabled={!isManager}
                                           className="border border-gray-200 rounded px-1 py-0.5 text-xs w-14">
                                           {['USD','INR','CNY','IDR'].map(currency => <option key={currency}>{currency}</option>)}
                                         </select>
                                         <MoneyInput value={opt.source_price} onChange={amount => updateOption(opt, { source_price: amount || null })} disabled={!isManager}
                                           placeholder="Price" className="flex-1 border border-gray-200 rounded px-2 py-0.5 text-xs" maximumFractionDigits={4} />
                                       </div>
-                                      <select value={opt.availability} onChange={e => updateOption(opt, { availability: e.target.value })} disabled={!isManager}
+                                      <select name="opt" aria-label="Opt" value={opt.availability} onChange={e => updateOption(opt, { availability: e.target.value })} disabled={!isManager}
                                         className={`col-span-1 border rounded px-1 py-0.5 text-xs ${AVAIL_COLOR[opt.availability] || ''}`}>
                                         {['available','partial','na'].map(value => <option key={value}>{value}</option>)}
                                       </select>
-                                      <select value={opt.document_status} onChange={e => updateOption(opt, { document_status: e.target.value })} disabled={!isManager}
+                                      <select name="opt" aria-label="Opt" value={opt.document_status} onChange={e => updateOption(opt, { document_status: e.target.value })} disabled={!isManager}
                                         className="col-span-2 border border-gray-200 rounded px-1 py-0.5 text-xs">
                                         {['not_required','pending','partial','received'].map(value => <option key={value}>{value}</option>)}
                                       </select>
-                                      <input value={opt.remark || ''} onChange={e => updateOption(opt, { remark: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="Remark" value={opt.remark || ''} onChange={e => updateOption(opt, { remark: e.target.value })} disabled={!isManager}
                                         placeholder="Remark" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" />
                                       <button onClick={() => removeOption(opt)} disabled={!isManager}
                                         className="col-span-1 p-1 text-gray-400 hover:text-red-600 disabled:opacity-30 justify-self-end">
@@ -1020,22 +1020,22 @@ export function PricingWorksheet() {
                                     </div>
                                     {/* ── Part 5: extended pricing-grid fields (inline, no popup) ── */}
                                     <div className="grid grid-cols-12 gap-2 items-center text-xs px-2 pb-1.5 border-t border-gray-100 pt-1.5">
-                                      <input value={opt.supplier || ''} onChange={e => updateOption(opt, { supplier: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="Supplier" value={opt.supplier || ''} onChange={e => updateOption(opt, { supplier: e.target.value })} disabled={!isManager}
                                         placeholder="Supplier" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Supplier" />
-                                      <input value={opt.origin || ''} onChange={e => updateOption(opt, { origin: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="Origin" value={opt.origin || ''} onChange={e => updateOption(opt, { origin: e.target.value })} disabled={!isManager}
                                         placeholder="Origin" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Country of origin" />
-                                      <input value={opt.moq || ''} onChange={e => updateOption(opt, { moq: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="MOQ" value={opt.moq || ''} onChange={e => updateOption(opt, { moq: e.target.value })} disabled={!isManager}
                                         placeholder="MOQ" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Minimum order quantity" />
-                                      <input value={opt.packing || ''} onChange={e => updateOption(opt, { packing: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="Packing" value={opt.packing || ''} onChange={e => updateOption(opt, { packing: e.target.value })} disabled={!isManager}
                                         placeholder="Packing" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Packing" />
-                                      <input value={opt.lead_time || ''} onChange={e => updateOption(opt, { lead_time: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="Lead time" value={opt.lead_time || ''} onChange={e => updateOption(opt, { lead_time: e.target.value })} disabled={!isManager}
                                         placeholder="Lead time" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Lead time" />
-                                      <input value={opt.specification || ''} onChange={e => updateOption(opt, { specification: e.target.value })} disabled={!isManager}
+                                      <input name="opt" aria-label="Specification" value={opt.specification || ''} onChange={e => updateOption(opt, { specification: e.target.value })} disabled={!isManager}
                                         placeholder="Specification" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Specification" />
-                                      <input type="number" value={opt.margin_pct ?? ''} onChange={e => updateOption(opt, { margin_pct: e.target.value ? parseFloat(e.target.value) : null })} disabled={!isManager}
+                                      <input name="opt" aria-label="Margin %" type="number" value={opt.margin_pct ?? ''} onChange={e => updateOption(opt, { margin_pct: e.target.value ? parseFloat(e.target.value) : null })} disabled={!isManager}
                                         placeholder="Margin %" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Margin %" />
                                       <div className="col-span-3 flex gap-1">
-                                        <select value={opt.selling_currency || opt.source_currency} onChange={e => updateOption(opt, { selling_currency: e.target.value })} disabled={!isManager}
+                                        <select name="opt" aria-label="Opt" value={opt.selling_currency || opt.source_currency} onChange={e => updateOption(opt, { selling_currency: e.target.value })} disabled={!isManager}
                                           className="border border-gray-200 rounded px-1 py-0.5 text-xs w-14" title="Selling currency">
                                           {['USD','INR','CNY','IDR'].map(currency => <option key={currency}>{currency}</option>)}
                                         </select>
@@ -1060,7 +1060,7 @@ export function PricingWorksheet() {
                                   </div>
                                   <label className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline cursor-pointer">
                                     <Upload className="w-3 h-3" /> Browse
-                                    <input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                                    <input name="file_upload" aria-label="Upload file" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
                                       className="hidden"
                                       onChange={e => { if (e.target.files) { queueDocFiles(inq, e.target.files); e.target.value = ''; } }} />
                                   </label>
@@ -1084,11 +1084,11 @@ export function PricingWorksheet() {
                                       <div key={idx} className="flex flex-wrap items-center gap-2 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded text-xs">
                                         <FileText className="w-3 h-3 text-amber-600 flex-shrink-0" />
                                         <span className="flex-1 min-w-0 truncate text-gray-700" title={item.file.name}>{item.file.name}</span>
-                                        <select value={item.doc_type} onChange={e => setQueueItemType(inq.id, idx, e.target.value)}
+                                        <select name="doc_type" aria-label="Doc Type" value={item.doc_type} onChange={e => setQueueItemType(inq.id, idx, e.target.value)}
                                           className="border border-gray-200 rounded px-1 py-0.5 text-[11px]">
                                           {CRM_DOC_TYPES.map(t => <option key={t}>{t}</option>)}
                                         </select>
-                                        <input
+                                        <input name="make" aria-label="Make / Supplier"
                                           value={item.make}
                                           onChange={e => setQueueItemMake(inq.id, idx, e.target.value)}
                                           placeholder="Make / Supplier"

@@ -1562,7 +1562,7 @@ export function DeliveryChallan() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Vehicle Number
                 </label>
-                <input
+                <input name="vehicle_number" aria-label="Vehicle Number"
                   type="text"
                   value={formData.vehicle_number}
                   onChange={(e) => setFormData({ ...formData, vehicle_number: e.target.value })}
@@ -1575,7 +1575,7 @@ export function DeliveryChallan() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Driver Name
                 </label>
-                <input
+                <input name="driver_name" aria-label="Driver Name"
                   type="text"
                   value={formData.driver_name}
                   onChange={(e) => setFormData({ ...formData, driver_name: e.target.value })}
@@ -1588,7 +1588,7 @@ export function DeliveryChallan() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Date *
                 </label>
-                <input
+                <input name="date" aria-label="Date"
                   type="date"
                   value={formData.challan_date}
                   onChange={(e) => setFormData({ ...formData, challan_date: e.target.value })}
@@ -1603,7 +1603,7 @@ export function DeliveryChallan() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Delivery Address *
                 </label>
-                <textarea
+                <textarea name="delivery_address" aria-label="Delivery Address"
                   value={formData.delivery_address}
                   onChange={(e) => setFormData({ ...formData, delivery_address: e.target.value })}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1615,7 +1615,7 @@ export function DeliveryChallan() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Notes
                 </label>
-                <textarea
+                <textarea name="notes" aria-label="Notes"
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1735,11 +1735,11 @@ export function DeliveryChallan() {
                       <td className="px-2 py-1 text-gray-600">{selectedBatch?.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}</td>
                       <td className="px-2 py-1 text-gray-600 truncate max-w-36">{selectedBatch?.packaging_details || '—'}</td>
                       <td className="px-2 py-1">
-                        {item.pack_size ? <input type="text" value={item.quantity || 0} className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-100 text-right" disabled /> : <input type="number" min="0.01" step="0.01" value={item.quantity || ''} onChange={(e) => { const next = [...items]; next[index] = { ...next[index], quantity: Number(e.target.value) || 0 }; setItems(next); }} className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right" required />}
+                        {item.pack_size ? <input name="quantity" aria-label="Quantity" type="text" value={item.quantity || 0} className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-100 text-right" disabled /> : <input name="quantity" aria-label="Quantity" type="number" min="0.01" step="0.01" value={item.quantity || ''} onChange={(e) => { const next = [...items]; next[index] = { ...next[index], quantity: Number(e.target.value) || 0 }; setItems(next); }} className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right" required />}
                       </td>
                       <td className="px-2 py-1 text-gray-600">{item.products?.unit || selectedBatch?.product_id && products.find(p => p.id === selectedBatch.product_id)?.unit || 'kg'}</td>
                       <td className="px-2 py-1 text-right font-semibold text-green-700">{selectedBatch ? `${(getAvailableStock(selectedBatch) - (batchUsageInForm.get(selectedBatch.id) || 0)).toLocaleString()} kg` : '—'}</td>
-                      <td className="px-2 py-1">{item.pack_size ? <input type="number" min="1" value={item.number_of_packs || ''} onChange={(e) => updatePackQuantity(index, Number(e.target.value))} className="w-full min-w-[4.5rem] appearance-none px-1.5 py-1 text-xs border border-gray-300 rounded text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" required /> : <span className="text-gray-400">—</span>}</td>
+                      <td className="px-2 py-1">{item.pack_size ? <input name="number_of_packs" aria-label="Number Of Packs" type="number" min="1" value={item.number_of_packs || ''} onChange={(e) => updatePackQuantity(index, Number(e.target.value))} className="w-full min-w-[4.5rem] appearance-none px-1.5 py-1 text-xs border border-gray-300 rounded text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" required /> : <span className="text-gray-400">—</span>}</td>
                       <td className="px-2 py-1 text-center">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
                     </tr>
                   );
@@ -1813,7 +1813,7 @@ export function DeliveryChallan() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Rejection Reason <span className="text-red-500">*</span>
                 </label>
-                <textarea
+                <textarea name="rejection_reason" aria-label="Enter reason for rejecting this delivery challan..."
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
                   rows={4}

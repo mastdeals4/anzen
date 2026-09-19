@@ -158,7 +158,7 @@ export function ProductDocumentsPanel() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Linked Inquiry (optional)</label>
-                <select value={selectedInquiryId} onChange={e => setSelectedInquiryId(e.target.value)}
+                <select name="linked_inquiry_optional" aria-label="Linked Inquiry (optional)" value={selectedInquiryId} onChange={e => setSelectedInquiryId(e.target.value)}
                   className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
                   <option value="">No specific inquiry</option>
                   {inquiryOptions.map(i => (
@@ -168,20 +168,20 @@ export function ProductDocumentsPanel() {
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Document Type</label>
-                <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value as typeof DOC_TYPES[number])}
+                <select name="document_type" aria-label="Document Type" value={uploadDocType} onChange={e => setUploadDocType(e.target.value as typeof DOC_TYPES[number])}
                   className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
                   {DOC_TYPES.map(t => <option key={t}>{t}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Make / Supplier (optional)</label>
-                <input value={uploadMake} onChange={e => setUploadMake(e.target.value)}
+                <input name="make_supplier_optional" aria-label="Make / Supplier (optional)" value={uploadMake} onChange={e => setUploadMake(e.target.value)}
                   placeholder="e.g. Curequest, BASF"
                   className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">File</label>
-                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                <input name="file" aria-label="File" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
                   onChange={e => setUploadFile(e.target.files?.[0] || null)}
                   className="w-full text-sm" />
               </div>
@@ -204,17 +204,17 @@ export function ProductDocumentsPanel() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input value={productFilter} onChange={e => setProductFilter(e.target.value)}
+            <input name="product_filter" aria-label="Filter by product" value={productFilter} onChange={e => setProductFilter(e.target.value)}
               placeholder="Filter by product"
               className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm" />
           </div>
           <div className="relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
+            <input name="supplier_filter" aria-label="Filter by supplier / make" value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
               placeholder="Filter by supplier / make"
               className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm" />
           </div>
-          <select value={documentTypeFilter} onChange={e => setDocumentTypeFilter(e.target.value)}
+          <select name="document_type_filter" aria-label="Document Type Filter" value={documentTypeFilter} onChange={e => setDocumentTypeFilter(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
             <option value="all">All document types</option>
             {DOC_TYPES.map(type => <option key={type} value={type}>{type}</option>)}

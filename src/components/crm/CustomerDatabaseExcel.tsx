@@ -589,7 +589,7 @@ export function CustomerDatabaseExcel() {
 
     if (isEditing) {
       return (
-        <input
+        <input name="value" aria-label="Value"
           type="text"
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
@@ -689,7 +689,7 @@ export function CustomerDatabaseExcel() {
             <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition cursor-pointer">
               <Upload className="w-3.5 h-3.5" />
               Import CSV
-              <input type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
+              <input name="file_upload" aria-label="Upload file" type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
             </label>
             <button
               onClick={exportToExcel}
@@ -704,7 +704,7 @@ export function CustomerDatabaseExcel() {
         <div className="flex items-center gap-2">
           <div className="flex-1 relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
+            <input name="search_term" aria-label="Search by company (PT/CV skipped), contact, email, city..."
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -746,7 +746,7 @@ export function CustomerDatabaseExcel() {
           <thead className="sticky top-0 bg-gray-50 z-10">
             <tr>
               <th className="border border-gray-300 px-2 py-2 bg-gray-100 w-10">
-                <input
+                <input name="selected" aria-label="Select item"
                   type="checkbox"
                   checked={selectedRows.size === filteredCustomers.length && filteredCustomers.length > 0}
                   onChange={toggleSelectAll}
@@ -789,7 +789,7 @@ export function CustomerDatabaseExcel() {
                         {openFilterCol === key && (
                           <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 w-52">
                             <div className="p-2 border-b border-gray-100">
-                              <input
+                              <input name="filter_search" aria-label="Search values..."
                                 type="text"
                                 value={tempFilterSearch}
                                 onChange={e => setTempFilterSearch(e.target.value)}
@@ -804,7 +804,7 @@ export function CustomerDatabaseExcel() {
                                 .filter(v => !tempFilterSearch || v.toLowerCase().includes(tempFilterSearch.toLowerCase()))
                                 .map(val => (
                                   <label key={val} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer text-xs">
-                                    <input
+                                    <input name="has" aria-label="Has"
                                       type="checkbox"
                                       checked={tempFilterValues.has(val)}
                                       onChange={e => {
@@ -862,7 +862,7 @@ export function CustomerDatabaseExcel() {
                   className={`${selectedRows.has(customer.id) ? 'bg-blue-50' : 'hover:bg-gray-50'} transition`}
                 >
                   <td className="border border-gray-300 px-2 py-1 text-center">
-                    <input
+                    <input name="selected" aria-label="Select item"
                       type="checkbox"
                       checked={selectedRows.has(customer.id)}
                       onChange={() => toggleRowSelection(customer.id)}
@@ -965,7 +965,7 @@ export function CustomerDatabaseExcel() {
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
             <h3 className="text-base font-semibold text-gray-900 mb-1">Assign Salesperson</h3>
             <p className="text-sm text-gray-500 mb-4">{assignModal.contactName}</p>
-            <select
+            <select name="sales_member" aria-label="Sales Member"
               value={selectedSalesMember}
               onChange={e => setSelectedSalesMember(e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-4"

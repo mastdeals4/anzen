@@ -285,7 +285,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Task Title <span className="text-red-500">*</span>
           </label>
-          <input
+          <input name="title" aria-label="e.g., Send quotation to customer"
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -300,7 +300,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Description
           </label>
-          <textarea
+          <textarea name="description" aria-label="Description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Add detailed instructions or notes..."
@@ -315,7 +315,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Deadline Date <span className="text-red-500">*</span>
             </label>
-            <input
+            <input name="deadline" aria-label="Deadline"
               type="date"
               value={deadline}
               onChange={(e) => setDeadline(e.target.value)}
@@ -328,7 +328,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Deadline Time <span className="text-red-500">*</span>
             </label>
-            <input
+            <input name="deadline_time" aria-label="Deadline Time"
               type="time"
               value={deadlineTime}
               onChange={(e) => setDeadlineTime(e.target.value)}
@@ -341,7 +341,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Priority <span className="text-red-500">*</span>
             </label>
-            <select
+            <select name="priority" aria-label="Priority"
               value={priority}
               onChange={(e) => setPriority(e.target.value as any)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -360,7 +360,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             Assign To <span className="text-red-500">*</span>
           </label>
           <div className="relative">
-            <input
+            <input name="user_search" aria-label="Search users..."
               type="text"
               value={userSearch}
               onChange={(e) => setUserSearch(e.target.value)}
@@ -429,7 +429,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Related Inquiry
             </label>
-            <select
+            <select name="related_inquiry" aria-label="Related Inquiry"
               value={selectedInquiry}
               onChange={(e) => setSelectedInquiry(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -445,7 +445,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Related Customer
             </label>
-            <select
+            <select name="related_customer" aria-label="Related Customer"
               value={selectedCustomer}
               onChange={(e) => setSelectedCustomer(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -461,7 +461,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Related Product
             </label>
-            <select
+            <select name="related_product" aria-label="Related Product"
               value={selectedProduct}
               onChange={(e) => setSelectedProduct(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -480,7 +480,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
             Tags
           </label>
           <div className="flex gap-2">
-            <input
+            <input name="tags" aria-label="Tags"
               type="text"
               value={tagInput}
               onChange={(e) => setTagInput(e.target.value)}
@@ -524,7 +524,7 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Attachments
           </label>
-          <input
+          <input name="attachments" aria-label="Attachments"
             ref={fileInputRef}
             type="file"
             multiple

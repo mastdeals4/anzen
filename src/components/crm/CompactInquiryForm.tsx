@@ -283,7 +283,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Product Name <span className="text-red-500">*</span>
               </label>
-              <input
+              <input name="product_name" aria-label="Enter product name"
                 type="text"
                 value={formData.product_name}
                 onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
@@ -296,7 +296,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Specification
               </label>
-              <input
+              <input name="specification" aria-label="Specification"
                 type="text"
                 value={formData.specification}
                 onChange={(e) => setFormData({ ...formData, specification: e.target.value })}
@@ -314,7 +314,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Quantity <span className="text-red-500">*</span>
               </label>
-              <input
+              <input name="quantity" aria-label="e.g., 500 KG"
                 type="text"
                 value={formData.quantity}
                 onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
@@ -328,7 +328,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Priority <span className="text-red-500">*</span>
             </label>
-            <select
+            <select name="priority" aria-label="Priority"
               value={formData.priority}
               onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
               className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -343,7 +343,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Inquiry Source
             </label>
-            <select
+            <select name="inquiry_source" aria-label="Inquiry Source"
               value={formData.inquiry_source}
               onChange={(e) => setFormData({ ...formData, inquiry_source: e.target.value })}
               className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -364,7 +364,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Supplier Name
             </label>
-            <input
+            <input name="supplier_name" aria-label="Supplier Name"
               type="text"
               value={formData.supplier_name}
               onChange={(e) => setFormData({ ...formData, supplier_name: e.target.value })}
@@ -376,7 +376,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Country of Origin
             </label>
-            <input
+            <input name="country_of_origin" aria-label="Country of Origin"
               type="text"
               value={formData.supplier_country}
               onChange={(e) => setFormData({ ...formData, supplier_country: e.target.value })}
@@ -389,7 +389,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               Customer <span className="text-red-500">*</span>
             </label>
             <div className="relative">
-              <input
+              <input name="company_name" aria-label="Search customer..."
                 type="text"
                 value={customerSearch || formData.company_name}
                 onChange={(e) => {
@@ -439,7 +439,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Contact Person
             </label>
-            <input
+            <input name="contact_person" aria-label="Contact Person"
               type="text"
               value={formData.contact_person}
               onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
@@ -451,7 +451,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Email
             </label>
-            <input
+            <input name="email" aria-label="Email"
               type="text"
               value={formData.contact_email}
               onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
@@ -464,7 +464,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Phone
             </label>
-            <input
+            <input name="phone" aria-label="Phone"
               type="tel"
               value={formData.contact_phone}
               onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
@@ -479,7 +479,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           <label className="block text-xs font-medium text-gray-700 mb-1">
             Mail Subject
           </label>
-          <input
+          <input name="mail_subject" aria-label="Mail Subject"
             type="text"
             value={formData.mail_subject}
             onChange={(e) => setFormData({ ...formData, mail_subject: e.target.value })}
@@ -495,7 +495,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           </label>
           <div className="grid grid-cols-5 gap-3">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input
+              <input name="customer_requested" aria-label="Customer Requested"
                 type="checkbox"
                 checked={formData.price_required}
                 onChange={(e) => setFormData({ ...formData, price_required: e.target.checked })}
@@ -504,7 +504,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <span className="text-xs text-gray-700">Price</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input
+              <input name="coa_required" aria-label="Coa Required"
                 type="checkbox"
                 checked={formData.coa_required}
                 onChange={(e) => setFormData({ ...formData, coa_required: e.target.checked })}
@@ -513,7 +513,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <span className="text-xs text-gray-700">COA</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input
+              <input name="sample_required" aria-label="Sample Required"
                 type="checkbox"
                 checked={formData.sample_required}
                 onChange={(e) => setFormData({ ...formData, sample_required: e.target.checked })}
@@ -522,7 +522,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <span className="text-xs text-gray-700">Sample</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input
+              <input name="agency_letter_required" aria-label="Agency Letter Required"
                 type="checkbox"
                 checked={formData.agency_letter_required}
                 onChange={(e) => setFormData({ ...formData, agency_letter_required: e.target.checked })}
@@ -531,7 +531,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <span className="text-xs text-gray-700">Agency Letter</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input
+              <input name="others_required" aria-label="Others Required"
                 type="checkbox"
                 checked={formData.others_required}
                 onChange={(e) => setFormData({ ...formData, others_required: e.target.checked })}
@@ -553,7 +553,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                   <label className="block text-xs font-medium text-gray-700 mb-1">
                     Purchase Price
                   </label>
-                  <input
+                  <input name="purchase_price" aria-label="Purchase Price"
                     type="text"
                     value={formData.purchase_price}
                     onChange={(e) => setFormData({ ...formData, purchase_price: e.target.value })}
@@ -565,7 +565,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                   <label className="block text-xs font-medium text-gray-700 mb-1">
                     Currency
                   </label>
-                  <select
+                  <select name="currency" aria-label="Currency"
                     value={formData.purchase_price_currency}
                     onChange={(e) => setFormData({ ...formData, purchase_price_currency: e.target.value })}
                     className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -580,7 +580,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Offered Price
               </label>
-              <input
+              <input name="offered_price" aria-label="Offered Price"
                 type="text"
                 value={formData.offered_price}
                 onChange={(e) => setFormData({ ...formData, offered_price: e.target.value })}
@@ -592,7 +592,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Currency
               </label>
-              <select
+              <select name="currency" aria-label="Currency"
                 value={formData.offered_price_currency}
                 onChange={(e) => setFormData({ ...formData, offered_price_currency: e.target.value })}
                 className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -610,7 +610,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Delivery Date
               </label>
-              <input
+              <input name="delivery_date" aria-label="Delivery Date"
                 type="date"
                 value={formData.delivery_date}
                 onChange={(e) => setFormData({ ...formData, delivery_date: e.target.value })}
@@ -621,7 +621,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Delivery Terms
               </label>
-              <select
+              <select name="delivery_terms" aria-label="Delivery Terms"
                 value={formData.delivery_terms}
                 onChange={(e) => setFormData({ ...formData, delivery_terms: e.target.value })}
                 className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -648,7 +648,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               ACE ERP No
             </label>
-            <input
+            <input name="ace_erp_no" aria-label="ACE ERP No"
               type="text"
               value={formData.aceerp_no}
               onChange={(e) => setFormData({ ...formData, aceerp_no: e.target.value })}
@@ -660,7 +660,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Pipeline Status
             </label>
-            <select
+            <select name="pipeline_status" aria-label="Pipeline Status"
               value={formData.pipeline_status}
               onChange={(e) => setFormData({ ...formData, pipeline_status: e.target.value })}
               className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -680,7 +680,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           <label className="block text-xs font-medium text-gray-700 mb-1">
             Remarks
           </label>
-          <textarea
+          <textarea name="remarks" aria-label="Remarks"
             value={formData.remarks}
             onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
             rows={2}
@@ -694,7 +694,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           <label className="block text-xs font-medium text-gray-700 mb-1">
             Internal Notes
           </label>
-          <textarea
+          <textarea name="internal_notes" aria-label="Internal Notes"
             value={formData.internal_notes}
             onChange={(e) => setFormData({ ...formData, internal_notes: e.target.value })}
             rows={2}
@@ -741,7 +741,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Company Name <span className="text-red-500">*</span>
                 </label>
-                <input
+                <input name="company_name" aria-label="Company name"
                   type="text"
                   value={newCustomer.company_name}
                   onChange={(e) => setNewCustomer({ ...newCustomer, company_name: e.target.value })}
@@ -753,7 +753,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Contact Person
                 </label>
-                <input
+                <input name="contact_person" aria-label="Contact Person"
                   type="text"
                   value={newCustomer.contact_person}
                   onChange={(e) => setNewCustomer({ ...newCustomer, contact_person: e.target.value })}
@@ -765,7 +765,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Email
                 </label>
-                <input
+                <input name="email" aria-label="Email"
                   type="text"
                   value={newCustomer.email}
                   onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
@@ -777,7 +777,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Phone
                 </label>
-                <input
+                <input name="phone" aria-label="Phone"
                   type="tel"
                   value={newCustomer.phone}
                   onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
@@ -789,7 +789,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Country
                 </label>
-                <input
+                <input name="country" aria-label="Country"
                   type="text"
                   value={newCustomer.country}
                   onChange={(e) => setNewCustomer({ ...newCustomer, country: e.target.value })}
@@ -801,7 +801,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Address
                 </label>
-                <textarea
+                <textarea name="address" aria-label="Address"
                   value={newCustomer.address}
                   onChange={(e) => setNewCustomer({ ...newCustomer, address: e.target.value })}
                   rows={2}

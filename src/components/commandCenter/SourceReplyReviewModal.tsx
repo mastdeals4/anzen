@@ -193,7 +193,7 @@ export function SourceReplyReviewModal({ open, onClose, onSaved, email, sourceTy
           </div>
           <div className="flex items-center gap-2">
             <label className="text-[11px] text-gray-600">Route:</label>
-            <select value={sourceType} onChange={e => setSourceType(e.target.value as SourceType)}
+            <select name="route" aria-label="Route" value={sourceType} onChange={e => setSourceType(e.target.value as SourceType)}
               className="border border-gray-200 rounded px-1.5 py-0.5 text-xs">
               <option value="india">India</option>
               <option value="china">China</option>
@@ -246,16 +246,16 @@ export function SourceReplyReviewModal({ open, onClose, onSaved, email, sourceTy
                 </div>
 
                 <div className="grid grid-cols-12 gap-1.5 items-center text-xs">
-                  <input value={r.product_name}
+                  <input name="product_name" aria-label="Product name *" value={r.product_name}
                     onChange={e => updateRow(idx, { product_name: e.target.value })}
                     placeholder="Product name *"
                     className="col-span-3 border border-gray-200 rounded px-2 py-1" disabled={r.saved} />
-                  <input value={r.offered_make || ''}
+                  <input name="offered_make" aria-label="Offered make" value={r.offered_make || ''}
                     onChange={e => updateRow(idx, { offered_make: e.target.value })}
                     placeholder="Offered make"
                     className="col-span-2 border border-gray-200 rounded px-2 py-1" disabled={r.saved} />
                   <div className="col-span-2 flex gap-1">
-                    <select value={r.source_currency}
+                    <select name="source_currency" aria-label="Source Currency" value={r.source_currency}
                       onChange={e => updateRow(idx, { source_currency: e.target.value })}
                       className="border border-gray-200 rounded px-1 py-1 text-xs w-14" disabled={r.saved}>
                       {['INR','USD','CNY','IDR','EUR','GBP'].map(c => <option key={c}>{c}</option>)}
@@ -265,24 +265,24 @@ export function SourceReplyReviewModal({ open, onClose, onSaved, email, sourceTy
                       placeholder="Price"
                       className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" disabled={r.saved} maximumFractionDigits={4} />
                   </div>
-                  <select value={r.availability}
+                  <select name="availability" aria-label="Availability" value={r.availability}
                     onChange={e => updateRow(idx, { availability: e.target.value as 'available' | 'partial' | 'na' })}
                     className="col-span-1 border border-gray-200 rounded px-1 py-1 text-xs" disabled={r.saved}>
                     {['available','partial','na'].map(s => <option key={s}>{s}</option>)}
                   </select>
-                  <select value={r.document_status}
+                  <select name="document_status" aria-label="Document Status" value={r.document_status}
                     onChange={e => updateRow(idx, { document_status: e.target.value as ParsedSourceRow['document_status'] })}
                     className="col-span-2 border border-gray-200 rounded px-1 py-1 text-xs" disabled={r.saved}>
                     {['pending','received','not_required','partial'].map(s => <option key={s}>{s}</option>)}
                   </select>
-                  <input value={r.lead_time || ''}
+                  <input name="lead_time" aria-label="Lead time" value={r.lead_time || ''}
                     onChange={e => updateRow(idx, { lead_time: e.target.value })}
                     placeholder="Lead time"
                     className="col-span-2 border border-gray-200 rounded px-2 py-1 text-xs" disabled={r.saved} />
                 </div>
 
                 <div className="grid grid-cols-12 gap-1.5 items-start text-xs">
-                  <textarea value={r.remark || ''}
+                  <textarea name="remark" aria-label="Remark" value={r.remark || ''}
                     onChange={e => updateRow(idx, { remark: e.target.value })}
                     placeholder="Remark"
                     rows={1}
@@ -294,7 +294,7 @@ export function SourceReplyReviewModal({ open, onClose, onSaved, email, sourceTy
                     ) : r.candidates.length === 0 ? (
                       <span className="text-[10px] text-amber-700">No matching inquiry — pick manually</span>
                     ) : (
-                      <select value={r.selectedInquiryId || ''}
+                      <select name="selectedInquiryId" aria-label="SelectedInquiryId" value={r.selectedInquiryId || ''}
                         onChange={e => updateRow(idx, { selectedInquiryId: e.target.value || null })}
                         className="flex-1 border border-gray-200 rounded px-1 py-1 text-xs" disabled={r.saved}>
                         <option value="">— Select inquiry —</option>

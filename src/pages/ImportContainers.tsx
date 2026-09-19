@@ -429,7 +429,7 @@ export default function ImportContainers() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('importContainers.containerRef')} <span className="text-red-500">*</span></label>
-                  <input type="text" value={formData.container_ref} onChange={(e) => setFormData({ ...formData, container_ref: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
+                  <input name="container_ref" aria-label="Container Ref" type="text" value={formData.container_ref} onChange={(e) => setFormData({ ...formData, container_ref: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.supplier')} <span className="text-red-500">*</span></label>
@@ -440,16 +440,16 @@ export default function ImportContainers() {
               <div className={`grid grid-cols-1 ${canViewCosting ? 'sm:grid-cols-3' : 'sm:grid-cols-1'} gap-4`}>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('importContainers.importDate')} <span className="text-red-500">*</span></label>
-                  <input type="date" value={formData.import_date} onChange={(e) => setFormData({ ...formData, import_date: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
+                  <input name="import_date" aria-label="Import Date" type="date" value={formData.import_date} onChange={(e) => setFormData({ ...formData, import_date: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
                 </div>
                 {canViewCosting && (<>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">{t('salesOrders.currency')}</label>
-                    <select value={formData.currency} onChange={(e) => setFormData({ ...formData, currency: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"><option>USD</option><option>IDR</option><option>CNY</option><option>INR</option></select>
+                    <select name="t_salesorders_currency" aria-label="{t('salesOrders.currency')}" value={formData.currency} onChange={(e) => setFormData({ ...formData, currency: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"><option>USD</option><option>IDR</option><option>CNY</option><option>INR</option></select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Exchange Rate (IDR per USD)</label>
-                    <input type="number" step="0.01" value={formData.exchange_rate} onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input name="exchange_rate_idr_per_usd" aria-label="Exchange Rate (IDR per USD)" type="number" step="0.01" value={formData.exchange_rate} onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                 </>)}
               </div>
@@ -476,7 +476,7 @@ export default function ImportContainers() {
                   <div className="space-y-1 max-h-60 overflow-y-auto">
                     {unifiedItems.map((item) => (
                       <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 bg-white rounded text-xs">
-                        <input type="checkbox" checked={item.include_in_landed_cost} onChange={(e) => handleToggleInclusion(item.id, item.source, e.target.checked)} disabled={savingInclusion} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer flex-shrink-0" />
+                        <input name="include_in_landed_cost" aria-label="Include In Landed Cost" type="checkbox" checked={item.include_in_landed_cost} onChange={(e) => handleToggleInclusion(item.id, item.source, e.target.checked)} disabled={savingInclusion} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer flex-shrink-0" />
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${item.source === 'expense' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{item.source === 'expense' ? 'Expense' : 'Petty Cash'}</span>
                         <span className="font-medium text-gray-800 truncate flex-1">{getCategoryLabel(item.category)}</span>
                         <span className="text-gray-500 truncate hidden sm:inline max-w-[200px]">{item.description}</span>
@@ -522,7 +522,7 @@ export default function ImportContainers() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
-                <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <textarea name="t_common_notes" aria-label="{t('common.notes')}" value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
 
               <div className="flex justify-end gap-3 pt-1">

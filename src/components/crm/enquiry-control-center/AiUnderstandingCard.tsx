@@ -77,17 +77,11 @@ export const AiUnderstandingCard: React.FC<AiUnderstandingCardProps> = ({
       setErrorMessage(null);
       const res = await EnquiryBrainService.acceptProposal(messageId, proposal, inquiryId);
       if (!res.success) {
-        if (res.error?.includes('Request changed since this AI suggestion was created')) {
-          setStaleConflict(res.error);
-        }
         setErrorMessage(res.error || 'Failed to accept proposal.');
         return;
       }
       onRefresh();
     } catch (err: any) {
-      if (err.message?.includes('Request changed since this AI suggestion was created')) {
-        setStaleConflict(err.message);
-      }
       setErrorMessage(err.message || 'Unexpected error accepting proposal.');
     } finally {
       setActing(false);
@@ -172,16 +166,16 @@ export const AiUnderstandingCard: React.FC<AiUnderstandingCardProps> = ({
       )}
 
       {/* Requirement Evolution Diff */}
-      {reqUpdate && reqUpdate.old_value && reqUpdate.new_value && (
+      {Boolean(reqUpdate && reqUpdate.old_value && reqUpdate.new_value) && (
         <div className="bg-white border border-blue-200 rounded p-2.5 space-y-1 text-xs">
           <span className="text-[10px] uppercase font-bold text-gray-500 block">Requirement Evolution</span>
           <div className="flex items-center gap-2 font-mono">
             <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 line-through text-[11px]">
-              {String(reqUpdate.old_value)}
+              {String(reqUpdate?.old_value)}
             </span>
             <ArrowRight className="w-3.5 h-3.5 text-blue-500 shrink-0" />
             <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px]">
-              {String(reqUpdate.new_value)}
+              {String(reqUpdate?.new_value)}
             </span>
           </div>
         </div>

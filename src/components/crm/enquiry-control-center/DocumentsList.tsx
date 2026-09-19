@@ -57,6 +57,7 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
   documents,
   currentInquiryNumber,
   loading = false,
+  onRefresh = () => {},
 }) => {
   const [filterType, setFilterType] = useState<string>('ALL');
   const [onlyRequestLinked, setOnlyRequestLinked] = useState<boolean>(false);
@@ -153,7 +154,7 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
         </div>
 
         <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
-          <input
+          <input name="checkbox" aria-label="Checkbox"
             type="checkbox"
             checked={onlyRequestLinked}
             onChange={e => setOnlyRequestLinked(e.target.checked)}

@@ -348,7 +348,7 @@ export function TaskDetailModal({ isOpen, onClose, taskId, onUpdate }: TaskDetai
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${getPriorityStyles(task.priority)}`}>
             {task.priority.toUpperCase()}
           </span>
-          <select
+          <select name="task" aria-label="Task"
             value={task.status}
             onChange={(e) => handleStatusChange(e.target.value)}
             disabled={statusUpdating}
@@ -494,7 +494,7 @@ export function TaskDetailModal({ isOpen, onClose, taskId, onUpdate }: TaskDetai
           {/* Comment Input */}
           <div className="space-y-3">
             <div className="relative">
-              <textarea
+              <textarea name="comment_text" aria-label="Add a comment... Use @ to mention someone"
                 ref={commentInputRef}
                 value={commentText}
                 onChange={handleCommentChange}
@@ -548,7 +548,7 @@ export function TaskDetailModal({ isOpen, onClose, taskId, onUpdate }: TaskDetai
 
             {/* Actions */}
             <div className="flex justify-between items-center">
-              <input
+              <input name="file_upload" aria-label="Upload file"
                 ref={fileInputRef}
                 type="file"
                 multiple

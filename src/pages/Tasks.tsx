@@ -436,7 +436,7 @@ export function Tasks() {
               <div className="flex gap-2">
                 <div className="relative flex-1 sm:flex-none sm:w-64">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                  <input
+                  <input name="search_query" aria-label="{${t(common.search)}...}"
                     type="text"
                     placeholder={`${t('common.search')}...`}
                     value={searchQuery}
@@ -463,7 +463,7 @@ export function Tasks() {
                   <div className="space-y-2">
                     {['to_do', 'in_progress', 'waiting', 'completed'].map(status => (
                       <label key={status} className="flex items-center gap-2">
-                        <input
+                        <input name="status" aria-label="Status"
                           type="checkbox"
                           checked={filters.status.includes(status)}
                           onChange={(e) => {
@@ -486,7 +486,7 @@ export function Tasks() {
                   <div className="space-y-2">
                     {['urgent', 'high', 'medium', 'low'].map(priority => (
                       <label key={priority} className="flex items-center gap-2">
-                        <input
+                        <input name="priority" aria-label="Priority"
                           type="checkbox"
                           checked={filters.priority.includes(priority)}
                           onChange={(e) => {

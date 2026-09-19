@@ -824,7 +824,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
             <div className="border-b border-gray-100">
               <div className="flex items-center px-4 py-1.5 border-b border-gray-100">
                 <span className="text-xs text-gray-500 w-8 shrink-0">To</span>
-                <input type="email" value={toEmail} onChange={e => setToEmail(e.target.value)}
+                <input name="to_email" aria-label="Recipients" type="email" value={toEmail} onChange={e => setToEmail(e.target.value)}
                   className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400" placeholder="Recipients" />
                 <div className="flex gap-2 ml-2 shrink-0">
                   <button onClick={() => setShowCc(s => !s)} className="text-xs text-gray-500 hover:text-gray-700">Cc</button>
@@ -834,19 +834,19 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
               {showCc && (
                 <div className="flex items-center px-4 py-1.5 border-b border-gray-100">
                   <span className="text-xs text-gray-500 w-8 shrink-0">Cc</span>
-                  <input type="text" value={ccEmail} onChange={e => setCcEmail(e.target.value)}
+                  <input name="cc_email" aria-label="Cc (comma-separated)" type="text" value={ccEmail} onChange={e => setCcEmail(e.target.value)}
                     className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400" placeholder="Cc (comma-separated)" />
                 </div>
               )}
               {showBcc && (
                 <div className="flex items-center px-4 py-1.5 border-b border-gray-100">
                   <span className="text-xs text-gray-500 w-8 shrink-0">Bcc</span>
-                  <input type="text" value={bccEmail} onChange={e => setBccEmail(e.target.value)}
+                  <input name="bcc_email" aria-label="Bcc (comma-separated)" type="text" value={bccEmail} onChange={e => setBccEmail(e.target.value)}
                     className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400" placeholder="Bcc (comma-separated)" />
                 </div>
               )}
               <div className="flex items-center px-4 py-1.5">
-                <input type="text" value={subject} onChange={e => setSubject(e.target.value)}
+                <input name="subject" aria-label="Subject" type="text" value={subject} onChange={e => setSubject(e.target.value)}
                   className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400 font-medium" placeholder="Subject" />
               </div>
             </div>
@@ -885,7 +885,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
                 </p>
                 {crmDocs.map(doc => (
                   <label key={doc.id} className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer hover:bg-white transition mb-0.5 ${selectedCrmDocs.has(doc.id) ? 'bg-white border border-blue-200' : ''}`}>
-                    <input type="checkbox" checked={selectedCrmDocs.has(doc.id)} onChange={() => toggleCrmDoc(doc.id)} className="w-3.5 h-3.5" />
+                    <input name="selected" aria-label="Select item" type="checkbox" checked={selectedCrmDocs.has(doc.id)} onChange={() => toggleCrmDoc(doc.id)} className="w-3.5 h-3.5" />
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${DOC_TYPE_COLOR[doc.document_type] || 'bg-gray-100 text-gray-600'}`}>{doc.document_type}</span>
                     <span className="flex-1 text-xs text-gray-700 truncate">{doc.display_file_name || doc.original_file_name || doc.storage_path.split('/').pop()}</span>
                     {selectedCrmDocs.has(doc.id) && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
@@ -919,7 +919,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
                 {sending ? <><Loader className="w-4 h-4 animate-spin" />Sending…</> : <><Send className="w-4 h-4" />Send</>}
               </button>
 
-              <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
+              <input name="file_upload" aria-label="Upload file" ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
               <button onClick={() => fileInputRef.current?.click()}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition" title="Attach new file">
                 <Paperclip className="w-4 h-4" />

@@ -1046,7 +1046,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
         toolbar={
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-            <input
+            <input name="search_term" aria-label="Search payments..."
               type="text"
               placeholder="Search payments..."
               value={searchTerm}
@@ -1172,12 +1172,12 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
           {/* Row A: Date · Payee · Method */}
           <SapRow>
             <SapField label="Date" required span={3}>
-              <input type="date" required value={formData.voucher_date}
+              <input name="voucher_date" aria-label="Voucher Date" type="date" required value={formData.voucher_date}
                 onChange={(e) => setFormData({ ...formData, voucher_date: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Pay To" required span={2}>
-              <select
+              <select name="payee_type" aria-label="Payee Type"
                 value={formData.payee_type}
                 onChange={(e) => {
                   const payeeType = e.target.value as 'supplier' | 'staff';
@@ -1222,7 +1222,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
               )}
             </SapField>
             <SapField label="Method" required span={4}>
-              <select required value={formData.payment_method}
+              <select name="payment_method" aria-label="Payment Method" required value={formData.payment_method}
                 onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
                 className={SAP_INPUT}>
                 <option value="cash">Cash</option>
@@ -1249,7 +1249,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
           {formData.payee_type === 'staff' && (
             <SapRow>
               <SapField label="Payment Purpose" required span={4}>
-                <select
+                <select name="payment_purpose" aria-label="Payment Purpose"
                   value={formData.payment_purpose}
                   onChange={(e) => setFormData({ ...formData, payment_purpose: e.target.value as PaymentPurpose })}
                   className={SAP_INPUT}
@@ -1291,7 +1291,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                       isCrossCurrency ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                     }`}>{selectedBank.currency || 'IDR'}</span>
                   ) : null}>
-                  <select
+                  <select name="bank_account_id" aria-label="Bank Account Id"
                     value={formData.bank_account_id}
                     onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
                     className={SAP_INPUT + (
@@ -1330,7 +1330,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                   </select>
                 </SapField>
                 <SapField label="Reference No" span={4}>
-                  <input type="text" value={formData.reference_number}
+                  <input name="reference_number" aria-label="Reference Number" type="text" value={formData.reference_number}
                     onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
                     className={SAP_INPUT} />
                 </SapField>
@@ -1362,7 +1362,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
               <div className="grid grid-cols-3 gap-2 mb-2">
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-1">Invoice ({invoiceCurrency})</label>
-                  <input
+                  <input name="invoice_invoicecurrency" aria-label="Invoice ({invoiceCurrency})"
                     readOnly
                     value={formData.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-gray-50 text-gray-700"
@@ -1370,7 +1370,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-1">Rate (1 {invoiceCurrency} = {bankCurrency})</label>
-                  <input
+                  <input name="rate_1_invoicecurrency_bankcur" aria-label="Rate (1 {invoiceCurrency} = {bankCurrency})"
                     type="number"
                     required={isCrossCurrency}
                     step="0.000001"
@@ -1383,7 +1383,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-1">Converted ({bankCurrency})</label>
-                  <input
+                  <input name="converted_bankcurrency" aria-label="Converted ({bankCurrency})"
                     readOnly
                     value={invoiceInBankCurrency.toLocaleString('id-ID', { minimumFractionDigits: 0 })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-green-50 text-green-800 font-medium"
@@ -1405,7 +1405,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-1">Total Bank Debit ({bankCurrency})</label>
-                  <input
+                  <input name="total_bank_debit_bankcurrency" aria-label="Total Bank Debit ({bankCurrency})"
                     readOnly
                     value={totalBankDebit.toLocaleString('id-ID', { minimumFractionDigits: 0 })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-blue-50 text-blue-800 font-bold"
@@ -1419,7 +1419,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
           <div className="border-t border-gray-200 pt-2">
             <SapRow>
               <SapField label="PPh Type" span={6}>
-                <select value={formData.pph_code_id}
+                <select name="pph_code_id" aria-label="Pph Code Id" value={formData.pph_code_id}
                   onChange={(e) => setFormData({ ...formData, pph_code_id: e.target.value })}
                   className={SAP_INPUT}>
                   <option value="">No withholding</option>
@@ -1460,7 +1460,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
 
           <SapRow>
             <SapField label="Description" span={12}>
-              <input type="text" value={formData.description}
+              <input name="description" aria-label="Payment description..." type="text" value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className={SAP_INPUT} placeholder="Payment description..." />
             </SapField>
@@ -1616,7 +1616,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Reason (optional)</label>
-              <textarea
+              <textarea name="reason_optional" aria-label="Reason (optional)"
                 value={cancelPostingReason}
                 onChange={(e) => setCancelPostingReason(e.target.value)}
                 rows={3}

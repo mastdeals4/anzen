@@ -956,7 +956,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Vendor Name *
               </label>
-              <input
+              <input name="vendor_name" aria-label="Vendor Name"
                 type="text"
                 value={billFormData.vendor_name}
                 onChange={(e) => setBillFormData({ ...billFormData, vendor_name: e.target.value })}
@@ -969,7 +969,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Vendor ID (Optional)
               </label>
-              <input
+              <input name="vendor_id_optional" aria-label="Vendor ID (Optional)"
                 type="text"
                 value={billFormData.vendor_id}
                 onChange={(e) => setBillFormData({ ...billFormData, vendor_id: e.target.value })}
@@ -981,7 +981,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Category *
               </label>
-              <select
+              <select name="category" aria-label="Category"
                 value={billFormData.category || ''}
                 onChange={(e) => setBillFormData({ ...billFormData, category: e.target.value as VendorBill['category'] })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -998,7 +998,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Bill Date *
               </label>
-              <input
+              <input name="bill_date" aria-label="Bill Date"
                 type="date"
                 value={billFormData.bill_date}
                 onChange={(e) => setBillFormData({ ...billFormData, bill_date: e.target.value })}
@@ -1011,7 +1011,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Due Date
               </label>
-              <input
+              <input name="due_date" aria-label="Due Date"
                 type="date"
                 value={billFormData.due_date}
                 onChange={(e) => setBillFormData({ ...billFormData, due_date: e.target.value })}
@@ -1057,7 +1057,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Description
               </label>
-              <textarea
+              <textarea name="description" aria-label="Description"
                 value={billFormData.description}
                 onChange={(e) => setBillFormData({ ...billFormData, description: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1101,7 +1101,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Bill *
               </label>
-              <select
+              <select name="bill" aria-label="Bill"
                 value={paymentFormData.bill_id}
                 onChange={(e) => {
                   const billId = e.target.value;
@@ -1129,7 +1129,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Payment Date *
               </label>
-              <input
+              <input name="payment_date" aria-label="Payment Date"
                 type="date"
                 value={paymentFormData.payment_date}
                 onChange={(e) => setPaymentFormData({ ...paymentFormData, payment_date: e.target.value })}
@@ -1155,7 +1155,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Payment Method *
               </label>
-              <select
+              <select name="payment_method" aria-label="Payment Method"
                 value={paymentFormData.payment_method}
                 onChange={(e) => setPaymentFormData({ ...paymentFormData, payment_method: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1173,7 +1173,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Bank Account
               </label>
-              <select
+              <select name="bank_account" aria-label="Bank Account"
                 value={paymentFormData.bank_account_id}
                 onChange={(e) => setPaymentFormData({ ...paymentFormData, bank_account_id: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1191,7 +1191,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Reference Number
               </label>
-              <input
+              <input name="reference_number" aria-label="Reference Number"
                 type="text"
                 value={paymentFormData.reference_number}
                 onChange={(e) => setPaymentFormData({ ...paymentFormData, reference_number: e.target.value })}
@@ -1204,7 +1204,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Notes
               </label>
-              <textarea
+              <textarea name="notes" aria-label="Notes"
                 value={paymentFormData.notes}
                 onChange={(e) => setPaymentFormData({ ...paymentFormData, notes: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"

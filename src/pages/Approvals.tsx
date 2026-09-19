@@ -307,7 +307,7 @@ export default function Approvals() {
         <div className="flex flex-col sm:flex-row gap-4 mb-4">
           <div className="flex items-center gap-2">
             <Filter className="w-5 h-5 text-gray-400" />
-            <select
+            <select name="status_filter" aria-label="Status Filter"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -319,7 +319,7 @@ export default function Approvals() {
             </select>
           </div>
 
-          <select
+          <select name="type_filter" aria-label="Type Filter"
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -522,7 +522,7 @@ export default function Approvals() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('rejectionReason') || 'Rejection Reason'} ({t('ifRejecting') || 'if rejecting'})
                   </label>
-                  <textarea
+                  <textarea name="t_rejectionreason_rejection_re" aria-label="{t('rejectionReason') || 'Rejection Reason'} ({t('ifRejecting') || 'if rejecting'})"
                     value={rejectionReason}
                     onChange={(e) => setRejectionReason(e.target.value)}
                     rows={3}

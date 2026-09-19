@@ -100,7 +100,7 @@ function NewPRModal({ onClose, onCreated }: { onClose: () => void; onCreated: (i
         <div className="px-5 py-4 space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Linked Inquiry (optional)</label>
-            <select
+            <select name="linked_inquiry_optional" aria-label="Linked Inquiry (optional)"
               value={form.inquiry_id}
               onChange={e => handleInquiryChange(e.target.value)}
               className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -113,7 +113,7 @@ function NewPRModal({ onClose, onCreated }: { onClose: () => void; onCreated: (i
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Customer Name</label>
-            <input
+            <input name="customer_name" aria-label="Customer Name"
               value={form.customer_name}
               onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))}
               className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -122,7 +122,7 @@ function NewPRModal({ onClose, onCreated }: { onClose: () => void; onCreated: (i
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-            <textarea
+            <textarea name="notes" aria-label="Notes"
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
               rows={2}
@@ -199,7 +199,7 @@ export function PriceRequests() {
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <div className="relative flex-1 min-w-[180px] max-w-xs">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search PR, customer, inquiry..."
+            <input name="search" aria-label="Search PR, customer, inquiry..." value={search} onChange={e => setSearch(e.target.value)} placeholder="Search PR, customer, inquiry..."
               className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           {['all', 'draft', 'sourcing', 'pricing', 'quoted', 'won', 'lost'].map(s => (

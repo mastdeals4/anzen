@@ -252,6 +252,9 @@ export function FileUpload({
         <input
           ref={fileInputRef}
           type="file"
+          id={batchId ? `file-upload-${batchId}` : 'file-upload-input'}
+          name="uploaded_files"
+          aria-label="Upload document file"
           multiple={multiple}
           accept={accept}
           onChange={(event) => {
@@ -299,6 +302,9 @@ export function FileUpload({
         <input
           ref={fileInputRef}
           type="file"
+          id={batchId ? `file-upload-main-${batchId}` : 'file-upload-main-input'}
+          name="uploaded_files_main"
+          aria-label="Upload document files"
           multiple={multiple}
           accept={accept}
           onChange={(e) => handleFileSelect(e.target.files)}
@@ -344,7 +350,7 @@ export function FileUpload({
                 </p>
               </div>
 
-              <select
+              <select name="file" aria-label="File"
                 value={file.file_type}
                 onChange={(e) => handleDocumentTypeChange(index, e.target.value)}
                 className="text-xs px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"

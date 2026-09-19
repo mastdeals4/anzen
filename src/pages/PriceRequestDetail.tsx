@@ -155,33 +155,33 @@ function ItemRow({ item, onSave }: { item: PRItem; onSave: (updated: Partial<PRI
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-3">
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Product</label>
-            <input value={form.product_name} onChange={e => setForm(f => ({ ...f, product_name: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="product" aria-label="Product" value={form.product_name} onChange={e => setForm(f => ({ ...f, product_name: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Specification</label>
-            <input value={form.specification || ''} onChange={e => setForm(f => ({ ...f, specification: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="specification" aria-label="Specification" value={form.specification || ''} onChange={e => setForm(f => ({ ...f, specification: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Quantity</label>
-            <input type="number" value={form.quantity || ''} onChange={e => setForm(f => ({ ...f, quantity: e.target.value ? +e.target.value : null }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="quantity" aria-label="Quantity" type="number" value={form.quantity || ''} onChange={e => setForm(f => ({ ...f, quantity: e.target.value ? +e.target.value : null }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Unit</label>
-            <input value={form.unit || ''} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="unit" aria-label="Unit" value={form.unit || ''} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Source Type</label>
-            <select value={form.source_type} onChange={e => setForm(f => ({ ...f, source_type: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <select name="source_type" aria-label="Source Type" value={form.source_type} onChange={e => setForm(f => ({ ...f, source_type: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
               {['india', 'china', 'local', 'unknown'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Source Contact</label>
-            <input value={form.source_contact || ''} onChange={e => setForm(f => ({ ...f, source_contact: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="source_contact" aria-label="Source Contact" value={form.source_contact || ''} onChange={e => setForm(f => ({ ...f, source_contact: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Price Status</label>
-            <select value={form.price_status} onChange={e => setForm(f => ({ ...f, price_status: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <select name="price_status" aria-label="Price Status" value={form.price_status} onChange={e => setForm(f => ({ ...f, price_status: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
               <option value="pending">pending</option>
               <option value="sourcing_request_sent">sourcing request sent</option>
               <option value="waiting_reply">waiting reply</option>
@@ -190,7 +190,7 @@ function ItemRow({ item, onSave }: { item: PRItem; onSave: (updated: Partial<PRI
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Doc Status</label>
-            <select value={form.doc_status} onChange={e => setForm(f => ({ ...f, doc_status: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <select name="doc_status" aria-label="Doc Status" value={form.doc_status} onChange={e => setForm(f => ({ ...f, doc_status: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
               <option value="not_required">not required</option>
               <option value="pending">pending</option>
               <option value="received">received</option>
@@ -199,7 +199,7 @@ function ItemRow({ item, onSave }: { item: PRItem; onSave: (updated: Partial<PRI
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Source Price</label>
             <div className="flex gap-1">
-              <select value={form.source_currency} onChange={e => setForm(f => ({ ...f, source_currency: e.target.value }))} className="border border-gray-300 rounded px-1.5 py-1 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <select name="source_price" aria-label="Source Price" value={form.source_currency} onChange={e => setForm(f => ({ ...f, source_currency: e.target.value }))} className="border border-gray-300 rounded px-1.5 py-1 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500">
                 {['USD', 'INR', 'CNY', 'IDR'].map(c => <option key={c} value={c}>{c}</option>)}
               </select>
               <MoneyInput value={form.source_price} onChange={amount => setForm(f => ({ ...f, source_price: amount || null }))} placeholder="0.00" className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" maximumFractionDigits={4} />
@@ -215,11 +215,11 @@ function ItemRow({ item, onSave }: { item: PRItem; onSave: (updated: Partial<PRI
           </div>
           <div className="col-span-2">
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Remarks</label>
-            <input value={form.remarks || ''} onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="remarks" aria-label="Remarks" value={form.remarks || ''} onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div className="col-span-2">
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Pending Reason</label>
-            <input value={form.pending_reason || ''} onChange={e => setForm(f => ({ ...f, pending_reason: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <input name="pending_reason" aria-label="Pending Reason" value={form.pending_reason || ''} onChange={e => setForm(f => ({ ...f, pending_reason: e.target.value }))} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
         </div>
         <div className="flex gap-2 justify-end">
@@ -457,7 +457,7 @@ function SourcingRequestModal({
         {eligibleItems.some(i => i.price_status === 'sourcing_request_sent' || i.price_status === 'waiting_reply') && (
           <div className="px-5 py-2 border-b border-gray-200 bg-amber-50 flex items-center gap-2 text-xs text-amber-800">
             <label className="inline-flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={allowResend} onChange={e => setAllowResend(e.target.checked)}
+              <input name="checkbox" aria-label="Checkbox" type="checkbox" checked={allowResend} onChange={e => setAllowResend(e.target.checked)}
                 className="rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
               <span>Include items already sent / waiting reply (resend)</span>
             </label>
@@ -476,7 +476,7 @@ function SourcingRequestModal({
                 <div className="space-y-1.5">
                   {group.items.map(item => (
                     <label key={item.id} className="flex items-start gap-2 cursor-pointer group">
-                      <input
+                      <input name="selected" aria-label="Select item"
                         type="checkbox"
                         checked={selectedIds.has(item.id)}
                         onChange={() => toggleItem(item.id)}
@@ -675,7 +675,7 @@ function SourceReplyModal({
             return (
               <div key={item.id} className={`border rounded-lg p-3 transition-colors ${selected ? 'border-blue-300 bg-blue-50' : 'border-gray-200'}`}>
                 <div className="flex items-start gap-2">
-                  <input type="checkbox" checked={selected} onChange={() => toggleItem(item.id)}
+                  <input name="selected" aria-label="Select item" type="checkbox" checked={selected} onChange={() => toggleItem(item.id)}
                     className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -689,7 +689,7 @@ function SourceReplyModal({
                         <div>
                           <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Source Price *</label>
                           <div className="flex gap-1">
-                            <select value={r.source_currency} onChange={e => updateReply(item.id, 'source_currency', e.target.value)}
+                            <select name="source_price" aria-label="Source Price" value={r.source_currency} onChange={e => updateReply(item.id, 'source_currency', e.target.value)}
                               className="border border-gray-300 rounded px-1.5 py-1 text-xs w-14 focus:outline-none focus:ring-1 focus:ring-blue-500">
                               {['USD', 'INR', 'CNY', 'IDR'].map(c => <option key={c}>{c}</option>)}
                             </select>
@@ -699,7 +699,7 @@ function SourceReplyModal({
                         </div>
                         <div>
                           <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Doc Status</label>
-                          <select value={r.doc_status} onChange={e => updateReply(item.id, 'doc_status', e.target.value)}
+                          <select name="doc_status" aria-label="Doc Status" value={r.doc_status} onChange={e => updateReply(item.id, 'doc_status', e.target.value)}
                             className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
                             <option value="not_required">not required</option>
                             <option value="pending">pending</option>
@@ -708,7 +708,7 @@ function SourceReplyModal({
                         </div>
                         <div className="col-span-2">
                           <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Remarks</label>
-                          <input value={r.remarks} onChange={e => updateReply(item.id, 'remarks', e.target.value)}
+                          <input name="remarks" aria-label="Remarks" value={r.remarks} onChange={e => updateReply(item.id, 'remarks', e.target.value)}
                             placeholder="Optional notes..." className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
                         </div>
                       </div>
@@ -892,23 +892,23 @@ Best regards`;
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[10px] font-medium text-gray-500 mb-1 uppercase tracking-wide">To *</label>
-              <input value={toEmail} onChange={e => setToEmail(e.target.value)} placeholder="customer@example.com"
+              <input name="to" aria-label="To" value={toEmail} onChange={e => setToEmail(e.target.value)} placeholder="customer@example.com"
                 className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
             </div>
             <div>
               <label className="block text-[10px] font-medium text-gray-500 mb-1 uppercase tracking-wide">CC (comma-separated)</label>
-              <input value={ccEmail} onChange={e => setCcEmail(e.target.value)} placeholder="optional"
+              <input name="cc_comma_separated" aria-label="CC (comma-separated)" value={ccEmail} onChange={e => setCcEmail(e.target.value)} placeholder="optional"
                 className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
             </div>
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-1 uppercase tracking-wide">Subject</label>
-            <input value={subject} onChange={e => setSubject(e.target.value)}
+            <input name="subject" aria-label="Subject" value={subject} onChange={e => setSubject(e.target.value)}
               className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-1 uppercase tracking-wide">Email Draft</label>
-            <textarea value={body} onChange={e => setBody(e.target.value)} rows={12}
+            <textarea name="email_draft" aria-label="Email Draft" value={body} onChange={e => setBody(e.target.value)} rows={12}
               className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y" />
           </div>
           {sendError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{sendError}</div>}
@@ -1335,7 +1335,7 @@ export function PriceRequestDetail({ prId, onBack }: Props) {
               <FileText className="w-3 h-3" /> Prepare Customer Quote
             </button>
             {isManager && (
-              <select value={pr.overall_status} onChange={e => updatePR({ overall_status: e.target.value })}
+              <select name="overall_status" aria-label="Overall Status" value={pr.overall_status} onChange={e => updatePR({ overall_status: e.target.value })}
                 className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
                 {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
               </select>
@@ -1386,7 +1386,7 @@ export function PriceRequestDetail({ prId, onBack }: Props) {
               </div>
               {addingItem && (
                 <div className="px-4 py-2 border-b border-gray-200 bg-blue-50 flex gap-2">
-                  <input autoFocus value={newItemName} onChange={e => setNewItemName(e.target.value)}
+                  <input name="item_name" aria-label="Product name..." autoFocus value={newItemName} onChange={e => setNewItemName(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') addItem(); if (e.key === 'Escape') setAddingItem(false); }}
                     placeholder="Product name..." className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
                   <button onClick={addItem} className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">Add</button>
@@ -1421,7 +1421,7 @@ export function PriceRequestDetail({ prId, onBack }: Props) {
               </div>
               <div className="px-3 py-2 border-b border-gray-200">
                 <div className="flex gap-2">
-                  <input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addNote(); }}
+                  <input name="note" aria-label="Add a note..." value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addNote(); }}
                     placeholder="Add a note..." className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
                   <button onClick={addNote} className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">Add</button>
                 </div>

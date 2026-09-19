@@ -126,7 +126,7 @@ export function JournalEntryViewer({ canManage }: JournalEntryViewerProps) {
       <div className="flex flex-wrap items-center gap-4">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-          <input
+          <input name="search_term" aria-label="Search entries..."
             type="text"
             placeholder="Search entries..."
             value={searchTerm}
@@ -139,7 +139,7 @@ export function JournalEntryViewer({ canManage }: JournalEntryViewerProps) {
           <p className="text-xs text-gray-500">Period is controlled by global date range at top</p>
         </div>
 
-        <select
+        <select name="module" aria-label="Module"
           value={filterModule}
           onChange={(e) => setFilterModule(e.target.value)}
           className="px-1.5 py-1 border border-gray-300 rounded-lg"

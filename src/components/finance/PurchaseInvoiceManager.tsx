@@ -1097,7 +1097,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       <div className="flex items-center gap-2 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input
+          <input name="search_term" aria-label="Search by invoice number or supplier..."
             type="text"
             placeholder="Search by invoice number or supplier..."
             value={searchTerm}
@@ -1268,7 +1268,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               <label className="block text-xs font-medium text-gray-700 mb-0.5">
                 Currency <span className="text-red-500">*</span>
               </label>
-              <select value={formData.currency}
+              <select name="currency" aria-label="Currency" value={formData.currency}
                 onChange={(e) => setFormData({ ...formData, currency: e.target.value, exchange_rate: e.target.value === 'IDR' ? 1 : formData.exchange_rate })}
                 className={SAP_INPUT}>
                 <option value="IDR">IDR</option>
@@ -1280,7 +1280,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           {formData.supplier_id && (
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-0.5">Purchase Order (optional)</label>
-              <select
+              <select name="purchase_order_optional" aria-label="Purchase Order (optional)"
                 value={purchaseOrderId || ''}
                 onChange={(e) => handlePurchaseOrderChange(e.target.value)}
                 disabled={loadingSupplierPurchaseOrders}
@@ -1309,24 +1309,24 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)] gap-3 items-start">
             <div className="grid grid-cols-12 gap-2">
               <SapField label="Invoice #" required span={4}>
-                <input type="text" value={formData.invoice_number}
+                <input name="invoice_number" aria-label="INV-001" type="text" value={formData.invoice_number}
                   onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
                   required placeholder="INV-001" className={SAP_INPUT} />
               </SapField>
               <SapField label="Inv Date" required span={4}>
-                <input type="date" value={formData.invoice_date}
+                <input name="invoice_date" aria-label="Invoice Date" type="date" value={formData.invoice_date}
                   onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
                   required className={SAP_INPUT} />
               </SapField>
               <SapField label="Due Date" span={4}>
-                <input type="date" value={formData.due_date}
+                <input name="due_date" aria-label="Due Date" type="date" value={formData.due_date}
                   onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                   className={SAP_INPUT} />
               </SapField>
 
               {formData.currency === 'USD' && (
                 <SapField label="Rate (USD)" required span={4}>
-                  <input type="number" value={formData.exchange_rate}
+                  <input name="exchange_rate" aria-label="15750" type="number" value={formData.exchange_rate}
                     onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 1 })}
                     min="1" step="0.01" required placeholder="15750"
                     className={SAP_INPUT + ' !text-right !font-mono'} />
@@ -1335,7 +1335,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
               {selectedSupplier?.pkp_status && (
                 <SapField label="Faktur Pajak" span={formData.currency === 'USD' ? 8 : 12}>
-                  <input type="text" value={formData.faktur_pajak_number}
+                  <input name="faktur_pajak_number" aria-label="010.000-00.00000000" type="text" value={formData.faktur_pajak_number}
                     onChange={(e) => setFormData({ ...formData, faktur_pajak_number: e.target.value })}
                     placeholder="010.000-00.00000000" className={SAP_INPUT + ' !font-mono'} />
                 </SapField>
@@ -1345,7 +1345,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             <div className="space-y-2">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-0.5">Notes</label>
-                <input type="text" value={formData.notes}
+                <input name="notes" aria-label="Notes" type="text" value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className={SAP_INPUT} placeholder="Supplier invoice notes..." />
               </div>
@@ -1373,12 +1373,12 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     <th className="px-2 py-1.5 text-left">Product</th><th className="px-2 py-1.5 text-left">Make</th><th className="px-2 py-1.5 text-left">Batch No.</th><th className="px-2 py-1.5 text-left">Expiry</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-left">UOM</th><th className="px-2 py-1.5 text-right">Unit Price</th><th className="px-2 py-1.5 text-right">Total</th><th className="px-2 py-1.5" />
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">{lineItems.map((item, index) => item.item_type === 'inventory' && <tr key={`inventory-${index}`}>
-                    <td className="px-2 py-1"><select value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && <option value={item.product_id}>{item.product_name}</option>}{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
-                    <td className="px-2 py-1"><select value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">Not specified</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
-                    <td className="px-2 py-1"><input value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-28 px-1.5 py-1 border border-gray-300 rounded" placeholder="Optional" /></td>
-                    <td className="px-2 py-1"><input type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-32 px-1.5 py-1 border border-gray-300 rounded" /></td>
-                    <td className="px-2 py-1"><input type="number" min="0" step="0.01" value={item.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} className="w-20 px-1.5 py-1 text-right border border-gray-300 rounded" /></td>
-                    <td className="px-2 py-1"><input value={item.unit} onChange={(e) => handleLineChange(index, 'unit', e.target.value)} className="w-16 px-1.5 py-1 border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1"><select name="product_id" aria-label="Product Id" value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && <option value={item.product_id}>{item.product_name}</option>}{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
+                    <td className="px-2 py-1"><select name="receiving_make_id" aria-label="Receiving Make Id" value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">Not specified</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
+                    <td className="px-2 py-1"><input name="receiving_batch_number" aria-label="Optional" value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-28 px-1.5 py-1 border border-gray-300 rounded" placeholder="Optional" /></td>
+                    <td className="px-2 py-1"><input name="receiving_expiry_date" aria-label="Receiving Expiry Date" type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-32 px-1.5 py-1 border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1"><input name="quantity" aria-label="Quantity" type="number" min="0" step="0.01" value={item.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} className="w-20 px-1.5 py-1 text-right border border-gray-300 rounded" /></td>
+                    <td className="px-2 py-1"><input name="unit" aria-label="Unit" value={item.unit} onChange={(e) => handleLineChange(index, 'unit', e.target.value)} className="w-16 px-1.5 py-1 border border-gray-300 rounded" /></td>
                     <td className="px-2 py-1"><MoneyInput decimal value={item.unit_price} onChange={(n) => handleLineChange(index, 'unit_price', n)} className="w-24 px-1.5 py-1 text-right border border-gray-300 rounded" /></td>
                     <td className="px-2 py-1 text-right font-medium">{item.line_total.toLocaleString()}</td>
                     <td className="px-2 py-1 text-right">{lineItems.length > 1 && <button type="button" onClick={() => handleRemoveLine(index)} className="text-red-600"><X className="w-3.5 h-3.5" /></button>}</td>
@@ -1406,7 +1406,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                         Type *
                       </label>
-                      <select
+                      <select name="type" aria-label="Type"
                         value={item.item_type}
                         onChange={(e) => handleLineChange(index, 'item_type', e.target.value)}
                         className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
@@ -1427,7 +1427,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                           Product *
                         </label>
-                        <select
+                        <select name="product" aria-label="Product"
                           value={item.product_id || ''}
                           onChange={(e) => handleLineChange(index, 'product_id', e.target.value)}
                           className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
@@ -1448,7 +1448,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                           Expense Account *
                         </label>
-                        <select
+                        <select name="expense_account" aria-label="Expense Account"
                           value={item.expense_account_id || ''}
                           onChange={(e) => handleLineChange(index, 'expense_account_id', e.target.value)}
                           className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
@@ -1466,7 +1466,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                           Asset Account *
                         </label>
-                        <select
+                        <select name="asset_account" aria-label="Asset Account"
                           value={item.asset_account_id || ''}
                           onChange={(e) => handleLineChange(index, 'asset_account_id', e.target.value)}
                           className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
@@ -1484,7 +1484,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                           Ledger (Optional - defaults to Inventory)
                         </label>
-                        <select
+                        <select name="ledger_optional_defaults_to_in" aria-label="Ledger (Optional - defaults to Inventory)"
                           value={item.expense_account_id || ''}
                           onChange={(e) => handleLineChange(index, 'expense_account_id', e.target.value)}
                           className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
@@ -1504,7 +1504,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                       Description *
                     </label>
-                    <input
+                    <input name="description" aria-label="Description"
                       type="text"
                       value={item.description}
                       onChange={(e) => handleLineChange(index, 'description', e.target.value)}
@@ -1517,22 +1517,22 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                       <div>
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Make</label>
-                        <select value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
+                        <select name="make" aria-label="Make" value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
                           <option value="">Not specified</option>
                           {productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed make'}{source.grade ? ` (${source.grade})` : ''}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Batch Number</label>
-                        <input value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" placeholder="If provided" />
+                        <input name="batch_number" aria-label="Batch Number" value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" placeholder="If provided" />
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Expiry</label>
-                        <input type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" />
+                        <input name="expiry" aria-label="Expiry" type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" />
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Import Container</label>
-                        <select value={item.receiving_import_container_id || ''} onChange={(e) => handleLineChange(index, 'receiving_import_container_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
+                        <select name="import_container" aria-label="Import Container" value={item.receiving_import_container_id || ''} onChange={(e) => handleLineChange(index, 'receiving_import_container_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
                           <option value="">None / local</option>
                           {importContainers.map(container => <option key={container.id} value={container.id}>{container.container_ref}</option>)}
                         </select>
@@ -1545,7 +1545,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                         Qty *
                       </label>
-                      <input
+                      <input name="qty" aria-label="Qty"
                         type="number"
                         value={item.quantity}
                         onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)}
@@ -1558,7 +1558,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                         Unit
                       </label>
-                      <input
+                      <input name="unit" aria-label="Unit"
                         type="text"
                         value={item.unit}
                         onChange={(e) => handleLineChange(index, 'unit', e.target.value)}
@@ -1582,7 +1582,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
                         Amount
                       </label>
-                      <input
+                      <input name="amount" aria-label="Amount"
                         type="text"
                         value={item.line_total.toLocaleString()}
                         readOnly
@@ -1603,7 +1603,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-600">PPN:</span>
-                  <select
+                  <select name="ppn_rate" aria-label="Ppn Rate"
                     value={ppnRate}
                     onChange={(e) => setPpnRate(Number(e.target.value))}
                     className="text-xs border border-gray-300 rounded px-1.5 py-0.5 focus:ring-1 focus:ring-blue-500"
@@ -1917,10 +1917,10 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           <div className="space-y-3">
             <div className="rounded bg-gray-50 p-3 text-sm"><div className="font-semibold">{receivingItem.product_name || receivingItem.description}</div><div className="text-gray-500">Invoice quantity: {Number(receivingItem.quantity).toLocaleString()} {receivingItem.unit}</div><div className="text-green-700">Already received: {receivingAlreadyReceived.toLocaleString()} {receivingItem.unit}</div><div className="text-orange-700">Remaining: {receivingRemaining.toLocaleString()} {receivingItem.unit}</div></div>
             <div><label className="block text-xs font-medium text-gray-700 mb-1">Make / Manufacturer *</label><SearchableSelect value={receivingForm.make_id} onChange={v => setReceivingForm(f => f.make_id === v ? f : ({ ...f, make_id: v, batch_id: '', batch_number: '', import_container_id: '' }))} options={receivingMakes.map(m => ({ value: m.id, label: `${m.supplier_name || 'Unnamed make'}${m.grade ? ` (${m.grade})` : ''}` }))} placeholder={receivingMakes.length ? 'Select Make / Manufacturer' : 'No makes recorded'} /></div>
-            <div><label className="block text-xs font-medium text-gray-700 mb-1">Existing Batch (optional)</label><select className={SAP_INPUT} value={receivingForm.batch_id} onChange={e => { const b = receivingBatches.find(x => x.id === e.target.value); setReceivingForm(f => ({ ...f, batch_id: e.target.value, batch_number: b?.batch_number || '', import_container_id: b?.import_container_id || '' })); }}><option value="">Create new batch</option>{receivingBatches.filter(b => b.make_id === receivingForm.make_id || b.make_id === null).map(b => <option key={b.id} value={b.id}>{b.batch_number} (stock {Number(b.current_stock).toLocaleString()}){b.make_id === null ? ' (Make not recorded)' : ''}</option>)}</select></div>
-            {!receivingForm.batch_id && <div><label className="block text-xs font-medium text-gray-700 mb-1">New Batch Number *</label><input className={SAP_INPUT} value={receivingForm.batch_number} onChange={e => setReceivingForm(f => ({ ...f, batch_number: e.target.value }))} /></div>}
-            <div className="grid grid-cols-2 gap-2"><div><label className="block text-xs font-medium text-gray-700 mb-1">Quantity *</label><input type="number" min="0.01" step="0.01" className={SAP_INPUT} value={receivingForm.quantity} onChange={e => setReceivingForm(f => ({ ...f, quantity: Number(e.target.value) || 0 }))} /></div><div><label className="block text-xs font-medium text-gray-700 mb-1">Expiry</label><input type="date" className={SAP_INPUT} value={receivingForm.expiry_date} onChange={e => setReceivingForm(f => ({ ...f, expiry_date: e.target.value }))} /></div></div>
-            <div><label className="block text-xs font-medium text-gray-700 mb-1">Import Container (optional)</label><select className={SAP_INPUT} disabled={Boolean(receivingForm.batch_id)} value={receivingForm.import_container_id} onChange={e => setReceivingForm(f => ({ ...f, import_container_id: e.target.value }))}><option value="">Local purchase / no container</option>{importContainers.map(c => <option key={c.id} value={c.id}>{c.container_ref}{c.status ? ` (${c.status})` : ''}</option>)}</select>{receivingForm.batch_id && <p className="mt-1 text-[10px] text-gray-500">Existing batch container is preserved.</p>}</div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Existing Batch (optional)</label><select name="existing_batch_optional" aria-label="Existing Batch (optional)" className={SAP_INPUT} value={receivingForm.batch_id} onChange={e => { const b = receivingBatches.find(x => x.id === e.target.value); setReceivingForm(f => ({ ...f, batch_id: e.target.value, batch_number: b?.batch_number || '', import_container_id: b?.import_container_id || '' })); }}><option value="">Create new batch</option>{receivingBatches.filter(b => b.make_id === receivingForm.make_id || b.make_id === null).map(b => <option key={b.id} value={b.id}>{b.batch_number} (stock {Number(b.current_stock).toLocaleString()}){b.make_id === null ? ' (Make not recorded)' : ''}</option>)}</select></div>
+            {!receivingForm.batch_id && <div><label className="block text-xs font-medium text-gray-700 mb-1">New Batch Number *</label><input name="new_batch_number" aria-label="New Batch Number" className={SAP_INPUT} value={receivingForm.batch_number} onChange={e => setReceivingForm(f => ({ ...f, batch_number: e.target.value }))} /></div>}
+            <div className="grid grid-cols-2 gap-2"><div><label className="block text-xs font-medium text-gray-700 mb-1">Quantity *</label><input name="quantity" aria-label="Quantity" type="number" min="0.01" step="0.01" className={SAP_INPUT} value={receivingForm.quantity} onChange={e => setReceivingForm(f => ({ ...f, quantity: Number(e.target.value) || 0 }))} /></div><div><label className="block text-xs font-medium text-gray-700 mb-1">Expiry</label><input name="expiry" aria-label="Expiry" type="date" className={SAP_INPUT} value={receivingForm.expiry_date} onChange={e => setReceivingForm(f => ({ ...f, expiry_date: e.target.value }))} /></div></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Import Container (optional)</label><select name="import_container_optional" aria-label="Import Container (optional)" className={SAP_INPUT} disabled={Boolean(receivingForm.batch_id)} value={receivingForm.import_container_id} onChange={e => setReceivingForm(f => ({ ...f, import_container_id: e.target.value }))}><option value="">Local purchase / no container</option>{importContainers.map(c => <option key={c.id} value={c.id}>{c.container_ref}{c.status ? ` (${c.status})` : ''}</option>)}</select>{receivingForm.batch_id && <p className="mt-1 text-[10px] text-gray-500">Existing batch container is preserved.</p>}</div>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Batch Documents (optional)</label>
               <FileUpload

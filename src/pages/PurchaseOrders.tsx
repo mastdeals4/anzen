@@ -632,7 +632,7 @@ export default function PurchaseOrders() {
           <div className="flex-1 max-w-sm">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 h-3 w-3" />
-              <input
+              <input name="search_term" aria-label="Search PO number, supplier..."
                 type="text"
                 placeholder="Search PO number, supplier..."
                 value={searchTerm}
@@ -641,7 +641,7 @@ export default function PurchaseOrders() {
               />
             </div>
           </div>
-          <select
+          <select name="status_filter" aria-label="Status Filter"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="h-7 px-2 text-xs border border-gray-300 rounded"
@@ -779,7 +779,7 @@ export default function PurchaseOrders() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">PO Date</label>
-                  <input
+                  <input name="po_date" aria-label="PO Date"
                     type="date"
                     value={formData.po_date}
                     onChange={(e) => setFormData({ ...formData, po_date: e.target.value })}
@@ -789,7 +789,7 @@ export default function PurchaseOrders() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Expected Delivery</label>
-                  <input
+                  <input name="expected_delivery" aria-label="Expected Delivery"
                     type="date"
                     value={formData.expected_delivery_date}
                     onChange={(e) => setFormData({ ...formData, expected_delivery_date: e.target.value })}
@@ -802,7 +802,7 @@ export default function PurchaseOrders() {
               <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                 <div className="col-span-1">
                   <label className="block text-xs font-medium text-gray-700 mb-1">Currency</label>
-                  <select
+                  <select name="currency" aria-label="Currency"
                     value={formData.currency}
                     onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
@@ -813,7 +813,7 @@ export default function PurchaseOrders() {
                 </div>
                 <div className="col-span-5">
                   <label className="block text-xs font-medium text-gray-700 mb-1">Payment Terms</label>
-                  <select
+                  <select name="payment_terms" aria-label="Payment Terms"
                     value={formData.payment_terms}
                     onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
@@ -895,7 +895,7 @@ export default function PurchaseOrders() {
                             />
                           </td>
                           <td className="px-2 py-1">
-                            <input
+                            <input name="specification" aria-label="Specs"
                               type="text"
                               value={item.specification || ''}
                               onChange={(e) => {
@@ -908,7 +908,7 @@ export default function PurchaseOrders() {
                             />
                           </td>
                           <td className="px-2 py-1">
-                            <input
+                            <input name="coa_code" aria-label="COA"
                               type="text"
                               value={item.coa_code || ''}
                               onChange={(e) => {
@@ -921,7 +921,7 @@ export default function PurchaseOrders() {
                             />
                           </td>
                           <td className="px-2 py-1">
-                            <input
+                            <input name="quantity" aria-label="Quantity"
                               type="number"
                               value={item.quantity}
                               onChange={(e) => {
@@ -935,7 +935,7 @@ export default function PurchaseOrders() {
                             />
                           </td>
                           <td className="px-2 py-1">
-                            <input
+                            <input name="unit" aria-label="Unit"
                               type="text"
                               value={item.unit}
                               className="w-full px-1.5 py-1 text-xs border border-gray-300 rounded bg-gray-50"
@@ -957,7 +957,7 @@ export default function PurchaseOrders() {
                             />
                           </td>
                           <td className="px-2 py-1">
-                            <input
+                            <input name="discount_percent" aria-label="Discount Percent"
                               type="number"
                               value={item.discount_percent}
                               onChange={(e) => {
@@ -970,7 +970,7 @@ export default function PurchaseOrders() {
                             />
                           </td>
                           <td className="px-2 py-1">
-                            <input
+                            <input name="line_total" aria-label="Line Total"
                               type="text"
                               value={formatCurrency(item.line_total, formData.currency)}
                               readOnly
@@ -1009,7 +1009,7 @@ export default function PurchaseOrders() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
-                <textarea
+                <textarea name="notes" aria-label="Notes"
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   rows={2}

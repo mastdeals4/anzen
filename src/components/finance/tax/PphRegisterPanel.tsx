@@ -896,7 +896,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                             )}
                             {Math.abs(traceDifference) > 0.01 && (
                               <p className="mb-2 text-xs font-medium text-red-700">
-                                Audit trace mismatch: source documents total Rp {fmt(detailTotal)}, Register total Rp {fmt(r.pph_total)}.
+                                Audit trace mismatch: source documents total Rp {fmt(withheldTotal)}, Register total Rp {fmt(r.pph_total)}.
                               </p>
                             )}
                             <table className="w-full text-xs border-collapse">
@@ -941,7 +941,7 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                                       {l.module === 'import' ? (
                                         <span className="text-gray-400">Derived import period</span>
                                       ) : (
-                                        <select
+                                        <select name="tax_period_id"
                                           aria-label={`Tax period for ${l.doc_number}`}
                                           value={l.tax_period_id ?? r.tax_period_id}
                                           disabled={editingPeriodId === l.id || r.status === 'closed' || r.status === 'filed'}

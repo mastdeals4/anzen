@@ -113,7 +113,7 @@ export function CustomerSelectionDialog({
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
-                      <input
+                      <input name="checkbox" aria-label="Checkbox"
                         type="radio"
                         checked={isSelected}
                         onChange={() => setSelectedId(match.customer.id)}

@@ -53,7 +53,7 @@ export function RecipientChips({ label, emails, onChange, placeholder, disabled 
             )}
           </span>
         ))}
-        <input
+        <input name="input" aria-label="{placeholder || Type email + Enter}"
           disabled={disabled}
           value={input}
           onChange={e => { setInput(e.target.value); setError(''); }}

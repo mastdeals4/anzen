@@ -209,7 +209,7 @@ export function SuppliersManager() {
       <div className="flex gap-4">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-          <input
+          <input name="search_term" aria-label="Search suppliers..."
             type="text"
             placeholder="Search suppliers..."
             value={searchTerm}
@@ -315,7 +315,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Company Name <span className="text-red-500">*</span>
                 </label>
-                <input
+                <input name="company_name" aria-label="Company Name"
                   type="text"
                   value={formData.company_name}
                   onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
@@ -328,7 +328,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Contact Person
                 </label>
-                <input
+                <input name="contact_person" aria-label="Contact Person"
                   type="text"
                   value={formData.contact_person}
                   onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
@@ -340,7 +340,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Phone
                 </label>
-                <input
+                <input name="phone" aria-label="Phone"
                   type="text"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -352,7 +352,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Email
                 </label>
-                <input
+                <input name="email" aria-label="Email"
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -364,7 +364,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   NPWP
                 </label>
-                <input
+                <input name="npwp" aria-label="NPWP"
                   type="text"
                   value={formData.npwp}
                   onChange={(e) => setFormData({ ...formData, npwp: e.target.value })}
@@ -376,7 +376,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Address
                 </label>
-                <textarea
+                <textarea name="address" aria-label="Address"
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   rows={2}
@@ -388,7 +388,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   City
                 </label>
-                <input
+                <input name="city" aria-label="City"
                   type="text"
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
@@ -400,7 +400,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Postal Code
                 </label>
-                <input
+                <input name="postal_code" aria-label="Postal Code"
                   type="text"
                   value={formData.postal_code}
                   onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
@@ -412,7 +412,7 @@ export function SuppliersManager() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Payment Terms (Days)
                 </label>
-                <input
+                <input name="payment_terms_days" aria-label="Payment Terms (Days)"
                   type="number"
                   value={formData.payment_terms_days}
                   onChange={(e) => setFormData({ ...formData, payment_terms_days: parseInt(e.target.value) || 0 })}

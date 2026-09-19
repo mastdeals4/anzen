@@ -318,28 +318,28 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         <form onSubmit={handleAddUser} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name <span className="text-red-500">*</span></label>
-            <input type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+            <input name="full_name" aria-label="John Doe" type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" placeholder="John Doe" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Username <span className="text-red-500">*</span></label>
-            <input type="text" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') })}
+            <input name="username" aria-label="johndoe" type="text" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono\" placeholder="johndoe\" pattern="[a-z0-9]+\" required />
             <p className="text-xs text-gray-400 mt-1">Lowercase letters and numbers only. Used for login.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email <span className="text-red-500">*</span></label>
-            <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            <input name="email" aria-label="user@company.com" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" placeholder="user@company.com" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Password <span className="text-red-500">*</span></label>
-            <input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            <input name="password" aria-label="Minimum 6 characters" type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" placeholder="Minimum 6 characters" minLength={6} required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Role <span className="text-red-500">*</span></label>
-            <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
+            <select name="role" aria-label="Role" value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" required>
               <option value="sales">Sales</option>
               <option value="accounts">Accounts</option>
@@ -363,22 +363,22 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         <form onSubmit={handleEditUser} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name <span className="text-red-500">*</span></label>
-            <input type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+            <input name="full_name" aria-label="Full Name" type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Username <span className="text-red-500">*</span></label>
-            <input type="text" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') })}
+            <input name="username" aria-label="Username" type="text" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono\" pattern="[a-z0-9]+\" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email <span className="text-red-500">*</span></label>
-            <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            <input name="email" aria-label="Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Role <span className="text-red-500">*</span></label>
-            <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
+            <select name="role" aria-label="Role" value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" required>
               <option value="sales">Sales</option>
               <option value="accounts">Accounts</option>
@@ -404,7 +404,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">New Password <span className="text-red-500">*</span></label>
-            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+            <input name="password" aria-label="Minimum 6 characters" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
               placeholder="Minimum 6 characters" minLength={6} required autoFocus />
           </div>
@@ -506,7 +506,7 @@ function InlinePermissionsPanel({ user, onClose, onSaved }: InlinePermissionsPan
         </div>
         <div className="flex items-center gap-2">
           <label className="text-[11px] flex items-center gap-1.5 text-gray-600 mr-2 cursor-pointer">
-            <input type="checkbox" checked={showAdvancedModules} onChange={e => setShowAdvancedModules(e.target.checked)}
+            <input name="checkbox" aria-label="Checkbox" type="checkbox" checked={showAdvancedModules} onChange={e => setShowAdvancedModules(e.target.checked)}
               className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
             Show advanced
           </label>
@@ -539,7 +539,7 @@ function InlinePermissionsPanel({ user, onClose, onSaved }: InlinePermissionsPan
                 </svg>
               )}
             </div>
-            <input
+            <input name="id" aria-label="Id"
               type="checkbox"
               className="sr-only"
               checked={perms[mod.id] ?? false}

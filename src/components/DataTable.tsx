@@ -117,9 +117,13 @@ export function DataTable<T extends object>({
           <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${compact ? 'w-4 h-4' : 'w-5 h-5'} text-gray-400`} />
           <input
             type="text"
+            id="datatable-search-input"
+            name="search"
+            aria-label={t('common.search') || 'Search table'}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder={t('common.search')}
+            autoComplete="off"
             className={`w-full pl-9 pr-3 ${compact ? 'py-1.5 text-sm' : 'py-2'} border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none`}
           />
         </div>

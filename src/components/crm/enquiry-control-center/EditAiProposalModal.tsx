@@ -100,7 +100,7 @@ export const EditAiProposalModal: React.FC<EditAiProposalModalProps> = ({
             <label className="block font-medium text-gray-700 mb-1">
               Customer Requirement / Specification
             </label>
-            <textarea
+            <textarea name="customer_requirement_specifica" aria-label="Customer Requirement / Specification"
               value={requirement}
               onChange={(e) => setRequirement(e.target.value)}
               rows={3}
@@ -112,7 +112,7 @@ export const EditAiProposalModal: React.FC<EditAiProposalModalProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-medium text-gray-700 mb-1">Status</label>
-              <select
+              <select name="status" aria-label="Status"
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded bg-white"
@@ -126,7 +126,7 @@ export const EditAiProposalModal: React.FC<EditAiProposalModalProps> = ({
 
             <div>
               <label className="block font-medium text-gray-700 mb-1">Waiting For</label>
-              <select
+              <select name="waiting_for" aria-label="Waiting For"
                 value={waitingFor}
                 onChange={(e) => setWaitingFor(e.target.value)}
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded bg-white"
@@ -142,7 +142,7 @@ export const EditAiProposalModal: React.FC<EditAiProposalModalProps> = ({
 
           <div>
             <label className="block font-medium text-gray-700 mb-1">Next Action</label>
-            <input
+            <input name="next_action" aria-label="Next Action"
               type="text"
               value={nextAction}
               onChange={(e) => setNextAction(e.target.value)}
@@ -153,7 +153,7 @@ export const EditAiProposalModal: React.FC<EditAiProposalModalProps> = ({
 
           <div>
             <label className="block font-medium text-gray-700 mb-1">Assigned Team</label>
-            <select
+            <select name="assigned_team" aria-label="Assigned Team"
               value={assignedTeam}
               onChange={(e) => setAssignedTeam(e.target.value)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded bg-white"

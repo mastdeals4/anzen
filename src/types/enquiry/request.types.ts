@@ -24,6 +24,8 @@ export type EnquiryWaitingFor =
   | 'CUSTOMER'
   | 'NONE';
 
+export type WaitingForParty = EnquiryWaitingFor;
+
 export type EnquiryAssignedTeam =
   | 'sales'
   | 'pricing_india'

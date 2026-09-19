@@ -111,6 +111,8 @@ export const MoneyInput = forwardRef<HTMLInputElement, MoneyInputProps>(function
 
   return (
     <input
+      name={rest.name || 'amount'}
+      aria-label={rest['aria-label'] || rest.placeholder || (currency ? `Amount (${currency})` : 'Amount')}
       {...rest}
       ref={ref}
       type="text"

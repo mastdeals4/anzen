@@ -165,7 +165,7 @@ export function EmailComposer({ inquiry, contactId, onClose, onSent }: EmailComp
         <label className="block text-sm font-medium text-gray-700 mb-1">
           To *
         </label>
-        <input
+        <input name="to" aria-label="To"
           type="text"
           value={toEmail}
           onChange={(e) => setToEmail(e.target.value)}
@@ -185,7 +185,7 @@ export function EmailComposer({ inquiry, contactId, onClose, onSent }: EmailComp
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Subject *
         </label>
-        <input
+        <input name="subject" aria-label="Subject"
           type="text"
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
@@ -199,7 +199,7 @@ export function EmailComposer({ inquiry, contactId, onClose, onSent }: EmailComp
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Message *
         </label>
-        <textarea
+        <textarea name="message" aria-label="Message"
           value={body}
           onChange={(e) => setBody(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"

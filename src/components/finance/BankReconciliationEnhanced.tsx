@@ -2879,7 +2879,7 @@ export function BankReconciliationEnhanced({
                 >
                   <XCircle className="w-3.5 h-3.5" />
                 </button>
-                <input
+                <input name="file_upload" aria-label="Upload file"
                   ref={fileInputRef}
                   type="file"
                   accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
@@ -2905,7 +2905,7 @@ export function BankReconciliationEnhanced({
       <div className="bg-white rounded border border-gray-200 p-2">
         <div className="flex items-center gap-3 flex-wrap">
           {/* Bank Account Selector */}
-          <select
+          <select name="bank" aria-label="Bank"
             value={selectedBank}
             onChange={(e) => { setSelectedBank(e.target.value); try { localStorage.setItem('bank_recon_selected_bank', e.target.value); } catch { /* Storage may be unavailable. */ } }}
             className="px-3 py-1.5 border border-gray-300 rounded-md text-xs font-medium"
@@ -3327,7 +3327,7 @@ export function BankReconciliationEnhanced({
               <div className="grid grid-cols-2 gap-3 p-3 border border-blue-200 bg-blue-50 rounded-lg">
                 <label className="text-sm font-medium text-gray-700">
                   USD to IDR Exchange Rate *
-                  <input
+                  <input name="record_exchange_rate" aria-label="Record Exchange Rate"
                     type="number"
                     min="1.000001"
                     step="0.000001"
@@ -3498,7 +3498,7 @@ export function BankReconciliationEnhanced({
                   <div className="space-y-3">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Loan *</label>
-                      <select
+                      <select name="loan" aria-label="Loan"
                         value={repaymentLoanId}
                         onChange={(e) => setRepaymentLoanId(e.target.value)}
                         className="w-full px-3 py-2 border rounded-lg"
@@ -3583,7 +3583,7 @@ export function BankReconciliationEnhanced({
                                 return (
                                   <tr key={bill.id} className={alloc ? 'bg-emerald-50/60' : bill.days_overdue > 0 ? 'bg-red-50/50' : ''}>
                                     <td className="px-2 py-1.5 text-center">
-                                      <input
+                                      <input name="checkbox" aria-label="Checkbox"
                                         type="checkbox"
                                         checked={!!alloc}
                                         onChange={() => toggleBillAllocation(bill, recordingLine.debit)}
@@ -3834,7 +3834,7 @@ export function BankReconciliationEnhanced({
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Payment Kind *</label>
-                      <select
+                      <select name="payment_kind" aria-label="Payment Kind"
                         value={linkPaymentKind}
                         onChange={(e) => setLinkPaymentKind(e.target.value as 'supplier' | 'pph23')}
                         className="w-full px-3 py-2 border rounded-lg text-sm"
@@ -4053,7 +4053,7 @@ export function BankReconciliationEnhanced({
                     {receiptType === 'loan' && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Counterparty *</label>
-                        <input
+                        <input name="counterparty" aria-label="Counterparty"
                           type="text"
                           value={loanCounterparty}
                           onChange={(e) => setLoanCounterparty(e.target.value)}
@@ -4072,7 +4072,7 @@ export function BankReconciliationEnhanced({
                             const isChecked = receiptAllocations[inv.id] !== undefined;
                             return (
                               <div key={inv.id} className="flex items-center gap-2 text-xs p-1 hover:bg-gray-50 rounded">
-                                <input
+                                <input name="checkbox" aria-label="Checkbox"
                                   type="checkbox"
                                   checked={isChecked}
                                   onChange={(e) => {
@@ -4646,7 +4646,7 @@ export function BankReconciliationEnhanced({
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Description
               </label>
-              <textarea
+              <textarea name="description" aria-label="Description"
                 value={editFormData.description}
                 onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
                 rows={3}

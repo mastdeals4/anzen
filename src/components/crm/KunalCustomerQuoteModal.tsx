@@ -233,7 +233,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
           <div>
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs font-medium text-gray-600 w-8">To:</label>
-              <input type="text" value={toEmail} onChange={e => setToEmail(e.target.value)}
+              <input name="to" aria-label="To" type="text" value={toEmail} onChange={e => setToEmail(e.target.value)}
                 placeholder="customer@example.com"
                 className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm" />
               <button type="button" onClick={() => setShowCc(!showCc)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Cc</button>
@@ -244,7 +244,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
           {showCc && (
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-gray-600 w-8">Cc:</label>
-              <input type="text" value={ccEmail} onChange={e => setCcEmail(e.target.value)}
+              <input name="cc" aria-label="Cc" type="text" value={ccEmail} onChange={e => setCcEmail(e.target.value)}
                 placeholder="cc@example.com" className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm" />
             </div>
           )}
@@ -252,14 +252,14 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
           {showBcc && (
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-gray-600 w-8">Bcc:</label>
-              <input type="text" value={bccEmail} onChange={e => setBccEmail(e.target.value)}
+              <input name="bcc" aria-label="Bcc" type="text" value={bccEmail} onChange={e => setBccEmail(e.target.value)}
                 placeholder="bcc@example.com" className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm" />
             </div>
           )}
 
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-gray-600 w-8">Subject:</label>
-            <input type="text" value={subject} onChange={e => setSubject(e.target.value)}
+            <input name="subject" aria-label="Subject" type="text" value={subject} onChange={e => setSubject(e.target.value)}
               className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm" />
           </div>
 
@@ -272,7 +272,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
               <div className="flex flex-wrap gap-2">
                 {docs.map(doc => (
                   <label key={doc.id} className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs cursor-pointer ${selectedDocs.has(doc.id) ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}>
-                    <input type="checkbox" checked={selectedDocs.has(doc.id)} onChange={() => toggleDoc(doc.id)} className="text-blue-600" />
+                    <input name="selected" aria-label="Select item" type="checkbox" checked={selectedDocs.has(doc.id)} onChange={() => toggleDoc(doc.id)} className="text-blue-600" />
                     <span className="font-medium">{doc.document_type}</span>
                     <span className="truncate max-w-[180px]" title={doc.display_file_name || doc.original_file_name || ''}>{doc.display_file_name || doc.original_file_name || 'file'}</span>
                   </label>

@@ -400,7 +400,7 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
       <span className="text-[10px] text-slate-300 flex items-center gap-1.5">
         Reference USD Rate (not applied):
         <span className="text-[10px] text-slate-400">1 USD =</span>
-        <input
+        <input name="usd_rate_input" aria-label="Usd Rate Input"
           type="text"
           value={usdRateInput}
           onChange={e => handleRateChange(e.target.value)}

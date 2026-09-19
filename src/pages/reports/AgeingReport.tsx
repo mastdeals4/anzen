@@ -343,7 +343,7 @@ export function AgeingReport() {
       <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="text-xs font-medium text-gray-700">As of:</div>
-          <input
+          <input name="as_of_date" aria-label="As Of Date"
             type="date"
             value={asOfDate}
             onChange={(e) => setAsOfDate(e.target.value)}
@@ -541,7 +541,7 @@ export function AgeingReport() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Email Message</label>
-                <textarea
+                <textarea name="email_message" aria-label="Email Message"
                   value={reminderNote}
                   onChange={(e) => setReminderNote(e.target.value)}
                   rows={8}
@@ -590,7 +590,7 @@ export function AgeingReport() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Task Title</label>
-                <input
+                <input name="task_title" aria-label="Task Title"
                   type="text"
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
@@ -600,7 +600,7 @@ export function AgeingReport() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Deadline</label>
-                  <input
+                  <input name="deadline" aria-label="Deadline"
                     type="date"
                     value={taskDeadline}
                     onChange={(e) => setTaskDeadline(e.target.value)}
@@ -609,7 +609,7 @@ export function AgeingReport() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Priority</label>
-                  <select
+                  <select name="priority" aria-label="Priority"
                     value={taskPriority}
                     onChange={(e) => setTaskPriority(e.target.value as 'low' | 'medium' | 'high')}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500"

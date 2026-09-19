@@ -401,7 +401,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Appointment Type *
                 </label>
-                <select
+                <select name="appointment_type" aria-label="Appointment Type"
                   value={formData.activity_type}
                   onChange={(e) => setFormData({ ...formData, activity_type: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -417,7 +417,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Date & Time *
                 </label>
-                <input
+                <input name="date_time" aria-label="Date & Time"
                   type="datetime-local"
                   value={formData.follow_up_date}
                   onChange={(e) => setFormData({ ...formData, follow_up_date: e.target.value })}
@@ -430,7 +430,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Subject *
                 </label>
-                <input
+                <input name="subject" aria-label="Subject"
                   type="text"
                   value={formData.subject}
                   onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
@@ -444,7 +444,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Description / Agenda
                 </label>
-                <textarea
+                <textarea name="description_agenda" aria-label="Description / Agenda"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -461,7 +461,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                   <div className="space-y-2">
                     {users.map(user => (
                       <label key={user.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
-                        <input
+                        <input name="participants" aria-label="Participants"
                           type="checkbox"
                           checked={formData.participants.includes(user.id)}
                           onChange={(e) => {
@@ -485,7 +485,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
 
               <div className="md:col-span-2">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input
+                  <input name="auto_create_followup_task" aria-label="Auto Create Followup Task"
                     type="checkbox"
                     checked={formData.auto_create_followup_task}
                     onChange={(e) => setFormData({ ...formData, auto_create_followup_task: e.target.checked })}

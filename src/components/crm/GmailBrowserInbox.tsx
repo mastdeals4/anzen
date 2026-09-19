@@ -219,7 +219,7 @@ export function GmailBrowserInbox() {
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-2 top-1.5 w-3.5 h-3.5 text-gray-400" />
-              <input
+              <input name="query" aria-label="Gmail search, e.g. in:inbox quotation"
                 value={query}
                 onChange={event => setQuery(event.target.value)}
                 onKeyDown={event => { if (event.key === 'Enter') loadMessages(); }}

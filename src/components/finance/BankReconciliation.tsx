@@ -344,7 +344,7 @@ export function BankReconciliation({ canManage }: BankReconciliationProps) {
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <select
+          <select name="bank" aria-label="Bank"
             value={selectedBank}
             onChange={(e) => setSelectedBank(e.target.value)}
             className="px-3 py-1.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -357,14 +357,14 @@ export function BankReconciliation({ canManage }: BankReconciliationProps) {
           </select>
           <div className="flex items-center gap-2 text-sm">
             <Calendar className="w-4 h-4 text-gray-400" />
-            <input
+            <input name="date_range" aria-label="Date Range"
               type="date"
               value={dateRange.start}
               onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
               className="px-2 py-1 border rounded text-sm"
             />
             <span className="text-gray-400">to</span>
-            <input
+            <input name="date_range" aria-label="Date Range"
               type="date"
               value={dateRange.end}
               onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
@@ -382,7 +382,7 @@ export function BankReconciliation({ canManage }: BankReconciliationProps) {
           </button>
           {canManage && (
             <>
-              <input
+              <input name="file_upload" aria-label="Upload file"
                 ref={fileInputRef}
                 type="file"
                 accept=".xlsx,.xls,.csv"

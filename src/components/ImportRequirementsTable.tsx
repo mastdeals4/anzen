@@ -184,7 +184,7 @@ export function ImportRequirementsTable({ requirements, onRefresh, canEdit }: Im
 
                 <td className="px-4 py-3">
                   {editingCell?.id === req.id && editingCell.field === 'required_quantity' ? (
-                    <input
+                    <input name="value" aria-label="Value"
                       ref={inputRef as React.RefObject<HTMLInputElement>}
                       type="number"
                       value={editValue}
@@ -207,7 +207,7 @@ export function ImportRequirementsTable({ requirements, onRefresh, canEdit }: Im
 
                 <td className="px-4 py-3">
                   {editingCell?.id === req.id && editingCell.field === 'required_delivery_date' ? (
-                    <input
+                    <input name="value" aria-label="Value"
                       ref={inputRef as React.RefObject<HTMLInputElement>}
                       type="date"
                       value={editValue}
@@ -231,7 +231,7 @@ export function ImportRequirementsTable({ requirements, onRefresh, canEdit }: Im
 
                 <td className="px-4 py-3">
                   {editingCell?.id === req.id && editingCell.field === 'priority' ? (
-                    <select
+                    <select name="value" aria-label="Value"
                       ref={inputRef as React.RefObject<HTMLSelectElement>}
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
@@ -254,7 +254,7 @@ export function ImportRequirementsTable({ requirements, onRefresh, canEdit }: Im
 
                 <td className="px-4 py-3">
                   {editingCell?.id === req.id && editingCell.field === 'status' ? (
-                    <select
+                    <select name="value" aria-label="Value"
                       ref={inputRef as React.RefObject<HTMLSelectElement>}
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
@@ -277,7 +277,7 @@ export function ImportRequirementsTable({ requirements, onRefresh, canEdit }: Im
 
                 <td className="px-4 py-3">
                   {editingCell?.id === req.id && editingCell.field === 'lead_time_days' ? (
-                    <input
+                    <input name="value" aria-label="Value"
                       ref={inputRef as React.RefObject<HTMLInputElement>}
                       type="number"
                       value={editValue}
@@ -298,7 +298,7 @@ export function ImportRequirementsTable({ requirements, onRefresh, canEdit }: Im
 
                 <td className="px-4 py-3">
                   {editingCell?.id === req.id && editingCell.field === 'notes' ? (
-                    <textarea
+                    <textarea name="value" aria-label="Value"
                       ref={inputRef as React.RefObject<HTMLTextAreaElement>}
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}

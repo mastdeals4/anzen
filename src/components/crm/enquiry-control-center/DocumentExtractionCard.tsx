@@ -246,7 +246,7 @@ export const DocumentExtractionCard: React.FC<DocumentExtractionCardProps> = ({
                       <td className="py-1.5 px-2 font-medium text-gray-900">{param.parameter}</td>
                       <td className="py-1.5 px-2 font-semibold text-blue-900">
                         {isEditing ? (
-                          <input
+                          <input name="ed_params" aria-label="Ed Params"
                             type="text"
                             value={editedParams[idx]?.extracted_value || ''}
                             onChange={(e) => {

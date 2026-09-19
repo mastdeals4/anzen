@@ -167,7 +167,7 @@ export function PeriodClosePanel() {
       {reopenPrompt && (
         <div className="border rounded p-4 bg-yellow-50 space-y-2">
           <p className="text-sm font-medium">Reopen closed period — admin only</p>
-          <textarea
+          <textarea name="reopen_prompt" aria-label="Reason for reopening (required, kept in audit log)"
             value={reopenPrompt.reason}
             onChange={e => setReopenPrompt(v => v ? { ...v, reason: e.target.value } : v)}
             placeholder="Reason for reopening (required, kept in audit log)"

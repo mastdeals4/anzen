@@ -709,7 +709,7 @@ export function Products() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('products.productName')} *
                 </label>
-                <input
+                <input name="t_products_productname" aria-label="{t('products.productName')}"
                   type="text"
                   required
                   value={formData.product_name}
@@ -722,7 +722,7 @@ export function Products() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('products.hsnCode')} *
                 </label>
-                <input
+                <input name="t_products_hsncode" aria-label="{t('products.hsnCode')}"
                   type="text"
                   required
                   value={formData.hsn_code}
@@ -742,7 +742,7 @@ export function Products() {
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('products.category')} *</label>
-                <select
+                <select name="t_products_category" aria-label="{t('products.category')}"
                   required
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
@@ -757,7 +757,7 @@ export function Products() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('products.unit')} *</label>
-                <select
+                <select name="t_products_unit" aria-label="{t('products.unit')}"
                   required
                   value={formData.unit}
                   onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
@@ -780,7 +780,7 @@ export function Products() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('products.minStockLevel')}
                 </label>
-                <input
+                <input name="t_products_minstocklevel" aria-label="{t('products.minStockLevel')}"
                   type="number"
                   step="0.01"
                   value={formData.min_stock_level}
@@ -795,7 +795,7 @@ export function Products() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('products.packagingType')}
                 </label>
-                <input
+                <input name="t_products_packagingtype" aria-label="{t('products.packagingType')}"
                   type="text"
                   value={formData.packaging_type}
                   onChange={(e) => setFormData({ ...formData, packaging_type: e.target.value })}
@@ -808,7 +808,7 @@ export function Products() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('products.dutyA1')} (%)
                 </label>
-                <input
+                <input name="t_products_dutya1" aria-label="{t('products.dutyA1')} (%)"
                   type="text"
                   value={formData.duty_a1}
                   onChange={(e) => setFormData({ ...formData, duty_a1: e.target.value })}
@@ -820,7 +820,7 @@ export function Products() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <textarea
+              <textarea name="description" aria-label="Description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 rows={2}
@@ -851,7 +851,7 @@ export function Products() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Make / Supplier Name
                       </label>
-                      <input
+                      <input name="make_supplier_name" aria-label="Make / Supplier Name"
                         type="text"
                         value={source.source_name}
                         onChange={(e) => updateSource(index, 'source_name', e.target.value)}
@@ -862,7 +862,7 @@ export function Products() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
-                      <select
+                      <select name="grade" aria-label="Grade"
                         value={source.grade}
                         onChange={(e) => updateSource(index, 'grade', e.target.value)}
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -893,7 +893,7 @@ export function Products() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
-                    <input
+                    <input name="country" aria-label="Country"
                       type="text"
                       value={source.country}
                       onChange={(e) => updateSource(index, 'country', e.target.value)}
@@ -902,7 +902,7 @@ export function Products() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
-                    <input
+                    <input name="remarks" aria-label="Remarks"
                       type="text"
                       value={source.remarks}
                       onChange={(e) => updateSource(index, 'remarks', e.target.value)}
@@ -920,7 +920,7 @@ export function Products() {
                     <label className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-100">
                       <Upload className="w-4 h-4 text-gray-600" />
                       <span className="text-sm text-gray-600">Choose Files</span>
-                      <input
+                      <input name="file_upload" aria-label="Upload file"
                         type="file"
                         multiple
                         onChange={(e) => handleFileSelect(index, e.target.files)}

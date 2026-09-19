@@ -310,10 +310,12 @@ export function Customers() {
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-company-name" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.companyName')} *
               </label>
               <input
+                id="customer-company-name"
+                name="company_name"
                 type="text"
                 required
                 value={formData.company_name}
@@ -325,10 +327,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-npwp" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.npwp')}
               </label>
               <input
+                id="customer-npwp"
+                name="npwp"
                 type="text"
                 value={formData.npwp}
                 onChange={(e) =>
@@ -339,10 +343,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-contact-person" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.contactPerson')} *
               </label>
               <input
+                id="customer-contact-person"
+                name="contact_person"
                 type="text"
                 required
                 value={formData.contact_person}
@@ -354,10 +360,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-email" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.email')}
               </label>
               <input
+                id="customer-email"
+                name="email"
                 type="email"
                 value={formData.email}
                 onChange={(e) =>
@@ -368,10 +376,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-phone" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.phone')}
               </label>
               <input
+                id="customer-phone"
+                name="phone"
                 type="tel"
                 value={formData.phone}
                 onChange={(e) =>
@@ -382,10 +392,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-pbf-license" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.pbfLicense')}
               </label>
               <input
+                id="customer-pbf-license"
+                name="pbf_license"
                 type="text"
                 value={formData.pbf_license}
                 onChange={(e) =>
@@ -397,10 +409,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-city" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.city')}
               </label>
               <SearchableSelect
+                id="customer-city"
+                name="city"
                 value={formData.city}
                 onChange={(value) => setFormData({ ...formData, city: value })}
                 options={[
@@ -413,10 +427,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-country" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.country')}
               </label>
               <input
+                id="customer-country"
+                name="country"
                 type="text"
                 value={formData.country}
                 readOnly
@@ -425,10 +441,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-gst-vat-type" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.gstVatType')}
               </label>
               <input
+                id="customer-gst-vat-type"
+                name="gst_vat_type"
                 type="text"
                 value={formData.gst_vat_type}
                 onChange={(e) =>
@@ -439,10 +457,12 @@ export function Customers() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label htmlFor="customer-payment-terms" className="block text-xs font-medium text-gray-700 mb-1">
                 {t('customers.paymentTerms')}
               </label>
               <select
+                id="customer-payment-terms"
+                name="payment_terms"
                 value={formData.payment_terms}
                 onChange={(e) =>
                   setFormData({ ...formData, payment_terms: e.target.value })
@@ -460,10 +480,12 @@ export function Customers() {
           </div>
 
           <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-700 mb-1">
+            <label htmlFor="customer-address" className="block text-xs font-medium text-gray-700 mb-1">
               {t('customers.address')}
             </label>
             <textarea
+              id="customer-address"
+              name="address"
               value={formData.address}
               onChange={(e) =>
                 setFormData({ ...formData, address: e.target.value })

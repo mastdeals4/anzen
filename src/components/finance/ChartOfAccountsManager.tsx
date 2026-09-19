@@ -194,7 +194,7 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
       toolbar={(
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input
+          <input name="search_term" aria-label="Search accounts..."
             type="text"
             placeholder="Search accounts..."
             value={searchTerm}
@@ -263,12 +263,12 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
         <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
           <SapRow>
             <SapField label="Code" required span={4}>
-              <input type="text" required value={formData.code}
+              <input name="code" aria-label="e.g., 1101" type="text" required value={formData.code}
                 onChange={(e) => setFormData({ ...formData, code: e.target.value })}
                 className={SAP_INPUT + ' !font-mono'} placeholder="e.g., 1101" />
             </SapField>
             <SapField label="Type" required span={4}>
-              <select required value={formData.account_type}
+              <select name="account_type" aria-label="Account Type" required value={formData.account_type}
                 onChange={(e) => setFormData({ ...formData, account_type: e.target.value })}
                 className={SAP_INPUT}>
                 {accountTypes.map(type => (
@@ -277,7 +277,7 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
               </select>
             </SapField>
             <SapField label="Normal" required span={4}>
-              <select required value={formData.normal_balance}
+              <select name="normal_balance" aria-label="Normal Balance" required value={formData.normal_balance}
                 onChange={(e) => setFormData({ ...formData, normal_balance: e.target.value })}
                 className={SAP_INPUT}>
                 <option value="debit">Debit</option>
@@ -287,24 +287,24 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
           </SapRow>
           <SapRow>
             <SapField label="Name (EN)" required span={6}>
-              <input type="text" required value={formData.name}
+              <input name="name" aria-label="Name" type="text" required value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Name (ID)" span={6}>
-              <input type="text" value={formData.name_id}
+              <input name="name_id" aria-label="Name Id" type="text" value={formData.name_id}
                 onChange={(e) => setFormData({ ...formData, name_id: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
           </SapRow>
           <SapRow>
             <SapField label="Group" span={4}>
-              <input type="text" value={formData.account_group}
+              <input name="account_group" aria-label="Account Group" type="text" value={formData.account_group}
                 onChange={(e) => setFormData({ ...formData, account_group: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Parent" span={8}>
-              <select value={formData.parent_id}
+              <select name="parent_id" aria-label="Parent Id" value={formData.parent_id}
                 onChange={(e) => setFormData({ ...formData, parent_id: e.target.value })}
                 className={SAP_INPUT}>
                 <option value="">None (Top Level)</option>
@@ -317,14 +317,14 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
           <SapRow>
             <SapField label="Header" span={4}>
               <label className="flex items-center gap-1.5 h-7 px-1 text-[11px]">
-                <input type="checkbox" checked={formData.is_header}
+                <input name="is_header" aria-label="Is Header" type="checkbox" checked={formData.is_header}
                   onChange={(e) => setFormData({ ...formData, is_header: e.target.checked })}
                   className="rounded" />
                 <span>Group only (no posting)</span>
               </label>
             </SapField>
             <SapField label="Description" span={8}>
-              <input type="text" value={formData.description}
+              <input name="description" aria-label="Description" type="text" value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>

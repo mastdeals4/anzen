@@ -406,14 +406,14 @@ export function Layout({ children }: LayoutProps) {
             <div className={`flex-1 hidden md:flex items-center justify-center px-2 ${!showDateRange ? 'invisible' : ''}`} aria-hidden={!showDateRange}>
               {showDateRange && <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
                 <Calendar className="w-3.5 h-3.5 text-gray-500" />
-                <input
+                <input name="date_range" aria-label="Date Range"
                   type="date"
                   value={dateRange.startDate}
                   onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
                   className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
                 <span className="text-xs text-gray-400">to</span>
-                <input
+                <input name="date_range" aria-label="Date Range"
                   type="date"
                   value={dateRange.endDate}
                   onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
@@ -436,7 +436,7 @@ export function Layout({ children }: LayoutProps) {
                   <div className="space-y-2">
                     <div>
                       <label className="text-xs text-gray-500">From</label>
-                      <input
+                      <input name="from" aria-label="From"
                         type="date"
                         value={dateRange.startDate}
                         onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
@@ -445,7 +445,7 @@ export function Layout({ children }: LayoutProps) {
                     </div>
                     <div>
                       <label className="text-xs text-gray-500">To</label>
-                      <input
+                      <input name="to" aria-label="To"
                         type="date"
                         value={dateRange.endDate}
                         onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
@@ -505,7 +505,7 @@ export function Layout({ children }: LayoutProps) {
           <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden" onMouseDown={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 py-2 border-b">
               <Search className="w-4 h-4 text-gray-400" />
-              <input autoFocus value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search invoices, SOs, DCs, customers, batches…" className="flex-1 outline-none text-sm" />
+              <input name="search_term" aria-label="Search invoices, SOs, DCs, customers, batches…" autoFocus value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search invoices, SOs, DCs, customers, batches…" className="flex-1 outline-none text-sm" />
               <button onClick={() => setSearchOpen(false)} className="text-xs text-gray-400">Esc</button>
             </div>
             <div className="max-h-80 overflow-y-auto">

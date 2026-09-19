@@ -417,7 +417,7 @@ function getDocDisplayName(url: string, index: number): string {
       <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center">
         <div className="relative w-full md:w-80">
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
+          <input name="search" aria-label="Search name, code, bank, NIK/NPWP..."
             type="text"
             placeholder="Search name, code, bank, NIK/NPWP..."
             value={search}
@@ -429,7 +429,7 @@ function getDocDisplayName(url: string, index: number): string {
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-gray-500 uppercase">Role:</span>
-            <select
+            <select name="role_filter" aria-label="Role Filter"
               value={roleFilter}
               onChange={e => setRoleFilter(e.target.value)}
               className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:ring-indigo-500 focus:border-indigo-500"
@@ -443,7 +443,7 @@ function getDocDisplayName(url: string, index: number): string {
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-gray-500 uppercase">Status:</span>
-            <select
+            <select name="status_filter" aria-label="Status Filter"
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
               className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:ring-indigo-500 focus:border-indigo-500"
@@ -606,7 +606,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Payee Code <span className="text-red-500">*</span>
                     </label>
-                    <input
+                    <input name="payee_code" aria-label="PAY-0001"
                       type="text"
                       required
                       value={formData.payee_code}
@@ -620,7 +620,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Full Name <span className="text-red-500">*</span>
                     </label>
-                    <input
+                    <input name="full_name" aria-label="e.g. Rudi Kartono"
                       type="text"
                       required
                       value={formData.full_name}
@@ -634,7 +634,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Business Role <span className="text-red-500">*</span>
                     </label>
-                    <select
+                    <select name="business_role" aria-label="Business Role"
                       value={formData.business_role}
                       onChange={e => handleRoleChange(e.target.value as PayeeBusinessRole)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500"
@@ -649,7 +649,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Tax Classification (DJP) <span className="text-red-500">*</span>
                     </label>
-                    <select
+                    <select name="tax_classification" aria-label="Tax Classification"
                       value={formData.tax_classification}
                       onChange={e => setFormData({ ...formData, tax_classification: e.target.value as PayeeTaxClassification })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500"
@@ -672,7 +672,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       NIK (KTP 16 Digits)
                     </label>
-                    <input
+                    <input name="nik_ktp_16_digits" aria-label="NIK (KTP 16 Digits)"
                       type="text"
                       maxLength={16}
                       value={formData.nik}
@@ -689,7 +689,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       NPWP (Tax ID)
                     </label>
-                    <input
+                    <input name="npwp_tax_id" aria-label="NPWP (Tax ID)"
                       type="text"
                       value={formData.npwp}
                       onChange={e => setFormData({ ...formData, npwp: e.target.value })}
@@ -702,7 +702,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       PTKP Status
                     </label>
-                    <select
+                    <select name="ptkp_status" aria-label="PTKP Status"
                       value={formData.ptkp_status}
                       onChange={e => setFormData({ ...formData, ptkp_status: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500"
@@ -717,7 +717,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Default Tax Code Recommendation
                     </label>
-                    <select
+                    <select name="default_tax_code_recommendatio" aria-label="Default Tax Code Recommendation"
                       value={formData.default_pph_code_id}
                       onChange={e => setFormData({ ...formData, default_pph_code_id: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500"
@@ -743,7 +743,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Bank Name
                     </label>
-                    <input
+                    <input name="bank_name" aria-label="Bank Name"
                       type="text"
                       value={formData.bank_name}
                       onChange={e => setFormData({ ...formData, bank_name: e.target.value })}
@@ -756,7 +756,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Account Number
                     </label>
-                    <input
+                    <input name="account_number" aria-label="Account Number"
                       type="text"
                       value={formData.bank_account_number}
                       onChange={e => setFormData({ ...formData, bank_account_number: e.target.value })}
@@ -769,7 +769,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Account Beneficiary Name
                     </label>
-                    <input
+                    <input name="account_beneficiary_name" aria-label="Account Beneficiary Name"
                       type="text"
                       value={formData.bank_account_holder}
                       onChange={e => setFormData({ ...formData, bank_account_holder: e.target.value })}
@@ -790,7 +790,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Phone Number
                     </label>
-                    <input
+                    <input name="phone_number" aria-label="Phone Number"
                       type="text"
                       value={formData.phone}
                       onChange={e => setFormData({ ...formData, phone: e.target.value })}
@@ -803,7 +803,7 @@ function getDocDisplayName(url: string, index: number): string {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Email Address
                     </label>
-                    <input
+                    <input name="email_address" aria-label="Email Address"
                       type="email"
                       value={formData.email}
                       onChange={e => setFormData({ ...formData, email: e.target.value })}
@@ -817,7 +817,7 @@ function getDocDisplayName(url: string, index: number): string {
                   <label className="block text-xs font-medium text-gray-700 mb-1">
                     Notes
                   </label>
-                  <textarea
+                  <textarea name="notes" aria-label="Notes"
                     rows={2}
                     value={formData.notes}
                     onChange={e => setFormData({ ...formData, notes: e.target.value })}

@@ -175,7 +175,7 @@ export const AiReplyDraftCard: React.FC<AiReplyDraftCardProps> = ({
           <span className="font-medium text-purple-900">Enquiry Brain Reply Drafter</span>
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <select name="draft_type" aria-label="Draft Type"
             value={draftType}
             onChange={(e) => setDraftType(e.target.value as ReplyDraftType)}
             className="text-[11px] bg-white border border-purple-300 rounded px-2 py-1 text-gray-700"
@@ -255,7 +255,7 @@ export const AiReplyDraftCard: React.FC<AiReplyDraftCardProps> = ({
             <label className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold block mb-0.5">
               Subject
             </label>
-            <input
+            <input name="subject" aria-label="Subject"
               type="text"
               value={editedSubject}
               onChange={(e) => setEditedSubject(e.target.value)}
@@ -266,7 +266,7 @@ export const AiReplyDraftCard: React.FC<AiReplyDraftCardProps> = ({
             <label className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold block mb-0.5">
               Body
             </label>
-            <textarea
+            <textarea name="body" aria-label="Body"
               rows={6}
               value={editedBody}
               onChange={(e) => setEditedBody(e.target.value)}

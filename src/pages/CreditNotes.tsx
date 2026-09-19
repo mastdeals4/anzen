@@ -628,7 +628,7 @@ export function CreditNotes() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Original Invoice (Optional)
                 </label>
-                <select
+                <select name="original_invoice_optional" aria-label="Original Invoice (Optional)"
                   value={formData.original_invoice_id}
                   onChange={(e) => handleInvoiceChange(e.target.value)}
                   disabled={!formData.customer_id}
@@ -647,7 +647,7 @@ export function CreditNotes() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Credit Note Date *
                 </label>
-                <input
+                <input name="credit_note_date" aria-label="Credit Note Date"
                   type="date"
                   value={formData.credit_note_date}
                   onChange={(e) => setFormData({ ...formData, credit_note_date: e.target.value })}
@@ -660,7 +660,7 @@ export function CreditNotes() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Currency
                 </label>
-                <select
+                <select name="currency" aria-label="Currency"
                   value={formData.currency}
                   onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
@@ -675,7 +675,7 @@ export function CreditNotes() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Reason for Credit Note *
               </label>
-              <textarea
+              <textarea name="reason_for_credit_note" aria-label="Reason for Credit Note"
                 value={formData.reason}
                 onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
                 required
@@ -708,7 +708,7 @@ export function CreditNotes() {
                   <div key={index} className="p-3 border border-gray-200 rounded-lg space-y-2">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
-                        <select
+                        <select name="product_id" aria-label="Product Id"
                           value={item.product_id}
                           onChange={(e) => updateItem(index, 'product_id', e.target.value)}
                           required
@@ -730,7 +730,7 @@ export function CreditNotes() {
                       </div>
 
                       <div>
-                        <select
+                        <select name="batch_id" aria-label="Batch Id"
                           value={item.batch_id}
                           onChange={(e) => updateItem(index, 'batch_id', e.target.value)}
                           required
@@ -753,7 +753,7 @@ export function CreditNotes() {
 
                       <div>
                         <label className="block text-xs text-gray-600 mb-1">Quantity (Kg)</label>
-                        <input
+                        <input name="quantity_kg" aria-label="Quantity (Kg)"
                           type="number"
                           step="0.001"
                           placeholder="Quantity in Kg"
@@ -816,7 +816,7 @@ export function CreditNotes() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Additional Notes
               </label>
-              <textarea
+              <textarea name="additional_notes" aria-label="Additional Notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 rows={2}

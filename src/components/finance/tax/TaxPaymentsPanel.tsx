@@ -402,7 +402,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
     <div className="space-y-2">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="h-7 rounded border px-2 text-xs" aria-label="Tax payment type filter">
+          <select name="type_filter" value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="h-7 rounded border px-2 text-xs" aria-label="Tax payment type filter">
             <option value="all">All types</option>
             {taxTypes.map(type => <option key={type} value={type}>{type}</option>)}
           </select>
@@ -441,7 +441,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <label className="text-sm">
               Tax Type
-              <select
+              <select name="tax_type" aria-label="Tax Type"
                 value={form.tax_type}
                 onChange={e => setForm(f => ({ ...f, tax_type: e.target.value, tax_period_id: editingId ? f.tax_period_id : '', amount: editingId ? f.amount : '' }))}
                 className="mt-1 w-full border rounded px-2 py-1.5 disabled:bg-gray-100"
@@ -456,7 +456,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm">
               Tax Period
-              <select
+              <select name="tax_period_id" aria-label="Tax Period Id"
                 value={form.tax_period_id}
                 onChange={e => {
                   const period = periods.find(item => item.id === e.target.value);
@@ -486,7 +486,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm">
               Payment Date
-              <input
+              <input name="payment_date" aria-label="Payment Date"
                 type="date"
                 value={form.payment_date}
                 onChange={e => setForm(f => ({ ...f, payment_date: e.target.value }))}
@@ -505,7 +505,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm">
               Bank Account
-              <select
+              <select name="bank_account_id" aria-label="Bank Account Id"
                 value={form.bank_account_id}
                 onChange={e => setForm(f => ({ ...f, bank_account_id: e.target.value }))}
                 className="mt-1 w-full border rounded px-2 py-1.5"
@@ -521,7 +521,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm">
               Billing Code (Kode Billing)
-              <input
+              <input name="billing_code" aria-label="e.g. 820260713000123"
                 value={form.billing_code}
                 onChange={e => setForm(f => ({ ...f, billing_code: e.target.value }))}
                 className="mt-1 w-full border rounded px-2 py-1.5"
@@ -530,7 +530,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm">
               NTPN
-              <input
+              <input name="ntpn" aria-label="16-char DJP reference"
                 value={form.ntpn}
                 onChange={e => setForm(f => ({ ...f, ntpn: e.target.value }))}
                 className="mt-1 w-full border rounded px-2 py-1.5"
@@ -539,11 +539,11 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm">
               Government Reference
-              <input value={form.government_reference} onChange={e => setForm(f => ({ ...f, government_reference: e.target.value }))} className="mt-1 w-full border rounded px-2 py-1.5" />
+              <input name="government_reference" aria-label="Government Reference" value={form.government_reference} onChange={e => setForm(f => ({ ...f, government_reference: e.target.value }))} className="mt-1 w-full border rounded px-2 py-1.5" />
             </label>
             <label className="text-sm">
               Payment Reference
-              <input
+              <input name="payment_reference" aria-label="Bank transfer reference"
                 value={form.payment_reference}
                 onChange={e => setForm(f => ({ ...f, payment_reference: e.target.value }))}
                 className="mt-1 w-full border rounded px-2 py-1.5"
@@ -552,7 +552,7 @@ export function TaxPaymentsPanel({ onOpenJournal }: TaxPaymentsPanelProps) {
             </label>
             <label className="text-sm md:col-span-3">
               Notes
-              <input
+              <input name="notes" aria-label="Notes"
                 value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 className="mt-1 w-full border rounded px-2 py-1.5"

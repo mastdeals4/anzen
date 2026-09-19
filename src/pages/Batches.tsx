@@ -1070,7 +1070,7 @@ export function Batches() {
           <div className="p-3 border-b border-gray-200 flex items-center gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
+              <input name="batch_search" aria-label="Search batches..."
                 type="text"
                 value={batchSearch}
                 onChange={(e) => setBatchSearch(e.target.value)}
@@ -1446,7 +1446,7 @@ export function Batches() {
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Batch Number *
                   </label>
-                  <input
+                  <input name="batch_number" aria-label="Batch Number"
                     type="text"
                     value={formData.batch_number}
                     onChange={(e) => setFormData({ ...formData, batch_number: e.target.value })}
@@ -1459,7 +1459,7 @@ export function Batches() {
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Import Date *
                   </label>
-                  <input
+                  <input name="import_date" aria-label="Import Date"
                     type="date"
                     value={formData.import_date}
                     onChange={(e) => setFormData({ ...formData, import_date: e.target.value })}
@@ -1472,7 +1472,7 @@ export function Batches() {
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Expiry Date
                   </label>
-                  <input
+                  <input name="expiry_date" aria-label="Expiry Date"
                     type="date"
                     value={formData.expiry_date}
                     onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
@@ -1550,7 +1550,7 @@ export function Batches() {
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Import Quantity *
                   </label>
-                  <input
+                  <input name="import_quantity" aria-label="Import Quantity"
                     type="number"
                     value={formData.import_quantity === 0 ? '' : formData.import_quantity}
                     onChange={(e) => setFormData({ ...formData, import_quantity: e.target.value === '' ? 0 : Number(e.target.value) })}
@@ -1590,7 +1590,7 @@ export function Batches() {
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Per Pack Weight
                   </label>
-                  <input
+                  <input name="per_pack_weight" aria-label="Per Pack Weight"
                     type="number"
                     step="0.001"
                     value={formData.per_pack_weight}
@@ -1615,7 +1615,7 @@ export function Batches() {
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Pack Type
                   </label>
-                  <select
+                  <select name="pack_type" aria-label="Pack Type"
                     value={formData.pack_type}
                     onChange={(e) => {
                       const newFormData = { ...formData, pack_type: e.target.value };
@@ -1703,7 +1703,7 @@ export function Batches() {
                       <label className="block text-xs font-medium text-gray-700 mb-0.5">
                         Exchange Rate (IDR per USD)
                       </label>
-                      <input
+                      <input name="exchange_rate_idr_per_usd" aria-label="Exchange Rate (IDR per USD)"
                         type="number"
                         value={formData.exchange_rate_usd_to_idr === 0 ? '' : formData.exchange_rate_usd_to_idr}
                         onChange={(e) => handleExchangeRateChange(e.target.value === '' ? 0 : Number(e.target.value))}
@@ -1747,7 +1747,7 @@ export function Batches() {
                           Duty (Form A1 %)
                         </label>
                         <div className="flex gap-0.5">
-                          <input
+                          <input name="duty_form_a1" aria-label="Duty (Form A1 %)"
                             type="number"
                             value={formData.duty_percent === 0 ? '' : formData.duty_percent}
                             onChange={(e) => setFormData({ ...formData, duty_percent: e.target.value === '' ? 0 : Number(e.target.value) })}
@@ -1783,7 +1783,7 @@ export function Batches() {
                               maximumFractionDigits={4}
                             />
                           ) : (
-                            <input
+                            <input name="freight_charges" aria-label="0"
                               data-non-currency="percentage"
                               type="number"
                               value={formData.freight_charges === 0 ? '' : formData.freight_charges}
@@ -1794,7 +1794,7 @@ export function Batches() {
                               placeholder="0"
                             />
                           )}
-                          <select
+                          <select name="freight_charge_type" aria-label="Freight Charge Type"
                             value={formData.freight_charge_type}
                             onChange={(e) => setFormData({ ...formData, freight_charge_type: e.target.value as 'percentage' | 'fixed' })}
                             className="w-12 px-0.5 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
@@ -1825,7 +1825,7 @@ export function Batches() {
                               maximumFractionDigits={4}
                             />
                           ) : (
-                            <input
+                            <input name="other_charges" aria-label="0"
                               data-non-currency="percentage"
                               type="number"
                               value={formData.other_charges === 0 ? '' : formData.other_charges}
@@ -1836,7 +1836,7 @@ export function Batches() {
                               placeholder="0"
                             />
                           )}
-                          <select
+                          <select name="other_charge_type" aria-label="Other Charge Type"
                             value={formData.other_charge_type}
                             onChange={(e) => setFormData({ ...formData, other_charge_type: e.target.value as 'percentage' | 'fixed' })}
                             className="w-12 px-0.5 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"

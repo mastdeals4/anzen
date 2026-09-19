@@ -1687,7 +1687,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               <div className="absolute left-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded shadow-lg z-50 py-1">
                 <label className="w-full text-left px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-1.5 cursor-pointer">
                   <FileSpreadsheet className="w-3 h-3" /> Import Excel
-                  <input type="file" accept=".xlsx,.xls" onChange={(e) => { setImportMenuOpen(false); handleImportFile(e); }} className="hidden" />
+                  <input name="file_upload" aria-label="Upload file" type="file" accept=".xlsx,.xls" onChange={(e) => { setImportMenuOpen(false); handleImportFile(e); }} className="hidden" />
                 </label>
                 <button onClick={() => { setImportMenuOpen(false); downloadImportTemplate(); }} className="w-full text-left px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-1.5">
                   <Download className="w-3 h-3" /> Download Template
@@ -1729,7 +1729,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                 ['remarks', 'Remarks'],
               ].map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-700">
-                  <input
+                  <input name="checkbox" aria-label="Checkbox"
                     type="checkbox"
                     checked={isColumnVisible(key)}
                     disabled={['inquiry_number', 'product_name'].includes(key)}
@@ -1755,7 +1755,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         {/* Product search — sits inline in the toolbar */}
         <div className="relative flex-1 min-w-[180px] max-w-[320px]">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
-          <input
+          <input name="product_search" aria-label="Search product..."
             type="text"
             value={productSearch}
             onChange={e => setProductSearch(e.target.value)}
@@ -1949,7 +1949,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <thead className="bg-gray-100 sticky top-0 z-20">
               <tr className="border-b border-gray-300">
                 <th className="px-3 py-2 border-r border-gray-300">
-                  <input
+                  <input name="selected" aria-label="Select item"
                     type="checkbox"
                     checked={selectedRows.size === filteredData.length && filteredData.length > 0}
                     onChange={toggleSelectAll}
@@ -1998,7 +1998,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                           const isSelected = filters.find(f => f.column === 'company_name')?.values.includes(String(company));
                           return (
                             <label key={String(company)} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
-                              <input
+                              <input name="checkbox" aria-label="Checkbox"
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleFilter('company_name', String(company))}
@@ -2050,7 +2050,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                           const isSelected = filters.find(f => f.column === 'pipeline_status')?.values.includes(option.value);
                           return (
                             <label key={option.value} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
-                              <input
+                              <input name="checkbox" aria-label="Checkbox"
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleFilter('pipeline_status', option.value)}
@@ -2211,7 +2211,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                           const isSelected = filters.find(f => f.column === 'priority')?.values.includes(option.value);
                           return (
                             <label key={option.value} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
-                              <input
+                              <input name="checkbox" aria-label="Checkbox"
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleFilter('priority', option.value)}
@@ -2246,7 +2246,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     }`}
                   >
                     <td className="px-3 py-2 border-r border-gray-200">
-                      <input
+                      <input name="selected" aria-label="Select item"
                         type="checkbox"
                         checked={selectedRows.has(inquiry.id)}
                         onChange={() => toggleRowSelection(inquiry.id)}
@@ -2293,7 +2293,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
                     {isColumnVisible('product_name') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'product_name' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2317,7 +2317,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
                     {isColumnVisible('specification') && <td className="px-3 py-1.5 border-r border-gray-200 text-gray-600 text-xs">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'specification' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2341,7 +2341,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
                     {isColumnVisible('quantity') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'quantity' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2365,7 +2365,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
                     {isColumnVisible('supplier_name') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'supplier_name' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2416,7 +2416,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     {/* Mail Subject */}
                     {isColumnVisible('mail_subject') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'mail_subject' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2446,7 +2446,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     {/* ACE ERP No */}
                     {isColumnVisible('aceerp_no') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'aceerp_no' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2496,7 +2496,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
                     {/* Pipeline Status */}
                     {isColumnVisible('pipeline_status') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      <select
+                      <select name="inquiry" aria-label="Inquiry"
                         value={inquiry.pipeline_status || 'new'}
                         onChange={(e) => updatePipelineStatus(inquiry, e.target.value)}
                         disabled={!canManage}
@@ -2524,7 +2524,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     {canSeePPrice && isColumnVisible('purchase_price') && (
                       <td className="px-3 py-1.5 border-r border-gray-200">
                         {editingCell?.id === inquiry.id && editingCell?.field === 'purchase_price' ? (
-                          <input
+                          <input name="value" aria-label="Click to add"
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
@@ -2559,7 +2559,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                           return <span className="px-2 py-1 text-xs text-gray-400 italic">Restricted</span>;
                         }
                         return editingCell?.id === inquiry.id && editingCell?.field === 'offered_price' ? (
-                          <input
+                          <input name="value" aria-label="Click to add"
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
@@ -2589,7 +2589,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     {/* Delivery Date */}
                     {isColumnVisible('delivery_date') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'delivery_date' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="date"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2620,7 +2620,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
                     {/* Priority */}
                     {isColumnVisible('priority') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      <select
+                      <select name="inquiry" aria-label="Inquiry"
                         value={inquiry.priority}
                         onChange={(e) => updatePriority(inquiry, e.target.value)}
                         disabled={!canManage}
@@ -2635,7 +2635,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     {/* Remarks */}
                     {isColumnVisible('remarks') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'remarks' ? (
-                        <input
+                        <input name="value" aria-label="Value"
                           type="text"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
@@ -2819,7 +2819,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Call Notes *
             </label>
-            <textarea
+            <textarea name="call_notes" aria-label="Call Notes"
               value={callNotes}
               onChange={(e) => setCallNotes(e.target.value)}
               rows={4}
@@ -2862,7 +2862,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Appointment Type *</label>
-            <select
+            <select name="appointment_type" aria-label="Appointment Type"
               value={appointmentType}
               onChange={(e) => setAppointmentType(e.target.value as 'meeting' | 'video_call' | 'phone_call')}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -2874,7 +2874,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-            <input
+            <input name="date" aria-label="Date"
               type="date"
               value={appointmentDate}
               onChange={(e) => setAppointmentDate(e.target.value)}
@@ -2884,7 +2884,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-            <textarea
+            <textarea name="notes" aria-label="Notes"
               value={appointmentNotes}
               onChange={(e) => setAppointmentNotes(e.target.value)}
               rows={3}
@@ -2929,7 +2929,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Follow-up Date *
             </label>
-            <input
+            <input name="follow_up_date" aria-label="Follow-up Date"
               type="date"
               value={followUpDate}
               onChange={(e) => setFollowUpDate(e.target.value)}
@@ -2941,7 +2941,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Notes
             </label>
-            <textarea
+            <textarea name="notes" aria-label="Notes"
               value={followUpNotes}
               onChange={(e) => setFollowUpNotes(e.target.value)}
               rows={3}
@@ -3085,7 +3085,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Attach file(s) <span className="text-gray-400 font-normal">(optional)</span>
             </label>
-            <input
+            <input name="file_upload" aria-label="Upload file"
               type="file"
               multiple
               onChange={(e) => {
@@ -3119,7 +3119,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Notes (optional)
             </label>
-            <textarea
+            <textarea name="notes_optional" aria-label="Notes (optional)"
               rows={3}
               value={requirementUploadNotes}
               onChange={(e) => setRequirementUploadNotes(e.target.value)}
@@ -3159,7 +3159,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
           </p>
           <div className="space-y-3">
             <label className="flex items-center gap-3 cursor-pointer">
-              <input
+              <input name="price_required" aria-label="Price Required"
                 type="checkbox"
                 checked={requirementsForm.price_required}
                 onChange={(e) => setRequirementsForm({ ...requirementsForm, price_required: e.target.checked })}
@@ -3168,7 +3168,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               <span className="text-sm font-medium text-gray-700">Price</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
-              <input
+              <input name="coa_required" aria-label="Coa Required"
                 type="checkbox"
                 checked={requirementsForm.coa_required}
                 onChange={(e) => setRequirementsForm({ ...requirementsForm, coa_required: e.target.checked })}
@@ -3177,7 +3177,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               <span className="text-sm font-medium text-gray-700">COA</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
-              <input
+              <input name="sample_required" aria-label="Sample Required"
                 type="checkbox"
                 checked={requirementsForm.sample_required}
                 onChange={(e) => setRequirementsForm({ ...requirementsForm, sample_required: e.target.checked })}
@@ -3186,7 +3186,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               <span className="text-sm font-medium text-gray-700">Sample</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
-              <input
+              <input name="agency_letter_required" aria-label="Agency Letter Required"
                 type="checkbox"
                 checked={requirementsForm.agency_letter_required}
                 onChange={(e) => setRequirementsForm({ ...requirementsForm, agency_letter_required: e.target.checked })}
@@ -3195,7 +3195,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               <span className="text-sm font-medium text-gray-700">Agency Letter</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
-              <input
+              <input name="others_required" aria-label="Others Required"
                 type="checkbox"
                 checked={requirementsForm.others_required}
                 onChange={(e) => setRequirementsForm({ ...requirementsForm, others_required: e.target.checked })}

@@ -466,7 +466,7 @@ export function CanonicalSalesProfitReport() {
           {/* Date Picker */}
           <div className="flex items-center gap-1.5 text-xs bg-gray-50 border border-gray-200 px-2 py-1 rounded-md">
             <Calendar className="w-3.5 h-3.5 text-gray-400" />
-            <input
+            <input name="start_date" aria-label="Start Date"
               type="date"
               value={startDate}
               onChange={e => {
@@ -476,7 +476,7 @@ export function CanonicalSalesProfitReport() {
               className="bg-transparent border-0 p-0 text-xs text-gray-700 w-24 focus:ring-0"
             />
             <span className="text-gray-400 text-[10px]">—</span>
-            <input
+            <input name="end_date" aria-label="End Date"
               type="date"
               value={endDate}
               onChange={e => {
@@ -596,7 +596,7 @@ export function CanonicalSalesProfitReport() {
           </div>
           <div className="relative w-56">
             <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input
+            <input name="search" aria-label="Search product..."
               type="text"
               placeholder="Search product..."
               value={search}

@@ -249,7 +249,7 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Activity Type *</label>
-                <select
+                <select name="activity_type" aria-label="Activity Type"
                   value={formData.activity_type}
                   onChange={(e) => setFormData({ ...formData, activity_type: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -266,7 +266,7 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Subject *</label>
-                <input
+                <input name="subject" aria-label="Subject"
                   type="text"
                   value={formData.subject}
                   onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
@@ -278,7 +278,7 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
 
               <div className="md:col-span-2">
                 <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
-                <textarea
+                <textarea name="description" aria-label="Description"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -289,7 +289,7 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Follow-up Date</label>
-                <input
+                <input name="follow_up_date" aria-label="Follow-up Date"
                   type="datetime-local"
                   value={formData.follow_up_date}
                   onChange={(e) => setFormData({ ...formData, follow_up_date: e.target.value })}
@@ -299,7 +299,7 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
 
               <div className="flex items-center">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input
+                  <input name="is_completed" aria-label="Is Completed"
                     type="checkbox"
                     checked={formData.is_completed}
                     onChange={(e) => setFormData({ ...formData, is_completed: e.target.checked })}

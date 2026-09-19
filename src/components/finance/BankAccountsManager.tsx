@@ -227,29 +227,29 @@ export function BankAccountsManager({ canManage }: Props) {
         <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
           <SapRow>
             <SapField label="Bank Name" required span={4}>
-              <input type="text" value={formData.bank_name}
+              <input name="bank_name" aria-label="Bank Name" type="text" value={formData.bank_name}
                 onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
                 className={SAP_INPUT} required />
             </SapField>
             <SapField label="Account Name" required span={4}>
-              <input type="text" value={formData.account_name}
+              <input name="account_name" aria-label="Account Name" type="text" value={formData.account_name}
                 onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
                 className={SAP_INPUT} required />
             </SapField>
             <SapField label="Alias" span={4}>
-              <input type="text" value={formData.alias}
+              <input name="alias" aria-label="BCA IDR, Mandiri USD" type="text" value={formData.alias}
                 onChange={(e) => setFormData({ ...formData, alias: e.target.value })}
                 className={SAP_INPUT} placeholder="BCA IDR, Mandiri USD" />
             </SapField>
           </SapRow>
           <SapRow>
             <SapField label="Account #" required span={4}>
-              <input type="text" value={formData.account_number}
+              <input name="account_number" aria-label="Account Number" type="text" value={formData.account_number}
                 onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
                 className={SAP_INPUT + ' !font-mono'} required />
             </SapField>
             <SapField label="Type" required span={4}>
-              <select value={formData.account_type}
+              <select name="account_type" aria-label="Account Type" value={formData.account_type}
                 onChange={(e) => setFormData({ ...formData, account_type: e.target.value as any })}
                 className={SAP_INPUT} required>
                 <option value="savings">Savings</option>
@@ -259,7 +259,7 @@ export function BankAccountsManager({ canManage }: Props) {
               </select>
             </SapField>
             <SapField label="Currency" required span={4}>
-              <select value={formData.currency}
+              <select name="currency" aria-label="Currency" value={formData.currency}
                 onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
                 className={SAP_INPUT} required>
                 <option value="IDR">IDR</option>
@@ -275,7 +275,7 @@ export function BankAccountsManager({ canManage }: Props) {
                 className={SAP_INPUT + ' !text-right !font-mono'} />
             </SapField>
             <SapField label="Open Date" required span={6}>
-              <input type="date" value={formData.opening_balance_date}
+              <input name="opening_balance_date" aria-label="Opening Balance Date" type="date" value={formData.opening_balance_date}
                 onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
                 className={SAP_INPUT} required />
             </SapField>

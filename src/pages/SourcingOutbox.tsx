@@ -1264,13 +1264,13 @@ export function SourcingOutbox() {
                 <p className="text-[11px] text-gray-500">Read Gmail, analyze one email, edit extracted data, then confirm save.</p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <input
+                <input name="gmail_query" aria-label="Gmail query, e.g. newer_than:30d"
                   value={gmailQuery}
                   onChange={e => setGmailQuery(e.target.value)}
                   placeholder="Gmail query, e.g. newer_than:30d"
                   className="w-64 max-w-full border border-gray-200 rounded px-2 py-1 text-xs"
                 />
-                <select
+                <select name="gmail_scan_limit" aria-label="Gmail Scan Limit"
                   value={gmailScanLimit}
                   onChange={e => setGmailScanLimit(Number(e.target.value))}
                   className="border border-gray-200 rounded px-2 py-1 text-xs"
@@ -1348,7 +1348,7 @@ export function SourcingOutbox() {
                             </td>
                             <td className="px-2 py-1 border-r border-gray-200">
                               {row.candidates.length > 0 ? (
-                                <select
+                                <select name="selectedInquiryId" aria-label="SelectedInquiryId"
                                   value={row.selectedInquiryId || ''}
                                   onChange={e => setAiRows(current => current.map(item => item.messageId === row.messageId ? { ...item, selectedInquiryId: e.target.value || null } : item))}
                                   className="w-full border border-gray-200 rounded px-1 py-0.5 text-[11px]"
@@ -1394,14 +1394,14 @@ export function SourcingOutbox() {
                   <div className="p-2 border-b border-gray-200 space-y-2">
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1.5" />
-                      <input
+                      <input name="ai_search" aria-label="Search sender, subject, product"
                         value={aiSearch}
                         onChange={e => setAiSearch(e.target.value)}
                         placeholder="Search sender, subject, product"
                         className="pl-7 pr-2 py-1 text-xs border border-gray-200 rounded w-full"
                       />
                     </div>
-                    <select value={aiTypeFilter} onChange={e => setAiTypeFilter(e.target.value as typeof aiTypeFilter)}
+                    <select name="ai_type_filter" aria-label="Ai Type Filter" value={aiTypeFilter} onChange={e => setAiTypeFilter(e.target.value as typeof aiTypeFilter)}
                       className="w-full text-xs border border-gray-200 rounded px-2 py-1">
                       <option value="all">All AI types</option>
                       <option value="Supplier Price Reply">Supplier Price Reply</option>
@@ -1517,7 +1517,7 @@ export function SourcingOutbox() {
                                 <>
                                   {sourceExtractionRows.map((row, idx) => (
                                     <div key={idx} className="bg-white border border-gray-200 rounded p-2 space-y-1.5">
-                                      <select value={row.selectedInquiryId || ''}
+                                      <select name="selectedInquiryId" aria-label="SelectedInquiryId" value={row.selectedInquiryId || ''}
                                         onChange={e => updateSourceExtractionRow(idx, { selectedInquiryId: e.target.value || null })}
                                         className="w-full border border-gray-200 rounded px-2 py-1 text-xs">
                                         <option value="">Matched Inquiry No</option>
@@ -1528,29 +1528,29 @@ export function SourcingOutbox() {
                                         ))}
                                       </select>
                                       <div className="grid grid-cols-2 gap-1.5">
-                                        <input value={row.aceerp_no || ''} onChange={e => updateSourceExtractionRow(idx, { aceerp_no: e.target.value || null })} placeholder="AC ERP#" className="border border-gray-200 rounded px-2 py-1 text-xs" />
-                                        <input value={row.quantity || ''} onChange={e => updateSourceExtractionRow(idx, { quantity: e.target.value || null })} placeholder="Qty" className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                        <input name="aceerp_no" aria-label="AC ERP#" value={row.aceerp_no || ''} onChange={e => updateSourceExtractionRow(idx, { aceerp_no: e.target.value || null })} placeholder="AC ERP#" className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                        <input name="quantity" aria-label="Qty" value={row.quantity || ''} onChange={e => updateSourceExtractionRow(idx, { quantity: e.target.value || null })} placeholder="Qty" className="border border-gray-200 rounded px-2 py-1 text-xs" />
                                       </div>
-                                      <input value={row.product_name} onChange={e => updateSourceExtractionRow(idx, { product_name: e.target.value })} placeholder="Product" className="w-full border border-gray-200 rounded px-2 py-1 text-xs" />
+                                      <input name="product_name" aria-label="Product" value={row.product_name} onChange={e => updateSourceExtractionRow(idx, { product_name: e.target.value })} placeholder="Product" className="w-full border border-gray-200 rounded px-2 py-1 text-xs" />
                                       <div className="grid grid-cols-2 gap-1.5">
-                                        <input value={row.offered_make || ''} onChange={e => updateSourceExtractionRow(idx, { offered_make: e.target.value || null })} placeholder="Offered Make / Manufacturer" className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                        <input name="offered_make" aria-label="Offered Make / Manufacturer" value={row.offered_make || ''} onChange={e => updateSourceExtractionRow(idx, { offered_make: e.target.value || null })} placeholder="Offered Make / Manufacturer" className="border border-gray-200 rounded px-2 py-1 text-xs" />
                                         <div className="flex gap-1">
                                           <MoneyInput value={row.source_price} onChange={amount => updateSourceExtractionRow(idx, { source_price: amount || null })} placeholder="INR Rate / Source Price" className="min-w-0 flex-1 border border-gray-200 rounded px-2 py-1 text-xs" maximumFractionDigits={4} />
-                                          <select value={row.source_currency} onChange={e => updateSourceExtractionRow(idx, { source_currency: e.target.value })} className="w-16 border border-gray-200 rounded px-1 py-1 text-xs">
+                                          <select name="source_currency" aria-label="Source Currency" value={row.source_currency} onChange={e => updateSourceExtractionRow(idx, { source_currency: e.target.value })} className="w-16 border border-gray-200 rounded px-1 py-1 text-xs">
                                             {['INR','USD','CNY','IDR','EUR','GBP'].map(currency => <option key={currency}>{currency}</option>)}
                                           </select>
                                         </div>
                                       </div>
                                       <div className="grid grid-cols-2 gap-1.5">
-                                        <select value={row.availability} onChange={e => updateSourceExtractionRow(idx, { availability: e.target.value as ParsedSourceRow['availability'] })} className="border border-gray-200 rounded px-2 py-1 text-xs">
+                                        <select name="availability" aria-label="Availability" value={row.availability} onChange={e => updateSourceExtractionRow(idx, { availability: e.target.value as ParsedSourceRow['availability'] })} className="border border-gray-200 rounded px-2 py-1 text-xs">
                                           {['available','partial','na'].map(value => <option key={value}>{value}</option>)}
                                         </select>
-                                        <select value={row.document_status} onChange={e => updateSourceExtractionRow(idx, { document_status: e.target.value as ParsedSourceRow['document_status'] })} className="border border-gray-200 rounded px-2 py-1 text-xs">
+                                        <select name="document_status" aria-label="Document Status" value={row.document_status} onChange={e => updateSourceExtractionRow(idx, { document_status: e.target.value as ParsedSourceRow['document_status'] })} className="border border-gray-200 rounded px-2 py-1 text-xs">
                                           {['pending','received','partial','not_required'].map(value => <option key={value}>{value}</option>)}
                                         </select>
                                       </div>
-                                      <input value={row.lead_time || ''} onChange={e => updateSourceExtractionRow(idx, { lead_time: e.target.value || null })} placeholder="Availability / Lead Time" className="w-full border border-gray-200 rounded px-2 py-1 text-xs" />
-                                      <textarea value={row.remark || ''} onChange={e => updateSourceExtractionRow(idx, { remark: e.target.value || null })} placeholder="Remarks / India Comments" className="w-full border border-gray-200 rounded px-2 py-1 text-xs min-h-[54px]" />
+                                      <input name="lead_time" aria-label="Availability / Lead Time" value={row.lead_time || ''} onChange={e => updateSourceExtractionRow(idx, { lead_time: e.target.value || null })} placeholder="Availability / Lead Time" className="w-full border border-gray-200 rounded px-2 py-1 text-xs" />
+                                      <textarea name="remark" aria-label="Remarks / India Comments" value={row.remark || ''} onChange={e => updateSourceExtractionRow(idx, { remark: e.target.value || null })} placeholder="Remarks / India Comments" className="w-full border border-gray-200 rounded px-2 py-1 text-xs min-h-[54px]" />
                                       <div className="flex justify-between text-[10px] text-gray-500">
                                         <span>Confidence {Math.round(row.confidence * 100)}%</span>
                                         {row.saved && <span className="text-green-700">saved</span>}
@@ -1636,35 +1636,35 @@ export function SourcingOutbox() {
             <div className="flex flex-wrap gap-2 items-center">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1.5" />
-                <input
+                <input name="search" aria-label="Search INQ, AC ERP, product, customer, make"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Search INQ, AC ERP, product, customer, make"
                   className="pl-7 pr-2 py-1 text-xs border border-gray-200 rounded w-72 max-w-full"
                 />
               </div>
-              <select value={routeFilter} onChange={e => setRouteFilter(e.target.value as RouteFilter)} className="text-xs border border-gray-200 rounded px-2 py-1">
+              <select name="route_filter" aria-label="Route Filter" value={routeFilter} onChange={e => setRouteFilter(e.target.value as RouteFilter)} className="text-xs border border-gray-200 rounded px-2 py-1">
                 <option value="all">All routes</option>
                 <option value="india">India</option>
                 <option value="china">China</option>
                 <option value="local">Local</option>
               </select>
-              <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} className="text-xs border border-gray-200 rounded px-2 py-1 max-w-[180px]">
+              <select name="customer_filter" aria-label="Customer Filter" value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} className="text-xs border border-gray-200 rounded px-2 py-1 max-w-[180px]">
                 <option value="all">All customers</option>
                 {customerOptions.map(customer => <option key={customer} value={customer}>{customer}</option>)}
               </select>
-              <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="text-xs border border-gray-200 rounded px-2 py-1">
+              <select name="status_filter" aria-label="Status Filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="text-xs border border-gray-200 rounded px-2 py-1">
                 <option value="all">All status</option>
                 {['not_sent', 'sent', 'waiting_reply', 'partial_received', 'received', 'unavailable'].map(status => <option key={status} value={status}>{status}</option>)}
               </select>
-              <select value={agingFilter} onChange={e => setAgingFilter(e.target.value)} className="text-xs border border-gray-200 rounded px-2 py-1">
+              <select name="aging_filter" aria-label="Aging Filter" value={agingFilter} onChange={e => setAgingFilter(e.target.value)} className="text-xs border border-gray-200 rounded px-2 py-1">
                 <option value="all">Any age</option>
                 <option value="3">3+ days</option>
                 <option value="7">7+ days</option>
                 <option value="15">15+ days</option>
                 <option value="30">30+ days</option>
               </select>
-              <select value={missingFilter} onChange={e => setMissingFilter(e.target.value as MissingFilter)} className="text-xs border border-gray-200 rounded px-2 py-1">
+              <select name="missing_filter" aria-label="Missing Filter" value={missingFilter} onChange={e => setMissingFilter(e.target.value as MissingFilter)} className="text-xs border border-gray-200 rounded px-2 py-1">
                 <option value="all">Any pending</option>
                 <option value="price">Missing price</option>
                 <option value="docs">Missing docs</option>
@@ -1674,7 +1674,7 @@ export function SourcingOutbox() {
 
           <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2 text-xs text-gray-700">
-              <input
+              <input name="selected" aria-label="Select item"
                 type="checkbox"
                 checked={selectedRows.length === visibleRows.length && visibleRows.length > 0}
                 onChange={() => selectedRows.length === visibleRows.length ? clearSelection() : selectFilteredRows()}
@@ -1695,7 +1695,7 @@ export function SourcingOutbox() {
                     <button onClick={table.reset} className="text-[11px] text-blue-600 hover:underline mb-1">Reset widths</button>
                     {table.columns.map(column => (
                       <label key={column.key} className="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-700">
-                        <input type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
+                        <input name="column_visibility" aria-label="Toggle column visibility" type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
                         <span>{column.label || 'Select/Actions'}</span>
                       </label>
                     ))}
@@ -1744,7 +1744,7 @@ export function SourcingOutbox() {
                     return (
                       <tr key={row.id} className="hover:bg-gray-50">
                         {table.isVisible('select') && <td style={table.getCellStyle('select')} className="px-2 py-1 border-r border-gray-200">
-                          <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggle(row.id)}
+                          <input name="selected" aria-label="Select item" type="checkbox" checked={selected.has(row.id)} onChange={() => toggle(row.id)}
                             className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                         </td>}
                         {table.isVisible('inquiry') && <td style={table.getCellStyle('inquiry')} className="px-2 py-1 text-xs font-medium whitespace-nowrap border-r border-gray-200">
@@ -1881,7 +1881,7 @@ export function SourcingOutbox() {
                             )}
                           </div>
                         ) : (
-                          <textarea
+                          <textarea name="body_override" aria-label="No sendable rows selected for this route."
                             value={bodyOverride[route] ?? previewBodies[route] ?? ''}
                             onChange={e => setBodyOverride(prev => ({ ...prev, [route]: e.target.value }))}
                             placeholder="No sendable rows selected for this route."
@@ -1949,7 +1949,7 @@ export function SourcingOutbox() {
                 <div className="grid sm:grid-cols-2 gap-3 text-xs">
                   <label className="text-gray-600">
                     Matched Inquiry
-                    <select
+                    <select name="ai_review_row" aria-label="Ai Review Row"
                       value={aiReviewRow.selectedInquiryId || ''}
                       onChange={e => setAiReviewRow(row => row ? { ...row, selectedInquiryId: e.target.value || null } : row)}
                       className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -1964,7 +1964,7 @@ export function SourcingOutbox() {
                   </label>
                   <label className="text-gray-600">
                     Product
-                    <input
+                    <input name="ai_review_draft" aria-label="Ai Review Draft"
                       value={aiReviewDraft.product}
                       onChange={e => setAiReviewDraft(draft => ({ ...draft, product: e.target.value }))}
                       className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -1975,7 +1975,7 @@ export function SourcingOutbox() {
                 {aiReviewRow.aiType === 'India Office Query / Revert Needed' ? (
                   <label className="block text-xs text-gray-600">
                     Extracted question
-                    <textarea
+                    <textarea name="ai_review_draft" aria-label="India query: Need quantity / specification..."
                       value={aiReviewDraft.question}
                       onChange={e => setAiReviewDraft(draft => ({ ...draft, question: e.target.value }))}
                       rows={4}
@@ -1987,7 +1987,7 @@ export function SourcingOutbox() {
 	                  <div className="grid sm:grid-cols-2 gap-3 text-xs">
                     <label className="text-gray-600">
                       Document type
-                      <select
+                      <select name="ai_review_draft" aria-label="Ai Review Draft"
                         value={aiReviewDraft.documentType}
                         onChange={e => setAiReviewDraft(draft => ({ ...draft, documentType: e.target.value as AiReviewDraft['documentType'] }))}
                         className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -1997,7 +1997,7 @@ export function SourcingOutbox() {
                     </label>
                     <label className="text-gray-600">
                       Make / Manufacturer
-                      <input
+                      <input name="ai_review_draft" aria-label="Ai Review Draft"
                         value={aiReviewDraft.make}
                         onChange={e => setAiReviewDraft(draft => ({ ...draft, make: e.target.value }))}
                         className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -2005,7 +2005,7 @@ export function SourcingOutbox() {
                     </label>
                     <label className="text-gray-600">
                       Rename file
-                      <input
+                      <input name="ai_review_draft" aria-label="Ai Review Draft"
                         value={aiReviewDraft.displayFileName}
                         onChange={e => setAiReviewDraft(draft => ({ ...draft, displayFileName: e.target.value }))}
                         className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -2013,7 +2013,7 @@ export function SourcingOutbox() {
                     </label>
                     <div className="text-gray-600">
                       Attachments
-                      <select
+                      <select name="ai_review_draft" aria-label="Ai Review Draft"
                         value={aiReviewDraft.attachmentId}
                         onChange={e => {
                           const att = aiReviewRow.attachments?.find(item => item.attachmentId === e.target.value);
@@ -2034,7 +2034,7 @@ export function SourcingOutbox() {
 
                 <label className="block text-xs text-gray-600">
                   Note to append
-                  <textarea
+                  <textarea name="ai_review_draft" aria-label="Ai Review Draft"
                     value={aiReviewDraft.notes}
                     onChange={e => setAiReviewDraft(draft => ({ ...draft, notes: e.target.value }))}
                     rows={3}
@@ -2075,7 +2075,7 @@ export function SourcingOutbox() {
               <div className="p-4 space-y-3">
                 <label className="block text-xs text-gray-600">
                   To
-                  <input
+                  <input name="reply_draft" aria-label="Reply Draft"
                     value={replyDraft.to}
                     onChange={e => setReplyDraft(current => ({ ...current, to: e.target.value }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -2083,7 +2083,7 @@ export function SourcingOutbox() {
                 </label>
                 <label className="block text-xs text-gray-600">
                   Subject
-                  <input
+                  <input name="reply_draft" aria-label="Reply Draft"
                     value={replyDraft.subject}
                     onChange={e => setReplyDraft(current => ({ ...current, subject: e.target.value }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs"
@@ -2091,7 +2091,7 @@ export function SourcingOutbox() {
                 </label>
                 <label className="block text-xs text-gray-600">
                   Body
-                  <textarea
+                  <textarea name="reply_draft" aria-label="Reply Draft"
                     value={replyDraft.body}
                     onChange={e => setReplyDraft(current => ({ ...current, body: e.target.value }))}
                     rows={10}
@@ -2127,7 +2127,7 @@ export function SourcingOutbox() {
               <div className="p-4 grid grid-cols-2 gap-3">
                 <label className="col-span-2 text-xs text-gray-600">
                   Offered Make / Manufacturer
-                  <input value={sourceDraft.offered_make} onChange={e => setSourceDraft(d => ({ ...d, offered_make: e.target.value }))}
+                  <input name="source_draft" aria-label="Source Draft" value={sourceDraft.offered_make} onChange={e => setSourceDraft(d => ({ ...d, offered_make: e.target.value }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs" />
                 </label>
                 <label className="text-xs text-gray-600">
@@ -2137,28 +2137,28 @@ export function SourcingOutbox() {
                 </label>
                 <label className="text-xs text-gray-600">
                   Currency
-                  <select value={sourceDraft.source_currency} onChange={e => setSourceDraft(d => ({ ...d, source_currency: e.target.value }))}
+                  <select name="source_draft" aria-label="Source Draft" value={sourceDraft.source_currency} onChange={e => setSourceDraft(d => ({ ...d, source_currency: e.target.value }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs">
                     {['INR', 'USD', 'CNY', 'IDR'].map(currency => <option key={currency}>{currency}</option>)}
                   </select>
                 </label>
                 <label className="text-xs text-gray-600">
                   Availability
-                  <select value={sourceDraft.availability} onChange={e => setSourceDraft(d => ({ ...d, availability: e.target.value as SourceDraft['availability'] }))}
+                  <select name="source_draft" aria-label="Source Draft" value={sourceDraft.availability} onChange={e => setSourceDraft(d => ({ ...d, availability: e.target.value as SourceDraft['availability'] }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs">
                     {['available', 'partial', 'na'].map(value => <option key={value}>{value}</option>)}
                   </select>
                 </label>
                 <label className="text-xs text-gray-600">
                   Document Status
-                  <select value={sourceDraft.document_status} onChange={e => setSourceDraft(d => ({ ...d, document_status: e.target.value as SourceDraft['document_status'] }))}
+                  <select name="source_draft" aria-label="Source Draft" value={sourceDraft.document_status} onChange={e => setSourceDraft(d => ({ ...d, document_status: e.target.value as SourceDraft['document_status'] }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs">
                     {['pending', 'partial', 'received', 'not_required'].map(value => <option key={value}>{value}</option>)}
                   </select>
                 </label>
                 <label className="col-span-2 text-xs text-gray-600">
                   Remark
-                  <textarea value={sourceDraft.remark} onChange={e => setSourceDraft(d => ({ ...d, remark: e.target.value }))}
+                  <textarea name="source_draft" aria-label="Source Draft" value={sourceDraft.remark} onChange={e => setSourceDraft(d => ({ ...d, remark: e.target.value }))}
                     className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-xs min-h-[72px]" />
                 </label>
               </div>

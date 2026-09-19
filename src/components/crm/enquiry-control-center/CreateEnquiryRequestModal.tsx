@@ -3,7 +3,7 @@ import { Modal } from '../../Modal';
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
 import { EnquiryRequestService } from '../../../services/enquiry/EnquiryRequestService';
-import { EnquiryRequestCategory, WaitingForParty } from '../../../types/enquiry/enquiryRequest.types';
+import { EnquiryRequestCategory, WaitingForParty } from '../../../types/enquiry';
 import { showToast } from '../../ToastNotification';
 import { Loader2 } from 'lucide-react';
 
@@ -132,7 +132,7 @@ export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
               Category <span className="text-rose-500">*</span>
             </label>
-            <select
+            <select name="category" aria-label="Category"
               value={category}
               onChange={e => setCategory(e.target.value as any)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-2 focus:ring-blue-500"
@@ -150,7 +150,7 @@ export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
               Waiting For
             </label>
-            <select
+            <select name="waiting_for" aria-label="Waiting For"
               value={waitingFor}
               onChange={e => setWaitingFor(e.target.value as any)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-2 focus:ring-blue-500"
@@ -168,7 +168,7 @@ export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps>
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             Requirement Title <span className="text-rose-500">*</span>
           </label>
-          <input
+          <input name="title" aria-label="e.g. COA Batch Verification, 100 Mesh Availability"
             type="text"
             value={title}
             onChange={e => setTitle(e.target.value)}
@@ -182,7 +182,7 @@ export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps>
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             Detailed Customer Requirement <span className="text-rose-500">*</span>
           </label>
-          <textarea
+          <textarea name="customer_requirement" aria-label="Exact specification or customer need..."
             value={customerRequirement}
             onChange={e => setCustomerRequirement(e.target.value)}
             rows={3}
@@ -195,7 +195,7 @@ export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Assign To</label>
-            <select
+            <select name="assign_to" aria-label="Assign To"
               value={assignedTo}
               onChange={e => setAssignedTo(e.target.value)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-2 focus:ring-blue-500"
@@ -211,7 +211,7 @@ export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps>
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Due Date</label>
-            <input
+            <input name="due_date" aria-label="Due Date"
               type="date"
               value={dueDate}
               onChange={e => setDueDate(e.target.value)}

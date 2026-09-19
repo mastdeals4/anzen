@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../../Modal';
 import { useAuth } from '../../../contexts/AuthContext';
 import { EnquiryRequestService } from '../../../services/enquiry/EnquiryRequestService';
-import { EnquiryRequestGridItem } from '../../../types/enquiry/controlCenter.types.ts';
-import { EnquiryRequestStatus, WaitingForParty } from '../../../types/enquiry/enquiryRequest.types';
+import { EnquiryRequestGridItem, EnquiryRequestStatus, WaitingForParty } from '../../../types/enquiry';
 import { showToast } from '../../ToastNotification';
 import { Loader2 } from 'lucide-react';
 
@@ -99,7 +98,7 @@ export const EditRequestRequirementModal: React.FC<EditRequestRequirementModalPr
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             New Customer Requirement <span className="text-rose-500">*</span>
           </label>
-          <textarea
+          <textarea name="requirement" aria-label="e.g. 500 KG — 660 mesh (customer approved alternative)"
             value={newRequirement}
             onChange={e => setNewRequirement(e.target.value)}
             rows={3}
@@ -113,7 +112,7 @@ export const EditRequestRequirementModal: React.FC<EditRequestRequirementModalPr
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             Reason for Change / Context
           </label>
-          <input
+          <input name="reason_for_change_context" aria-label="Reason for Change / Context"
             type="text"
             value={reason}
             onChange={e => setReason(e.target.value)}
@@ -125,7 +124,7 @@ export const EditRequestRequirementModal: React.FC<EditRequestRequirementModalPr
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Updated Status</label>
-            <select
+            <select name="updated_status" aria-label="Updated Status"
               value={newStatus}
               onChange={e => setNewStatus(e.target.value as any)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white"
@@ -138,7 +137,7 @@ export const EditRequestRequirementModal: React.FC<EditRequestRequirementModalPr
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">Waiting For</label>
-            <select
+            <select name="waiting_for" aria-label="Waiting For"
               value={newWaitingFor}
               onChange={e => setNewWaitingFor(e.target.value as any)}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white"

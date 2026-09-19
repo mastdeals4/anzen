@@ -177,35 +177,35 @@ export function StockUpdateEmailComposer({ onClose, onComplete }: Props) {
     <h3 className='font-semibold'>Stock Update Email</h3>
     <div className='grid grid-cols-1 lg:grid-cols-2 gap-3'>
       <div className='border rounded p-2 space-y-2'>
-        <input className='w-full border rounded px-2 py-1 text-xs' placeholder='Search product / code / batch' value={productSearch} onChange={e => setProductSearch(e.target.value)} />
+        <input name="product_search" aria-label="Search product / code / batch" className='w-full border rounded px-2 py-1 text-xs' placeholder='Search product / code / batch' value={productSearch} onChange={e => setProductSearch(e.target.value)} />
         <div className='max-h-44 overflow-auto space-y-1'>
           {filteredStocks.map(s => <div key={s.id} className='flex items-center justify-between gap-2 text-xs border rounded px-2 py-1'>
             <label className='flex items-center gap-2 min-w-0'>
-              <input type='checkbox' checked={selectedStock.has(s.id)} onChange={() => { const n = new Set(selectedStock); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); setSelectedStock(n); }} />
+              <input name="selected" aria-label="Select item" type='checkbox' checked={selectedStock.has(s.id)} onChange={() => { const n = new Set(selectedStock); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); setSelectedStock(n); }} />
               <span className='truncate'>{s.products?.product_name} • {s.current_stock - (s.reserved_stock || 0)} avail</span>
             </label>
-            <input className='w-24 border rounded px-1 py-0.5 text-xs' placeholder='Price' value={manualPrices[s.id] || ''} onChange={e => setManualPrices(prev => ({ ...prev, [s.id]: e.target.value }))} />
+            <input name="manual_prices" aria-label="Price" className='w-24 border rounded px-1 py-0.5 text-xs' placeholder='Price' value={manualPrices[s.id] || ''} onChange={e => setManualPrices(prev => ({ ...prev, [s.id]: e.target.value }))} />
           </div>)}
         </div>
       </div>
       <div className='border rounded p-2 max-h-56 overflow-auto'>
         {recipients.map(r => <label key={r.id} className='block text-xs'>
-          <input type='checkbox' checked={selectedRecipients.has(r.id)} onChange={() => { const n = new Set(selectedRecipients); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); setSelectedRecipients(n); }} /> {r.label} ({r.email})
+          <input name="selected" aria-label="Select item" type='checkbox' checked={selectedRecipients.has(r.id)} onChange={() => { const n = new Set(selectedRecipients); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); setSelectedRecipients(n); }} /> {r.label} ({r.email})
           {invalidRecipientIds.has(r.id) && <span className='text-red-600 ml-2'>⚠ invalid email</span>}
         </label>)}
       </div>
     </div>
     <div className='flex flex-wrap gap-4 text-xs'>
-      <label className='flex items-center gap-1'><input type='checkbox' checked={showExpiryDate} onChange={e => setShowExpiryDate(e.target.checked)} /> Include expiry date</label>
-      <label className='flex items-center gap-1'><input type='checkbox' checked={showBatchNumber} onChange={e => setShowBatchNumber(e.target.checked)} /> Include batch number</label>
+      <label className='flex items-center gap-1'><input name="checkbox" aria-label="Checkbox" type='checkbox' checked={showExpiryDate} onChange={e => setShowExpiryDate(e.target.checked)} /> Include expiry date</label>
+      <label className='flex items-center gap-1'><input name="checkbox" aria-label="Checkbox" type='checkbox' checked={showBatchNumber} onChange={e => setShowBatchNumber(e.target.checked)} /> Include batch number</label>
     </div>
-    <input className='w-full border rounded p-2 text-sm' value={subject} onChange={e => setSubject(e.target.value)} />
-    <textarea className='w-full border rounded p-2 text-sm h-28' value={body} onChange={e => setBody(e.target.value)} />
+    <input name="subject" aria-label="Subject" className='w-full border rounded p-2 text-sm' value={subject} onChange={e => setSubject(e.target.value)} />
+    <textarea name="body" aria-label="Body" className='w-full border rounded p-2 text-sm h-28' value={body} onChange={e => setBody(e.target.value)} />
     <div className='border rounded p-3 bg-gray-50'>
       <div className='text-xs font-semibold mb-2'>Email Preview</div>
       <div className='text-xs bg-white border rounded p-2 overflow-auto max-h-52' dangerouslySetInnerHTML={{ __html: sanitizedPreviewHtml }} />
     </div>
-    <select className='border rounded p-2 text-sm' value={followUpDays} onChange={e => setFollowUpDays(e.target.value ? Number(e.target.value) : '')}><option value=''>No follow-up reminder</option><option value='3'>Remind in 3 days</option><option value='7'>Remind in 7 days</option></select>
+    <select name="follow_up_days" aria-label="Follow Up Days" className='border rounded p-2 text-sm' value={followUpDays} onChange={e => setFollowUpDays(e.target.value ? Number(e.target.value) : '')}><option value=''>No follow-up reminder</option><option value='3'>Remind in 3 days</option><option value='7'>Remind in 7 days</option></select>
     <div className='text-xs'>Delivery: sent {Object.values(results).filter(v => v === 'sent').length}, failed {Object.values(results).filter(v => v === 'failed').length}, pending {Object.values(results).filter(v => v === 'pending').length}</div>
     <div className='flex gap-2 justify-end flex-wrap'>
       <button onClick={onClose} className='px-3 py-1 border rounded'>Close</button>

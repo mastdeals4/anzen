@@ -285,7 +285,7 @@ export function SourceDocuments({
                   <p className="text-sm font-medium text-gray-900 truncate">{item.file.name}</p>
                   <p className="text-xs text-gray-500">{(item.file.size / 1024).toFixed(1)} KB</p>
                 </div>
-                <select
+                <select name="doc_type" aria-label="Doc Type"
                   value={item.doc_type}
                   onChange={(e) => updateQueueItemType(index, e.target.value)}
                   className="px-2 py-1 text-sm border border-gray-300 rounded"
@@ -324,7 +324,7 @@ export function SourceDocuments({
           <p className="text-xs text-gray-500">
             Or press <kbd className="px-2 py-0.5 bg-gray-200 rounded text-xs font-mono">Ctrl+V</kbd> to paste from clipboard
           </p>
-          <input
+          <input name="file_upload" aria-label="Upload file"
             ref={fileInputRef}
             type="file"
             multiple

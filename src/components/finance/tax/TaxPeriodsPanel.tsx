@@ -293,7 +293,7 @@ export function TaxPeriodsPanel() {
   function periodEditor(source: InputLine['source'] | OutputLine['source'], id: string, currentPeriodId: string, locked: boolean) {
     if (source === 'broker' || source === 'pib') return <span className="text-gray-400">Same as expense</span>;
     return (
-      <select
+      <select name="period_id"
         aria-label="Tax period"
         value={currentPeriodId}
         disabled={locked || editingDocumentId === id}

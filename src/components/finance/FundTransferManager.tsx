@@ -886,12 +886,12 @@ export function FundTransferManager({
             {/* Row A: Date · From Type · From Bank */}
             <SapRow>
               <SapField label="Date" required span={4}>
-                <input type="date" value={formData.transfer_date}
+                <input name="transfer_date" aria-label="Transfer Date" type="date" value={formData.transfer_date}
                   onChange={(e) => setFormData({ ...formData, transfer_date: e.target.value })}
                   className={SAP_INPUT} required />
               </SapField>
               <SapField label="From Type" required span={4}>
-                <select value={formData.from_account_type}
+                <select name="from_account_type" aria-label="From Account Type" value={formData.from_account_type}
                   onChange={(e) => setFormData({
                     ...formData,
                     from_account_type: e.target.value as any,
@@ -905,7 +905,7 @@ export function FundTransferManager({
               </SapField>
               {formData.from_account_type === 'bank' && (
                 <SapField label="From Bank" required span={4}>
-                  <select value={formData.from_bank_account_id}
+                  <select name="from_bank_account_id" aria-label="From Bank Account Id" value={formData.from_bank_account_id}
                     onChange={(e) => {
                       setFormData({ ...formData, from_bank_account_id: e.target.value, from_bank_statement_line_id: '' });
                       loadBankStatements(e.target.value, 'from');
@@ -939,7 +939,7 @@ export function FundTransferManager({
                   className={SAP_INPUT + ' !text-right !font-mono !font-semibold'} required />
               </SapField>
               <SapField label="To Type" required span={4}>
-                <select value={formData.to_account_type}
+                <select name="to_account_type" aria-label="To Account Type" value={formData.to_account_type}
                   onChange={(e) => setFormData({
                     ...formData,
                     to_account_type: e.target.value as any,
@@ -953,7 +953,7 @@ export function FundTransferManager({
               </SapField>
               {formData.to_account_type === 'bank' && (
                 <SapField label="To Bank" required span={4}>
-                  <select value={formData.to_bank_account_id}
+                  <select name="to_bank_account_id" aria-label="To Bank Account Id" value={formData.to_bank_account_id}
                     onChange={(e) => {
                       setFormData({ ...formData, to_bank_account_id: e.target.value, to_bank_statement_line_id: '' });
                       loadBankStatements(e.target.value, 'to');
@@ -985,7 +985,7 @@ export function FundTransferManager({
               {formData.from_bank_account_id && (
                 <SapField label="From Bank Stmt" span={4}>
                   {fromBankStatements.length > 0 ? (
-                    <select value={formData.from_bank_statement_line_id}
+                    <select name="from_bank_statement_line_id" aria-label="From Bank Statement Line Id" value={formData.from_bank_statement_line_id}
                       onChange={(e) => setFormData({ ...formData, from_bank_statement_line_id: e.target.value })}
                       className={SAP_INPUT}>
                       <option value="">No link</option>
@@ -1003,7 +1003,7 @@ export function FundTransferManager({
               {formData.to_bank_account_id && (
                 <SapField label="To Bank Stmt" span={4}>
                   {toBankStatements.length > 0 ? (
-                    <select value={formData.to_bank_statement_line_id}
+                    <select name="to_bank_statement_line_id" aria-label="To Bank Statement Line Id" value={formData.to_bank_statement_line_id}
                       onChange={(e) => setFormData({ ...formData, to_bank_statement_line_id: e.target.value })}
                       className={SAP_INPUT}>
                       <option value="">No link</option>
@@ -1022,7 +1022,7 @@ export function FundTransferManager({
 
             <SapRow>
               <SapField label="Description" span={12}>
-                <input type="text" value={formData.description}
+                <input name="description" aria-label="Purpose of transfer (optional)" type="text" value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className={SAP_INPUT} placeholder="Purpose of transfer (optional)" />
               </SapField>
@@ -1085,7 +1085,7 @@ export function FundTransferManager({
             </p>
             <label className="block">
               <span className="block mb-1 text-xs font-medium text-gray-700">Reason (optional)</span>
-              <textarea
+              <textarea name="undo_reverse_reason" aria-label="Reason for restoring this Contra Voucher"
                 value={undoReverseReason}
                 onChange={(event) => setUndoReverseReason(event.target.value)}
                 rows={3}

@@ -377,7 +377,7 @@ export function JournalEntryViewerEnhanced({
       <div className="flex flex-wrap items-center gap-4">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-          <input
+          <input name="search_term" aria-label="Search voucher, accounts, narration..."
             type="text"
             placeholder="Search voucher, accounts, narration..."
             value={searchTerm}
@@ -386,14 +386,14 @@ export function JournalEntryViewerEnhanced({
           />
         </div>
 
-        <select
+        <select name="module" aria-label="Module"
           value={filterModule}
           onChange={(e) => setFilterModule(e.target.value)}
           className="px-1.5 py-1 border border-gray-300 rounded-lg"
         >
           {sourceFilters.map(filter => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
         </select>
-        <select
+        <select name="status_filter"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
           className="px-1.5 py-1 border border-gray-300 rounded-lg"

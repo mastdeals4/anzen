@@ -80,7 +80,7 @@ export function Customer360Panel() {
   return <div className="grid lg:grid-cols-3 gap-3">
     <div className="bg-white border rounded-lg p-3">
       <div className="flex items-center justify-between mb-2"><h3 className="font-semibold">Customer 360</h3><button onClick={load} className="text-xs text-blue-600">Refresh</button></div>
-      <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search customer" className="w-full border rounded px-2 py-1 text-sm mb-2" />
+      <input name="filter" aria-label="Search customer" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search customer" className="w-full border rounded px-2 py-1 text-sm mb-2" />
       <div className="space-y-1 max-h-[65vh] overflow-auto">{visible.map(r => { const d = daysSince(r.lastPurchase); const relationship = !r.invoices.length ? 'Never purchased' : d !== null && d >= 30 ? `Inactive customer · ${d}d` : 'Active customer'; return <button key={r.id} onClick={() => setSelectedId(r.id)} className={`w-full text-left border rounded p-2 ${selected?.id === r.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}><div className="font-medium text-sm">{r.company_name}</div><div className="text-xs text-gray-500">{r.erp ? 'ERP linked' : 'CRM prospect'} · {relationship}</div></button>; })}</div>
     </div>
     <div className="lg:col-span-2 bg-white border rounded-lg p-4">{loading ? <div className="text-sm text-gray-500">Loading customer intelligence…</div> : !selected ? <div className="text-sm text-gray-500">No customers found.</div> : <>

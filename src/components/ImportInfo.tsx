@@ -311,7 +311,7 @@ export function ImportInfo() {
         {/* Filter rows */}
         {filters.map((f) => (
           <div key={f.id} className="flex items-center gap-1.5">
-            <select
+            <select name="field" aria-label="Field"
               value={f.field}
               onChange={e => setFilterField(f.id, e.target.value as SortField)}
               className="w-28 px-1.5 py-1 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-gray-700 font-medium flex-shrink-0"
@@ -324,7 +324,7 @@ export function ImportInfo() {
             <span className="text-[10px] text-gray-400 select-none flex-shrink-0">contains</span>
 
             <div className="relative flex-1 min-w-0">
-              <input
+              <input name="value" aria-label="{${FILTER_FIELDS.find(ff => ff.value === f.field)?.label ?? f.field}…}"
                 type="text"
                 value={f.value}
                 onChange={e => setFilterValue(f.id, e.target.value)}
@@ -378,7 +378,7 @@ export function ImportInfo() {
           <label className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-white border border-gray-300 text-gray-600 rounded hover:bg-gray-100 cursor-pointer transition-colors whitespace-nowrap">
             <Upload className="w-3 h-3" />
             {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Upload'}
-            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleUpload} className="hidden" disabled={uploading} />
+            <input name="file_upload" aria-label="Upload file" ref={fileRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleUpload} className="hidden" disabled={uploading} />
           </label>
           {(userRole === 'admin' || userRole === 'manager') && (
             <button onClick={() => setShowClear(true)} className="p-1 text-red-400 hover:text-red-600 transition-colors" title="Clear all data">

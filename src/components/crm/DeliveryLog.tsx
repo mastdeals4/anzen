@@ -900,7 +900,7 @@ export function DeliveryLog() {
           ))}
         </div>
         <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
-          <input
+          <input name="checkbox" aria-label="Checkbox"
             type="checkbox"
             checked={hideCancelled}
             onChange={e => setHideCancelled(e.target.checked)}
@@ -1208,7 +1208,7 @@ export function DeliveryLog() {
                                 {/* Inline email edit — auto-refresh is paused while this is open */}
                                 {editingEmailId === r.id ? (
                                   <div className="flex items-center gap-1.5 mt-1">
-                                    <input
+                                    <input name="email_value" aria-label="Email Value"
                                       ref={editInputRef}
                                       type="email"
                                       value={editEmailValue}

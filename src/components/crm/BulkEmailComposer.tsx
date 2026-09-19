@@ -384,7 +384,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
           {/* Subject */}
           <div className="flex items-center gap-2 px-5 py-2.5 border-b border-gray-200 bg-white flex-shrink-0">
             <span className="text-sm text-gray-500 w-16 flex-shrink-0">Subject</span>
-            <input
+            <input name="subject" aria-label="Subject (use {{company_name}}, {{contact_person}}, {{customer_name}}, {{salutation}})"
               type="text"
               value={subject}
               onChange={e => setSubject(e.target.value)}
@@ -447,7 +447,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
             <div className="w-px h-4 bg-gray-300 mx-1" />
             <label className="relative cursor-pointer p-1.5 rounded hover:bg-gray-200 transition" title="Text color">
               <span className="text-xs font-bold text-red-500">A</span>
-              <input
+              <input name="field" aria-label="Field"
                 type="color"
                 className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                 onChange={e => execFormat('foreColor', e.target.value)}
@@ -528,7 +528,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
               {/* Attach file */}
               <label className="cursor-pointer p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition" title="Attach files">
                 <Paperclip className="w-5 h-5" />
-                <input
+                <input name="file_upload" aria-label="Upload file"
                   ref={fileInputRef}
                   type="file"
                   multiple

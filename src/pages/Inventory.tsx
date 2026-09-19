@@ -652,7 +652,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Transaction Type *
                 </label>
-                <select
+                <select name="transaction_type" aria-label="Transaction Type"
                   value={formData.transaction_type}
                   onChange={() => undefined}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -667,7 +667,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Product *
                 </label>
-                <select
+                <select name="product" aria-label="Product"
                   value={formData.product_id}
                   onChange={(e) => setFormData({ ...formData, product_id: e.target.value, batch_id: '' })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -687,7 +687,7 @@ export function Inventory() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Batch *
                   </label>
-                  <select
+                  <select name="batch" aria-label="Batch"
                     value={formData.batch_id}
                     onChange={(e) => setFormData({ ...formData, batch_id: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -708,7 +708,7 @@ export function Inventory() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Quantity *
                   </label>
-                  <input
+                  <input name="quantity" aria-label="Quantity"
                     type="number"
                     value={formData.quantity}
                     onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
@@ -725,7 +725,7 @@ export function Inventory() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Transaction Date *
                   </label>
-                  <input
+                  <input name="transaction_date" aria-label="Transaction Date"
                     type="date"
                     value={formData.transaction_date}
                     onChange={(e) => setFormData({ ...formData, transaction_date: e.target.value })}
@@ -739,7 +739,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Reference Number
                 </label>
-                <input
+                <input name="reference_number" aria-label="Reference Number"
                   type="text"
                   value={formData.reference_number}
                   onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
@@ -752,7 +752,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Notes
                 </label>
-                <textarea
+                <textarea name="notes" aria-label="Notes"
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -787,7 +787,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Customer *
                 </label>
-                <select
+                <select name="customer" aria-label="Customer"
                   value={returnFormData.customer_id}
                   onChange={(e) => setReturnFormData({ ...returnFormData, customer_id: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -806,7 +806,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Return Type *
                 </label>
-                <select
+                <select name="return_type" aria-label="Return Type"
                   value={returnFormData.return_type}
                   onChange={(e) => setReturnFormData({ ...returnFormData, return_type: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -825,7 +825,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Return Date *
                 </label>
-                <input
+                <input name="return_date" aria-label="Return Date"
                   type="date"
                   value={returnFormData.return_date}
                   onChange={(e) => setReturnFormData({ ...returnFormData, return_date: e.target.value })}
@@ -838,7 +838,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Return Reason *
                 </label>
-                <textarea
+                <textarea name="return_reason" aria-label="Return Reason"
                   value={returnFormData.return_reason}
                   onChange={(e) => setReturnFormData({ ...returnFormData, return_reason: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -851,7 +851,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Additional Notes
                 </label>
-                <textarea
+                <textarea name="additional_notes" aria-label="Additional Notes"
                   value={returnFormData.notes}
                   onChange={(e) => setReturnFormData({ ...returnFormData, notes: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -886,7 +886,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Product *
                 </label>
-                <select
+                <select name="product" aria-label="Product"
                   value={rejectionFormData.product_id}
                   onChange={(e) => setRejectionFormData({ ...rejectionFormData, product_id: e.target.value, batch_id: '' })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -906,7 +906,7 @@ export function Inventory() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Batch *
                   </label>
-                  <select
+                  <select name="batch" aria-label="Batch"
                     value={rejectionFormData.batch_id}
                     onChange={(e) => setRejectionFormData({ ...rejectionFormData, batch_id: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -926,7 +926,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Rejection Reason *
                 </label>
-                <select
+                <select name="rejection_reason" aria-label="Rejection Reason"
                   value={rejectionFormData.rejection_reason}
                   onChange={(e) => setRejectionFormData({ ...rejectionFormData, rejection_reason: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -945,7 +945,7 @@ export function Inventory() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Quantity Rejected *
                   </label>
-                  <input
+                  <input name="quantity_rejected" aria-label="Quantity Rejected"
                     type="number"
                     value={rejectionFormData.quantity_rejected}
                     onChange={(e) => setRejectionFormData({ ...rejectionFormData, quantity_rejected: Number(e.target.value) })}
@@ -974,7 +974,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Rejection Date *
                 </label>
-                <input
+                <input name="rejection_date" aria-label="Rejection Date"
                   type="date"
                   value={rejectionFormData.rejection_date}
                   onChange={(e) => setRejectionFormData({ ...rejectionFormData, rejection_date: e.target.value })}
@@ -987,7 +987,7 @@ export function Inventory() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Detailed Description *
                 </label>
-                <textarea
+                <textarea name="detailed_description" aria-label="Detailed Description"
                   value={rejectionFormData.rejection_details}
                   onChange={(e) => setRejectionFormData({ ...rejectionFormData, rejection_details: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"

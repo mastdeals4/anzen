@@ -320,7 +320,7 @@ export function GmailSettings() {
                 <p className="text-xs text-gray-500">Fetch new emails every 10 minutes</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input
+                <input name="sync_enabled" aria-label="Sync Enabled"
                   type="checkbox"
                   checked={connection.sync_enabled}
                   onChange={handleToggleSync}

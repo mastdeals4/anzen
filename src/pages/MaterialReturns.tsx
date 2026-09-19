@@ -683,7 +683,7 @@ export default function MaterialReturns() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Original Delivery Challan *
                 </label>
-                <select
+                <select name="original_delivery_challan" aria-label="Original Delivery Challan"
                   value={formData.original_dc_id}
                   onChange={(e) => handleChallanChange(e.target.value)}
                   required
@@ -706,7 +706,7 @@ export default function MaterialReturns() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Return Date *
                 </label>
-                <input
+                <input name="return_date" aria-label="Return Date"
                   type="date"
                   value={formData.return_date}
                   onChange={(e) => setFormData({ ...formData, return_date: e.target.value })}
@@ -719,7 +719,7 @@ export default function MaterialReturns() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Return Type *
                 </label>
-                <select
+                <select name="return_type" aria-label="Return Type"
                   value={formData.return_type}
                   onChange={(e) => setFormData({ ...formData, return_type: e.target.value })}
                   required
@@ -739,7 +739,7 @@ export default function MaterialReturns() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Return Reason *
               </label>
-              <textarea
+              <textarea name="return_reason" aria-label="Return Reason"
                 value={formData.return_reason}
                 onChange={(e) => setFormData({ ...formData, return_reason: e.target.value })}
                 required
@@ -795,7 +795,7 @@ export default function MaterialReturns() {
 
                           <div className="col-span-2">
                             <label className="block text-xs text-gray-600 mb-1">Return Qty (Kg) *</label>
-                            <input
+                            <input name="return_qty_kg" aria-label="Return Qty (Kg)"
                               type="number"
                               step="0.01"
                               value={returnItem.quantity_returned || ''}
@@ -812,7 +812,7 @@ export default function MaterialReturns() {
 
                           <div className="col-span-2">
                             <label className="block text-xs text-gray-600 mb-1">Condition</label>
-                            <select
+                            <select name="condition" aria-label="Condition"
                               value={returnItem.condition}
                               onChange={(e) => updateReturnItem(index, 'condition', e.target.value)}
                               className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -829,7 +829,7 @@ export default function MaterialReturns() {
                           <div className="mt-3 grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-xs text-gray-600 mb-1">Disposition</label>
-                              <select
+                              <select name="disposition" aria-label="Disposition"
                                 value={returnItem.disposition}
                                 onChange={(e) => updateReturnItem(index, 'disposition', e.target.value)}
                                 className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
@@ -842,7 +842,7 @@ export default function MaterialReturns() {
                             </div>
                             <div>
                               <label className="block text-xs text-gray-600 mb-1">Notes (optional)</label>
-                              <input
+                              <input name="notes_optional" aria-label="Notes (optional)"
                                 type="text"
                                 value={returnItem.notes || ''}
                                 onChange={(e) => updateReturnItem(index, 'notes', e.target.value)}
@@ -870,7 +870,7 @@ export default function MaterialReturns() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Additional Notes
               </label>
-              <textarea
+              <textarea name="additional_notes" aria-label="Additional Notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 rows={2}

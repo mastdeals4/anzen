@@ -248,7 +248,7 @@ export default function ImportRequirements() {
             {/* Product Search */}
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
+              <input name="product_search" aria-label="Search product…"
                 type="text"
                 placeholder="Search product…"
                 value={productSearch}
@@ -259,7 +259,7 @@ export default function ImportRequirements() {
 
             {/* Status filter (SO view only) */}
             {viewMode === 'so_view' && (
-              <select
+              <select name="status_filter" aria-label="Status Filter"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="border rounded-lg px-2.5 py-1.5 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
@@ -273,7 +273,7 @@ export default function ImportRequirements() {
             )}
 
             {/* Priority filter */}
-            <select
+            <select name="priority_filter" aria-label="Priority Filter"
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value)}
               className="border rounded-lg px-2.5 py-1.5 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
@@ -286,7 +286,7 @@ export default function ImportRequirements() {
 
             {/* Customer filter (SO view only) */}
             {viewMode === 'so_view' && (
-              <select
+              <select name="customer_filter" aria-label="Customer Filter"
                 value={customerFilter}
                 onChange={(e) => setCustomerFilter(e.target.value)}
                 className="border rounded-lg px-2.5 py-1.5 text-sm focus:ring-1 focus:ring-blue-500 outline-none max-w-[180px]"

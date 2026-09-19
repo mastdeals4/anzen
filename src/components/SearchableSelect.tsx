@@ -10,6 +10,10 @@ interface Option {
 }
 
 interface SearchableSelectProps {
+  id?: string;
+  name?: string;
+  'aria-label'?: string;
+  'aria-labelledby'?: string;
   value: string;
   onChange: (value: string) => void;
   options: Option[];
@@ -34,6 +38,10 @@ function normalize(text: string): string {
 }
 
 export function SearchableSelect({
+  id,
+  name,
+  'aria-label': ariaLabel,
+  'aria-labelledby': ariaLabelledBy,
   value,
   onChange,
   options,
@@ -327,6 +335,10 @@ export function SearchableSelect({
       <button
         ref={buttonRef}
         type="button"
+        id={id}
+        name={name || id}
+        aria-label={ariaLabel || (!ariaLabelledBy ? placeholder : undefined)}
+        aria-labelledby={ariaLabelledBy}
         onClick={() => {
           if (!disabled) {
             setIsOpen(prev => !prev);

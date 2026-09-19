@@ -198,7 +198,7 @@ export function TaxAttachments({ table, parentId, storagePrefix, allowedKinds, d
   return (
     <div className="space-y-2" onPaste={showUploader ? handlePaste : undefined}>
       {showUploader && <div className="flex items-center gap-2 flex-wrap">
-        <select
+        <select name="kind" aria-label="Kind"
           value={kind}
           onChange={e => setKind(e.target.value)}
           className="text-sm border rounded px-2 py-1 bg-white"
@@ -211,7 +211,7 @@ export function TaxAttachments({ table, parentId, storagePrefix, allowedKinds, d
         <label className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded cursor-pointer hover:bg-blue-700 disabled:opacity-50">
           <Upload className="w-4 h-4" />
           {uploading ? 'Uploading…' : 'Upload'}
-          <input
+          <input name="file_upload" aria-label="Upload file"
             ref={inputRef}
             type="file"
             multiple

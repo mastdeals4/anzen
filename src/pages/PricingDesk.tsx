@@ -233,7 +233,7 @@ export function PricingDesk() {
                             <span className="text-xs text-green-600 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Saved</span>
                           ) : e ? (
                             <div className="flex gap-1">
-                              <select value={e.currency} onChange={ev => setEditing(ed => ({ ...ed, [item.id]: { ...ed[item.id], currency: ev.target.value } }))} className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14">
+                              <select name="field" aria-label="Field" value={e.currency} onChange={ev => setEditing(ed => ({ ...ed, [item.id]: { ...ed[item.id], currency: ev.target.value } }))} className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14">
                                 {['USD', 'IDR', 'INR', 'CNY'].map(c => <option key={c} value={c}>{c}</option>)}
                               </select>
                               <MoneyInput autoFocus value={Number(e.price) || 0} onChange={amount => setEditing(ed => ({ ...ed, [item.id]: { ...ed[item.id], price: String(amount) } }))}

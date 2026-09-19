@@ -193,7 +193,7 @@ async function asyncPool<T, R>(
 // ─── Browser File Download Helper ────────────────────────────────────────────
 
 function downloadWorkbookBuffer(buffer: ArrayBuffer | Uint8Array, filename: string) {
-  const blob = new Blob([buffer], {
+  const blob = new Blob([buffer as BlobPart], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
   const url = window.URL.createObjectURL(blob);

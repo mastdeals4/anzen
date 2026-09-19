@@ -110,7 +110,7 @@ export function CustomerConfirmationDialog({
               <Building2 className="inline h-4 w-4 mr-1" />
               Company Name *
             </label>
-            <input
+            <input name="company_name" aria-label="Enter company name"
               type="text"
               value={formData.company_name}
               onChange={(e) => handleChange('company_name', e.target.value)}
@@ -129,7 +129,7 @@ export function CustomerConfirmationDialog({
               <User className="inline h-4 w-4 mr-1" />
               Contact Person
             </label>
-            <input
+            <input name="contact_person" aria-label="Enter contact person name"
               type="text"
               value={formData.contact_person}
               onChange={(e) => handleChange('contact_person', e.target.value)}
@@ -143,7 +143,7 @@ export function CustomerConfirmationDialog({
               <Mail className="inline h-4 w-4 mr-1" />
               Email
             </label>
-            <input
+            <input name="email" aria-label="Enter email address"
               type="email"
               value={formData.email}
               onChange={(e) => handleChange('email', e.target.value)}
@@ -162,7 +162,7 @@ export function CustomerConfirmationDialog({
               <Phone className="inline h-4 w-4 mr-1" />
               Phone
             </label>
-            <input
+            <input name="phone" aria-label="Enter phone number"
               type="text"
               value={formData.phone}
               onChange={(e) => handleChange('phone', e.target.value)}
@@ -176,7 +176,7 @@ export function CustomerConfirmationDialog({
               <MapPin className="inline h-4 w-4 mr-1" />
               Address
             </label>
-            <textarea
+            <textarea name="address" aria-label="Enter address"
               value={formData.address}
               onChange={(e) => handleChange('address', e.target.value)}
               rows={2}
@@ -190,7 +190,7 @@ export function CustomerConfirmationDialog({
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 City
               </label>
-              <select
+              <select name="city" aria-label="City"
                 value={formData.city}
                 onChange={(e) => handleChange('city', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -208,7 +208,7 @@ export function CustomerConfirmationDialog({
                 <Globe className="inline h-4 w-4 mr-1" />
                 Country
               </label>
-              <input
+              <input name="country" aria-label="Enter country"
                 type="text"
                 value={formData.country}
                 onChange={(e) => handleChange('country', e.target.value)}
@@ -222,7 +222,7 @@ export function CustomerConfirmationDialog({
             <label className="block text-sm font-medium text-gray-700 mb-1">
               PBF License
             </label>
-            <input
+            <input name="pbf_license" aria-label="PBF License"
               type="text"
               value={formData.pbf_license}
               onChange={(e) => handleChange('pbf_license', e.target.value)}
@@ -235,7 +235,7 @@ export function CustomerConfirmationDialog({
             <label className="block text-sm font-medium text-gray-700 mb-1">
               NPWP
             </label>
-            <input
+            <input name="npwp" aria-label="NPWP"
               type="text"
               value={formData.npwp}
               onChange={(e) => handleChange('npwp', e.target.value)}

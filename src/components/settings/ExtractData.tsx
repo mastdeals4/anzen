@@ -389,7 +389,7 @@ export function ExtractData() {
             <label className="block text-sm font-medium text-gray-700 mb-2">Scan Mode</label>
             <div className="flex items-center gap-3 flex-wrap">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
+                <input name="scan_mode" aria-label="Scan Mode"
                   type="radio"
                   checked={extractAll}
                   onChange={() => setExtractAll(true)}
@@ -399,14 +399,14 @@ export function ExtractData() {
                 <span className="text-xs text-gray-500">(recommended)</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
+                <input name="checkbox" aria-label="Checkbox"
                   type="radio"
                   checked={!extractAll}
                   onChange={() => setExtractAll(false)}
                   className="text-blue-600"
                 />
                 <span className="text-sm text-gray-700">Limit to</span>
-                <input
+                <input name="max_emails" aria-label="Max Emails"
                   type="number"
                   value={maxEmails}
                   onChange={(e) => setMaxEmails(Math.max(50, Math.min(5000, parseInt(e.target.value) || 500)))}
@@ -533,7 +533,7 @@ export function ExtractData() {
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th className="px-4 py-3 text-left w-8">
-                    <input
+                    <input name="selected" aria-label="Select item"
                       type="checkbox"
                       checked={selectedContacts.size === contacts.length && contacts.length > 0}
                       onChange={toggleSelectAll}
@@ -565,7 +565,7 @@ export function ExtractData() {
                       }`}
                     >
                       <td className="px-4 py-3">
-                        <input
+                        <input name="selected" aria-label="Select item"
                           type="checkbox"
                           checked={selectedContacts.has(originalIndex)}
                           onChange={() => toggleContact(originalIndex)}

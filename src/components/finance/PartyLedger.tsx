@@ -570,7 +570,7 @@ export default function PartyLedger() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Party Type</label>
-            <select
+            <select name="party_type" aria-label="Party Type"
               value={partyType}
               onChange={(e) => {
                 setPartyType(e.target.value as 'customer' | 'supplier' | 'staff');
@@ -587,7 +587,7 @@ export default function PartyLedger() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}
             </label>
-            <select
+            <select name="select_partytype_customer_cust" aria-label="Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}"
               value={selectedParty}
               onChange={(e) => setSelectedParty(e.target.value)}
               className="w-full px-3 py-2 border rounded-lg"

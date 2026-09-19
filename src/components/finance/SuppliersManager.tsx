@@ -257,7 +257,7 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
       toolbar={(
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input
+          <input name="search_term" aria-label="Search suppliers..."
             type="text"
             placeholder="Search suppliers..."
             value={searchTerm}
@@ -340,12 +340,12 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           {/* Identification */}
           <SapRow>
             <SapField label="Code" span={4}>
-              <input type="text" value={formData.supplier_code}
+              <input name="supplier_code" aria-label="Auto-generated" type="text" value={formData.supplier_code}
                 onChange={(e) => setFormData({ ...formData, supplier_code: e.target.value })}
                 className={SAP_INPUT} placeholder="Auto-generated" />
             </SapField>
             <SapField label="Company" required span={8}>
-              <input type="text" required value={formData.company_name}
+              <input name="company_name" aria-label="Company Name" type="text" required value={formData.company_name}
                 onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
@@ -354,17 +354,17 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           {/* Contact */}
           <SapRow>
             <SapField label="Contact" span={4}>
-              <input type="text" value={formData.contact_person}
+              <input name="contact_person" aria-label="Contact Person" type="text" value={formData.contact_person}
                 onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Phone" span={4}>
-              <input type="text" value={formData.phone}
+              <input name="phone" aria-label="Phone" type="text" value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Email" span={4}>
-              <input type="email" value={formData.email}
+              <input name="email" aria-label="Email" type="email" value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
@@ -373,17 +373,17 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           {/* Address */}
           <SapRow>
             <SapField label="Address" span={8}>
-              <input type="text" value={formData.address}
+              <input name="address" aria-label="Address" type="text" value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="City" span={2}>
-              <input type="text" value={formData.city}
+              <input name="city" aria-label="City" type="text" value={formData.city}
                 onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Country" span={2}>
-              <input type="text" value={formData.country}
+              <input name="country" aria-label="Country" type="text" value={formData.country}
                 onChange={(e) => setFormData({ ...formData, country: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
@@ -393,13 +393,13 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           <div className="border-t border-gray-200 pt-1.5" />
           <SapRow>
             <SapField label="NPWP" span={6}>
-              <input type="text" value={formData.npwp}
+              <input name="npwp" aria-label="00.000.000.0-000.000" type="text" value={formData.npwp}
                 onChange={(e) => setFormData({ ...formData, npwp: e.target.value })}
                 className={SAP_INPUT + ' !font-mono'} placeholder="00.000.000.0-000.000" />
             </SapField>
             <SapField label="PKP" span={6}>
               <label className="flex items-center gap-1.5 h-7 px-1 text-[11px]">
-                <input type="checkbox" checked={formData.pkp_status}
+                <input name="pkp_status" aria-label="Pkp Status" type="checkbox" checked={formData.pkp_status}
                   onChange={(e) => setFormData({ ...formData, pkp_status: e.target.checked })}
                   className="rounded" />
                 <span>Pengusaha Kena Pajak</span>
@@ -411,17 +411,17 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           <div className="border-t border-gray-200 pt-1.5" />
           <SapRow>
             <SapField label="Bank" span={4}>
-              <input type="text" value={formData.bank_name}
+              <input name="bank_name" aria-label="Bank Name" type="text" value={formData.bank_name}
                 onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
             <SapField label="Acct #" span={4}>
-              <input type="text" value={formData.bank_account_number}
+              <input name="bank_account_number" aria-label="Bank Account Number" type="text" value={formData.bank_account_number}
                 onChange={(e) => setFormData({ ...formData, bank_account_number: e.target.value })}
                 className={SAP_INPUT + ' !font-mono'} />
             </SapField>
             <SapField label="Acct Name" span={4}>
-              <input type="text" value={formData.bank_account_name}
+              <input name="bank_account_name" aria-label="Bank Account Name" type="text" value={formData.bank_account_name}
                 onChange={(e) => setFormData({ ...formData, bank_account_name: e.target.value })}
                 className={SAP_INPUT} />
             </SapField>
@@ -431,12 +431,12 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           <div className="border-t border-gray-200 pt-1.5" />
           <SapRow>
             <SapField label="Terms (d)" span={4}>
-              <input type="number" value={formData.payment_terms_days}
+              <input name="payment_terms_days" aria-label="Payment Terms Days" type="number" value={formData.payment_terms_days}
                 onChange={(e) => setFormData({ ...formData, payment_terms_days: parseInt(e.target.value) || 30 })}
                 className={SAP_INPUT + ' !text-right !font-mono'} />
             </SapField>
             <SapField label="Sup Type" span={4}>
-              <select value={formData.supplier_type || 'General'}
+              <select name="supplier_type" aria-label="Supplier Type" value={formData.supplier_type || 'General'}
                 onChange={(e) => handleSupplierTypeChange(e.target.value)}
                 className={SAP_INPUT}>
                 {SUPPLIER_TYPES.map(t => (
@@ -445,7 +445,7 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
               </select>
             </SapField>
             <SapField label="Default Cat" span={4}>
-              <select value={formData.default_expense_category}
+              <select name="default_expense_category" aria-label="Default Expense Category" value={formData.default_expense_category}
                 onChange={(e) => setFormData({ ...formData, default_expense_category: e.target.value })}
                 className={SAP_INPUT}>
                 {[{ value: '', label: 'No default' }, ...expenseCategories.map(category => ({ value: category.value, label: category.label }))].map(opt => (
@@ -456,7 +456,7 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
           </SapRow>
           <SapRow>
             <SapField label="Tax Pref" span={6}>
-              <select value={formData.tax_preference}
+              <select name="tax_preference" aria-label="Tax Preference" value={formData.tax_preference}
                 onChange={(e) => setFormData({ ...formData, tax_preference: e.target.value as 'none' | 'ppn_only' | 'ppn_pph' | 'pph_only' })}
                 className={SAP_INPUT}>
                 <option value="none">None</option>
@@ -467,7 +467,7 @@ export function SuppliersManager({ canManage }: SuppliersManagerProps) {
             </SapField>
             {(formData.tax_preference === 'ppn_pph' || formData.tax_preference === 'pph_only') && (
               <SapField label="PPh Code" span={6}>
-                <select value={formData.default_pph_code_id}
+                <select name="default_pph_code_id" aria-label="Default Pph Code Id" value={formData.default_pph_code_id}
                   onChange={(e) => setFormData({ ...formData, default_pph_code_id: e.target.value })}
                   className={SAP_INPUT}>
                   <option value="">None</option>

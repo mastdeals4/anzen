@@ -413,12 +413,12 @@ export function SalesTeam({ embedded = false }: { embedded?: boolean }) {
             <div className="p-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
               <div className="relative flex-1 min-w-[200px] max-w-xs">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
+                <input name="t_salesteam_searchcompanies" aria-label="{t(salesTeam.searchCompanies)}"
                   type="text" placeholder={t('salesTeam.searchCompanies')}
                   className="pl-9 pr-4 py-2 w-full border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
-              <select
+              <select name="member_filter" aria-label="Member Filter"
                 value={selectedMemberFilter}
                 onChange={(e) => setSelectedMemberFilter(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -494,7 +494,7 @@ export function SalesTeam({ embedded = false }: { embedded?: boolean }) {
           ].map(({ label, field, type, placeholder }) => (
             <div key={field}>
               <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-              <input
+              <input name="label" aria-label="{label}"
                 type={type}
                 value={(memberForm as any)[field]}
                 onChange={(e) => setMemberForm({ ...memberForm, [field]: e.target.value })}
@@ -518,7 +518,7 @@ export function SalesTeam({ embedded = false }: { embedded?: boolean }) {
         <div className="space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
+            <input name="customer_search" aria-label="{t(salesTeam.searchCompanies)}"
               type="text" value={customerSearch}
               onChange={(e) => setCustomerSearch(e.target.value)}
               placeholder={t('salesTeam.searchCompanies')}

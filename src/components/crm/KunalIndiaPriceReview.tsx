@@ -722,14 +722,14 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
           </div>
           <div className="relative flex-1 min-w-[220px]">
             <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input
+            <input name="query" aria-label="{listMode === mailbox ? Gmail search query (default: in:inbox) : Filter queue (search-only in this mode)}"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder={listMode === 'mailbox' ? 'Gmail search query (default: in:inbox)' : 'Filter queue (search-only in this mode)'}
               className="w-full border border-gray-300 rounded pl-8 pr-2 py-1.5 text-xs"
             />
           </div>
-          <select
+          <select name="max_results" aria-label="Max Results"
             value={maxResults}
             onChange={e => setMaxResults(parseInt(e.target.value))}
             className="border border-gray-300 rounded px-2 py-1.5 text-xs"
@@ -789,13 +789,13 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
             </div>
           )}
           <div className="flex items-center gap-2 mb-2">
-            <input
+            <input name="search" aria-label="Filter…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Filter…"
               className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
             />
-            <select
+            <select name="type_filter" aria-label="Type Filter"
               value={typeFilter}
               onChange={e => setTypeFilter(e.target.value as FilterKey)}
               disabled={!!activeBucket}
@@ -1324,7 +1324,7 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                               /* No AI matches — show proper search UI */
                               <div className="space-y-1">
                                 <div className="flex gap-1">
-                                  <input
+                                  <input name="manual_search_text" aria-label="Inquiry no. or product name…"
                                     value={manualSearchText[idx] || ''}
                                     onChange={e => setManualSearchText(prev => ({ ...prev, [idx]: e.target.value }))}
                                     onKeyDown={e => { if (e.key === 'Enter') handleManualSearch(idx); }}
@@ -1345,7 +1345,7 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                             ) : (
                               /* Candidates found — dropdown + option to search for a different one */
                               <div className="space-y-1">
-                                <select
+                                <select name="selectedInquiryId" aria-label="SelectedInquiryId"
                                   value={row.selectedInquiryId || ''}
                                   onChange={e => updateExtractionRow(idx, { selectedInquiryId: e.target.value || null, needsManualLink: !e.target.value })}
                                   className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]"
@@ -1368,7 +1368,7 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                                   </button>
                                 ) : (
                                   <div className="flex gap-1 pt-0.5">
-                                    <input
+                                    <input name="manual_search_text" aria-label="Inquiry no. or product name…"
                                       value={manualSearchText[idx] || ''}
                                       onChange={e => setManualSearchText(prev => ({ ...prev, [idx]: e.target.value }))}
                                       onKeyDown={e => { if (e.key === 'Enter') handleManualSearch(idx); }}
@@ -1396,12 +1396,12 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Product</label>
-                            <input value={row.product_name} onChange={e => updateExtractionRow(idx, { product_name: e.target.value })}
+                            <input name="product" aria-label="Product" value={row.product_name} onChange={e => updateExtractionRow(idx, { product_name: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Offered Make</label>
-                            <input value={row.offered_make || ''} onChange={e => updateExtractionRow(idx, { offered_make: e.target.value })}
+                            <input name="offered_make" aria-label="Offered Make" value={row.offered_make || ''} onChange={e => updateExtractionRow(idx, { offered_make: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
@@ -1411,19 +1411,19 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Currency</label>
-                            <select value={row.source_currency} onChange={e => updateExtractionRow(idx, { source_currency: e.target.value })}
+                            <select name="currency" aria-label="Currency" value={row.source_currency} onChange={e => updateExtractionRow(idx, { source_currency: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]">
                               {['INR', 'USD', 'CNY', 'IDR', 'EUR', 'GBP'].map(c => <option key={c}>{c}</option>)}
                             </select>
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Qty / MOQ</label>
-                            <input value={row.quantity || ''} onChange={e => updateExtractionRow(idx, { quantity: e.target.value })}
+                            <input name="qty_moq" aria-label="Qty / MOQ" value={row.quantity || ''} onChange={e => updateExtractionRow(idx, { quantity: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Availability</label>
-                            <select value={row.availability} onChange={e => updateExtractionRow(idx, { availability: e.target.value as any })}
+                            <select name="availability" aria-label="Availability" value={row.availability} onChange={e => updateExtractionRow(idx, { availability: e.target.value as any })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]">
                               <option value="available">Available</option>
                               <option value="partial">Partial</option>
@@ -1432,7 +1432,7 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Doc Status</label>
-                            <select value={row.document_status} onChange={e => updateExtractionRow(idx, { document_status: e.target.value as any })}
+                            <select name="doc_status" aria-label="Doc Status" value={row.document_status} onChange={e => updateExtractionRow(idx, { document_status: e.target.value as any })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]">
                               <option value="pending">Pending</option>
                               <option value="received">Received</option>
@@ -1442,48 +1442,48 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Lead Time</label>
-                            <input value={row.lead_time || ''} onChange={e => updateExtractionRow(idx, { lead_time: e.target.value })}
+                            <input name="lead_time" aria-label="Lead Time" value={row.lead_time || ''} onChange={e => updateExtractionRow(idx, { lead_time: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           {/* Part 4 — product/body extracted fields (editable; low-confidence rows correctable) */}
                           <div>
                             <label className="block text-[10px] text-gray-500">Grade</label>
-                            <input value={row.grade || ''} onChange={e => updateExtractionRow(idx, { grade: e.target.value })}
+                            <input name="grade" aria-label="Grade" value={row.grade || ''} onChange={e => updateExtractionRow(idx, { grade: e.target.value })}
                               placeholder="USP / BP / IP…"
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">CAS No.</label>
-                            <input value={row.cas || ''} onChange={e => updateExtractionRow(idx, { cas: e.target.value })}
+                            <input name="cas_no" aria-label="CAS No." value={row.cas || ''} onChange={e => updateExtractionRow(idx, { cas: e.target.value })}
                               placeholder="e.g. 50-00-0"
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Unit</label>
-                            <input value={row.unit || ''} onChange={e => updateExtractionRow(idx, { unit: e.target.value })}
+                            <input name="unit" aria-label="Unit" value={row.unit || ''} onChange={e => updateExtractionRow(idx, { unit: e.target.value })}
                               placeholder="kg / MT / L"
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Preferred Mfr</label>
-                            <input value={row.preferred_manufacturer || ''} onChange={e => updateExtractionRow(idx, { preferred_manufacturer: e.target.value })}
+                            <input name="preferred_mfr" aria-label="Preferred Mfr" value={row.preferred_manufacturer || ''} onChange={e => updateExtractionRow(idx, { preferred_manufacturer: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-gray-500">Required Origin</label>
-                            <input value={row.required_origin || ''} onChange={e => updateExtractionRow(idx, { required_origin: e.target.value })}
+                            <input name="required_origin" aria-label="Required Origin" value={row.required_origin || ''} onChange={e => updateExtractionRow(idx, { required_origin: e.target.value })}
                               placeholder="European / Germany…"
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div className="md:col-span-3">
                             <label className="block text-[10px] text-gray-500">Specification</label>
-                            <input value={row.specification || ''} onChange={e => updateExtractionRow(idx, { specification: e.target.value })}
+                            <input name="specification" aria-label="Specification" value={row.specification || ''} onChange={e => updateExtractionRow(idx, { specification: e.target.value })}
                               placeholder="e.g. min 99%, <10 ppm heavy metals"
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                           <div className="md:col-span-4">
                             <label className="block text-[10px] text-gray-500">India Comments / Remark</label>
-                            <input value={row.remark || ''} onChange={e => updateExtractionRow(idx, { remark: e.target.value })}
+                            <input name="india_comments_remark" aria-label="India Comments / Remark" value={row.remark || ''} onChange={e => updateExtractionRow(idx, { remark: e.target.value })}
                               className="w-full border border-gray-300 rounded px-1 py-0.5 text-[11px]" />
                           </div>
                         </div>
@@ -1600,7 +1600,7 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
               </div>
               <div>
                 <label className="block text-[11px] text-gray-600 mb-1">Document Type</label>
-                <select
+                <select name="document_type" aria-label="Document Type"
                   value={savePrompt.docType}
                   onChange={e => setSavePrompt({ ...savePrompt, docType: e.target.value as DocType })}
                   className="w-full border border-gray-300 rounded px-2 py-1 text-xs"

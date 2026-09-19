@@ -185,7 +185,7 @@ export function ArchiveView({ canManage, onRefresh }: ArchiveViewProps) {
         <div className="flex items-center gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
+            <input name="search_term" aria-label="Search by inquiry no, company, product, or lost reason..."
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}

@@ -249,7 +249,7 @@ export function ImportRequirementsProductSummary({
 
                       {/* Ordered qty — inline editable */}
                       <td className="px-3 py-2 text-right">
-                        <input
+                        <input name="field" aria-label="Field"
                           type="number"
                           min="0"
                           defaultValue={childOrdered}

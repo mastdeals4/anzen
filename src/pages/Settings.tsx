@@ -827,7 +827,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Company Name *
                       </label>
-                      <input
+                      <input name="company_name" aria-label="Company Name"
                         type="text"
                         value={formData.company_name}
                         onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
@@ -840,7 +840,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Address
                       </label>
-                      <textarea
+                      <textarea name="address" aria-label="Address"
                         value={formData.company_address}
                         onChange={(e) => setFormData({ ...formData, company_address: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -852,7 +852,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Phone
                       </label>
-                      <input
+                      <input name="phone" aria-label="Phone"
                         type="text"
                         value={formData.company_phone}
                         onChange={(e) => setFormData({ ...formData, company_phone: e.target.value })}
@@ -864,7 +864,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Email
                       </label>
-                      <input
+                      <input name="email" aria-label="Email"
                         type="email"
                         value={formData.company_email}
                         onChange={(e) => setFormData({ ...formData, company_email: e.target.value })}
@@ -884,7 +884,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Default Tax Rate (%)
                       </label>
-                      <input
+                      <input name="default_tax_rate" aria-label="Default Tax Rate (%)"
                         type="number"
                         value={formData.tax_rate}
                         onChange={(e) => setFormData({ ...formData, tax_rate: Number(e.target.value) })}
@@ -899,7 +899,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Invoice Prefix
                       </label>
-                      <input
+                      <input name="invoice_prefix" aria-label="Invoice Prefix"
                         type="text"
                         value={formData.invoice_prefix}
                         onChange={(e) => setFormData({ ...formData, invoice_prefix: e.target.value })}
@@ -911,7 +911,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Invoice Start Number
                       </label>
-                      <input
+                      <input name="invoice_start_number" aria-label="Invoice Start Number"
                         type="number"
                         value={formData.invoice_start_number}
                         onChange={(e) => setFormData({ ...formData, invoice_start_number: Number(e.target.value) })}
@@ -1135,7 +1135,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Current Financial Year *
                       </label>
-                      <select
+                      <select name="current_financial_year" aria-label="Current Financial Year"
                         value={formData.current_financial_year}
                         onChange={(e) => {
                           const year = e.target.value;
@@ -1164,7 +1164,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Start Date *
                       </label>
-                      <input
+                      <input name="start_date" aria-label="Start Date"
                         type="date"
                         value={formData.financial_year_start}
                         onChange={(e) => setFormData({ ...formData, financial_year_start: e.target.value })}
@@ -1180,7 +1180,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         End Date *
                       </label>
-                      <input
+                      <input name="end_date" aria-label="End Date"
                         type="date"
                         value={formData.financial_year_end}
                         onChange={(e) => setFormData({ ...formData, financial_year_end: e.target.value })}
@@ -1226,7 +1226,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Low Stock Threshold
                       </label>
-                      <input
+                      <input name="low_stock_threshold" aria-label="Low Stock Threshold"
                         type="number"
                         value={formData.low_stock_threshold}
                         onChange={(e) => setFormData({ ...formData, low_stock_threshold: Number(e.target.value) })}
@@ -1242,7 +1242,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Expiry Alert Days
                       </label>
-                      <input
+                      <input name="expiry_alert_days" aria-label="Expiry Alert Days"
                         type="number"
                         value={formData.expiry_alert_days}
                         onChange={(e) => setFormData({ ...formData, expiry_alert_days: Number(e.target.value) })}
@@ -1266,7 +1266,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         SMTP Host
                       </label>
-                      <input
+                      <input name="smtp_host" aria-label="SMTP Host"
                         type="text"
                         value={formData.email_host}
                         onChange={(e) => setFormData({ ...formData, email_host: e.target.value })}
@@ -1279,7 +1279,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         SMTP Port
                       </label>
-                      <input
+                      <input name="smtp_port" aria-label="SMTP Port"
                         type="number"
                         value={formData.email_port}
                         onChange={(e) => setFormData({ ...formData, email_port: Number(e.target.value) })}
@@ -1291,7 +1291,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Email Username
                       </label>
-                      <input
+                      <input name="email_username" aria-label="Email Username"
                         type="text"
                         value={formData.email_username}
                         onChange={(e) => setFormData({ ...formData, email_username: e.target.value })}
@@ -1323,7 +1323,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Write-off Account
                       </label>
-                      <select
+                      <select name="write_off_account" aria-label="Write-off Account"
                         value={formData.rounding_writeoff_account_id}
                         onChange={(e) => setFormData({ ...formData, rounding_writeoff_account_id: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1338,7 +1338,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Gain Account
                       </label>
-                      <select
+                      <select name="gain_account" aria-label="Gain Account"
                         value={formData.rounding_gain_account_id}
                         onChange={(e) => setFormData({ ...formData, rounding_gain_account_id: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1362,7 +1362,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Batch Size
                       </label>
-                      <input
+                      <input name="batch_size" aria-label="Batch Size"
                         type="number"
                         value={formData.bulk_email_batch_size}
                         onChange={(e) => setFormData({ ...formData, bulk_email_batch_size: Number(e.target.value) })}
@@ -1376,7 +1376,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Batch Delay Seconds
                       </label>
-                      <input
+                      <input name="batch_delay_seconds" aria-label="Batch Delay Seconds"
                         type="number"
                         value={formData.bulk_email_batch_delay_seconds}
                         onChange={(e) => setFormData({ ...formData, bulk_email_batch_delay_seconds: Number(e.target.value) })}
@@ -1389,7 +1389,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Worker URL
                       </label>
-                      <input
+                      <input name="worker_url" aria-label="Worker URL"
                         type="text"
                         value={formData.bulk_email_worker_url}
                         onChange={(e) => setFormData({ ...formData, bulk_email_worker_url: e.target.value })}
@@ -1403,7 +1403,7 @@ export function Settings() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Worker Secret
                       </label>
-                      <input
+                      <input name="worker_secret" aria-label="Worker Secret"
                         type="password"
                         value={formData.bulk_email_worker_secret}
                         onChange={(e) => setFormData({ ...formData, bulk_email_worker_secret: e.target.value })}
@@ -1421,7 +1421,7 @@ export function Settings() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Default Language
                     </label>
-                    <select
+                    <select name="default_language" aria-label="Default Language"
                       value={formData.default_language}
                       onChange={(e) => setFormData({ ...formData, default_language: e.target.value })}
                       className="w-full md:w-1/3 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1783,53 +1783,53 @@ function CompanyProfileFields({ data, onChange, onUploadAsset, uploadingAsset, r
         <label className="block text-xs font-medium text-gray-600 mb-1">
           Effective From *{brandingOnly && <span className="ml-1 text-gray-400">(locked)</span>}
         </label>
-        <input type="date" value={data.effective_from} onChange={e => setField({ effective_from: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} required />
+        <input name="effective_from" aria-label="Effective From" type="date" value={data.effective_from} onChange={e => setField({ effective_from: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} required />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">
           Company Name *{brandingOnly && <span className="ml-1 text-gray-400">(locked)</span>}
         </label>
-        <input type="text" value={data.company_name} onChange={e => setField({ company_name: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="PT. ..." />
+        <input name="company_name" aria-label="PT. ..." type="text" value={data.company_name} onChange={e => setField({ company_name: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="PT. ..." />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">
           Legal Name{brandingOnly && <span className="ml-1 text-gray-400">(locked)</span>}
         </label>
-        <input type="text" value={data.company_legal_name} onChange={e => setField({ company_legal_name: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="Legal registered name" />
+        <input name="company_legal_name" aria-label="Legal registered name" type="text" value={data.company_legal_name} onChange={e => setField({ company_legal_name: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="Legal registered name" />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">
           Tax ID (NPWP){brandingOnly && <span className="ml-1 text-gray-400">(locked)</span>}
         </label>
-        <input type="text" value={data.company_tax_id} onChange={e => setField({ company_tax_id: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} />
+        <input name="company_tax_id" aria-label="Company Tax Id" type="text" value={data.company_tax_id} onChange={e => setField({ company_tax_id: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} />
       </div>
       <div className="col-span-2">
         <label className="block text-xs font-medium text-gray-600 mb-1">Address</label>
-        <input type="text" value={data.company_address} onChange={e => setField({ company_address: e.target.value })} disabled={readOnly} className={brandCls} />
+        <input name="address" aria-label="Address" type="text" value={data.company_address} onChange={e => setField({ company_address: e.target.value })} disabled={readOnly} className={brandCls} />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
-        <input type="text" value={data.company_phone} onChange={e => setField({ company_phone: e.target.value })} disabled={readOnly} className={brandCls} />
+        <input name="phone" aria-label="Phone" type="text" value={data.company_phone} onChange={e => setField({ company_phone: e.target.value })} disabled={readOnly} className={brandCls} />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
-        <input type="email" value={data.company_email} onChange={e => setField({ company_email: e.target.value })} disabled={readOnly} className={brandCls} />
+        <input name="email" aria-label="Email" type="email" value={data.company_email} onChange={e => setField({ company_email: e.target.value })} disabled={readOnly} className={brandCls} />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Website</label>
-        <input type="url" value={data.company_website} onChange={e => setField({ company_website: e.target.value })} disabled={readOnly} className={brandCls} placeholder="https://..." />
+        <input name="website" aria-label="Website" type="url" value={data.company_website} onChange={e => setField({ company_website: e.target.value })} disabled={readOnly} className={brandCls} placeholder="https://..." />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">
           PBF License No.{brandingOnly && <span className="ml-1 text-gray-400">(locked)</span>}
         </label>
-        <input type="text" value={data.pbf_license} onChange={e => setField({ pbf_license: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="No izin PBF: ..." />
+        <input name="pbf_license" aria-label="No izin PBF: ..." type="text" value={data.pbf_license} onChange={e => setField({ pbf_license: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="No izin PBF: ..." />
       </div>
       <div className="col-span-2">
         <label className="block text-xs font-medium text-gray-600 mb-1">
           CDOB Certificate No.{brandingOnly && <span className="ml-1 text-gray-400">(locked)</span>}
         </label>
-        <input type="text" value={data.cdob_certificate} onChange={e => setField({ cdob_certificate: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="No Sertifikasi CDOB: ..." />
+        <input name="cdob_certificate" aria-label="No Sertifikasi CDOB: ..." type="text" value={data.cdob_certificate} onChange={e => setField({ cdob_certificate: e.target.value })} disabled={readOnly || brandingOnly} className={acctCls} placeholder="No Sertifikasi CDOB: ..." />
       </div>
 
       {/* Logo */}
@@ -1846,7 +1846,7 @@ function CompanyProfileFields({ data, onChange, onUploadAsset, uploadingAsset, r
           <div className="flex flex-wrap gap-2 items-center">
             <label className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 cursor-pointer">
               {data.company_logo_url ? 'Replace' : 'Upload'}
-              <input type="file" accept="image/*" onChange={e => handleAssetUpload('logo', e)} disabled={uploadingAsset !== null} className="hidden" />
+              <input name="file_upload" aria-label="Upload file" type="file" accept="image/*" onChange={e => handleAssetUpload('logo', e)} disabled={uploadingAsset !== null} className="hidden" />
             </label>
             {data.company_logo_url && (
               <button
@@ -1876,7 +1876,7 @@ function CompanyProfileFields({ data, onChange, onUploadAsset, uploadingAsset, r
           <div className="flex flex-wrap gap-2 items-center">
             <label className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 cursor-pointer">
               {data.company_stamp_url ? 'Replace' : 'Upload'}
-              <input type="file" accept="image/*" onChange={e => handleAssetUpload('stamp', e)} disabled={uploadingAsset !== null} className="hidden" />
+              <input name="file_upload" aria-label="Upload file" type="file" accept="image/*" onChange={e => handleAssetUpload('stamp', e)} disabled={uploadingAsset !== null} className="hidden" />
             </label>
             {data.company_stamp_url && (
               <button
@@ -1894,7 +1894,7 @@ function CompanyProfileFields({ data, onChange, onUploadAsset, uploadingAsset, r
 
       <div className="col-span-2">
         <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-        <input type="text" value={data.notes} onChange={e => setField({ notes: e.target.value })} disabled={readOnly} className={brandCls} placeholder="Reason for change..." />
+        <input name="notes" aria-label="Notes" type="text" value={data.notes} onChange={e => setField({ notes: e.target.value })} disabled={readOnly} className={brandCls} placeholder="Reason for change..." />
       </div>
     </div>
   );

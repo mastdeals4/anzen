@@ -96,7 +96,7 @@ export function LostReasonModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Primary signal <span className="text-gray-400">(optional)</span></label>
-          <select value={lostReasonCode} onChange={(e) => setLostReasonCode(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
+          <select name="lost_reason_code" aria-label="Lost Reason Code" value={lostReasonCode} onChange={(e) => setLostReasonCode(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
             <option value="">Select a signal…</option>
             <option value="price">Price</option><option value="availability">Availability</option><option value="lead_time">Lead time</option><option value="specification">Specification</option><option value="customer_postponed">Customer postponed</option><option value="competitor">Competitor</option><option value="no_response">No response</option><option value="sample_coa">Sample / COA issue</option><option value="other">Other</option>
           </select>
@@ -106,7 +106,7 @@ export function LostReasonModal({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Lost Reason <span className="text-red-600">*</span>
           </label>
-          <textarea
+          <textarea name="lost_reason" aria-label="e.g., Competitor offered lower price, Customer chose local supplier, Budget constraints..."
             value={lostReason}
             onChange={(e) => setLostReason(e.target.value)}
             placeholder="e.g., Competitor offered lower price, Customer chose local supplier, Budget constraints..."
@@ -124,7 +124,7 @@ export function LostReasonModal({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Competitor Name <span className="text-gray-400">(optional)</span>
           </label>
-          <input
+          <input name="competitor_name" aria-label="e.g., ABC Trading Co."
             type="text"
             value={competitorName}
             onChange={(e) => setCompetitorName(e.target.value)}
