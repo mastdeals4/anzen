@@ -130,18 +130,90 @@ if (pibExpErr) {
   }
 }
 
-// ===== CHECK 5: FIFO ending inventory =====
-console.log('\nCHECK 5: FIFO ending inventory value (purchase_batch_cost_layers)...');
-const { data: fifoData, error: fifoErr } = await supabase
+// ===== CHECK 5: FIFO ending inventory (Authoritative remaining layers) =====
+console.log('\nCHECK 5: FIFO Inventory Valuation Breakdown...');
+
+// Fetch layers and sales consumption to compute remaining quantities accurately
+const { data: costLayers, error: fifoErr } = await supabase
   .from('purchase_batch_cost_layers')
-  .select('quantity, final_functional_unit_cost, batch_id');
+  .select('id, batch_id, quantity, functional_unit_cost, functional_total_cost, landed_cost_amount, final_functional_unit_cost, created_at')
+  .order('created_at', { ascending: true });
+
 if (fifoErr) {
-  console.log('  ERROR:', fifoErr.message);
+  console.log('  ERROR fetching layers:', fifoErr.message);
 } else {
-  const fifoValue = (fifoData || []).reduce((sum, l) =>
-    sum + Number(l.quantity || 0) * Number(l.final_functional_unit_cost || 0), 0
-  );
-  console.log(`  FIFO ending inventory: Rp ${fifoValue.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  // Fetch sales lines to deduct consumed quantity by batch
+  const { data: salesItems, error: salesErr } = await supabase
+    .from('sales_invoice_items')
+    .select('id, batch_id, quantity, invoice_id, sales_invoices!inner(invoice_date, invoice_number, is_draft)')
+    .eq('sales_invoices.is_draft', false);
+
+  let totalReceivedQty = 0;
+  let totalReceivedValue = 0;
+  let totalConsumedQty = 0;
+  let remainingQty = 0;
+  let trueEndingFifoValue = 0;
+  let remainingLayerCount = 0;
+
+  if (costLayers && costLayers.length > 0) {
+    // Map layers per batch for FIFO consumption simulation
+    const batchLayers = new Map();
+    for (const layer of costLayers) {
+      const q = Number(layer.quantity || 0);
+      const unitCost = Number(layer.final_functional_unit_cost || 0);
+      totalReceivedQty += q;
+      totalReceivedValue += q * unitCost;
+
+      if (!batchLayers.has(layer.batch_id)) {
+        batchLayers.set(layer.batch_id, []);
+      }
+      batchLayers.get(layer.batch_id).push({
+        id: layer.id,
+        quantity: q,
+        remaining_qty: q,
+        unit_cost: unitCost,
+      });
+    }
+
+    // Apply FIFO consumption if sales items are accessible
+    if (!salesErr && salesItems) {
+      // Sort sales chronologically
+      salesItems.sort((a, b) => {
+        const da = new Date(a.sales_invoices?.invoice_date || 0).getTime();
+        const db = new Date(b.sales_invoices?.invoice_date || 0).getTime();
+        return da - db;
+      });
+
+      for (const sale of salesItems) {
+        let toConsume = Number(sale.quantity || 0);
+        totalConsumedQty += toConsume;
+        const layers = batchLayers.get(sale.batch_id) || [];
+        for (const layer of layers) {
+          if (toConsume <= 0.0001) break;
+          if (layer.remaining_qty <= 0.0001) continue;
+          const consumed = Math.min(layer.remaining_qty, toConsume);
+          layer.remaining_qty -= consumed;
+          toConsume -= consumed;
+        }
+      }
+    }
+
+    for (const [batchId, layers] of batchLayers.entries()) {
+      for (const layer of layers) {
+        if (layer.remaining_qty > 0.0001) {
+          remainingLayerCount++;
+          remainingQty += layer.remaining_qty;
+          trueEndingFifoValue += layer.remaining_qty * layer.unit_cost;
+        }
+      }
+    }
+
+    console.log(`  Total Received Quantity:        ${totalReceivedQty.toLocaleString('id-ID')} kg across ${costLayers.length} layers`);
+    console.log(`  Total Historical Layer Value:   Rp ${totalReceivedValue.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    console.log(`  Total Sold / Consumed Quantity: ${totalConsumedQty.toLocaleString('id-ID')} kg`);
+    console.log(`  Remaining Quantity:             ${remainingQty.toLocaleString('id-ID')} kg (${remainingLayerCount} remaining layers)`);
+    console.log(`  TRUE FIFO Ending Inventory:     Rp ${trueEndingFifoValue.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  }
 }
 
 // ===== CHECK 6: GL 1130 balance =====
