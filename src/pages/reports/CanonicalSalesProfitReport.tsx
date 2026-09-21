@@ -160,6 +160,10 @@ function MarginBadge({ pct }: { pct: number | null }) {
   if (pct == null) {
     return <span className="text-xs text-amber-700 font-medium">Cost unavailable</span>;
   }
+  // Safety guard: margin > 100% indicates anomalous negative COGS on positive sales
+  if (pct > 100) {
+    return <span className="text-xs text-amber-700 font-medium">Cost anomaly</span>;
+  }
   const isGood = pct >= 15;
   const isPositive = pct >= 0;
   const badgeCls = isGood
@@ -281,8 +285,12 @@ export function CanonicalSalesProfitReport() {
       if (rawSummary?.products) {
         rawSummary.products = rawSummary.products.map(p => {
           const canonical = stockMap.get(p.product_id);
+          const safeAvgCost = (p.avg_landed_cost != null && p.avg_landed_cost < 0) ? null : p.avg_landed_cost;
+          const safeProductCost = (p.product_cost != null && p.product_cost < 0) ? null : p.product_cost;
           return {
             ...p,
+            avg_landed_cost: safeAvgCost,
+            product_cost: safeProductCost,
             current_stock: canonical ? canonical.current : Number(p.current_stock || 0),
             reserved_stock: canonical ? canonical.reserved : 0,
             available_stock: canonical ? canonical.available : Number(p.current_stock || 0),

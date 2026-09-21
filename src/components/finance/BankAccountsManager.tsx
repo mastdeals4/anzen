@@ -52,6 +52,16 @@ export function BankAccountsManager({ canManage }: Props) {
   const loadAccounts = async () => {
     try {
       const today = new Date().toISOString().split('T')[0];
+      const { data: balancesData, error: balancesError } = await supabase
+        .rpc('get_bank_account_balances', { p_as_of_date: today });
+
+      const balanceMap: Record<string, number> = {};
+      if (!balancesError && balancesData) {
+        for (const b of balancesData) {
+          balanceMap[b.bank_account_id] = Number(b.book_balance);
+        }
+      }
+
       const { data: accountsData, error: accountsError } = await supabase
         .from('bank_accounts')
         .select('*, chart_of_accounts!coa_id(code, id)')
@@ -59,44 +69,12 @@ export function BankAccountsManager({ canManage }: Props) {
 
       if (accountsError) throw accountsError;
 
-      // Compute ledger balances only for the COA IDs linked to bank accounts,
-      // using the same active-JE-lines logic as get_balance_sheet but scoped
-      // to just those accounts (avoids invoking the full balance sheet RPC).
-      const coaEntries = (accountsData || [])
-        .map((acct: any) => acct.chart_of_accounts)
-        .filter((coa: any) => coa?.id);
-      const coaIds = Array.from(new Set(coaEntries.map((coa: any) => coa.id)));
-
-      const bsMap: Record<string, number> = {};
-      if (coaIds.length > 0) {
-        const { data: lines, error: linesError } = await supabase
-          .from('journal_entry_lines')
-          .select('account_id, debit, credit, journal_entries!inner(entry_date, is_posted, is_reversed)')
-          .in('account_id', coaIds)
-          .eq('journal_entries.is_posted', true)
-          .eq('journal_entries.is_reversed', false)
-          .lte('journal_entries.entry_date', today);
-
-        if (linesError) {
-          console.warn('[BankMaster] Could not load ledger balances', linesError);
-        } else if (lines) {
-          const byAccount: Record<string, number> = {};
-          for (const line of lines) {
-            const aid = line.account_id as string;
-            byAccount[aid] = (byAccount[aid] || 0) + (Number(line.debit) - Number(line.credit));
-          }
-          for (const coa of coaEntries) {
-            bsMap[coa.code] = byAccount[coa.id] ?? 0;
-          }
-        }
-      }
-
       const enriched = (accountsData || []).map((acct: any) => ({
         ...acct,
         coa_code: acct.chart_of_accounts?.code,
-        ledger_balance: acct.chart_of_accounts?.code
-          ? (bsMap[acct.chart_of_accounts.code] ?? null)
-          : null,
+        ledger_balance: balanceMap[acct.id] !== undefined 
+          ? balanceMap[acct.id] 
+          : (acct.chart_of_accounts?.code ? Number(acct.opening_balance || 0) : null),
       }));
 
       setAccounts(enriched);

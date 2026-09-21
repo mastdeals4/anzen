@@ -979,9 +979,32 @@ export function BankReconciliationEnhanced({
 
           const { lines: parsedLines, metadata } = parseStatementDataWithMetadata(rows, statementYear);
 
-
           if (parsedLines.length === 0) {
             alert('No transactions found in the CSV file. Check that the file has date and amount columns.');
+            return;
+          }
+
+          const stmtCurrency = metadata.currency || selectedAccount?.currency || 'IDR';
+          if (selectedAccount?.currency && stmtCurrency !== selectedAccount.currency) {
+            alert(`❌ Statement currency (${stmtCurrency}) does not match bank account currency (${selectedAccount.currency})`);
+            return;
+          }
+
+          const totalDebits = parsedLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0);
+          const totalCredits = parsedLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0);
+          const openingBal = Number(metadata.openingBalance || 0);
+          const computedClosing = openingBal + totalCredits - totalDebits;
+          const finalLineBal = parsedLines[parsedLines.length - 1]?.balance;
+          const closingBal = metadata.closingBalance && metadata.closingBalance !== 0
+            ? Number(metadata.closingBalance)
+            : (finalLineBal !== undefined && finalLineBal !== null ? Number(finalLineBal) : computedClosing);
+
+          const dates = parsedLines.map(l => l.date).filter(Boolean).sort();
+          const startDate = metadata.startDate || dates[0] || dateRange.start;
+          const endDate = metadata.endDate || dates[dates.length - 1] || dateRange.end;
+
+          if (startDate > endDate) {
+            alert(`❌ Invalid statement date range: start date (${startDate}) is after end date (${endDate})`);
             return;
           }
 
@@ -990,13 +1013,13 @@ export function BankReconciliationEnhanced({
             .insert({
               bank_account_id: selectedBank,
               statement_period: metadata.period || `${new Date().toLocaleString('default', { month: 'long' })} ${new Date().getFullYear()}`,
-              statement_start_date: metadata.startDate || dateRange.start,
-              statement_end_date: metadata.endDate || dateRange.end,
-              currency: selectedAccount?.currency || 'IDR',
-              opening_balance: metadata.openingBalance || 0,
-              closing_balance: metadata.closingBalance || parsedLines[parsedLines.length - 1]?.balance || 0,
-              total_debits: metadata.totalDebits || parsedLines.reduce((sum, l) => sum + l.debit, 0),
-              total_credits: metadata.totalCredits || parsedLines.reduce((sum, l) => sum + l.credit, 0),
+              statement_start_date: startDate,
+              statement_end_date: endDate,
+              currency: stmtCurrency,
+              opening_balance: openingBal,
+              closing_balance: closingBal,
+              total_debits: metadata.totalDebits || totalDebits,
+              total_credits: metadata.totalCredits || totalCredits,
               transaction_count: parsedLines.length,
               status: 'completed',
             })
@@ -1017,8 +1040,9 @@ export function BankReconciliationEnhanced({
             credit_amount: line.credit,
             running_balance: line.balance,
             statement_balance: line.balance,
-            currency: selectedAccount?.currency || 'IDR',
+            currency: stmtCurrency,
             reconciliation_status: 'unmatched',
+            payment_kind: 'unclassified',
             created_by: user?.id,
           }));
 
@@ -1277,18 +1301,42 @@ export function BankReconciliationEnhanced({
             return;
           }
 
+          const stmtCurrency = metadata.currency || selectedAccount?.currency || 'IDR';
+          if (selectedAccount?.currency && stmtCurrency !== selectedAccount.currency) {
+            alert(`❌ Statement currency (${stmtCurrency}) does not match bank account currency (${selectedAccount.currency})`);
+            return;
+          }
+
+          const totalDebits = lines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0);
+          const totalCredits = lines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0);
+          const openingBal = Number(metadata.openingBalance || 0);
+          const computedClosing = openingBal + totalCredits - totalDebits;
+          const finalLineBal = lines[lines.length - 1]?.balance;
+          const closingBal = metadata.closingBalance && metadata.closingBalance !== 0
+            ? Number(metadata.closingBalance)
+            : (finalLineBal !== undefined && finalLineBal !== null ? Number(finalLineBal) : computedClosing);
+
+          const dates = lines.map(l => l.date).filter(Boolean).sort();
+          const startDate = metadata.startDate || dates[0] || dateRange.start;
+          const endDate = metadata.endDate || dates[dates.length - 1] || dateRange.end;
+
+          if (startDate > endDate) {
+            alert(`❌ Invalid statement date range: start date (${startDate}) is after end date (${endDate})`);
+            return;
+          }
+
           const { data: uploadRecord, error: uploadError } = await supabase
             .from('bank_statement_uploads')
             .insert({
               bank_account_id: selectedBank,
               statement_period: metadata.period || `${new Date().toLocaleString('default', { month: 'long' })} ${new Date().getFullYear()}`,
-              statement_start_date: metadata.startDate || dateRange.start,
-              statement_end_date: metadata.endDate || dateRange.end,
-              currency: selectedAccount?.currency || 'IDR',
-              opening_balance: metadata.openingBalance || 0,
-              closing_balance: metadata.closingBalance || lines[lines.length - 1]?.balance || 0,
-              total_debits: metadata.totalDebits || lines.reduce((sum, l) => sum + l.debit, 0),
-              total_credits: metadata.totalCredits || lines.reduce((sum, l) => sum + l.credit, 0),
+              statement_start_date: startDate,
+              statement_end_date: endDate,
+              currency: stmtCurrency,
+              opening_balance: openingBal,
+              closing_balance: closingBal,
+              total_debits: metadata.totalDebits || totalDebits,
+              total_credits: metadata.totalCredits || totalCredits,
               transaction_count: lines.length,
               status: 'completed',
             })
@@ -1309,8 +1357,9 @@ export function BankReconciliationEnhanced({
             credit_amount: line.credit,
             running_balance: line.balance,
             statement_balance: line.balance,
-            currency: selectedAccount?.currency || 'IDR',
+            currency: stmtCurrency,
             reconciliation_status: 'unmatched',
+            payment_kind: 'unclassified',
             created_by: user?.id,
           }));
 
