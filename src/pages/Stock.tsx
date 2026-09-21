@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { Package, AlertTriangle, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { useNavigation } from '../contexts/NavigationContext';
 import { formatDate } from '../utils/dateFormat';
+import { formatUnit } from '../utils/unitDisplay';
 
 interface StockSummary {
   product_id: string;
@@ -282,7 +283,7 @@ export function Stock() {
                           <span className="text-[10px] text-gray-400 ml-1.5 capitalize">({item.category})</span>
                         </td>
                         <td className={`px-3 py-2 text-sm text-right font-semibold ${item.total_current_stock === 0 ? 'text-gray-400' : item.total_current_stock < 500 ? 'text-orange-600' : 'text-green-600'}`}>
-                          {item.total_current_stock.toLocaleString()} {item.unit}
+                          {item.total_current_stock.toLocaleString()} {formatUnit(item.unit)}
                         </td>
                         <td className="px-3 py-2 text-sm text-right">
                           {item.reserved_stock === 0 && !item.shortage_quantity ? (
@@ -290,7 +291,7 @@ export function Stock() {
                           ) : (
                             <div className="flex flex-col items-end gap-0.5">
                               {item.reserved_stock > 0 && (
-                                <span className="text-orange-600">{item.reserved_stock.toLocaleString()} {item.unit}</span>
+                                <span className="text-orange-600">{item.reserved_stock.toLocaleString()} {formatUnit(item.unit)}</span>
                               )}
                               {item.shortage_quantity > 0 && (
                                 <span className="text-red-600 text-xs font-semibold">-{item.shortage_quantity.toLocaleString()} shortage</span>
@@ -299,7 +300,7 @@ export function Stock() {
                           )}
                         </td>
                         <td className="px-3 py-2 text-sm text-right font-semibold text-green-600">
-                          {item.available_quantity.toLocaleString()} {item.unit}
+                          {item.available_quantity.toLocaleString()} {formatUnit(item.unit)}
                         </td>
                         <td className="px-3 py-2 text-sm text-center">
                           <span className="text-blue-600 font-medium">{item.active_batch_count}</span>
@@ -346,9 +347,9 @@ export function Stock() {
                                         <tr className="bg-blue-50/60">
                                           <td className="px-3 py-1.5 font-semibold text-gray-800">{group.name}</td>
                                           <td className="px-3 py-1.5 text-gray-500" colSpan={4}>{group.batches.length} batch{group.batches.length === 1 ? '' : 'es'}</td>
-                                          <td className="px-3 py-1.5 text-right font-semibold">{group.stock.toLocaleString()} {item.unit}</td>
-                                          <td className="px-3 py-1.5 text-right">{group.reserved.toLocaleString()} {item.unit}</td>
-                                          <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(group.stock - group.reserved).toLocaleString()} {item.unit}</td>
+                                          <td className="px-3 py-1.5 text-right font-semibold">{group.stock.toLocaleString()} {formatUnit(item.unit)}</td>
+                                          <td className="px-3 py-1.5 text-right">{group.reserved.toLocaleString()} {formatUnit(item.unit)}</td>
+                                          <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(group.stock - group.reserved).toLocaleString()} {formatUnit(item.unit)}</td>
                                         </tr>
                                         {group.batches.map(batch => (
                                           <tr key={batch.id} className="hover:bg-gray-50">
@@ -356,10 +357,10 @@ export function Stock() {
                                             <td className="px-3 py-1.5 font-mono text-blue-700">{batch.batch_number || '—'}</td>
                                             <td className={`px-3 py-1.5 ${batch.expiry_date && isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' : batch.expiry_date && isNearExpiry(batch.expiry_date) ? 'text-orange-600 font-semibold' : 'text-gray-600'}`}>{batch.expiry_date ? formatDate(batch.expiry_date) : '—'}</td>
                                             <td className="px-3 py-1.5 text-right">{batch.import_quantity.toLocaleString()}</td>
-                                            <td className="px-3 py-1.5">{batch.unit}</td>
-                                            <td className="px-3 py-1.5 text-right font-semibold">{batch.current_stock.toLocaleString()} {batch.unit}</td>
-                                            <td className="px-3 py-1.5 text-right">{batch.reserved_stock.toLocaleString()} {batch.unit}</td>
-                                            <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(batch.current_stock - batch.reserved_stock).toLocaleString()} {batch.unit}</td>
+                                            <td className="px-3 py-1.5">{formatUnit(batch.unit)}</td>
+                                            <td className="px-3 py-1.5 text-right font-semibold">{batch.current_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
+                                            <td className="px-3 py-1.5 text-right">{batch.reserved_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
+                                            <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(batch.current_stock - batch.reserved_stock).toLocaleString()} {formatUnit(batch.unit)}</td>
                                           </tr>
                                         ))}
                                       </Fragment>

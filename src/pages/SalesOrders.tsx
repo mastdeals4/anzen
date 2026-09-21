@@ -5,10 +5,11 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { Layout } from '../components/Layout';
-import { FileText, Plus, Search, Eye, Pencil as Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download, AlertTriangle, Clock, ExternalLink, Truck } from 'lucide-react';
+import { FileText, Plus, Search, Eye, Pencil as Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download, AlertTriangle, Clock, ExternalLink, Truck, DollarSign, RefreshCw, Check } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
 import { ProformaInvoiceView } from '../components/ProformaInvoiceView';
+import { EditSalesOrderFxRateModal } from '../components/EditSalesOrderFxRateModal';
 import { DeliveryChallanView } from '../components/DeliveryChallanView';
 import { InvoiceView } from '../components/InvoiceView';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
@@ -107,7 +108,7 @@ export default function SalesOrders() {
   const { navigationData, clearNavigationData, setNavigationData, setCurrentPage } = useNavigation();
   const { t } = useLanguage();
   const { dateRange } = useFinance();
-  const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'fx_backfill'>('active');
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,6 +116,11 @@ export default function SalesOrders() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingOrder, setEditingOrder] = useState<SalesOrder | null>(null);
+  const [editingFxRateOrder, setEditingFxRateOrder] = useState<SalesOrder | null>(null);
+  const [backfillRates, setBackfillRates] = useState<Record<string, string>>({});
+  const [backfillSaving, setBackfillSaving] = useState<Record<string, boolean>>({});
+  const [backfillFilter, setBackfillFilter] = useState<'all' | 'missing' | 'set'>('all');
+  const [backfillAllDates, setBackfillAllDates] = useState(true);
   const [createPrefill, setCreatePrefill] = useState<ComponentProps<typeof SalesOrderForm>['prefill']>();
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
@@ -141,11 +147,11 @@ export default function SalesOrders() {
 
   useEffect(() => {
     fetchSalesOrders();
-  }, [activeTab, dateRange.startDate, dateRange.endDate]);
+  }, [activeTab, dateRange.startDate, dateRange.endDate, backfillAllDates]);
 
   useEffect(() => {
     filterOrders();
-  }, [debouncedSearchTerm, statusFilter, salesOrders, activeTab, soStatuses, approvedDeliverySoIds, sortConfig]);
+  }, [debouncedSearchTerm, statusFilter, salesOrders, activeTab, soStatuses, approvedDeliverySoIds, sortConfig, backfillFilter]);
 
   useEffect(() => {
     const requestedId = navigationData?.salesOrderId;
@@ -230,13 +236,15 @@ export default function SalesOrders() {
 
       if (activeTab === 'active') {
         query = query.eq('is_archived', false);
-      } else {
+      } else if (activeTab === 'archived') {
         query = query.eq('is_archived', true);
       }
 
-      query = query
-        .gte('so_date', dateRange.startDate)
-        .lte('so_date', dateRange.endDate);
+      if (activeTab !== 'fx_backfill' || !backfillAllDates) {
+        query = query
+          .gte('so_date', dateRange.startDate)
+          .lte('so_date', dateRange.endDate);
+      }
 
       const { data, error } = await query.order('created_at', { ascending: false });
 
@@ -402,6 +410,14 @@ export default function SalesOrders() {
       ));
     }
 
+    if (activeTab === 'fx_backfill') {
+      if (backfillFilter === 'missing') {
+        filtered = filtered.filter(order => !order.commercial_usd_to_idr_rate || Number(order.commercial_usd_to_idr_rate) <= 0);
+      } else if (backfillFilter === 'set') {
+        filtered = filtered.filter(order => order.commercial_usd_to_idr_rate && Number(order.commercial_usd_to_idr_rate) > 0);
+      }
+    }
+
     filtered = [...filtered].sort((a, b) => {
       let result = 0;
       if (sortConfig.field === 'status') {
@@ -422,6 +438,53 @@ export default function SalesOrders() {
     });
 
     setFilteredOrders(filtered);
+  };
+
+  const handleSaveBackfillRate = async (order: SalesOrder) => {
+    const rawVal = backfillRates[order.id];
+    if (!rawVal || !rawVal.trim()) {
+      showToast({ type: 'error', title: 'Missing Rate', message: 'Please enter a numeric exchange rate to save' });
+      return;
+    }
+    const num = parseFloat(rawVal.replace(/,/g, ''));
+    if (isNaN(num) || num <= 0) {
+      showToast({ type: 'error', title: 'Invalid Rate', message: 'Please enter a valid positive exchange rate' });
+      return;
+    }
+
+    setBackfillSaving((prev) => ({ ...prev, [order.id]: true }));
+    try {
+      const { data, error } = await supabase.rpc('update_sales_order_commercial_rate', {
+        p_so_id: order.id,
+        p_new_rate: num,
+        p_reason: 'Historical commercial FX rate backfill',
+      });
+
+      if (error) throw error;
+      if (data && !data.success) {
+        throw new Error(data.message || 'Failed to update rate');
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Rate Saved',
+        message: `Exchange rate for ${order.so_number} updated to Rp ${num.toLocaleString('id-ID')} / USD`,
+      });
+
+      setSalesOrders((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, commercial_usd_to_idr_rate: num } : o))
+      );
+      setBackfillRates((prev) => {
+        const next = { ...prev };
+        delete next[order.id];
+        return next;
+      });
+    } catch (err: any) {
+      console.error('Error saving backfill rate:', err);
+      showToast({ type: 'error', title: 'Save Failed', message: err.message || 'Could not update exchange rate' });
+    } finally {
+      setBackfillSaving((prev) => ({ ...prev, [order.id]: false }));
+    }
   };
 
   const getDeliveryAlert = (order: SalesOrder) => {
@@ -739,13 +802,27 @@ export default function SalesOrders() {
           <h1 className="text-3xl font-bold text-gray-900">Sales Orders</h1>
           <p className="text-gray-600 mt-1">Manage customer purchase orders and track delivery</p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-        >
-          <Plus className="w-5 h-5" />
-          New Sales Order
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setActiveTab('fx_backfill')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium transition shadow-sm text-sm ${
+              activeTab === 'fx_backfill'
+                ? 'bg-amber-700 text-white'
+                : 'bg-amber-600 hover:bg-amber-700 text-white'
+            }`}
+            title="Open Historical Exchange Rate Backfill"
+          >
+            <DollarSign className="w-4 h-4" />
+            Backfill FX Rates
+          </button>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+          >
+            <Plus className="w-5 h-5" />
+            New Sales Order
+          </button>
+        </div>
       </div>
 
       <div className="mb-4 border-b border-gray-200">
@@ -769,6 +846,21 @@ export default function SalesOrders() {
             }`}
           >
             Archived Orders
+          </button>
+          <button
+            onClick={() => setActiveTab('fx_backfill')}
+            className={`px-4 py-2 font-medium border-b-2 transition flex items-center gap-2 ${
+              activeTab === 'fx_backfill'
+                ? 'border-amber-600 text-amber-700 font-semibold'
+                : 'border-transparent text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <span>Exchange Rate Backfill</span>
+            {salesOrders.some((o) => !o.commercial_usd_to_idr_rate || Number(o.commercial_usd_to_idr_rate) <= 0) && (
+              <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                {salesOrders.filter((o) => !o.commercial_usd_to_idr_rate || Number(o.commercial_usd_to_idr_rate) <= 0).length} Missing
+              </span>
+            )}
           </button>
         </nav>
       </div>
@@ -804,228 +896,464 @@ export default function SalesOrders() {
               className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg"
             />
           </div>
-          <select name="status_filter" aria-label="Status Filter"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="border rounded-lg px-3 py-1.5 text-sm"
-          >
-            <option value="all">All Status</option>
-            <option value="pending">Pending</option>
-            <option value="processing">Processing</option>
-            <option value="shortage">Shortage</option>
-            <option value="delivered">Delivered</option>
-            <option value="completed">Completed</option>
-            <option value="overdue">Overdue</option>
-            <option value="rejected">Rejected</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
+          {activeTab === 'fx_backfill' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label="Backfill Filter"
+                value={backfillFilter}
+                onChange={(e) => setBackfillFilter(e.target.value as any)}
+                className="border rounded-lg px-3 py-1.5 text-sm bg-white"
+              >
+                <option value="all">All Orders</option>
+                <option value="missing">Missing Rate Only</option>
+                <option value="set">Rate Already Set</option>
+              </select>
+              <label className="flex items-center gap-1.5 text-xs text-gray-700 font-medium px-2 py-1.5 bg-gray-50 border rounded-lg cursor-pointer whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={backfillAllDates}
+                  onChange={(e) => setBackfillAllDates(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>All Historical Dates</span>
+              </label>
+            </div>
+          ) : (
+            <select name="status_filter" aria-label="Status Filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="border rounded-lg px-3 py-1.5 text-sm"
+            >
+              <option value="all">All Status</option>
+              <option value="pending">Pending</option>
+              <option value="processing">Processing</option>
+              <option value="shortage">Shortage</option>
+              <option value="delivered">Delivered</option>
+              <option value="completed">Completed</option>
+              <option value="overdue">Overdue</option>
+              <option value="rejected">Rejected</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          )}
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1200px]">
-            <thead className="bg-gray-50">
-              <tr>
-                {sortableHeader('so_number', 'SO Number')}
-                {sortableHeader('customer', 'Customer')}
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">PO Number</th>
-                {sortableHeader('date', 'SO Date')}
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Delivery Date</th>
-                {sortableHeader('amount', 'Amount', 'px-4 py-2 text-left')}
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase min-w-[150px]">Linked Docs</th>
-                {sortableHeader('status', 'Order Status', 'px-3 py-2 text-center')}
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {loading ? (
+        {activeTab === 'fx_backfill' ? (
+          <div className="overflow-x-auto">
+            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-900">
+              <span className="font-semibold text-amber-950">Commercial Exchange Rate Backfill:</span> Enter historical USD → IDR exchange rates used for customer commercial pricing agreements. This field serves as a commercial pricing reference and feeds the FX Business Dashboard; it never modifies issued sales invoices, delivery challans, accounting journals, or inventory COGS.
+            </div>
+            <table className="w-full min-w-[1200px]">
+              <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <td colSpan={9} className="px-3 py-2 text-center text-gray-500">
-                    Loading...
-                  </td>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">SO Number</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">SO Date</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Customer</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Currency</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Current Exchange Rate</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">New Exchange Rate</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Linked DC</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Linked Invoice</th>
+                  <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Action</th>
                 </tr>
-              ) : filteredOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-3 py-2 text-center text-gray-500">
-                    No sales orders found
-                  </td>
-                </tr>
-              ) : (
-                filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{order.so_number}</div>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {loading ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
+                      Loading sales orders...
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{order.customers?.company_name}</div>
+                  </tr>
+                ) : filteredOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                      No matching sales orders found
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        <div className="text-sm text-gray-900">{order.customer_po_number}</div>
-                        {order.customer_po_file_url && (
-                          <>
-                            <button
-                              onClick={() => handleViewPO(order.customer_po_file_url!)}
-                              className="text-blue-600 hover:text-blue-800"
-                              title="View uploaded PO"
-                              type="button"
-                            >
-                              <Paperclip className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDownloadPO(order.customer_po_file_url!, order.customer_po_number || 'customer-po')}
-                              className="text-gray-500 hover:text-gray-700"
-                              title="Download uploaded PO"
-                              type="button"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500">{formatDate(order.customer_po_date)}</div>
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(order.so_date)}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                      <div>{order.expected_delivery_date ? formatDate(order.expected_delivery_date) : '-'}</div>
-                      {getDeliveryDueBadge(order)}
-                    </td>
-                    <td className="px-4 py-2 whitespace-nowrap text-xs font-medium text-gray-900">{formatCurrency(order.total_amount, order.currency || 'IDR')}</td>
-                    <td className="px-3 py-2 min-w-[150px]">
-                      <LinkedDocsCell
-                        sos={[]}
-                        dcs={(soLinkedChallans.get(order.id) || []).map((dc) => ({ id: dc.id, number: dc.challan_number, type: 'dc' as const }))}
-                        invs={(soLinkedInvoices.get(order.id) || []).map((inv) => ({ id: inv.id, number: inv.invoice_number, type: 'inv' as const }))}
-                        show={{ so: false }}
-                        onClick={(doc: LinkedDocRef) => { if (doc.type === 'dc') openLinkedChallanView(doc.id); if (doc.type === 'inv') openLinkedInvoiceView(doc.id); }}
-                      />
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="flex flex-col items-center gap-1">
-                        {getOrderStatusBadge(order)}
-                        {order.status === 'pending_approval' && (
-                          <span className="text-[11px] text-yellow-700">Awaiting approval</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm">
-                      <div className="flex items-center gap-2">
-                        {order.status === 'pending_approval' && profile?.role === 'admin' && (
-                          <>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleApproveOrder(order.id);
-                              }}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
-                              title="Approve Sales Order"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" />
-                              Approve
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setOrderToReject(order.id);
-                                setShowRejectModal(true);
-                              }}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700"
-                              title="Reject Sales Order"
-                            >
-                              <XCircle className="w-3.5 h-3.5" />
-                              Reject
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={() => handleViewOrder(order)}
-                          className="text-blue-600 hover:text-blue-800"
-                          title="View Sales Order"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        {!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery'].includes(order.status) &&
-                          (!['approved', 'stock_reserved', 'shortage'].includes(order.status) || profile?.role === 'admin') && (
+                  </tr>
+                ) : (
+                  filteredOrders.map((order) => {
+                    const currentRateNum = order.commercial_usd_to_idr_rate ? Number(order.commercial_usd_to_idr_rate) : null;
+                    const dcs = soLinkedChallans.get(order.id) || [];
+                    const invs = soLinkedInvoices.get(order.id) || [];
+                    const isSaving = !!backfillSaving[order.id];
+                    const inputVal = backfillRates[order.id] !== undefined ? backfillRates[order.id] : '';
+
+                    return (
+                      <tr key={order.id} className="hover:bg-gray-50">
+                        {/* 1. SO Number */}
+                        <td className="px-3 py-2.5 whitespace-nowrap">
                           <button
-                            onClick={() => handleEditOrder(order)}
-                            className="text-indigo-600 hover:text-indigo-800"
-                            title={['approved', 'stock_reserved', 'shortage'].includes(order.status) ? 'Edit (Admin Only)' : 'Edit'}
+                            type="button"
+                            onClick={() => handleViewOrder(order)}
+                            className="font-medium text-blue-600 hover:text-blue-800 text-xs font-mono underline"
+                            title="View Sales Order Proforma"
                           >
-                            <Edit className="w-4 h-4" />
+                            {order.so_number}
                           </button>
-                        )}
-                        {order.status === 'draft' && (
-                          <>
+                        </td>
+
+                        {/* 2. SO Date */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-600">
+                          {formatDate(order.so_date)}
+                        </td>
+
+                        {/* 3. Customer */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-900 font-medium max-w-[200px] truncate" title={order.customers?.company_name}>
+                          {order.customers?.company_name || '-'}
+                        </td>
+
+                        {/* 4. Currency */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center">
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${order.currency === 'USD' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-gray-100 text-gray-700'}`}>
+                            {order.currency || 'IDR'}
+                          </span>
+                        </td>
+
+                        {/* 5. Current Exchange Rate */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-xs">
+                          {currentRateNum && currentRateNum > 0 ? (
+                            <span className="font-mono font-medium text-gray-800">
+                              Rp {currentRateNum.toLocaleString('id-ID', { maximumFractionDigits: 2 })} / USD
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                              Missing
+                            </span>
+                          )}
+                        </td>
+
+                        {/* 6. New Exchange Rate */}
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="relative w-36">
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-mono">Rp</span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder={currentRateNum ? String(currentRateNum) : "e.g. 17735"}
+                              value={inputVal}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBackfillRates((prev) => ({ ...prev, [order.id]: val }));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSaveBackfillRate(order);
+                                }
+                              }}
+                              className="w-full pl-8 pr-2 py-1 text-xs font-mono border rounded border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                            />
+                          </div>
+                        </td>
+
+                        {/* 7. Status */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center">
+                          {getOrderStatusBadge(order)}
+                        </td>
+
+                        {/* 8. Linked DC */}
+                        <td className="px-3 py-2.5 text-xs">
+                          {dcs.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {dcs.map((dc) => (
+                                <button
+                                  key={dc.id}
+                                  type="button"
+                                  onClick={() => openLinkedChallanView(dc.id)}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-mono bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200"
+                                  title="View Delivery Challan"
+                                >
+                                  {dc.challan_number}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-xs">-</span>
+                          )}
+                        </td>
+
+                        {/* 9. Linked Invoice */}
+                        <td className="px-3 py-2.5 text-xs">
+                          {invs.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {invs.map((inv) => (
+                                <button
+                                  key={inv.id}
+                                  type="button"
+                                  onClick={() => openLinkedInvoiceView(inv.id)}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-mono bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"
+                                  title="View Sales Invoice"
+                                >
+                                  {inv.invoice_number}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-xs">-</span>
+                          )}
+                        </td>
+
+                        {/* 10. Action */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center">
+                          <div className="flex items-center justify-center gap-1.5">
                             <button
-                              onClick={() => handleSubmitForApproval(order.id)}
+                              type="button"
+                              onClick={() => handleSaveBackfillRate(order)}
+                              disabled={isSaving || !inputVal.trim()}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded transition shadow-sm ${
+                                inputVal.trim()
+                                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              }`}
+                              title="Save Exchange Rate"
+                            >
+                              {isSaving ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5" />
+                              )}
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleViewOrder(order)}
+                              className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded"
+                              title="Open/View Sales Order"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingFxRateOrder(order)}
+                              className="p-1 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded"
+                              title="Edit Rate (with audit reason)"
+                            >
+                              <DollarSign className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1200px]">
+              <thead className="bg-gray-50">
+                <tr>
+                  {sortableHeader('so_number', 'SO Number')}
+                  {sortableHeader('customer', 'Customer')}
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">PO Number</th>
+                  {sortableHeader('date', 'SO Date')}
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Delivery Date</th>
+                  {sortableHeader('amount', 'Amount', 'px-4 py-2 text-left')}
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase min-w-[150px]">Linked Docs</th>
+                  {sortableHeader('status', 'Order Status', 'px-3 py-2 text-center')}
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-2 text-center text-gray-500">
+                      Loading...
+                    </td>
+                  </tr>
+                ) : filteredOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-2 text-center text-gray-500">
+                      No sales orders found
+                    </td>
+                  </tr>
+                ) : (
+                  filteredOrders.map((order) => (
+                    <tr key={order.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{order.so_number}</div>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{order.customers?.company_name}</div>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <div className="text-sm text-gray-900">{order.customer_po_number}</div>
+                          {order.customer_po_file_url && (
+                            <>
+                              <button
+                                onClick={() => handleViewPO(order.customer_po_file_url!)}
+                                className="text-blue-600 hover:text-blue-800"
+                                title="View uploaded PO"
+                                type="button"
+                              >
+                                <Paperclip className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDownloadPO(order.customer_po_file_url!, order.customer_po_number || 'customer-po')}
+                                className="text-gray-500 hover:text-gray-700"
+                                title="Download uploaded PO"
+                                type="button"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500">{formatDate(order.customer_po_date)}</div>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                        {formatDate(order.so_date)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                        <div>{order.expected_delivery_date ? formatDate(order.expected_delivery_date) : '-'}</div>
+                        {getDeliveryDueBadge(order)}
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap text-xs font-medium text-gray-900">{formatCurrency(order.total_amount, order.currency || 'IDR')}</td>
+                      <td className="px-3 py-2 min-w-[150px]">
+                        <LinkedDocsCell
+                          sos={[]}
+                          dcs={(soLinkedChallans.get(order.id) || []).map((dc) => ({ id: dc.id, number: dc.challan_number, type: 'dc' as const }))}
+                          invs={(soLinkedInvoices.get(order.id) || []).map((inv) => ({ id: inv.id, number: inv.invoice_number, type: 'inv' as const }))}
+                          show={{ so: false }}
+                          onClick={(doc: LinkedDocRef) => { if (doc.type === 'dc') openLinkedChallanView(doc.id); if (doc.type === 'inv') openLinkedInvoiceView(doc.id); }}
+                        />
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex flex-col items-center gap-1">
+                          {getOrderStatusBadge(order)}
+                          {order.status === 'pending_approval' && (
+                            <span className="text-[11px] text-yellow-700">Awaiting approval</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-sm">
+                        <div className="flex items-center gap-2">
+                          {order.status === 'pending_approval' && profile?.role === 'admin' && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleApproveOrder(order.id);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                                title="Approve Sales Order"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                Approve
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOrderToReject(order.id);
+                                  setShowRejectModal(true);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700"
+                                title="Reject Sales Order"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                Reject
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => handleViewOrder(order)}
+                            className="text-blue-600 hover:text-blue-800"
+                            title="View Sales Order"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setEditingFxRateOrder(order)}
+                            className="text-emerald-600 hover:text-emerald-800 p-0.5 hover:bg-emerald-50 rounded"
+                            title="Edit Commercial FX Rate"
+                          >
+                            <DollarSign className="w-4 h-4" />
+                          </button>
+                          {!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery'].includes(order.status) &&
+                            (!['approved', 'stock_reserved', 'shortage'].includes(order.status) || profile?.role === 'admin') && (
+                            <button
+                              onClick={() => handleEditOrder(order)}
+                              className="text-indigo-600 hover:text-indigo-800"
+                              title={['approved', 'stock_reserved', 'shortage'].includes(order.status) ? 'Edit (Admin Only)' : 'Edit'}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          )}
+                          {order.status === 'draft' && (
+                            <>
+                              <button
+                                onClick={() => handleSubmitForApproval(order.id)}
+                                className="text-green-600 hover:text-green-800"
+                                title="Submit for Approval"
+                              >
+                                <FileCheck className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteOrder(order.id)}
+                                className="text-red-600 hover:text-red-800"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                          {!['cancelled', 'closed', 'delivered', 'rejected'].includes(order.status) &&
+                            activeTab === 'active' &&
+                            (!['approved', 'stock_reserved', 'shortage', 'pending_delivery'].includes(order.status) || profile?.role === 'admin') && (
+                            <button
+                              onClick={() => handleCancelOrder(order.id)}
+                              className="text-orange-600 hover:text-orange-800"
+                              title="Cancel"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          )}
+                          {['approved', 'stock_reserved', 'pending_delivery', 'partially_delivered'].includes(order.status)
+                            && !approvedDeliverySoIds.has(order.id) && (
+                            <button
+                              onClick={() => {
+                                setNavigationData({ createDeliveryChallanFromSO: order.id });
+                                setCurrentPage('delivery-challan');
+                              }}
                               className="text-green-600 hover:text-green-800"
-                              title="Submit for Approval"
+                              title="Create Delivery Challan"
+                            >
+                              <Truck className="w-4 h-4" />
+                            </button>
+                          )}
+                          {activeTab === 'active' && ['admin', 'sales'].includes(profile?.role || '') && ['delivered', 'cancelled'].includes(order.status) && (
+                            <button
+                              onClick={() => {
+                                setOrderToArchive(order.id);
+                                setShowArchiveModal(true);
+                              }}
+                              className="text-gray-600 hover:text-gray-800"
+                              title="Archive Order"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          )}
+                          {activeTab === 'archived' && ['admin', 'sales'].includes(profile?.role || '') && (
+                            <button
+                              onClick={() => handleUnarchiveOrder(order.id)}
+                              className="text-green-600 hover:text-green-800"
+                              title="Unarchive Order"
                             >
                               <FileCheck className="w-4 h-4" />
                             </button>
-                            <button
-                              onClick={() => handleDeleteOrder(order.id)}
-                              className="text-red-600 hover:text-red-800"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
-                        {!['cancelled', 'closed', 'delivered', 'rejected'].includes(order.status) &&
-                          activeTab === 'active' &&
-                          (!['approved', 'stock_reserved', 'shortage', 'pending_delivery'].includes(order.status) || profile?.role === 'admin') && (
-                          <button
-                            onClick={() => handleCancelOrder(order.id)}
-                            className="text-orange-600 hover:text-orange-800"
-                            title="Cancel"
-                          >
-                            <XCircle className="w-4 h-4" />
-                          </button>
-                        )}
-                        {['approved', 'stock_reserved', 'pending_delivery', 'partially_delivered'].includes(order.status)
-                          && !approvedDeliverySoIds.has(order.id) && (
-                          <button
-                            onClick={() => {
-                              setNavigationData({ createDeliveryChallanFromSO: order.id });
-                              setCurrentPage('delivery-challan');
-                            }}
-                            className="text-green-600 hover:text-green-800"
-                            title="Create Delivery Challan"
-                          >
-                            <Truck className="w-4 h-4" />
-                          </button>
-                        )}
-                        {activeTab === 'active' && ['admin', 'sales'].includes(profile?.role || '') && ['delivered', 'cancelled'].includes(order.status) && (
-                          <button
-                            onClick={() => {
-                              setOrderToArchive(order.id);
-                              setShowArchiveModal(true);
-                            }}
-                            className="text-gray-600 hover:text-gray-800"
-                            title="Archive Order"
-                          >
-                            <FileText className="w-4 h-4" />
-                          </button>
-                        )}
-                        {activeTab === 'archived' && ['admin', 'sales'].includes(profile?.role || '') && (
-                          <button
-                            onClick={() => handleUnarchiveOrder(order.id)}
-                            className="text-green-600 hover:text-green-800"
-                            title="Unarchive Order"
-                          >
-                            <FileCheck className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {showCreateModal && (
@@ -1236,6 +1564,30 @@ export default function SalesOrders() {
             setProformaOrder(null);
           }}
           companyProfile={(proformaOrder as any).company_snapshot ?? undefined}
+          linkedDcs={(soLinkedChallans.get(proformaOrder.id) || []).map((dc) => ({ id: dc.id, number: dc.challan_number }))}
+          linkedInvoices={(soLinkedInvoices.get(proformaOrder.id) || []).map((inv) => ({ id: inv.id, number: inv.invoice_number }))}
+          onRateUpdated={(newRate: number | null) => {
+            setSalesOrders((prev) =>
+              prev.map((o) => (o.id === proformaOrder.id ? { ...o, commercial_usd_to_idr_rate: newRate } : o))
+            );
+            setProformaOrder((prev) => (prev ? { ...prev, commercial_usd_to_idr_rate: newRate } : null));
+          }}
+        />
+      )}
+
+      {editingFxRateOrder && (
+        <EditSalesOrderFxRateModal
+          isOpen={!!editingFxRateOrder}
+          onClose={() => setEditingFxRateOrder(null)}
+          salesOrder={editingFxRateOrder}
+          onSuccess={(soId: string, newRate: number | null) => {
+            setSalesOrders((prev) =>
+              prev.map((o) => (o.id === soId ? { ...o, commercial_usd_to_idr_rate: newRate } : o))
+            );
+            if (proformaOrder?.id === soId) {
+              setProformaOrder((prev) => (prev ? { ...prev, commercial_usd_to_idr_rate: newRate } : null));
+            }
+          }}
         />
       )}
       {linkedChallanPreview && (

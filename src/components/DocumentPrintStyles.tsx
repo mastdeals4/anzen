@@ -101,6 +101,14 @@ export function DocumentPrintStyles({ contentId }: DocumentPrintStylesProps) {
       #${contentId} tfoot {
         display: table-footer-group;
       }
+
+      /* Screen-only and print-hidden element suppression */
+      .printHidden,
+      .screenOnly,
+      .no-print,
+      [data-screen-only="true"] {
+        display: none !important;
+      }
     }
   `;
   return <style>{css}</style>;

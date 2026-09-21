@@ -17,6 +17,7 @@ import { formatDate } from '../utils/dateFormat';
 import { MoneyInput } from '../components/MoneyInput';
 import { canSeeInventoryCosting } from '../utils/permissions';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
+import { formatUnit, abbreviateUnit, formatPackagingDetails } from '../utils/unitDisplay';
 
 interface Batch {
   id: string;
@@ -164,7 +165,7 @@ export function Batches() {
   }, [canViewCosting]);
 
   const loadPendingInwards = async () => {
-    const { data, error } = await supabase.from('purchase_invoices').select('*,suppliers(company_name),purchase_invoice_items(*,products(product_name))');
+    const { data, error } = await supabase.from('purchase_invoices').select('*,suppliers(company_name),purchase_invoice_items(*,products(product_name, unit))');
     if (error) {
       console.error('Error loading pending inwards:', error);
       setPendingInwards([]);
@@ -177,7 +178,7 @@ export function Batches() {
         product_id: item.product_id, make_id: item.receiving_make_id || null,
         import_container_id: item.receiving_import_container_id || null,
         invoice_date: invoice.invoice_date, currency: invoice.currency || 'IDR', exchange_rate: Number(invoice.exchange_rate) || 1,
-        unit: item.unit || item.products?.unit || '', unit_price: Number(item.unit_price) || 0,
+        unit: item.products?.unit || item.unit || '', unit_price: Number(item.unit_price) || 0,
         supplier_name: invoice.suppliers?.company_name || '—',
         product_name: item.products?.product_name || item.description || '—',
         quantity: Number(item.quantity) || 0, received: 0, pending: Number(item.quantity) || 0,
@@ -323,7 +324,7 @@ export function Batches() {
     if (!challan) return;
     const { data: items } = await supabase
       .from('delivery_challan_items')
-      .select(`*, products(product_name, product_code, unit), batches(batch_number)`)
+      .select(`*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))`)
       .eq('challan_id', challan.id);
     setQuickViewDC({ challan, items: items || [] });
   };
@@ -607,7 +608,7 @@ export function Batches() {
     let perPackWeight = '';
     let packType = 'bag';
     if (batch.packaging_details) {
-      const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)kg/);
+      const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/);
       if (match) {
         perPackWeight = match[3];
         packType = match[2].toLowerCase();
@@ -618,6 +619,8 @@ export function Batches() {
     // must load and preserve their own saved duty percentage.
     const selectedProduct = products.find(p => p.id === batch.product_id);
     const productDutyPercent = selectedProduct?.duty_percent || 0;
+    const batchUnit = selectedProduct?.unit || (batch as any).products?.unit;
+    const sanitizedPackaging = formatPackagingDetails(batch.packaging_details, batchUnit);
 
     setFormData({
       batch_number: batch.batch_number,
@@ -626,7 +629,7 @@ export function Batches() {
       import_container_id: batch.import_container_id || '',
       import_date: batch.import_date,
       import_quantity: batch.import_quantity,
-      packaging_details: batch.packaging_details,
+      packaging_details: sanitizedPackaging,
       import_price_usd: batch.import_price_usd || 0,
       import_price_idr: batch.import_price || 0,
       exchange_rate_usd_to_idr: batch.exchange_rate_usd_to_idr || 0,
@@ -988,6 +991,11 @@ export function Batches() {
 
   const canEdit = profile?.role === 'admin' || profile?.role === 'warehouse' || profile?.role === 'accounts';
 
+  const modalProduct = products.find(p => p.id === formData.product_id);
+  const rawModalUnit = modalProduct?.unit || (editingBatch as any)?.products?.unit;
+  const modalPackUnit = abbreviateUnit(rawModalUnit);
+  const modalProductDisplayUnit = formatUnit(rawModalUnit);
+
   return (
     <Layout>
       <div className="space-y-6">
@@ -1060,7 +1068,7 @@ export function Batches() {
             <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-gray-50"><tr>
               <th className="px-3 py-2 text-left text-xs text-gray-500">Supplier / Invoice</th><th className="px-3 py-2 text-left text-xs text-gray-500">Product</th><th className="px-3 py-2 text-left text-xs text-gray-500">Make / Batch</th><th className="px-3 py-2 text-right text-xs text-gray-500">Pending</th><th className="px-3 py-2 text-right text-xs text-gray-500">Action</th>
             </tr></thead><tbody className="divide-y divide-gray-100">{pendingInwards.map(row => <tr key={row.item_id}>
-              <td className="px-3 py-2">{row.supplier_name}<div className="text-xs text-gray-400">{row.invoice_number}</div></td><td className="px-3 py-2">{row.product_name}</td><td className="px-3 py-2">{row.make_name || 'Not specified'}<div className="text-xs text-gray-400">{row.batch_number || 'Batch at inward'}</div></td><td className="px-3 py-2 text-right font-semibold text-orange-700">{row.pending.toLocaleString()} {row.unit}</td><td className="px-3 py-2 text-right"><button className="text-blue-600 hover:underline text-xs mr-2" onClick={() => { window.location.href = `/finance/purchase?document=${row.invoice_id}`; }}>Edit</button>{canEdit && <button className="text-green-600 hover:underline text-xs mr-2" onClick={() => void openPendingInward(row)}>Inward</button>}<button className="text-red-600 hover:underline text-xs" onClick={() => void rejectPendingInward(row)}>Reject</button></td>
+              <td className="px-3 py-2">{row.supplier_name}<div className="text-xs text-gray-400">{row.invoice_number}</div></td><td className="px-3 py-2">{row.product_name}</td><td className="px-3 py-2">{row.make_name || 'Not specified'}<div className="text-xs text-gray-400">{row.batch_number || 'Batch at inward'}</div></td><td className="px-3 py-2 text-right font-semibold text-orange-700">{row.pending.toLocaleString()} {formatUnit(row.unit)}</td><td className="px-3 py-2 text-right"><button className="text-blue-600 hover:underline text-xs mr-2" onClick={() => { window.location.href = `/finance/purchase?document=${row.invoice_id}`; }}>Edit</button>{canEdit && <button className="text-green-600 hover:underline text-xs mr-2" onClick={() => void openPendingInward(row)}>Inward</button>}<button className="text-red-600 hover:underline text-xs" onClick={() => void rejectPendingInward(row)}>Reject</button></td>
             </tr>)}</tbody></table></div>
           )}
         </div>
@@ -1125,7 +1133,7 @@ export function Batches() {
                 grouped.set(key, {
                   productName: batch.products?.product_name || '',
                   productCode: batch.products?.product_code || '',
-                  unit: batch.products?.unit || 'kg',
+                  unit: batch.products?.unit || '',
                   productId: key,
                   batches: [],
                 });
@@ -1200,7 +1208,7 @@ export function Batches() {
                                 )}
                               </td>
                               <td className={`px-2 py-2 w-28 text-right pr-3 text-sm font-semibold ${totalStock > 0 ? 'text-gray-900' : 'text-red-500'}`}>
-                                {totalStock.toLocaleString()} {group.unit}
+                                {totalStock.toLocaleString()} {formatUnit(group.unit)}
                               </td>
                             </tr>
                           </tbody>
@@ -1408,7 +1416,7 @@ export function Batches() {
                 <div className="bg-white rounded-lg p-3 border border-blue-100">
                   <p className="text-xs text-gray-500 mb-1">Stock in Hand Quantity</p>
                   <p className="text-xl font-bold text-gray-800">
-                    {batches.reduce((sum, batch) => sum + batch.current_stock, 0).toLocaleString()} units
+                    {batches.reduce((sum, batch) => sum + batch.current_stock, 0).toLocaleString()}
                   </p>
                   <p className="text-xs text-gray-400 mt-1">
                     of {batches.reduce((sum, batch) => sum + batch.import_quantity, 0).toLocaleString()} imported
@@ -1422,7 +1430,7 @@ export function Batches() {
               <div className="flex justify-between items-center text-sm mt-1">
                 <span className="text-gray-600">Total Import Quantity:</span>
                 <span className="font-semibold text-gray-900">
-                  {batches.reduce((sum, batch) => sum + batch.import_quantity, 0).toLocaleString()} units
+                  {batches.reduce((sum, batch) => sum + batch.import_quantity, 0).toLocaleString()}
                 </span>
               </div>
             </div>
@@ -1548,7 +1556,7 @@ export function Batches() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                    Import Quantity *
+                    Import Quantity {modalProductDisplayUnit ? `(${modalProductDisplayUnit})` : ''} *
                   </label>
                   <input name="import_quantity" aria-label="Import Quantity"
                     type="number"
@@ -1566,14 +1574,16 @@ export function Batches() {
                 {editingBatch && (
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                      Current Stock
+                      Current Stock {modalProductDisplayUnit ? `(${modalProductDisplayUnit})` : ''}
                     </label>
                     <div className="w-full px-2 py-1 text-sm border border-gray-200 rounded bg-gray-50">
-                      <span className="text-gray-700 font-medium">{editingBatch.current_stock.toLocaleString()}</span>
+                      <span className="text-gray-700 font-medium">
+                        {editingBatch.current_stock.toLocaleString()}{modalProductDisplayUnit ? ` ${modalProductDisplayUnit}` : ''}
+                      </span>
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Available: {editingBatch.current_stock.toLocaleString()} |
-                      Sold: {(editingBatch.import_quantity - editingBatch.current_stock).toLocaleString()}
+                      Available: {editingBatch.current_stock.toLocaleString()}{modalProductDisplayUnit ? ` ${modalProductDisplayUnit}` : ''} |
+                      Sold: {(editingBatch.import_quantity - editingBatch.current_stock).toLocaleString()}{modalProductDisplayUnit ? ` ${modalProductDisplayUnit}` : ''}
                     </p>
                   </div>
                 )}
@@ -1600,7 +1610,7 @@ export function Batches() {
                         const perPack = parseFloat(e.target.value);
                         if (perPack) {
                           const packs = (formData.import_quantity / perPack).toFixed(0);
-                          newFormData.packaging_details = `${packs} ${formData.pack_type}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}kg`;
+                          newFormData.packaging_details = `${packs} ${formData.pack_type}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}${modalPackUnit}`;
                         }
                       }
                       setFormData(newFormData);
@@ -1608,7 +1618,7 @@ export function Batches() {
                     placeholder="e.g., 25"
                     className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                   />
-                  <p className="text-xs text-gray-500 mt-0.5">kg per pack</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{modalPackUnit ? `${modalPackUnit} per pack` : 'per pack'}</p>
                 </div>
 
                 <div>
@@ -1623,7 +1633,7 @@ export function Batches() {
                         const perPack = parseFloat(formData.per_pack_weight);
                         if (perPack) {
                           const packs = (formData.import_quantity / perPack).toFixed(0);
-                          newFormData.packaging_details = `${packs} ${e.target.value}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}kg`;
+                          newFormData.packaging_details = `${packs} ${e.target.value}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}${modalPackUnit}`;
                         }
                       }
                       setFormData(newFormData);
@@ -1658,7 +1668,7 @@ export function Batches() {
                 <div className="mt-1 p-1.5 bg-blue-50 border border-blue-200 rounded">
                   <p className="text-xs text-blue-900">
                     <span className="font-semibold">Packaging: </span>
-                    {formData.packaging_details}
+                    {formatPackagingDetails(formData.packaging_details, rawModalUnit)}
                   </p>
                 </div>
               )}

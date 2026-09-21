@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabase';
+import { formatUnit } from './unitDisplay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -459,7 +460,7 @@ export async function generateSalesProfitabilityExcel(
         index + 1,
         p.product_code || '—',
         p.product_name,
-        p.product_unit || 'kg',
+        p.product_unit ? formatUnit(p.product_unit) : 'KG',
         Number(p.current_stock || 0),
         Number(p.reserved_stock || 0),
         Number(p.available_stock || 0),
@@ -753,7 +754,7 @@ export async function generateSalesProfitabilityExcel(
       '—',
       '—',
       '—',
-      prod.product_unit || 'kg',
+      prod.product_unit ? formatUnit(prod.product_unit) : 'KG',
       Number(prod.current_stock || 0),
       Number(prod.sold_qty || 0),
       prod.avg_landed_cost != null ? Number(prod.avg_landed_cost) : '—',
@@ -797,7 +798,7 @@ export async function generateSalesProfitabilityExcel(
         '—',
         '—',
         '—',
-        prod.product_unit || 'kg',
+        prod.product_unit ? formatUnit(prod.product_unit) : 'KG',
         Number(b.current_stock || 0),
         Number(b.sold_qty || 0),
         b.cost_per_unit != null ? Number(b.cost_per_unit) : '—',
@@ -851,7 +852,7 @@ export async function generateSalesProfitabilityExcel(
           ord.customer_name,
           ord.so_number || '—',
           ord.dc_number || '—',
-          prod.product_unit || 'kg',
+          prod.product_unit ? formatUnit(prod.product_unit) : 'KG',
           '—',
           Number(ord.quantity || 0),
           ord.unit_cost != null ? Number(ord.unit_cost) : '—',
@@ -952,7 +953,7 @@ export async function generateSalesProfitabilityExcel(
       idx + 1,
       p.product_code || '—',
       p.product_name,
-      p.product_unit || 'kg',
+      p.product_unit ? formatUnit(p.product_unit) : 'KG',
       Number(p.current_stock || 0),
       Number(p.reserved_stock || 0),
       Number(p.available_stock || 0),

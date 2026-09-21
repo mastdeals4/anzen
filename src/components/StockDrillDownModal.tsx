@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatDate } from '../utils/dateFormat';
+import { formatUnit, abbreviateUnit } from '../utils/unitDisplay';
 import { X, Package, AlertTriangle, ChevronDown, ChevronUp, ShoppingCart, Calendar, Layers } from 'lucide-react';
 
 interface StockSummary {
@@ -162,6 +163,9 @@ export function StockDrillDownModal({ product, onClose }: Props) {
     return acc;
   }, {}));
 
+  const displayUnit = formatUnit(product.unit);
+  const abbrUnit = abbreviateUnit(product.unit);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
@@ -180,7 +184,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                   <span className="text-xs text-gray-400 font-mono">{product.product_code}</span>
                 )}
                 <span className="text-xs text-gray-400 capitalize">{product.category}</span>
-                <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">{product.unit}</span>
+                <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">{displayUnit}</span>
               </div>
             </div>
           </div>
@@ -194,21 +198,21 @@ export function StockDrillDownModal({ product, onClose }: Props) {
           <div className="bg-white rounded-lg p-3 border border-gray-200">
             <p className="text-xs text-gray-500">Total Stock</p>
             <p className="text-xl font-bold text-gray-900">{product.total_current_stock.toLocaleString()}</p>
-            <p className="text-xs text-gray-400">{product.unit}</p>
+            <p className="text-xs text-gray-400">{displayUnit}</p>
           </div>
           <div className="bg-white rounded-lg p-3 border border-orange-200">
             <p className="text-xs text-orange-600">Reserved</p>
             <p className={`text-xl font-bold ${product.reserved_stock > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
               {product.reserved_stock.toLocaleString()}
             </p>
-            <p className="text-xs text-gray-400">{product.unit}</p>
+            <p className="text-xs text-gray-400">{displayUnit}</p>
           </div>
           <div className="bg-white rounded-lg p-3 border border-green-200">
             <p className="text-xs text-green-600">Available</p>
             <p className={`text-xl font-bold ${product.available_quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
               {product.available_quantity.toLocaleString()}
             </p>
-            <p className="text-xs text-gray-400">{product.unit}</p>
+            <p className="text-xs text-gray-400">{displayUnit}</p>
           </div>
           <div className="bg-white rounded-lg p-3 border border-blue-200">
             <p className="text-xs text-blue-600">Active Batches</p>
@@ -236,9 +240,9 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                   {makeSummary.map(row => (
                     <tr key={row.name}>
                       <td className="px-3 py-1.5 text-gray-800">{row.name}</td>
-                      <td className="px-3 py-1.5 text-right text-green-700">{row.received.toLocaleString()} {product.unit}</td>
-                      <td className="px-3 py-1.5 text-right text-orange-700">{row.out.toLocaleString()} {product.unit}</td>
-                      <td className="px-3 py-1.5 text-right font-semibold text-blue-700">{row.balance.toLocaleString()} {product.unit}</td>
+                      <td className="px-3 py-1.5 text-right text-green-700">{row.received.toLocaleString()} {displayUnit}</td>
+                      <td className="px-3 py-1.5 text-right text-orange-700">{row.out.toLocaleString()} {displayUnit}</td>
+                      <td className="px-3 py-1.5 text-right font-semibold text-blue-700">{row.balance.toLocaleString()} {displayUnit}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -264,7 +268,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
             Reservations ({reservations.length})
             {reservations.length > 0 && (
               <span className="ml-1.5 bg-orange-100 text-orange-700 text-xs px-1.5 py-0.5 rounded-full font-semibold">
-                {reservations.reduce((s, r) => s + Number(r.reserved_quantity), 0).toLocaleString()} {product.unit}
+                {reservations.reduce((s, r) => s + Number(r.reserved_quantity), 0).toLocaleString()} {displayUnit}
               </span>
             )}
           </button>
@@ -318,16 +322,16 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                         <div className="flex items-center gap-6 text-sm">
                           <div className="text-right">
                             <p className="text-xs text-gray-400">Stock</p>
-                            <p className="font-bold text-gray-800">{Number(batch.current_stock).toLocaleString()} <span className="text-xs font-normal text-gray-400">{product.unit}</span></p>
+                            <p className="font-bold text-gray-800">{Number(batch.current_stock).toLocaleString()} <span className="text-xs font-normal text-gray-400">{abbrUnit}</span></p>
                           </div>
                           <div className="text-right">
                             <p className="text-xs text-orange-500">Reserved</p>
-                            <p className="font-bold text-orange-600">{Number(batch.reserved_stock || 0).toLocaleString()} <span className="text-xs font-normal text-gray-400">{product.unit}</span></p>
+                            <p className="font-bold text-orange-600">{Number(batch.reserved_stock || 0).toLocaleString()} <span className="text-xs font-normal text-gray-400">{abbrUnit}</span></p>
                           </div>
                           <div className="text-right">
                             <p className="text-xs text-green-500">Available</p>
                             <p className={`font-bold ${batch.available_quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {Number(batch.available_quantity).toLocaleString()} <span className="text-xs font-normal text-gray-400">{product.unit}</span>
+                              {Number(batch.available_quantity).toLocaleString()} <span className="text-xs font-normal text-gray-400">{abbrUnit}</span>
                             </p>
                           </div>
                         </div>
@@ -345,8 +349,8 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                           <span className="text-xs text-gray-400 w-12 text-right">{availPct}% left</span>
                         </div>
                         <div className="flex items-center gap-4 mt-1 text-xs text-gray-400">
-                          <span>Imported: {Number(batch.import_quantity).toLocaleString()} {product.unit}</span>
-                          <span>Consumed: {(Number(batch.import_quantity) - Number(batch.current_stock)).toLocaleString()} {product.unit}</span>
+                          <span>Imported: {Number(batch.import_quantity).toLocaleString()} {displayUnit}</span>
+                          <span>Consumed: {(Number(batch.import_quantity) - Number(batch.current_stock)).toLocaleString()} {displayUnit}</span>
                         </div>
                       </div>
                     </div>
@@ -386,7 +390,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                               {batch.pack_type && batch.per_pack_weight && (
                                 <div className="flex justify-between px-3 py-1.5 text-sm">
                                   <span className="text-gray-500">Pack Size</span>
-                                  <span>{batch.per_pack_weight} {product.unit}/{batch.pack_type}</span>
+                                  <span>{batch.per_pack_weight} {abbrUnit}/{batch.pack_type}</span>
                                 </div>
                               )}
                             </div>
@@ -452,7 +456,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                                       }`}>{r.so_status?.replace(/_/g,' ') || '-'}</span>
                                     </td>
                                     <td className="px-3 py-1.5 text-right font-bold text-orange-600">
-                                      {Number(r.reserved_quantity).toLocaleString()} {product.unit}
+                                      {Number(r.reserved_quantity).toLocaleString()} {displayUnit}
                                     </td>
                                   </tr>
                                 ))}
@@ -480,7 +484,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                   <div className="mb-3 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-800 flex items-center gap-2">
                     <ShoppingCart className="w-4 h-4 text-orange-500 flex-shrink-0" />
                     <span>
-                      <strong>{reservations.reduce((s, r) => s + Number(r.reserved_quantity), 0).toLocaleString()} {product.unit}</strong> reserved across <strong>{reservations.length}</strong> active reservation(s)
+                      <strong>{reservations.reduce((s, r) => s + Number(r.reserved_quantity), 0).toLocaleString()} {displayUnit}</strong> reserved across <strong>{reservations.length}</strong> active reservation(s)
                     </span>
                   </div>
                   <table className="w-full text-sm">
@@ -512,7 +516,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                               }`}>{r.so_status?.replace(/_/g,' ') || '-'}</span>
                             </td>
                             <td className="px-3 py-2 text-right font-bold text-orange-600">
-                              {Number(r.reserved_quantity).toLocaleString()} {product.unit}
+                              {Number(r.reserved_quantity).toLocaleString()} {displayUnit}
                             </td>
                           </tr>
                         );
@@ -522,7 +526,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                       <tr>
                         <td colSpan={5} className="px-3 py-2 text-sm font-semibold text-gray-600">Total Reserved</td>
                         <td className="px-3 py-2 text-right font-bold text-orange-600">
-                          {reservations.reduce((s, r) => s + Number(r.reserved_quantity), 0).toLocaleString()} {product.unit}
+                          {reservations.reduce((s, r) => s + Number(r.reserved_quantity), 0).toLocaleString()} {displayUnit}
                         </td>
                       </tr>
                     </tfoot>
@@ -535,7 +539,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
 
         {/* Footer */}
         <div className="px-5 py-3 border-t bg-gray-50 flex items-center justify-between text-xs text-gray-400 rounded-b-xl">
-          <span>Total imported: {totalImported.toLocaleString()} {product.unit} across {batches.length} active batch{batches.length !== 1 ? 'es' : ''}</span>
+          <span>Total imported: {totalImported.toLocaleString()} {displayUnit} across {batches.length} active batch{batches.length !== 1 ? 'es' : ''}</span>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700 font-medium">Close</button>
         </div>
       </div>

@@ -8,6 +8,7 @@ import { sanitizeCsvCell } from '../../utils/csvSafe';
 import { fetchInBatches } from '../../utils/batchQuery';
 import { FinancialReports } from './FinancialReports';
 import { TaxReportsPanel } from './tax/TaxReportsPanel';
+import { FXReport } from './FXReport';
 
 type ReportType =
   | 'coa'
@@ -23,6 +24,7 @@ type ReportType =
   | 'profit_and_loss'
   | 'balance_sheet'
   | 'tax_compliance'
+  | 'fx_report'
   | 'fixed_assets';
 
 interface DateRange {
@@ -64,6 +66,7 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
     { id: 'trial_balance' as const, name: 'Trial Balance', icon: FileText, description: 'Debit/Credit summary' },
     { id: 'profit_and_loss' as const, name: 'Profit & Loss', icon: TrendingUp, description: 'Canonical journal-native P&L' },
     { id: 'balance_sheet' as const, name: 'Balance Sheet', icon: Building2, description: 'Canonical journal-native balance sheet' },
+    { id: 'fx_report' as const, name: 'FX Gain & Loss', icon: TrendingUp, description: 'Auditable realized & open FX reporting', highlight: true },
     { id: 'tax_compliance' as const, name: 'Tax Reports', icon: FileText, description: 'Canonical PPN, PPh, payments, Faktur and audit exports' },
     { id: 'fixed_assets' as const, name: 'Fixed Asset Register', icon: Building2, description: 'Assets with depreciation' }
   ];
@@ -792,9 +795,10 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
       {selectedReport === 'trial_balance' && <FinancialReports initialReport="trial_balance" onDrillDown={onDrillDown} />}
       {selectedReport === 'profit_and_loss' && <FinancialReports initialReport="pnl" onDrillDown={onDrillDown} />}
       {selectedReport === 'balance_sheet' && <FinancialReports initialReport="balance_sheet" onDrillDown={onDrillDown} />}
+      {selectedReport === 'fx_report' && <FXReport onViewJournal={onOpenJournal} />}
       {selectedReport === 'tax_compliance' && <TaxReportsPanel />}
 
-      {!['trial_balance', 'profit_and_loss', 'balance_sheet', 'tax_compliance'].includes(selectedReport) && <div className="bg-white rounded-lg border border-slate-200 p-6">
+      {!['trial_balance', 'profit_and_loss', 'balance_sheet', 'tax_compliance', 'fx_report'].includes(selectedReport) && <div className="bg-white rounded-lg border border-slate-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-slate-900">
             {reports.find(r => r.id === selectedReport)?.name}

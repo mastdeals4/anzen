@@ -1,5 +1,5 @@
-import { useRef, useEffect } from 'react';
-import { X, Printer, Download } from 'lucide-react';
+import { useRef, useEffect, useState } from 'react';
+import { X, Printer, Download, DollarSign } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { type CompanySnapshot } from '../types/company';
 import { useResolvedCompanyLogo, waitForImages } from '../utils/companyLogoUrl';
@@ -8,6 +8,9 @@ import { DocumentHeader } from './DocumentHeader';
 import { DocumentPrintStyles } from './DocumentPrintStyles';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { formatUnit } from '../utils/unitDisplay';
+import { supabase } from '../lib/supabase';
+import { EditSalesOrderFxRateModal } from './EditSalesOrderFxRateModal';
 
 interface SalesOrderItem {
   id?: string;
@@ -20,6 +23,7 @@ interface SalesOrderItem {
   tax_percent: number;
   tax_amount: number;
   line_total: number;
+  quoted_usd_unit_price?: number | null;
   products?: {
     product_name: string;
     product_code: string;
@@ -45,6 +49,7 @@ interface ProformaInvoiceViewProps {
     total_amount: number;
     notes: string | null;
     currency?: string;
+    commercial_usd_to_idr_rate?: number | null;
     company_snapshot?: CompanySnapshot | null;
     customers?: {
       company_name: string;
@@ -59,13 +64,61 @@ interface ProformaInvoiceViewProps {
   items: SalesOrderItem[];
   onClose: () => void;
   companyProfile?: CompanySnapshot | null;
+  linkedDcs?: Array<{ id: string; number: string }>;
+  linkedInvoices?: Array<{ id: string; number: string }>;
+  onRateUpdated?: (newRate: number | null) => void;
 }
 
-export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile }: ProformaInvoiceViewProps) {
+export function ProformaInvoiceView({
+  salesOrder,
+  items,
+  onClose,
+  companyProfile,
+  linkedDcs,
+  linkedInvoices,
+  onRateUpdated,
+}: ProformaInvoiceViewProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const { t, language } = useLanguage();
   const companySnapshot = companyProfile ?? salesOrder.company_snapshot;
   const { ready: logoReady } = useResolvedCompanyLogo(companySnapshot?.company_logo_url);
+
+  const [currentRate, setCurrentRate] = useState<number | null>(salesOrder.commercial_usd_to_idr_rate ?? null);
+  const [showRateModal, setShowRateModal] = useState(false);
+  const [linkedDcsList, setLinkedDcsList] = useState<Array<{ id: string; number: string }>>(linkedDcs || []);
+  const [linkedInvoicesList, setLinkedInvoicesList] = useState<Array<{ id: string; number: string }>>(linkedInvoices || []);
+
+  useEffect(() => {
+    setCurrentRate(salesOrder.commercial_usd_to_idr_rate ?? null);
+  }, [salesOrder.commercial_usd_to_idr_rate]);
+
+  useEffect(() => {
+    if (linkedDcs) {
+      setLinkedDcsList(linkedDcs);
+    } else if (salesOrder?.id) {
+      supabase
+        .from('delivery_challans')
+        .select('id, challan_number')
+        .eq('sales_order_id', salesOrder.id)
+        .then(({ data }) => {
+          if (data) setLinkedDcsList(data.map((d: any) => ({ id: d.id, number: d.challan_number })));
+        });
+    }
+  }, [salesOrder?.id, linkedDcs]);
+
+  useEffect(() => {
+    if (linkedInvoices) {
+      setLinkedInvoicesList(linkedInvoices);
+    } else if (salesOrder?.id) {
+      supabase
+        .from('sales_invoices')
+        .select('id, invoice_number')
+        .eq('sales_order_id', salesOrder.id)
+        .then(({ data }) => {
+          if (data) setLinkedInvoicesList(data.map((i: any) => ({ id: i.id, number: i.invoice_number })));
+        });
+    }
+  }, [salesOrder?.id, linkedInvoices]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -98,6 +151,19 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
       return `${amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     return `${currencySymbol} ${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const getSecondaryUsdUnitPrice = (item: SalesOrderItem): string | null => {
+    if (currency !== 'IDR') return null; // Commercial reference is specifically for IDR Sales Orders
+    let usdPrice: number | null = null;
+    if (item.quoted_usd_unit_price != null && Number(item.quoted_usd_unit_price) > 0) {
+      usdPrice = Number(item.quoted_usd_unit_price);
+    } else if (currentRate != null && currentRate > 0 && (item.unit_price || 0) > 0) {
+      usdPrice = Number(item.unit_price) / currentRate;
+    }
+    if (usdPrice == null) return null;
+    const uom = formatUnit(item.products?.unit) || 'Unit';
+    return `$${usdPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${uom}`;
   };
 
   const formatDate = (dateString: string) => {
@@ -228,6 +294,13 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
           if (clonedElement) {
             clonedElement.style.width = '210mm';
           }
+          // Completely remove screen-only and print-hidden elements from PDF canvas
+          const printHiddenElements = clonedDoc.querySelectorAll(
+            '.printHidden, .screenOnly, .no-print, [data-screen-only="true"]'
+          );
+          printHiddenElements.forEach((el) => {
+            (el as HTMLElement).style.setProperty('display', 'none', 'important');
+          });
         }
       });
 
@@ -276,7 +349,15 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
             <h2 className="text-xl font-bold text-gray-900">
               {language === 'id' ? 'Faktur Proforma' : 'Proforma Invoice'} {salesOrder.so_number}
             </h2>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowRateModal(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition shadow-sm"
+                title="Edit Commercial FX Rate (USD → IDR)"
+              >
+                <DollarSign className="h-4 w-4 text-amber-600" />
+                Edit FX Rate
+              </button>
               <button
                 onClick={handlePrint}
                 disabled={!logoReady}
@@ -333,16 +414,16 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
                   </div>
                 </div>
 
-                <div className="space-y-1 text-xs print:text-[10px] print:space-y-0 text-right" style={{minWidth: '220px'}}>
+                <div className="space-y-1 text-xs print:text-[10px] print:space-y-0 text-right" style={{minWidth: '240px'}}>
                   <div>
                     <span className="font-bold">{language === 'id' ? 'SO Number:' : 'SO Number:'}</span>
-                    <span className="ml-2">{salesOrder.so_number}</span>
+                    <span className="ml-2 font-semibold">{salesOrder.so_number}</span>
                   </div>
                   <div>
                     <span className="font-bold">{language === 'id' ? 'SO Date:' : 'SO Date:'}</span>
                     <span className="ml-2">{formatDate(salesOrder.so_date)}</span>
                   </div>
-                  <div className="pt-1">
+                  <div className="pt-0.5">
                     <span className="font-bold">Customer PO No:</span>
                     <span className="ml-2">{salesOrder.customer_po_number}</span>
                   </div>
@@ -354,6 +435,51 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
                     <div>
                       <span className="font-bold">{language === 'id' ? 'Expected Delivery:' : 'Expected Delivery:'}</span>
                       <span className="ml-2">{formatDate(salesOrder.expected_delivery_date)}</span>
+                    </div>
+                  )}
+
+                  {/* Commercial FX Rate (Screen Only) */}
+                  <div className="printHidden screenOnly pt-1.5 border-t border-black/20 mt-1.5 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span className="font-bold">Exchange Rate (USD → IDR):</span>
+                      <span className={`font-semibold ${currentRate != null ? 'text-gray-900' : 'text-amber-700 italic'}`}>
+                        {currentRate != null
+                          ? `Rp ${Number(currentRate).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / USD`
+                          : 'Not Set'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowRateModal(true)}
+                        className="no-print ml-1 text-blue-600 hover:text-blue-800 underline text-[10px] font-semibold"
+                        title="Edit Commercial FX Rate"
+                      >
+                        {currentRate != null ? 'Edit' : 'Set Rate'}
+                      </button>
+                    </div>
+                    <div className="text-[9px] text-gray-500 font-normal">
+                      Commercial FX Rate (pricing reference)
+                    </div>
+                  </div>
+
+                  {/* Linked Documents (DC / Invoice) (Screen Only) */}
+                  {(linkedDcsList.length > 0 || linkedInvoicesList.length > 0) && (
+                    <div className="printHidden screenOnly pt-1 border-t border-black/10 text-[10px] text-gray-600 space-y-0.5">
+                      <div>
+                        <span className="font-bold">Linked DC: </span>
+                        <span>
+                          {linkedDcsList.length > 0
+                            ? linkedDcsList.map((d) => d.number).join(', ')
+                            : 'None'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-bold">Linked Invoice: </span>
+                        <span>
+                          {linkedInvoicesList.length > 0
+                            ? linkedInvoicesList.map((i) => i.number).join(', ')
+                            : 'None'}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -384,7 +510,9 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
 
                     return (
                       <tr key={item.id || index} className="border-b border-black">
+                        {/* Cell 1: No. */}
                         <td className="border-r border-black p-1.5 text-center print:p-1">{index + 1}</td>
+                        {/* Cell 2: Product Name + source */}
                         <td className="border-r border-black p-1.5 print:p-1">
                           <div>{item.products?.product_name || 'Unknown Product'}</div>
                           <div className="text-[9px] leading-none text-gray-600 print:text-[8px]">
@@ -392,12 +520,35 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
                             {item.product_sources?.grade ? ` (${item.product_sources.grade})` : ''}
                           </div>
                         </td>
+                        {/* Cell 3: Total Qty */}
                         <td className="border-r border-black p-1.5 text-center print:p-1">{quantity.toLocaleString()}</td>
-                        <td className="border-r border-black p-1.5 text-center print:p-1">{item.products?.unit || 'Kg'}</td>
-                        <td className={`border-r border-black p-1.5 text-right print:p-1 ${!hasAnyDiscount ? '' : ''}`}>{formatCurrency(unitPrice)}</td>
+                        {/* Cell 4: UOM — ALWAYS present, never hidden. Hiding a td breaks column alignment. */}
+                        <td className="border-r border-black p-1.5 text-center print:p-1">
+                          {formatUnit(item.products?.unit) || ''}
+                        </td>
+                        {/* Cell 5: Unit Price (IDR).
+                             The USD reference sub-line is screen-only; it sits inside this td as a child
+                             div with screenOnly/printHidden so the column count never changes. */}
+                        <td className="border-r border-black p-1.5 text-right print:p-1">
+                          <div>{formatCurrency(unitPrice)}</div>
+                          {(() => {
+                            const secondaryUsd = getSecondaryUsdUnitPrice(item);
+                            if (!secondaryUsd) return null;
+                            return (
+                              <div
+                                className="screenOnly printHidden text-[10px] text-gray-500 font-medium whitespace-nowrap mt-0.5"
+                                title="Commercial USD reference based on commercial FX rate"
+                              >
+                                {secondaryUsd}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        {/* Conditional Discount cell */}
                         {hasAnyDiscount && (
                           <td className="border-r border-black p-1.5 text-right print:p-1">{formatCurrency(discountAmount)}</td>
                         )}
+                        {/* Cell 6: Sub Total */}
                         <td className="p-1.5 text-right print:p-1">{formatCurrency(itemSubtotal)}</td>
                       </tr>
                     );
@@ -408,6 +559,7 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
                       <td className="border-r border-black p-1.5 text-center print:p-1">&nbsp;</td>
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
+                      {/* UOM cell must always be present — matches header column 4 */}
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
                       <td className="border-r border-black p-1.5 print:p-1">&nbsp;</td>
                       {hasAnyDiscount && (
@@ -442,6 +594,23 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
                     <span className="font-bold">{language === 'id' ? 'Grand Total' : 'Grand Total'}</span>
                     <span className="font-bold text-sm print:text-xs">{formatCurrency(salesOrder.total_amount)}</span>
                   </div>
+
+                  {currency === 'USD' && currentRate != null && currentRate > 0 && (
+                    <div className="printHidden screenOnly border-t-2 border-dashed border-black/40 mt-1.5 pt-1.5 bg-amber-50/50 p-2 rounded text-[11px] space-y-1">
+                      <div className="flex justify-between text-gray-600">
+                        <span>Original SO Value:</span>
+                        <span className="font-semibold">${Number(salesOrder.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Commercial FX Rate:</span>
+                        <span className="font-semibold">Rp {Number(currentRate).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / USD</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-amber-900 border-t border-amber-200 pt-0.5">
+                        <span>Commercial IDR Equivalent:</span>
+                        <span>Rp {(salesOrder.total_amount * currentRate).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -500,7 +669,41 @@ export function ProformaInvoiceView({ salesOrder, items, onClose, companyProfile
         </div>
       </div>
 
+      {showRateModal && (
+        <EditSalesOrderFxRateModal
+          isOpen={showRateModal}
+          onClose={() => setShowRateModal(false)}
+          salesOrder={{
+            id: salesOrder.id,
+            so_number: salesOrder.so_number,
+            currency: salesOrder.currency || 'IDR',
+            total_amount: salesOrder.total_amount,
+            commercial_usd_to_idr_rate: currentRate,
+          }}
+          onSuccess={(soId, newRate) => {
+            setCurrentRate(newRate);
+            salesOrder.commercial_usd_to_idr_rate = newRate;
+            onRateUpdated?.(newRate);
+          }}
+        />
+      )}
+
       <DocumentPrintStyles contentId="proforma-print-content" />
+      <style>{`
+        @media screen {
+          .printOnly {
+            display: none !important;
+          }
+        }
+        @media print {
+          .printHidden,
+          .screenOnly,
+          .no-print,
+          [data-screen-only="true"] {
+            display: none !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

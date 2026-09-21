@@ -221,7 +221,7 @@ export function Products() {
   const handleEdit = async (product: Product) => {
     setEditingProduct(product);
     const cat = product.category || 'api';
-    const unt = product.unit || 'kg';
+    const unt = product.unit || '';
     setFormData({
       product_name: product.product_name,
       hsn_code: product.hsn_code,

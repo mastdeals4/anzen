@@ -18,6 +18,7 @@ import { formatDate } from '../utils/dateFormat';
 import { fetchLinkedDocumentsBundle, LinkedDocRef } from '../utils/linkedDocuments';
 import { LinkedDocsCell } from '../components/LinkedDocsCell';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
+import { formatUnit } from '../utils/unitDisplay';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -552,7 +553,7 @@ export function DeliveryChallan() {
                 let lineQty = 0;
 
                 if (batch.packaging_details) {
-                  const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)kg/i);
+                  const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/i);
                   if (match) {
                     packType = match[2].toLowerCase();
                     packSize = parseFloat(match[3]);
@@ -688,7 +689,7 @@ export function DeliveryChallan() {
 
       // Extract packaging details from batch
       if (batch.packaging_details) {
-        const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)kg/i);
+        const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/i);
         if (match) {
           packType = match[2].toLowerCase();
           packSize = parseFloat(match[3]);
@@ -874,7 +875,7 @@ export function DeliveryChallan() {
 
         if (totalQuantity > availableStock) {
           const product = products.find(p => p.id === items.find(i => i.batch_id === batchId)?.product_id);
-          const unit = product?.unit || 'kg';
+          const unit = formatUnit(product?.unit);
           showToast({ type: 'error', title: 'Error', message: `Insufficient available stock for batch ${batch.batch_number}!\n\nProduct: ${product?.product_name || 'Unknown'}\nBatch: ${batch.batch_number}\nAvailable: ${availableStock} ${unit}\nTotal Requested (across all items): ${totalQuantity} ${unit}\n\nYou are using this batch in multiple items. Please reduce quantities or select different batches.` });
           return;
         }
@@ -1730,15 +1731,15 @@ export function DeliveryChallan() {
                       </td>
                       <td className="px-2 py-1 text-gray-600">{selectedBatch?.product_sources?.supplier_name || 'Not recorded'}</td>
                       <td className="px-2 py-1">
-                        {!item.product_id ? <span className="text-gray-400">Select product first</span> : availableBatches.length > 0 ? <div className="flex items-center gap-1"><SearchableSelect value={item.batch_id} onChange={(value) => handleBatchChange(index, value)} options={availableBatches.map((b, idx) => ({ value: b.id, label: `${b.batch_number} (Avl: ${getAvailableStock(b) - (batchUsageInForm.get(b.id) || 0)}kg)${idx === 0 ? ' 🔄' : ''}` }))} placeholder="Select Batch" className="text-xs flex-1" required /><button type="button" onClick={() => { const sourceMake = salesOrderItemSources.find(source => source.id === item.sales_order_item_id)?.make_id || null; const fifoBatch = getFIFOBatch(item.product_id, sourceMake); if (fifoBatch) handleBatchChange(index, fifoBatch.id); }} className="shrink-0 text-[10px] text-blue-600 hover:text-blue-700 font-medium" title="Select oldest batch (FIFO)">FIFO</button></div> : <span className="text-red-600">No stock available</span>}
+                        {!item.product_id ? <span className="text-gray-400">Select product first</span> : availableBatches.length > 0 ? <div className="flex items-center gap-1"><SearchableSelect value={item.batch_id} onChange={(value) => handleBatchChange(index, value)} options={availableBatches.map((b, idx) => ({ value: b.id, label: `${b.batch_number} (Avl: ${getAvailableStock(b) - (batchUsageInForm.get(b.id) || 0)} ${formatUnit(products.find(p => p.id === item.product_id)?.unit)})${idx === 0 ? ' 🔄' : ''}` }))} placeholder="Select Batch" className="text-xs flex-1" required /><button type="button" onClick={() => { const sourceMake = salesOrderItemSources.find(source => source.id === item.sales_order_item_id)?.make_id || null; const fifoBatch = getFIFOBatch(item.product_id, sourceMake); if (fifoBatch) handleBatchChange(index, fifoBatch.id); }} className="shrink-0 text-[10px] text-blue-600 hover:text-blue-700 font-medium" title="Select oldest batch (FIFO)">FIFO</button></div> : <span className="text-red-600">No stock available</span>}
                       </td>
                       <td className="px-2 py-1 text-gray-600">{selectedBatch?.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}</td>
                       <td className="px-2 py-1 text-gray-600 truncate max-w-36">{selectedBatch?.packaging_details || '—'}</td>
                       <td className="px-2 py-1">
                         {item.pack_size ? <input name="quantity" aria-label="Quantity" type="text" value={item.quantity || 0} className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-100 text-right" disabled /> : <input name="quantity" aria-label="Quantity" type="number" min="0.01" step="0.01" value={item.quantity || ''} onChange={(e) => { const next = [...items]; next[index] = { ...next[index], quantity: Number(e.target.value) || 0 }; setItems(next); }} className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right" required />}
                       </td>
-                      <td className="px-2 py-1 text-gray-600">{item.products?.unit || selectedBatch?.product_id && products.find(p => p.id === selectedBatch.product_id)?.unit || 'kg'}</td>
-                      <td className="px-2 py-1 text-right font-semibold text-green-700">{selectedBatch ? `${(getAvailableStock(selectedBatch) - (batchUsageInForm.get(selectedBatch.id) || 0)).toLocaleString()} kg` : '—'}</td>
+                      <td className="px-2 py-1 text-gray-600">{formatUnit(item.products?.unit || (selectedBatch?.product_id && products.find(p => p.id === selectedBatch.product_id)?.unit) || '')}</td>
+                      <td className="px-2 py-1 text-right font-semibold text-green-700">{selectedBatch ? `${(getAvailableStock(selectedBatch) - (batchUsageInForm.get(selectedBatch.id) || 0)).toLocaleString()} ${formatUnit(products.find(p => p.id === item.product_id)?.unit)}` : '—'}</td>
                       <td className="px-2 py-1">{item.pack_size ? <input name="number_of_packs" aria-label="Number Of Packs" type="number" min="1" value={item.number_of_packs || ''} onChange={(e) => updatePackQuantity(index, Number(e.target.value))} className="w-full min-w-[4.5rem] appearance-none px-1.5 py-1 text-xs border border-gray-300 rounded text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" required /> : <span className="text-gray-400">—</span>}</td>
                       <td className="px-2 py-1 text-center">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
                     </tr>

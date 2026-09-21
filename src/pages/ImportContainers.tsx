@@ -162,10 +162,10 @@ export default function ImportContainers() {
               const linkedExpensesTotal = (expenses || [])
                 .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
                 .filter(e => e.expense_category !== 'pib_import')
-                .filter(e => e.include_in_landed_cost !== false)
+                .filter(e => e.include_in_landed_cost === true)  // NULL means NOT included (audit fix)
                 .reduce((sum, e) => sum + calculateCanonicalExpenseTotal(e), 0) || 0;
               const linkedPettyCashTotal = (pettyCash || [])
-                .filter(pc => pc.include_in_landed_cost !== false)
+                .filter(pc => pc.include_in_landed_cost === true)  // NULL means NOT included (audit fix)
                 .reduce((sum, pc) => sum + (pc.amount || 0), 0) || 0;
               const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
               return { ...container, linked_expenses_total: linkedExpensesTotal, linked_petty_cash_total: linkedPettyCashTotal, canonical_landed_cost_pool: Number(canonicalPool) || 0 };
@@ -235,8 +235,9 @@ export default function ImportContainers() {
       setLinkedPettyCash((pcData || []) as LinkedPettyCash[]);
 
       const map: Record<string, boolean> = {};
-      for (const e of activeExpenses) map[e.id] = e.include_in_landed_cost !== false;
-      for (const pc of (pcData || [])) map[pc.id] = pc.include_in_landed_cost !== false;
+      // NULL means NOT included — only explicit TRUE is treated as included (audit fix)
+      for (const e of activeExpenses) map[e.id] = e.include_in_landed_cost === true;
+      for (const pc of (pcData || [])) map[pc.id] = pc.include_in_landed_cost === true;
       setInclusionMap(map);
     } catch {
       setLinkedExpenses([]); setLinkedPettyCash([]); setInclusionMap({});
@@ -346,13 +347,16 @@ export default function ImportContainers() {
   const unifiedItems: UnifiedLinkedItem[] = [
     ...linkedExpenses.filter(e => e.expense_category !== 'pib_import').map(e => ({
       id: e.id, source: 'expense' as SourceType, category: e.expense_category, amount: calculateCanonicalExpenseTotal(e),
-      date: e.expense_date, description: e.description || '', include_in_landed_cost: inclusionMap[e.id] !== false,
+      date: e.expense_date, description: e.description || '',
+      // NULL means NOT included (audit fix: only explicit true = included)
+      include_in_landed_cost: inclusionMap[e.id] === true,
       isPIB: false,
     })),
     ...linkedPettyCash.map(pc => ({
       id: pc.id, source: 'petty_cash' as SourceType, category: pc.expense_category || pc.transaction_type,
       amount: pc.amount, date: pc.transaction_date, description: pc.description || '',
-      include_in_landed_cost: inclusionMap[pc.id] !== false, isPIB: false,
+      // NULL means NOT included (audit fix: only explicit true = included)
+      include_in_landed_cost: inclusionMap[pc.id] === true, isPIB: false,
     })),
   ];
 

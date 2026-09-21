@@ -35,17 +35,19 @@ const GeneralJournalEntry = lazy(() => import('../components/finance/GeneralJour
 const IntegrityMonitor = lazy(() => import('../components/finance/IntegrityMonitor').then(m => ({ default: m.IntegrityMonitor })));
 const FinanceExceptionCorrectionDashboard = lazy(() => import('../components/finance/FinanceExceptionCorrectionDashboard').then(m => ({ default: m.FinanceExceptionCorrectionDashboard })));
 const PayeeMasterManager = lazy(() => import('../components/finance/PayeeMasterManager').then(m => ({ default: m.PayeeMasterManager })));
+const FXReport = lazy(() => import('../components/finance/FXReport').then(m => ({ default: m.FXReport })));
+const FXBusinessDashboard = lazy(() => import('../components/finance/FXBusinessDashboard').then(m => ({ default: m.FXBusinessDashboard })));
 
 type FinanceTab =
   | 'purchase' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
   | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon'
-  | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports' | 'integrity_monitor' | 'exception_correction'
+  | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports' | 'fx_dashboard' | 'fx_report' | 'integrity_monitor' | 'exception_correction'
   | 'coa' | 'expense_categories' | 'customers' | 'suppliers' | 'products' | 'banks' | 'staff_master' | 'utility_master' | 'payee_master';
 
 const FINANCE_TABS: readonly FinanceTab[] = [
   'purchase', 'receipt', 'payment', 'journal', 'contra', 'expenses', 'petty_cash',
   'ledger', 'journal_register', 'bank_ledger', 'party_ledger', 'bank_recon',
-  'trial_balance', 'pnl', 'balance_sheet', 'receivables', 'payables', 'ageing', 'tax', 'ca_reports', 'integrity_monitor', 'exception_correction',
+  'trial_balance', 'pnl', 'balance_sheet', 'receivables', 'payables', 'ageing', 'tax', 'ca_reports', 'fx_dashboard', 'fx_report', 'integrity_monitor', 'exception_correction',
   'coa', 'expense_categories', 'customers', 'suppliers', 'products', 'banks', 'staff_master', 'utility_master', 'payee_master',
 ];
 const DEFAULT_FINANCE_TAB: FinanceTab = 'purchase';
@@ -55,7 +57,7 @@ const FINANCE_ROUTE_BY_TAB: Record<FinanceTab, string> = {
   expenses: 'expenses', petty_cash: 'petty-cash', ledger: 'ledger', journal_register: 'journal-register',
   bank_ledger: 'bank-ledger', party_ledger: 'party-ledger', bank_recon: 'bank-reconciliation',
   trial_balance: 'trial-balance', pnl: 'profit-and-loss', balance_sheet: 'balance-sheet', receivables: 'receivables',
-  payables: 'payables', ageing: 'ageing', tax: 'tax', ca_reports: 'ca-reports', integrity_monitor: 'integrity-monitor',
+  payables: 'payables', ageing: 'ageing', tax: 'tax', ca_reports: 'ca-reports', fx_dashboard: 'fx-dashboard', fx_report: 'fx-report', integrity_monitor: 'integrity-monitor',
   exception_correction: 'exception-correction', coa: 'chart-of-accounts', customers: 'customers', suppliers: 'suppliers',
   products: 'products', banks: 'banks', staff_master: 'staff-master', utility_master: 'utility-master', expense_categories: 'expense-categories',
   payee_master: 'payees',
@@ -114,6 +116,7 @@ const getFinanceMenu = (t: TFunction): MenuGroup[] => [
       { id: 'payables', label: t.finance.payables },
       { id: 'ageing', label: t.finance.ageing },
       { id: 'tax', label: t.finance.taxCompliance ?? t.finance.taxReports },
+      { id: 'fx_dashboard', label: 'FX Management & Reports' },
       { id: 'integrity_monitor', label: 'Integrity Monitor' },
       { id: 'exception_correction', label: 'Exception Correction' },
     ]
@@ -477,6 +480,20 @@ function FinanceContent() {
         return <CAReports
           onOpenJournal={handleOpenJournal}
           onDrillDown={(code) => openFinanceTarget('ledger', 'account', code)}
+        />;
+      case 'fx_dashboard':
+        return (
+          <FXBusinessDashboard
+            onSwitchToAccountingReport={() => setActiveTab('fx_report')}
+            onViewInvoice={(invoiceId) => openFinanceTarget('purchase', 'document', invoiceId)}
+            onViewPayment={(paymentId) => openFinanceTarget('payment', 'document', paymentId)}
+          />
+        );
+      case 'fx_report':
+        return <FXReport
+          onViewInvoice={(invoiceId) => openFinanceTarget('purchase', 'document', invoiceId)}
+          onViewJournal={handleOpenJournal}
+          onSwitchToCommercialDashboard={() => setActiveTab('fx_dashboard')}
         />;
       case 'integrity_monitor':
         return <IntegrityMonitor />;

@@ -195,12 +195,15 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
     return Array.from(codeMap.values()).sort((a, b) => a.code.localeCompare(b.code));
   }, [openingTB, periodTB]);
 
-  // ── P&L calculations (unchanged from original) ───────────────────────────
-  const revenueRows   = useMemo(() => periodTB.filter(r => r.account_type === 'revenue'), [periodTB]);
+  // ── P&L calculations (separate commercial operations from FX) ───────────
+  const revenueRows   = useMemo(() => periodTB.filter(r => r.account_type === 'revenue' && r.account_group !== 'Other Income' && r.code !== '4930'), [periodTB]);
+  const otherIncRows  = useMemo(() => periodTB.filter(r => r.account_type === 'revenue' && r.account_group === 'Other Income' && r.code !== '4930'), [periodTB]);
   const contraRevRows = useMemo(() => periodTB.filter(r => r.account_type === 'contra' && r.account_group === 'Revenue'), [periodTB]);
   const cogsRows      = useMemo(() => periodTB.filter(r => r.account_type === 'expense' && r.account_group === 'COGS'), [periodTB]);
   const opexRows      = useMemo(() => periodTB.filter(r => r.account_type === 'expense' && r.account_group === 'Operating Expenses'), [periodTB]);
-  const otherExpRows  = useMemo(() => periodTB.filter(r => r.account_type === 'expense' && r.account_group !== 'COGS' && r.account_group !== 'Operating Expenses'), [periodTB]);
+  const fxGainRows    = useMemo(() => periodTB.filter(r => r.code === '4930' || r.name.toLowerCase().includes('foreign exchange gain')), [periodTB]);
+  const fxLossRows    = useMemo(() => periodTB.filter(r => r.code === '7300' || r.name.toLowerCase().includes('foreign exchange loss')), [periodTB]);
+  const otherExpRows  = useMemo(() => periodTB.filter(r => r.account_type === 'expense' && r.account_group !== 'COGS' && r.account_group !== 'Operating Expenses' && r.code !== '7300' && !r.name.toLowerCase().includes('foreign exchange loss')), [periodTB]);
 
   const totalRevenue    = revenueRows.reduce((s, r) => s + Math.abs(r.balance), 0);
   const totalContraRev  = contraRevRows.reduce((s, r) => s + Math.abs(r.balance), 0);
@@ -209,8 +212,13 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
   const grossProfit     = netRevenue - totalCOGS;
   const totalOpex       = opexRows.reduce((s, r) => s + r.balance, 0);
   const operatingIncome = grossProfit - totalOpex;
+  const totalFxGain     = fxGainRows.reduce((s, r) => s + Math.abs(r.balance), 0);
+  const totalFxLoss     = fxLossRows.reduce((s, r) => s + r.balance, 0);
+  const netFxImpact     = totalFxGain - totalFxLoss;
+  const totalOtherInc   = otherIncRows.reduce((s, r) => s + Math.abs(r.balance), 0);
   const totalOtherExp   = otherExpRows.reduce((s, r) => s + r.balance, 0);
-  const netIncome       = operatingIncome - totalOtherExp;
+  const profitBeforeTax = operatingIncome + netFxImpact + totalOtherInc - totalOtherExp;
+  const netIncome       = profitBeforeTax;
 
   // ── Balance Sheet calculations ───────────────────────────────────────────
   const bsAssetRows    = useMemo(() => balanceSheetData.filter(r => r.account_type === 'asset'), [balanceSheetData]);
@@ -309,8 +317,12 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
     addTotal('GROSS PROFIT', grossProfit);
     add('Operating Expenses', opexRows, r => r.balance);
     addTotal('OPERATING INCOME', operatingIncome);
+    if (fxGainRows.length) add('Foreign Exchange Gain', fxGainRows, r => Math.abs(r.balance));
+    if (fxLossRows.length) add('Foreign Exchange Loss', fxLossRows, r => r.balance);
+    if (fxGainRows.length || fxLossRows.length) addTotal('NET FOREIGN EXCHANGE', netFxImpact);
+    if (otherIncRows.length) add('Other Income', otherIncRows, r => Math.abs(r.balance));
     if (otherExpRows.length) { add('Other Expenses', otherExpRows, r => r.balance); }
-    addTotal('NET INCOME (PROVISIONAL)', netIncome);
+    addTotal('PROFIT BEFORE TAX / NET INCOME', netIncome);
     const ws = XLSX.utils.json_to_sheet(sanitizeExportRows(rows));
     ws['!cols'] = [{ wch: 35 }, { wch: 10 }, { wch: 45 }, { wch: 20 }, { wch: 12 }];
     const wb = XLSX.utils.book_new();
@@ -714,6 +726,55 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
                     {pctStr(operatingIncome, netRevenue)}
                   </td>
                 </tr>
+
+                {/* FOREIGN EXCHANGE GAIN & LOSS */}
+                {(fxGainRows.length > 0 || fxLossRows.length > 0) && (
+                  <>
+                    <tr className="bg-amber-50/70 cursor-pointer select-none" onClick={() => toggleSection('pnl-fx')}>
+                      <td colSpan={4} className="px-1.5 py-1">
+                        <div className="flex items-center gap-1.5">
+                          {collapsedSections.has('pnl-fx') ? <ChevronRight className="w-3.5 h-3.5 text-amber-700 opacity-70" /> : <ChevronDown className="w-3.5 h-3.5 text-amber-700 opacity-70" />}
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-amber-900">Foreign Exchange Gain / Loss (Selisih Kurs)</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {!collapsedSections.has('pnl-fx') && (
+                      <>
+                        {fxGainRows.map(r => <PnLAccountRow key={r.code} row={r} getAmt={r => Math.abs(r.balance)} />)}
+                        {fxLossRows.map(r => <PnLAccountRow key={r.code} row={r} getAmt={r => -r.balance} />)}
+                      </>
+                    )}
+                    <tr className="bg-amber-50/40 border-t border-amber-200">
+                      <td />
+                      <td className="px-1.5 py-1 text-xs font-semibold text-amber-900">Net Foreign Exchange Result</td>
+                      <td className={`px-1.5 py-1 text-right text-xs font-semibold tabular-nums ${netFxImpact >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {netFxImpact < 0 ? `(${fmt(Math.abs(netFxImpact))})` : `Rp ${fmt(netFxImpact)}`}
+                      </td>
+                      <td className="px-1.5 py-1 text-right text-[10px] text-amber-800">{pctStr(netFxImpact, netRevenue)}</td>
+                    </tr>
+                  </>
+                )}
+
+                {/* OTHER INCOME */}
+                {otherIncRows.length > 0 && (
+                  <>
+                    <tr className="bg-gray-50 cursor-pointer select-none" onClick={() => toggleSection('pnl-other-inc')}>
+                      <td colSpan={4} className="px-1.5 py-1">
+                        <div className="flex items-center gap-1.5">
+                          {collapsedSections.has('pnl-other-inc') ? <ChevronRight className="w-3.5 h-3.5 text-gray-500 opacity-70" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-500 opacity-70" />}
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700">Other Income (Pendapatan Lain-lain)</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {!collapsedSections.has('pnl-other-inc') && otherIncRows.map(r => <PnLAccountRow key={r.code} row={r} getAmt={r => Math.abs(r.balance)} />)}
+                    <tr className="bg-gray-50 border-t border-gray-200">
+                      <td />
+                      <td className="px-1.5 py-1 text-xs font-semibold text-gray-700">Total Other Income</td>
+                      <td className="px-1.5 py-1 text-right text-xs font-semibold text-gray-700 tabular-nums">Rp {fmt(totalOtherInc)}</td>
+                      <td className="px-1.5 py-1 text-right text-[10px] text-gray-500">{pctStr(totalOtherInc, netRevenue)}</td>
+                    </tr>
+                  </>
+                )}
 
                 {/* OTHER EXPENSES */}
                 {otherExpRows.length > 0 && (

@@ -8,6 +8,7 @@ import { DocumentHeader } from './DocumentHeader';
 import { DocumentPrintStyles } from './DocumentPrintStyles';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { formatUnit } from '../utils/unitDisplay';
 
 interface InvoiceItem {
   id?: string;
@@ -402,7 +403,7 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
                         <td className="border-r border-black p-1.5 text-center print:p-1">{item.batches?.batch_number || 'N/A'}<br/><span className="text-[9px] leading-tight">{item.batches?.product_sources?.supplier_name || 'Not recorded'}</span></td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{expDate}</td>
                         <td className="border-r border-black p-1.5 text-center print:p-1">{quantity.toLocaleString()}</td>
-                        <td className="border-r border-black p-1.5 text-center print:p-1">{item.products?.unit || 'Kg'}</td>
+                        <td className="border-r border-black p-1.5 text-center print:p-1">{formatUnit(item.products?.unit)}</td>
                         <td className="border-r border-black p-1.5 text-right print:p-1">{formatCurrency(unitPrice)}</td>
                         <td className="p-1.5 text-right print:p-1">
                           {formatCurrency(itemSubtotal)}

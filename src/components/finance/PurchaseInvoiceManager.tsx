@@ -60,6 +60,7 @@ interface PurchaseInvoiceItem {
   receiving_make_id?: string | null;
   receiving_make?: { supplier_name: string | null; grade: string | null } | null;
   receiving_batch_number?: string | null;
+  batch_id?: string | null;
   receiving_expiry_date?: string | null;
   receiving_import_container_id?: string | null;
   receiving_notes?: string | null;
@@ -144,6 +145,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   const [receivingMakes, setReceivingMakes] = useState<Array<{ id: string; supplier_name: string | null; grade: string | null }>>([]);
   const [receivingBatches, setReceivingBatches] = useState<Array<{ id: string; batch_number: string; make_id: string | null; current_stock: number; import_container_id: string | null }>>([]);
   const [receivingAllocations, setReceivingAllocations] = useState<ReceivingAllocation[]>([]);
+  const [productBatches, setProductBatches] = useState<Array<{ id: string; product_id: string; batch_number: string; make_id: string | null }>>([]);
   const [receivingDocuments, setReceivingDocuments] = useState<ReceivingDocument[]>([]);
   const [receivingForm, setReceivingForm] = useState({ make_id: '', batch_id: '', batch_number: '', expiry_date: '', quantity: 0, import_container_id: '' });
   const [receivingBusy, setReceivingBusy] = useState(false);
@@ -278,7 +280,17 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     void loadProductSources();
     loadAccounts();
     void loadImportContainers();
+    void loadProductBatches();
   }, []);
+
+  const loadProductBatches = async () => {
+    const { data } = await supabase
+      .from('batches')
+      .select('id, product_id, batch_number, make_id')
+      .eq('is_active', true)
+      .order('batch_number');
+    setProductBatches((data || []) as typeof productBatches);
+  };
 
   const loadProductSources = async () => {
     const { data } = await supabase.from('product_sources').select('id,product_id,supplier_name,grade').order('supplier_name');
@@ -385,6 +397,8 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     line_total: 0,
     expense_account_id: null,
     asset_account_id: null,
+    receiving_batch_number: null,
+    batch_id: null,
   });
 
   const mapPurchaseOrderLines = (po: (typeof supplierPurchaseOrders)[number]) =>
@@ -620,17 +634,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   const handleAddLine = () => {
     setLineItems([
       ...lineItems,
-      {
-        item_type: 'inventory',
-        product_id: null,
-        description: '',
-        quantity: 1,
-        unit: 'pcs',
-        unit_price: 0,
-        line_total: 0,
-        expense_account_id: null,
-        asset_account_id: null,
-      },
+      emptyInvoiceLine(),
     ]);
   };
 
@@ -657,6 +661,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       newLines[index].description = '';
       newLines[index].receiving_make_id = null;
       newLines[index].receiving_batch_number = null;
+      newLines[index].batch_id = null;
       newLines[index].receiving_expiry_date = null;
       newLines[index].receiving_import_container_id = null;
     }
@@ -668,6 +673,23 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         newLines[index].unit = product.unit;
       }
       newLines[index].receiving_make_id = null;
+      if (newLines[index].receiving_batch_number) {
+        const matched = productBatches.find(b => b.product_id === value && b.batch_number.trim().toLowerCase() === String(newLines[index].receiving_batch_number).trim().toLowerCase());
+        newLines[index].batch_id = matched ? matched.id : null;
+      } else {
+        newLines[index].batch_id = null;
+      }
+    }
+
+    // If receiving_batch_number changes, resolve batch_id
+    if (field === 'receiving_batch_number') {
+      const batchNum = value ? String(value).trim() : '';
+      if (batchNum && newLines[index].product_id) {
+        const matched = productBatches.find(b => b.product_id === newLines[index].product_id && b.batch_number.trim().toLowerCase() === batchNum.toLowerCase());
+        newLines[index].batch_id = matched ? matched.id : null;
+      } else {
+        newLines[index].batch_id = null;
+      }
     }
 
     setLineItems(newLines);
@@ -725,6 +747,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       asset_account_id: item.asset_account_id,
       receiving_make_id: item.receiving_make_id || null,
       receiving_batch_number: item.receiving_batch_number || null,
+      batch_id: item.batch_id || null,
       receiving_expiry_date: item.receiving_expiry_date || null,
       receiving_import_container_id: item.receiving_import_container_id || null,
       receiving_notes: item.receiving_notes || null,
@@ -853,6 +876,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         asset_account_id: item.asset_account_id,
         receiving_make_id: item.receiving_make_id || null,
         receiving_batch_number: item.receiving_batch_number || null,
+        batch_id: item.batch_id || null,
         receiving_expiry_date: item.receiving_expiry_date || null,
         receiving_import_container_id: item.receiving_import_container_id || null,
         receiving_notes: item.receiving_notes || null,
@@ -1375,7 +1399,25 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   <tbody className="divide-y divide-gray-100">{lineItems.map((item, index) => item.item_type === 'inventory' && <tr key={`inventory-${index}`}>
                     <td className="px-2 py-1"><select name="product_id" aria-label="Product Id" value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && <option value={item.product_id}>{item.product_name}</option>}{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
                     <td className="px-2 py-1"><select name="receiving_make_id" aria-label="Receiving Make Id" value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">Not specified</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
-                    <td className="px-2 py-1"><input name="receiving_batch_number" aria-label="Optional" value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-28 px-1.5 py-1 border border-gray-300 rounded" placeholder="Optional" /></td>
+                    <td className="px-2 py-1">
+                      <input
+                        name="receiving_batch_number"
+                        aria-label="Optional"
+                        value={item.receiving_batch_number || ''}
+                        onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)}
+                        className="w-28 px-1.5 py-1 border border-gray-300 rounded"
+                        placeholder="Optional"
+                        list={`batch-options-${index}`}
+                        autoComplete="off"
+                      />
+                      <datalist id={`batch-options-${index}`}>
+                        {productBatches
+                          .filter(b => !item.product_id || b.product_id === item.product_id)
+                          .map(b => (
+                            <option key={b.id} value={b.batch_number} />
+                          ))}
+                      </datalist>
+                    </td>
                     <td className="px-2 py-1"><input name="receiving_expiry_date" aria-label="Receiving Expiry Date" type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-32 px-1.5 py-1 border border-gray-300 rounded" /></td>
                     <td className="px-2 py-1"><input name="quantity" aria-label="Quantity" type="number" min="0" step="0.01" value={item.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} className="w-20 px-1.5 py-1 text-right border border-gray-300 rounded" /></td>
                     <td className="px-2 py-1"><input name="unit" aria-label="Unit" value={item.unit} onChange={(e) => handleLineChange(index, 'unit', e.target.value)} className="w-16 px-1.5 py-1 border border-gray-300 rounded" /></td>
@@ -1524,7 +1566,23 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Batch Number</label>
-                        <input name="batch_number" aria-label="Batch Number" value={item.receiving_batch_number || ''} onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" placeholder="If provided" />
+                        <input
+                          name="batch_number"
+                          aria-label="Batch Number"
+                          value={item.receiving_batch_number || ''}
+                          onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)}
+                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                          placeholder="If provided"
+                          list={`mobile-batch-options-${index}`}
+                          autoComplete="off"
+                        />
+                        <datalist id={`mobile-batch-options-${index}`}>
+                          {productBatches
+                            .filter(b => !item.product_id || b.product_id === item.product_id)
+                            .map(b => (
+                              <option key={b.id} value={b.batch_number} />
+                            ))}
+                        </datalist>
                       </div>
                       <div>
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Expiry</label>
