@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, Clock } from 'lucide-react';
+import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, Clock, Info, X, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
@@ -368,14 +368,34 @@ export function BankReconciliationEnhanced({
   } | null>(null);
   const [selectedSuggestedLine, setSelectedSuggestedLine] = useState<StatementLine | null>(null);
 
+  // Persistent user feedback banner state
+  interface ActionFeedback {
+    type: 'success' | 'error' | 'info';
+    title: string;
+    details?: Array<{ label: string; value: string }>;
+    message?: string;
+    timestamp: number;
+  }
+  const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+  const [autoMatching, setAutoMatching] = useState(false);
+
+  // Guard against duplicate / self-triggered reloads
+  const selfActionTimestampRef = useRef(0);
+  const loadingRequestIdRef = useRef(0);
+  const isLoadingRef = useRef(false);
+  const pendingReloadRef = useRef(false);
+
+  // Auto-dismiss persistent feedback after 12 seconds
+  useEffect(() => {
+    if (!actionFeedback) return;
+    const timer = setTimeout(() => {
+      setActionFeedback(null);
+    }, 12000);
+    return () => clearTimeout(timer);
+  }, [actionFeedback]);
+
   // Refs let the stable-deps realtime effect below read latest state/loaders
   // without resubscribing on every render.
-  //
-  // NB: loadStatementLines / loadExpenses are `const` declarations further
-  // down in the component body, so referencing them here (during the render
-  // pass) hits the Temporal Dead Zone. We seed the refs with no-op stubs
-  // and let the effects on the next two lines populate them post-commit,
-  // before any realtime subscription (also post-commit) can fire.
   const selectedBankRef = useRef(selectedBank);
   const noopAsync = useRef<() => Promise<void> | void>(() => {});
   const loadStatementLinesRef = useRef<() => Promise<void> | void>(noopAsync.current);
@@ -386,6 +406,8 @@ export function BankReconciliationEnhanced({
 
   useEffect(() => {
     const refresh = () => {
+      // Avoid reacting to refresh events self-triggered by in-flight user actions
+      if (Date.now() - selfActionTimestampRef.current < 2000) return;
       loadExpensesRef.current();
       if (selectedBankRef.current) loadStatementLinesRef.current();
     };
@@ -443,6 +465,8 @@ export function BankReconciliationEnhanced({
     const row = payload.new || payload.old;
     // Only react to lines relevant to the active bank account.
     if (row?.bank_account_id && row.bank_account_id !== bankId) return;
+    // Ignore realtime events triggered by our own in-flight actions
+    if (Date.now() - selfActionTimestampRef.current < 2000) return;
     scheduleStatement();
   };
 
@@ -534,9 +558,14 @@ export function BankReconciliationEnhanced({
     if (selectedBank) {
       const account = bankAccounts.find(b => b.id === selectedBank);
       setSelectedAccount(account || null);
+    }
+  }, [selectedBank, bankAccounts]);
+
+  useEffect(() => {
+    if (selectedBank) {
       loadStatementLines();
     }
-  }, [selectedBank, bankAccounts, financeDateRange]);
+  }, [selectedBank, financeDateRange]);
 
   const loadBankAccounts = async () => {
     setStatementLoadError(null);
@@ -610,8 +639,17 @@ export function BankReconciliationEnhanced({
 
   const loadStatementLines = async () => {
     if (!selectedBank) return;
+
+    if (isLoadingRef.current) {
+      pendingReloadRef.current = true;
+      return;
+    }
+
+    isLoadingRef.current = true;
     setLoading(true);
     setStatementLoadError(null);
+    loadingRequestIdRef.current += 1;
+    const currentRequestId = loadingRequestIdRef.current;
     try {
       // Calculate next day for inclusive end date filtering
       const endDatePlusOne = new Date(dateRange.end);
@@ -694,14 +732,34 @@ export function BankReconciliationEnhanced({
       ])];
       const taxPaymentIds = idsFor('tax_payment', data.map(r => r.matched_tax_payment_id));
 
-      // Batch load all expenses
+      // Batch load all expenses with optimized projections:
+      // Rich relations are only loaded for suggested matches (for review modal),
+      // while bulk historical matches load lightweight fields.
       const expenseMap = new Map();
       if (expenseIds.length > 0) {
-        const expenses = await loadBankReconciliationRowsInBatches<any>(expenseIds, batchIds => supabase
-          .from('finance_expenses')
-          .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, invoice_number, payment_reference, payment_method, currency_code, transaction_currency, exchange_rate, document_urls, ppn_amount, ppn_rate, pph_amount, pph_rate, stamp_duty_amount, bank_charges_amount, broker_items, approval_status, suppliers(company_name), finance_staff_master(full_name), finance_payees(full_name), import_containers(container_ref), bank_accounts(account_name, account_number), created_by_profile:user_profiles!finance_expenses_created_by_fkey(full_name)')
-          .in('id', batchIds));
-        expenses.forEach(e => expenseMap.set(e.id, e));
+        const suggestedSet = new Set(
+          data.filter(r => r.matching_status === 'suggested' && r.matched_expense_id).map(r => r.matched_expense_id)
+        );
+        const suggestedExpenseIds = expenseIds.filter(id => suggestedSet.has(id));
+        const historicalExpenseIds = expenseIds.filter(id => !suggestedSet.has(id));
+
+        // 1. Bulk historical expenses: lightweight select without heavy joins
+        if (historicalExpenseIds.length > 0) {
+          const histExpenses = await loadBankReconciliationRowsInBatches<any>(historicalExpenseIds, batchIds => supabase
+            .from('finance_expenses')
+            .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, invoice_number, payment_reference, payment_method, currency_code, transaction_currency, exchange_rate, approval_status')
+            .in('id', batchIds));
+          histExpenses.forEach(e => expenseMap.set(e.id, e));
+        }
+
+        // 2. Suggested expenses: full detail select for side-by-side review
+        if (suggestedExpenseIds.length > 0) {
+          const suggestedExpenses = await loadBankReconciliationRowsInBatches<any>(suggestedExpenseIds, batchIds => supabase
+            .from('finance_expenses')
+            .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, invoice_number, payment_reference, payment_method, currency_code, transaction_currency, exchange_rate, document_urls, ppn_amount, ppn_rate, pph_amount, pph_rate, stamp_duty_amount, bank_charges_amount, broker_items, approval_status, suppliers(company_name), finance_staff_master(full_name), finance_payees(full_name), import_containers(container_ref), bank_accounts(account_name, account_number), created_by_profile:user_profiles!finance_expenses_created_by_fkey(full_name)')
+            .in('id', batchIds));
+          suggestedExpenses.forEach(e => expenseMap.set(e.id, e));
+        }
       }
 
       const paymentMap = new Map();
@@ -918,12 +976,25 @@ export function BankReconciliationEnhanced({
         };
       });
 
-      setStatementLines(lines);
-    } catch (err) {
-      console.error('Error loading statement lines:', err);
-      setStatementLoadError(err instanceof Error ? err.message : 'Unable to load bank transactions.');
+      if (currentRequestId === loadingRequestIdRef.current) {
+        setStatementLines(lines);
+      }
+    } catch (err: any) {
+      if (currentRequestId === loadingRequestIdRef.current) {
+        if (err?.name !== 'AbortError' && !err?.message?.includes('aborted')) {
+          console.error('Error loading statement lines:', err);
+          setStatementLoadError(err instanceof Error ? err.message : 'Unable to load bank transactions.');
+        }
+      }
     } finally {
-      setLoading(false);
+      if (currentRequestId === loadingRequestIdRef.current) {
+        isLoadingRef.current = false;
+        setLoading(false);
+      }
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        loadStatementLines();
+      }
     }
   };
 
@@ -1854,8 +1925,10 @@ export function BankReconciliationEnhanced({
   };
 
   const autoMatchTransactions = async () => {
-    if (!selectedBank) return;
+    if (!selectedBank || autoMatching) return;
 
+    setAutoMatching(true);
+    selfActionTimestampRef.current = Date.now();
     try {
       // Use the database function that enforces 7-day date tolerance
       const { data, error } = await supabase.rpc('auto_match_smart');
@@ -1873,20 +1946,31 @@ export function BankReconciliationEnhanced({
         setActiveFilter('suggested');
       }
 
-      let message = `✅ Auto-match complete!\n\n`;
-      message += `✓ Matched: ${matchedCount}\n`;
-      message += `⚠ Needs Review: ${suggestedCount}\n`;
-      message += `⏭ Unmatched/Skipped: ${skippedCount}\n`;
-      message += `\n🔒 Date tolerance: ±7 days maximum`;
-
-      alert(message);
+      setActionFeedback({
+        type: 'success',
+        title: 'Auto-match completed successfully',
+        details: [
+          { label: 'Matched', value: `${matchedCount}` },
+          { label: 'Needs Review', value: `${suggestedCount}` },
+          { label: 'Unmatched / Skipped', value: `${skippedCount}` },
+          { label: 'Tolerance', value: '±7 days maximum' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (err: any) {
       if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
         console.warn('Auto-match request was aborted.');
       } else {
         console.error('Error auto-matching:', err);
-        alert('❌ Auto-match failed: ' + err.message);
+        setActionFeedback({
+          type: 'error',
+          title: 'Auto-match failed',
+          message: err?.message || 'Unknown error occurred',
+          timestamp: Date.now(),
+        });
       }
+    } finally {
+      setAutoMatching(false);
     }
   };
 
@@ -1950,7 +2034,12 @@ export function BankReconciliationEnhanced({
       if (!bsl) throw new Error('Row not found');
 
       if (!(bsl.matched_expense_id || bsl.matched_receipt_id || bsl.matched_payment_id || bsl.matched_petty_cash_id || bsl.matched_fund_transfer_id || bsl.matched_tax_payment_id || bsl.matched_entry_id)) {
-        alert('❌ Cannot confirm: no suggested link found on this row.');
+        setActionFeedback({
+          type: 'error',
+          title: 'Cannot confirm match',
+          message: 'No suggested link found on this row.',
+          timestamp: Date.now(),
+        });
         return;
       }
 
@@ -1962,7 +2051,12 @@ export function BankReconciliationEnhanced({
           .maybeSingle();
 
         if (exp?.approval_status === 'pending_approval') {
-          alert(`⚠️ Expense ${exp.voucher_number || ''} is pending approval.\n\nPlease approve the expense in Finance Expenses before confirming this match.\n\nBank transactions cannot automatically approve pending expenses.`);
+          setActionFeedback({
+            type: 'error',
+            title: 'Expense pending approval',
+            message: `Expense ${exp.voucher_number || ''} is pending approval.\n\nPlease approve the expense in Finance Expenses before confirming this match.\n\nBank transactions cannot automatically approve pending expenses.`,
+            timestamp: Date.now(),
+          });
           return;
         }
         await linkBankStatementLine(lineId, 'expense', bsl.matched_expense_id);
@@ -1977,10 +2071,21 @@ export function BankReconciliationEnhanced({
       // Reload the canonical links/status. This is important for fund
       // transfers, where the RPC also writes matched_entry_id and may clear
       // the legacy single-owner fields when allocations are plural.
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
+      setActionFeedback({
+        type: 'success',
+        title: 'Match confirmed successfully',
+        timestamp: Date.now(),
+      });
     } catch (err: any) {
       console.error('Error confirming match:', err);
-      alert('❌ ' + (err?.message || 'Failed to confirm match'));
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to confirm match',
+        message: err?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2054,7 +2159,7 @@ export function BankReconciliationEnhanced({
       // approval action.  Saving it as pending keeps the creator from
       // accidentally self-approving; the bank line can be linked after an
       // authorized approver posts the expense.
-      await saveFinanceExpense(null, {
+      const savedExpense = await saveFinanceExpense(null, {
         expense_category: category,
         expense_type: 'admin',
         amount: line.debit,
@@ -2072,11 +2177,30 @@ export function BankReconciliationEnhanced({
 
       setRecordModal(false);
       setRecordingLine(null);
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
-      alert('✅ Expense recorded as pending. An authorized approver must approve it before this bank transaction can be linked.');
+      notifyFinanceReconciliationRefresh();
+      setActionFeedback({
+        type: 'success',
+        title: 'Expense recorded as pending',
+        message: 'An authorized approver must approve it before this bank transaction can be linked.',
+        details: [
+          { label: 'Expense ID', value: typeof savedExpense === 'string' ? savedExpense.slice(0, 8) : 'Generated' },
+          { label: 'Amount', value: formatCurrency(line.debit, line.currency) },
+          { label: 'Category', value: category },
+          { label: 'Date', value: new Date(line.date).toLocaleDateString('id-ID') },
+          { label: 'Status', value: 'Pending Approval' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error recording expense:', error);
-      alert('❌ ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record expense',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2125,7 +2249,12 @@ export function BankReconciliationEnhanced({
       });
     } catch (error: any) {
       console.error('Error preparing expense allocation:', error);
-      alert('❌ ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to prepare expense allocation',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2140,12 +2269,27 @@ export function BankReconciliationEnhanced({
       setRecordingLine(null);
       setLinkToExpense(false);
       setLinkPaymentKind('supplier');
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
       notifyFinanceReconciliationRefresh();
-      alert('✅ Linked to expense successfully');
+      setActionFeedback({
+        type: 'success',
+        title: 'Linked to expense successfully',
+        details: [
+          { label: 'Allocated Amount', value: formatCurrency(amount, line.currency) },
+          { label: 'Payment Kind', value: linkPaymentKind === 'supplier' ? 'Supplier' : 'PPh' },
+          { label: 'Status', value: 'Confirmed' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error linking to expense:', error);
-      alert('❌ ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to link to expense',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2232,7 +2376,17 @@ export function BankReconciliationEnhanced({
 
         const allocCount = Object.values(receiptAllocations).filter(a => a > 0).length;
         const { data: receipt } = await supabase.from('receipt_vouchers').select('voucher_number').eq('id', receiptId).single();
-        alert(`Receipt Voucher ${receipt?.voucher_number || ''} created${allocCount > 0 ? ` and allocated to ${allocCount} invoice(s)` : ''}`);
+        setActionFeedback({
+          type: 'success',
+          title: 'Receipt voucher created and linked successfully',
+          details: [
+            { label: 'Receipt', value: receipt?.voucher_number || '' },
+            { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+            { label: 'Invoices', value: allocCount > 0 ? `${allocCount} allocated` : 'Unallocated' },
+            { label: 'Status', value: 'Recorded' },
+          ],
+          timestamp: Date.now(),
+        });
       } else if (type === 'capital') {
         if (line.currency === 'USD' && recordExchangeRate <= 1) throw new Error('Enter a valid USD-to-IDR exchange rate');
         const result = await saveCapitalContribution({
@@ -2244,7 +2398,17 @@ export function BankReconciliationEnhanced({
           description: description || line.description,
           created_by: user.id,
         }, line.id);
-        alert(`Capital Contribution ${result.voucher_number} created and linked successfully`);
+        setActionFeedback({
+          type: 'success',
+          title: 'Capital contribution recorded successfully',
+          details: [
+            { label: 'Voucher', value: result.voucher_number },
+            { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+            { label: 'Date', value: new Date(line.date).toLocaleDateString('id-ID') },
+            { label: 'Status', value: 'Recorded' },
+          ],
+          timestamp: Date.now(),
+        });
       } else if (type === 'loan' || type === 'loan_director_owner') {
         const selectedDirectorLoan = directorLoanAccounts.find(option => option.account.id === directorLoanAccountId);
         if (type === 'loan_director_owner' && !selectedDirectorLoan) {
@@ -2262,21 +2426,42 @@ export function BankReconciliationEnhanced({
             line.currency === 'IDR' ? 1 : recordExchangeRate,
           );
           const { data: journal } = await supabase.from('journal_entries').select('entry_number').eq('id', result.journal_entry_id).single();
-          alert(`Director Loan journal ${journal?.entry_number || ''} created and linked successfully`);
+          setActionFeedback({
+            type: 'success',
+            title: 'Director loan receipt recorded successfully',
+            details: [
+              { label: 'Journal', value: journal?.entry_number || '' },
+              { label: 'Ledger', value: selectedDirectorLoan!.account.name },
+              { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+              { label: 'Status', value: 'Recorded' },
+            ],
+            timestamp: Date.now(),
+          });
         } else {
           const result = await saveFinanceLoan({
-          loan_date: line.date,
-          counterparty_name: loanCounterparty.trim(),
-          counterparty_type: 'bank',
-          principal_amount: line.credit,
-          bank_account_id: selectedBank,
-          liability_kind: 'bank',
-          transaction_currency: line.currency as 'IDR' | 'USD',
-          exchange_rate: line.currency === 'IDR' ? 1 : recordExchangeRate,
-          description: description || line.description,
-          created_by: user.id,
-        }, line.id);
-        alert(`Loan ${result.loan_number} created and linked successfully`);
+            loan_date: line.date,
+            counterparty_name: loanCounterparty.trim(),
+            counterparty_type: 'bank',
+            principal_amount: line.credit,
+            bank_account_id: selectedBank,
+            liability_kind: 'bank',
+            transaction_currency: line.currency as 'IDR' | 'USD',
+            exchange_rate: line.currency === 'IDR' ? 1 : recordExchangeRate,
+            description: description || line.description,
+            created_by: user.id,
+          }, line.id);
+          setActionFeedback({
+            type: 'success',
+            title: 'Loan recorded successfully',
+            details: [
+              { label: 'Loan', value: result.loan_number },
+              { label: 'Counterparty', value: loanCounterparty.trim() },
+              { label: 'Date', value: new Date(line.date).toLocaleDateString('id-ID') },
+              { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+              { label: 'Status', value: 'Recorded' },
+            ],
+            timestamp: Date.now(),
+          });
         }
       } else {
         if (!NON_CUSTOMER_JOURNAL_TYPES.has(type)) {
@@ -2295,7 +2480,16 @@ export function BankReconciliationEnhanced({
         );
         const journalId = result.journal_entry_id;
         const { data: journal } = await supabase.from('journal_entries').select('entry_number').eq('id', journalId).single();
-        alert(`Journal Entry ${journal?.entry_number || ''} created and linked successfully`);
+        setActionFeedback({
+          type: 'success',
+          title: 'Journal entry created and linked successfully',
+          details: [
+            { label: 'Journal', value: journal?.entry_number || '' },
+            { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+            { label: 'Status', value: 'Recorded' },
+          ],
+          timestamp: Date.now(),
+        });
       }
 
       setRecordModal(false);
@@ -2307,11 +2501,28 @@ export function BankReconciliationEnhanced({
       setLoanCounterparty('');
       setDirectorLoanAccountId('');
       setLinkExistingReceipt(false);
+
+      // Local optimistic update of the recorded line
+      setStatementLines(prev => prev.map(l => l.id === line.id ? {
+        ...l,
+        status: 'recorded',
+        reconciliation_status: 'recorded',
+        matching_status: 'confirmed',
+        remainingAmount: 0,
+        allocatedAmount: l.credit || l.debit,
+      } : l));
+
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
       notifyFinanceReconciliationRefresh();
     } catch (error: any) {
       console.error('Error recording receipt:', error);
-      alert('Error: ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record receipt',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     } finally {
       recordingReceiptRef.current = false;
       setRecordingReceipt(false);
@@ -2341,7 +2552,12 @@ export function BankReconciliationEnhanced({
   const handleRecordDirectorLoanWithdrawal = async (line: StatementLine) => {
     const selectedDirectorLoan = directorLoanAccounts.find(option => option.account.id === directorLoanAccountId);
     if (!selectedDirectorLoan) {
-      alert('Select the existing Director / Owner loan ledger');
+      setActionFeedback({
+        type: 'error',
+        title: 'Missing ledger selection',
+        message: 'Select the existing Director / Owner loan ledger',
+        timestamp: Date.now(),
+      });
       return;
     }
     try {
@@ -2358,13 +2574,29 @@ export function BankReconciliationEnhanced({
       setRecordingLine(null);
       setRecordDirectorLoanWithdrawal(false);
       setDirectorLoanAccountId('');
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
       notifyFinanceReconciliationRefresh();
       const { data: journal } = await supabase.from('journal_entries').select('entry_number').eq('id', result.journal_entry_id).single();
-      alert(`Director Loan withdrawal journal ${journal?.entry_number || ''} created and linked successfully`);
+      setActionFeedback({
+        type: 'success',
+        title: 'Director loan withdrawal recorded successfully',
+        details: [
+          { label: 'Journal', value: journal?.entry_number || '' },
+          { label: 'Ledger', value: selectedDirectorLoan.account.name },
+          { label: 'Amount', value: formatCurrency(line.debit, line.currency) },
+          { label: 'Status', value: 'Recorded' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error recording Director Loan withdrawal:', error);
-      alert('Error: ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record Director Loan withdrawal',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2383,11 +2615,27 @@ export function BankReconciliationEnhanced({
       setRecordingLine(null);
       setLinkExistingReceipt(false);
       setExistingReceipts([]);
-      loadStatementLines();
-      alert('Linked to existing receipt successfully');
+      selfActionTimestampRef.current = Date.now();
+      await loadStatementLines();
+      notifyFinanceReconciliationRefresh();
+      setActionFeedback({
+        type: 'success',
+        title: 'Linked to existing receipt successfully',
+        details: [
+          { label: 'Receipt', value: receipt?.voucher_number || receiptId },
+          { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+          { label: 'Status', value: 'Confirmed' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error linking receipt:', error);
-      alert('Error: ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to link receipt',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2719,11 +2967,28 @@ export function BankReconciliationEnhanced({
       setLinkSettleBills(false);
       setBillAllocations([]);
       setOutstandingBills([]);
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
-      alert(`✅ ${voucherNumber} created, posted and linked — ${allocs.length} bill(s) settled`);
+      notifyFinanceReconciliationRefresh();
+      setActionFeedback({
+        type: 'success',
+        title: 'Payment voucher created, posted and linked',
+        details: [
+          { label: 'Voucher', value: voucherNumber },
+          { label: 'Bills Settled', value: `${allocs.length} bill(s)` },
+          { label: 'Total Paid', value: formatCurrency(total, line.currency) },
+          { label: 'Status', value: 'Recorded' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error settling bills:', error);
-      alert('❌ ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to settle bills',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     } finally {
       setSettleSubmitting(false);
     }
@@ -2731,15 +2996,30 @@ export function BankReconciliationEnhanced({
 
   const handleRecordLoanRepayment = async (line: StatementLine) => {
     if (!repaymentLoanId) {
-      alert('Select the loan being repaid');
+      setActionFeedback({
+        type: 'error',
+        title: 'Missing loan selection',
+        message: 'Select the loan being repaid',
+        timestamp: Date.now(),
+      });
       return;
     }
     if (Math.abs((repaymentPrincipal + repaymentInterest) - line.debit) > 0.01) {
-      alert('Principal plus interest must equal the bank debit amount');
+      setActionFeedback({
+        type: 'error',
+        title: 'Invalid amount',
+        message: 'Principal plus interest must equal the bank debit amount',
+        timestamp: Date.now(),
+      });
       return;
     }
     if (repaymentPrincipal < 0 || repaymentInterest < 0 || repaymentPrincipal <= 0) {
-      alert('Enter a valid principal amount');
+      setActionFeedback({
+        type: 'error',
+        title: 'Invalid amount',
+        message: 'Enter a valid principal amount',
+        timestamp: Date.now(),
+      });
       return;
     }
     try {
@@ -2763,12 +3043,28 @@ export function BankReconciliationEnhanced({
       setRepaymentLoanId('');
       setRepaymentPrincipal(0);
       setRepaymentInterest(0);
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
       notifyFinanceReconciliationRefresh();
-      alert(`Loan Repayment ${result.transaction_number} created and linked successfully`);
+      setActionFeedback({
+        type: 'success',
+        title: 'Loan repayment recorded successfully',
+        details: [
+          { label: 'Transaction', value: result.transaction_number },
+          { label: 'Principal', value: formatCurrency(repaymentPrincipal, line.currency) },
+          { label: 'Interest', value: formatCurrency(repaymentInterest, line.currency) },
+          { label: 'Status', value: 'Recorded' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error recording loan repayment:', error);
-      alert('Error: ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record loan repayment',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -2786,13 +3082,28 @@ export function BankReconciliationEnhanced({
       );
       setRecordModal(false);
       setRecordingLine(null);
+      selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
       notifyFinanceReconciliationRefresh();
       const { data: journal } = await supabase.from('journal_entries').select('entry_number').eq('id', result.journal_entry_id).single();
-      alert(`Owner Withdrawal journal ${journal?.entry_number || ''} created and linked successfully`);
+      setActionFeedback({
+        type: 'success',
+        title: 'Owner withdrawal recorded successfully',
+        details: [
+          { label: 'Journal', value: journal?.entry_number || '' },
+          { label: 'Amount', value: formatCurrency(line.debit, line.currency) },
+          { label: 'Status', value: 'Recorded' },
+        ],
+        timestamp: Date.now(),
+      });
     } catch (error: any) {
       console.error('Error recording owner withdrawal:', error);
-      alert('Error: ' + error.message);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record owner withdrawal',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -3051,6 +3362,52 @@ export function BankReconciliationEnhanced({
 
   return (
     <div className="space-y-2">
+      {/* Persistent Action Feedback Notification */}
+      {actionFeedback && (
+        <div
+          className={`rounded-lg border p-3 shadow-md flex items-start justify-between gap-3 transition-all ${
+            actionFeedback.type === 'success'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+              : actionFeedback.type === 'error'
+              ? 'bg-rose-50 border-rose-300 text-rose-950'
+              : 'bg-blue-50 border-blue-300 text-blue-950'
+          }`}
+        >
+          <div className="flex items-start gap-2.5">
+            {actionFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            ) : actionFeedback.type === 'error' ? (
+              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            ) : (
+              <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-1">
+              <div className="text-sm font-semibold">{actionFeedback.title}</div>
+              {actionFeedback.message && (
+                <div className="text-xs text-slate-700 whitespace-pre-wrap">{actionFeedback.message}</div>
+              )}
+              {actionFeedback.details && actionFeedback.details.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-700 mt-1">
+                  {actionFeedback.details.map((d, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-slate-200 font-medium shadow-xs">
+                      <span className="text-slate-500">{d.label}:</span>
+                      <span className="text-slate-900 font-semibold">{d.value}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => setActionFeedback(null)}
+            className="p-1 rounded hover:bg-black/5 text-slate-400 hover:text-slate-700 transition"
+            title="Dismiss notification"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Compact Header with Bank Selection and Actions */}
       <div className="bg-gradient-to-r from-slate-700 to-slate-800 rounded-lg p-2.5 text-white shadow-md">
         <div className="flex items-center justify-between">
@@ -3075,12 +3432,12 @@ export function BankReconciliationEnhanced({
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => { autoMatchTransactions(); }}
-              disabled={!selectedBank}
+              disabled={!selectedBank || autoMatching}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium shadow-sm"
               title="Auto-match"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Match
+              <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
+              {autoMatching ? 'Matching...' : 'Match'}
             </button>
             {canManage && (
               <>
