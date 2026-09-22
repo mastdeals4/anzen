@@ -253,31 +253,78 @@ console.log('===================================================================
 }
 
 // -----------------------------------------------------------------------------
-// TEST 7: Permission Isolation: reporting_ai_role denied direct legacy table access
+// TEST 7: Real Permission Isolation: reporting_ai_role execution test
+// PASS:
+// - SELECT ai_inventory_current
+// - EXECUTE ai_inventory_movement()
+// - cannot SELECT inventory_transactions
+// - cannot SELECT inventory_historical_movement_classifications
+// - cannot SELECT audit_removed_duplicate_sale_inventory_transactions
 // -----------------------------------------------------------------------------
 {
-  const testRoleDenied = runSql(`
+  const testRealPermissions = runSql(`
     DO $$
     DECLARE
-      v_has_access boolean;
+      v_rec record;
+      v_err_it boolean := false;
+      v_err_ihmc boolean := false;
+      v_err_audit boolean := false;
     BEGIN
-      SELECT has_table_privilege('reporting_ai_role', 'public.inventory_transactions', 'SELECT')
-      INTO v_has_access;
+      -- Switch to reporting_ai_role
+      SET ROLE reporting_ai_role;
 
-      IF v_has_access THEN
-        RAISE EXCEPTION 'SECURITY BREACH: reporting_ai_role has SELECT on legacy inventory_transactions!';
+      -- 1. Must succeed: SELECT ai_inventory_current
+      BEGIN
+        SELECT * INTO v_rec FROM public.ai_inventory_current LIMIT 1;
+      EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'FAILED: reporting_ai_role could not query ai_inventory_current: %', SQLERRM;
+      END;
+
+      -- 2. Must succeed: EXECUTE ai_inventory_movement()
+      BEGIN
+        SELECT * INTO v_rec FROM public.ai_inventory_movement('2026-01-01', '2026-12-31') LIMIT 1;
+      EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'FAILED: reporting_ai_role could not execute ai_inventory_movement: %', SQLERRM;
+      END;
+
+      -- 3. Must FAIL: cannot SELECT inventory_transactions
+      BEGIN
+        EXECUTE 'SELECT * FROM public.inventory_transactions LIMIT 1';
+      EXCEPTION WHEN insufficient_privilege THEN
+        v_err_it := true;
+      END;
+
+      -- 4. Must FAIL: cannot SELECT inventory_historical_movement_classifications
+      BEGIN
+        EXECUTE 'SELECT * FROM public.inventory_historical_movement_classifications LIMIT 1';
+      EXCEPTION WHEN insufficient_privilege THEN
+        v_err_ihmc := true;
+      END;
+
+      -- 5. Must FAIL: cannot SELECT audit_removed_duplicate_sale_inventory_transactions
+      BEGIN
+        EXECUTE 'SELECT * FROM public.audit_removed_duplicate_sale_inventory_transactions LIMIT 1';
+      EXCEPTION WHEN insufficient_privilege THEN
+        v_err_audit := true;
+      END;
+
+      -- Reset role
+      RESET ROLE;
+
+      IF NOT v_err_it THEN
+        RAISE EXCEPTION 'SECURITY BREACH: reporting_ai_role was able to SELECT inventory_transactions';
       END IF;
-
-      SELECT has_table_privilege('reporting_ai_role', 'public.ai_inventory_current', 'SELECT')
-      INTO v_has_access;
-
-      IF NOT v_has_access THEN
-        RAISE EXCEPTION 'CONFIG ERROR: reporting_ai_role lacks SELECT on ai_inventory_current!';
+      IF NOT v_err_ihmc THEN
+        RAISE EXCEPTION 'SECURITY BREACH: reporting_ai_role was able to SELECT inventory_historical_movement_classifications';
+      END IF;
+      IF NOT v_err_audit THEN
+        RAISE EXCEPTION 'SECURITY BREACH: reporting_ai_role was able to SELECT audit_removed_duplicate_sale_inventory_transactions';
       END IF;
     END $$;
   `);
 
-  assert('Security permission isolation: reporting_ai_role denied legacy tables, granted canonical views', true);
+  assert('Real permission test: reporting_ai_role can query ai views/functions', true);
+  assert('Real permission test: reporting_ai_role strictly denied all legacy tables', true);
 }
 
 console.log('\n====================================================================');

@@ -95,11 +95,28 @@ $$\text{Opening} + \text{In} - \text{Out} = \text{Closing}$$
 ## 6. Database Permission Design
 
 To guarantee architectural separation:
-1. **Dedicated Role**: `reporting_ai_role` is granted `SELECT` and `EXECUTE` privileges exclusively on:
-   - `public.inventory_operational_physical_ledger`
-   - `public.inventory_v1_stock_summary`
-   - `public.ai_inventory_current`
-   - `public.inventory_v1_movement_report(date, date)`
-   - `public.ai_inventory_movement(date, date)`
-2. **Explicit Revocation**: `reporting_ai_role` has **NO** access (`REVOKE ALL`) to legacy tables `inventory_transactions` and `inventory_historical_movement_classifications`.
-3. **Application Safety**: ERP application service roles retain required transactional permissions to ensure uninterrupted day-to-day warehouse operations.
+1. **Dedicated Role**: `reporting_ai_role` is granted `SELECT` on `public.ai_inventory_current` and `EXECUTE` on `public.ai_inventory_movement(date, date)`:
+   - View `public.ai_inventory_current` is created with `security_invoker = false` (owned by `postgres`).
+   - Function `public.ai_inventory_movement(date, date)` is created with `SECURITY DEFINER` (owned by `postgres`).
+   - This design allows `reporting_ai_role` to retrieve canonical live stock and deterministic period movements without requiring broad `SELECT` privileges on raw ERP tables (`products`, `batches`, `so_product_reservations`, `delivery_challan_items`, etc.).
+2. **Explicit Revocation on Legacy Tables**: `reporting_ai_role` has **NO** access (`REVOKE ALL`) to legacy tables:
+   - `public.inventory_transactions`
+   - `public.inventory_historical_movement_classifications`
+   - `public.audit_removed_duplicate_sale_inventory_transactions`
+3. **Application Safety**: ERP application service roles (`authenticated`, `service_role`) retain required transactional permissions to ensure uninterrupted day-to-day warehouse operations.
+
+---
+
+## 7. External Connector Authentication Note
+
+> [!IMPORTANT]
+> **External Connector Privileges (ChatGPT / Supabase MCP)**:
+> The external ChatGPT/Supabase connector may use a separate privileged database credential (such as `postgres` or `service_role`).
+> Database migrations cannot force an external connector session to assume `reporting_ai_role`.
+> 
+> Therefore, all operational AI tools, prompts, connectors, and analytical queries **MUST** explicitly target:
+> - `public.ai_inventory_current` (for current stock & availability)
+> - `public.ai_inventory_movement(p_date_from, p_date_to)` (for historical/period movement)
+> 
+> and must **NEVER** construct queries against legacy tables (`inventory_transactions`, `inventory_historical_movement_classifications`, `audit_removed_duplicate_sale_inventory_transactions`).
+

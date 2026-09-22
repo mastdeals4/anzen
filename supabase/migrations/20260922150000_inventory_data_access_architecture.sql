@@ -138,26 +138,55 @@ AS $$
   ORDER BY p.product_code, p.product_name;
 $$;
 
--- 3. AI / REPORTING ACCESS LAYER
+-- 3. AI / REPORTING ACCESS LAYER (SECURITY DEFINER / SECURITY_INVOKER=FALSE)
+-- Dedicated AI view: security_invoker = false allows reporting_ai_role to query
+-- canonical stock without needing direct table privileges on products/batches.
 CREATE OR REPLACE VIEW public.ai_inventory_current
-WITH (security_invoker = true)
+WITH (security_invoker = false)
 AS
-SELECT
-  product_id,
-  product_code,
-  product_name,
-  unit,
-  category,
-  min_stock_level,
-  total_current_stock AS current_stock,
-  reserved_stock,
-  available_quantity,
-  shortage_quantity,
-  active_batch_count,
-  expired_batch_count,
-  nearest_expiry_date
-FROM public.inventory_v1_stock_summary;
+WITH batch_totals AS (
+  SELECT b.product_id,
+    COALESCE(sum(b.current_stock) FILTER (WHERE b.is_active), 0::numeric) AS total_current_stock,
+    COALESCE(sum(b.current_stock) FILTER (WHERE b.is_active AND (b.expiry_date IS NULL OR b.expiry_date > CURRENT_DATE)), 0::numeric) AS usable_current_stock,
+    count(*) FILTER (WHERE b.is_active) AS active_batch_count,
+    count(*) FILTER (WHERE b.is_active AND b.expiry_date IS NOT NULL AND b.expiry_date <= CURRENT_DATE) AS expired_batch_count,
+    min(b.expiry_date) FILTER (WHERE b.is_active AND b.expiry_date IS NOT NULL AND b.expiry_date > CURRENT_DATE AND b.current_stock > 0::numeric) AS nearest_expiry_date
+  FROM public.batches b
+  GROUP BY b.product_id
+), reservation_totals AS (
+  SELECT r.product_id,
+    COALESCE(sum(r.reserved_quantity), 0::numeric) AS reserved_stock
+  FROM public.so_product_reservations r
+  WHERE r.status = 'active'::text
+  GROUP BY r.product_id
+), shortage_totals AS (
+  SELECT ir.product_id,
+    COALESCE(sum(ir.shortage_quantity), 0::numeric) AS shortage_quantity
+  FROM public.import_requirements ir
+  WHERE ir.status = ANY (ARRAY['pending'::public.import_status, 'ordered'::public.import_status])
+  GROUP BY ir.product_id
+)
+SELECT p.id AS product_id,
+  p.product_code,
+  p.product_name,
+  p.unit,
+  p.category,
+  p.min_stock_level,
+  COALESCE(bt.total_current_stock, 0::numeric) AS current_stock,
+  COALESCE(rt.reserved_stock, 0::numeric) AS reserved_stock,
+  COALESCE(bt.usable_current_stock, 0::numeric) - COALESCE(rt.reserved_stock, 0::numeric) AS available_quantity,
+  COALESCE(st.shortage_quantity, 0::numeric) AS shortage_quantity,
+  COALESCE(bt.active_batch_count, 0::bigint) AS active_batch_count,
+  COALESCE(bt.expired_batch_count, 0::bigint) AS expired_batch_count,
+  bt.nearest_expiry_date
+FROM public.products p
+  LEFT JOIN batch_totals bt ON bt.product_id = p.id
+  LEFT JOIN reservation_totals rt ON rt.product_id = p.id
+  LEFT JOIN shortage_totals st ON st.product_id = p.id
+WHERE p.is_active = true;
 
+-- Dedicated AI function: SECURITY DEFINER allows reporting_ai_role to run
+-- movement reporting without needing direct table privileges on underlying ERP tables.
 CREATE OR REPLACE FUNCTION public.ai_inventory_movement(
   p_date_from date,
   p_date_to date
@@ -176,8 +205,8 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
-SECURITY INVOKER
-SET search_path TO 'public'
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
 AS $$
   SELECT * FROM public.inventory_v1_movement_report(p_date_from, p_date_to);
 $$;
@@ -189,6 +218,9 @@ COMMENT ON TABLE public.inventory_transactions IS
 COMMENT ON TABLE public.inventory_historical_movement_classifications IS
 'LEGACY INVENTORY HISTORY - AUDIT / FORENSIC ONLY. Classification metadata for pre-V1 historical movement audit.';
 
+COMMENT ON TABLE public.audit_removed_duplicate_sale_inventory_transactions IS
+'LEGACY INVENTORY AUDIT LOG - AUDIT / FORENSIC ONLY. Preserved log of historical duplicate sale transactions removed from operational ledger.';
+
 -- 5. REPORTING / AI ROLE PERMISSION DESIGN
 DO $$
 BEGIN
@@ -197,17 +229,25 @@ BEGIN
   END IF;
 END $$;
 
+-- Enable postgres to assume reporting_ai_role during test verification
+GRANT reporting_ai_role TO postgres WITH SET TRUE;
+
 GRANT USAGE ON SCHEMA public TO reporting_ai_role;
 
--- Grant operational reads
-GRANT SELECT ON public.inventory_operational_physical_ledger TO reporting_ai_role, authenticated, service_role;
-GRANT SELECT ON public.inventory_v1_stock_summary TO reporting_ai_role, authenticated, service_role;
-GRANT SELECT ON public.ai_inventory_current TO reporting_ai_role, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.inventory_v1_movement_report(date, date) TO reporting_ai_role, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.ai_inventory_movement(date, date) TO reporting_ai_role, authenticated, service_role;
+-- Grant operational reads to reporting_ai_role
+GRANT SELECT ON public.ai_inventory_current TO reporting_ai_role;
+GRANT EXECUTE ON FUNCTION public.ai_inventory_movement(date, date) TO reporting_ai_role;
 
--- Explicitly ensure legacy tables are NOT accessible to reporting_ai_role
+-- Application roles maintain full operational access
+GRANT SELECT ON public.inventory_operational_physical_ledger TO authenticated, service_role;
+GRANT SELECT ON public.inventory_v1_stock_summary TO authenticated, service_role;
+GRANT SELECT ON public.ai_inventory_current TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.inventory_v1_movement_report(date, date) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.ai_inventory_movement(date, date) TO authenticated, service_role;
+
+-- Explicitly ensure legacy tables are strictly NOT accessible to reporting_ai_role
 REVOKE ALL ON public.inventory_transactions FROM reporting_ai_role;
 REVOKE ALL ON public.inventory_historical_movement_classifications FROM reporting_ai_role;
+REVOKE ALL ON public.audit_removed_duplicate_sale_inventory_transactions FROM reporting_ai_role;
 
 COMMIT;
