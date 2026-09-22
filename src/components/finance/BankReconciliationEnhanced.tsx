@@ -902,6 +902,77 @@ export function BankReconciliationEnhanced({
     }
   };
 
+  const normalizeHeader = (s: string) => s.toLowerCase().trim().replace(/[\s_-]+/g, ' ');
+
+  const isDateHeader = (s: string) =>
+    ['tanggal', 'tgl', 'date', 'transaction date', 'trn date', 'tx date'].includes(normalizeHeader(s));
+
+  const isDescHeader = (s: string) =>
+    ['keterangan', 'uraian', 'description', 'desc', 'transaction description'].includes(normalizeHeader(s));
+
+  const isBranchHeader = (s: string) =>
+    ['cabang', 'branch', 'branch code'].includes(normalizeHeader(s));
+
+  const isAmountHeader = (s: string) =>
+    ['mutasi', 'amount', 'total amount', 'nominal'].includes(normalizeHeader(s));
+
+  const isDebitHeader = (s: string) =>
+    ['debet', 'debit', 'db', 'mutasi debet', 'mutasi debit'].includes(normalizeHeader(s));
+
+  const isCreditHeader = (s: string) =>
+    ['kredit', 'credit', 'cr', 'mutasi kredit', 'mutasi credit'].includes(normalizeHeader(s));
+
+  const isBalanceHeader = (s: string) =>
+    ['saldo', 'balance', 'running balance', 'saldo akhir'].includes(normalizeHeader(s));
+
+  const detectNeedsYearPrompt = (rows: any[][]): boolean => {
+    // 1. Check if period metadata exists with year
+    for (let i = 0; i < Math.min(20, rows.length); i++) {
+      const row = rows[i];
+      if (!row) continue;
+      for (let j = 0; j < row.length; j++) {
+        const cell = String(row[j] || '');
+        if (/Period(?:e)?\s*:\s*\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/i.test(cell)) {
+          return false;
+        }
+      }
+    }
+
+    // 2. Identify date column
+    let dateCol = -1;
+    for (let i = 0; i < Math.min(25, rows.length); i++) {
+      const row = rows[i];
+      if (!row) continue;
+      const colIdx = row.findIndex(c => isDateHeader(String(c || '')));
+      if (colIdx !== -1) {
+        dateCol = colIdx;
+        break;
+      }
+    }
+
+    if (dateCol === -1) return false;
+
+    let hasDateWithoutYear = false;
+    let hasDateWithYear = false;
+
+    for (let i = 0; i < rows.length; i++) {
+      const val = rows[i]?.[dateCol];
+      if (typeof val === 'number') {
+        hasDateWithYear = true;
+        break;
+      }
+      const cell = String(val || '').trim();
+      if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(cell)) {
+        hasDateWithYear = true;
+        break;
+      } else if (/^\d{1,2}[\/-]\d{1,2}$/.test(cell)) {
+        hasDateWithoutYear = true;
+      }
+    }
+
+    return hasDateWithoutYear && !hasDateWithYear;
+  };
+
   const parseCSVLine = (line: string, delimiter: string = ';'): string[] => {
     const result: string[] = [];
     let current = '';
@@ -964,17 +1035,20 @@ export function BankReconciliationEnhanced({
             rows.push(cells);
           }
 
-          // Ask user for the year since CSV only has dd/MM format
-          const currentYear = new Date().getFullYear();
-          const userYear = prompt(`CSV contains dates without year (e.g., 01/12).\nWhich year is this statement for?`, String(currentYear));
-          if (!userYear) {
-            alert('❌ Year is required to process the CSV');
-            return;
-          }
-          const statementYear = parseInt(userYear);
-          if (isNaN(statementYear) || statementYear < 2000 || statementYear > 2100) {
-            alert('❌ Invalid year provided');
-            return;
+          // Only ask user for year when CSV genuinely contains dates without a year
+          let statementYear: number | undefined = undefined;
+          if (detectNeedsYearPrompt(rows)) {
+            const currentYear = new Date().getFullYear();
+            const userYear = prompt(`CSV contains dates without year (e.g., 01/12).\nWhich year is this statement for?`, String(currentYear));
+            if (!userYear) {
+              alert('❌ Year is required to process the CSV');
+              return;
+            }
+            statementYear = parseInt(userYear);
+            if (isNaN(statementYear) || statementYear < 2000 || statementYear > 2100) {
+              alert('❌ Invalid year provided');
+              return;
+            }
           }
 
           const { lines: parsedLines, metadata } = parseStatementDataWithMetadata(rows, statementYear);
@@ -1472,51 +1546,51 @@ export function BankReconciliationEnhanced({
       closingBalance: 0,
       totalDebits: 0,
       totalCredits: 0,
+      currency: '',
     };
 
-    let year = providedYear || new Date().getFullYear();
+    let fileYear = providedYear || null;
 
-    for (let i = 0; i < Math.min(10, rows.length); i++) {
+    // 1. Pre-scan for metadata (Period, Currency)
+    for (let i = 0; i < Math.min(25, rows.length); i++) {
       const row = rows[i];
       if (!row || row.length === 0) continue;
 
-      const firstCell = String(row[0] || '');
-      if (firstCell.includes('Periode')) {
-        const periodeMatch = firstCell.match(/(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2})\/(\d{2})\/(\d{4})/);
-        if (periodeMatch) {
-          const startDay = parseInt(periodeMatch[1]);
-          const startMonth = parseInt(periodeMatch[2]);
-          const startYear = parseInt(periodeMatch[3]);
-          const endDay = parseInt(periodeMatch[4]);
-          const endMonth = parseInt(periodeMatch[5]);
-          const endYear = parseInt(periodeMatch[6]);
+      for (let j = 0; j < row.length; j++) {
+        const cell = String(row[j] || '').trim();
+        if (!cell) continue;
 
-          year = startYear;
-
-          metadata.startDate = `${startYear}-${String(startMonth).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
-          metadata.endDate = `${endYear}-${String(endMonth).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
-
+        const pMatch = cell.match(/Period(?:e)?\s*:\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s*-\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/i);
+        if (pMatch) {
+          let sDay = parseInt(pMatch[1]), sMon = parseInt(pMatch[2]), sYr = parseInt(pMatch[3]);
+          let eDay = parseInt(pMatch[4]), eMon = parseInt(pMatch[5]), eYr = parseInt(pMatch[6]);
+          if (sYr < 100) sYr += 2000;
+          if (eYr < 100) eYr += 2000;
+          fileYear = sYr;
+          metadata.startDate = `${sYr}-${String(sMon).padStart(2, '0')}-${String(sDay).padStart(2, '0')}`;
+          metadata.endDate = `${eYr}-${String(eMon).padStart(2, '0')}-${String(eDay).padStart(2, '0')}`;
           const monthNames = ['', 'JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI', 'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER'];
-          metadata.period = `${monthNames[startMonth]} ${startYear}`;
+          metadata.period = `${monthNames[sMon] || sMon} ${sYr}`;
+        }
+
+        const cMatch = cell.match(/(?:Currency Code|Mata Uang)\s*:\s*([A-Za-z]+)/i);
+        if (cMatch) {
+          const rawC = cMatch[1].toUpperCase();
+          metadata.currency = rawC === 'RP' ? 'IDR' : rawC;
         }
       }
     }
 
+    // 2. Identify header row
     let headerRowIdx = -1;
-    for (let i = 0; i < Math.min(20, rows.length); i++) {
+    for (let i = 0; i < Math.min(25, rows.length); i++) {
       const row = rows[i];
       if (!row || row.length === 0) continue;
-
-      const rowStr = row.map((c: any) => String(c || '').toLowerCase()).join('|');
-
-      if ((rowStr.includes('tanggal') || rowStr.includes('date') || rowStr.includes('tgl')) &&
-          (rowStr.includes('keterangan') || rowStr.includes('description') || rowStr.includes('desc') ||
-           rowStr.includes('mutasi') || rowStr.includes('amount') || rowStr.includes('saldo') || rowStr.includes('balance'))) {
+      if (row.some(isDateHeader) && (row.some(isDescHeader) || row.some(isAmountHeader) || row.some(isDebitHeader))) {
         headerRowIdx = i;
         break;
       }
     }
-
 
     if (headerRowIdx === -1) {
       return { lines, metadata };
@@ -1527,48 +1601,67 @@ export function BankReconciliationEnhanced({
     let debitCol = -1, creditCol = -1;
 
     headerRow.forEach((cell: any, idx: number) => {
-      const cellStr = String(cell || '').toLowerCase();
-      if (cellStr.includes('tanggal') || cellStr.includes('date') || cellStr.includes('tgl')) dateCol = idx;
-      if (cellStr.includes('keterangan') || cellStr.includes('description') || cellStr.includes('desc')) descCol = idx;
-      if (cellStr.includes('cabang') || cellStr.includes('branch')) branchCol = idx;
-      if (cellStr.includes('mutasi') && !cellStr.includes('debet') && !cellStr.includes('kredit')) amountCol = idx;
-      if (cellStr.includes('debet') || cellStr.includes('debit') || cellStr.includes('db')) debitCol = idx;
-      if (cellStr.includes('kredit') || cellStr.includes('credit') || cellStr.includes('cr')) creditCol = idx;
-      if (cellStr.includes('saldo') || cellStr.includes('balance')) balanceCol = idx;
+      const s = String(cell || '');
+      if (isDateHeader(s)) dateCol = idx;
+      else if (isDescHeader(s)) descCol = idx;
+      else if (isBranchHeader(s)) branchCol = idx;
+      else if (isDebitHeader(s)) debitCol = idx;
+      else if (isCreditHeader(s)) creditCol = idx;
+      else if (isAmountHeader(s)) amountCol = idx;
+      else if (isBalanceHeader(s)) balanceCol = idx;
     });
-
 
     if (dateCol === -1) {
       return { lines, metadata };
     }
 
+    // Pre-scan date column if fileYear is not yet known
+    if (!fileYear) {
+      for (let i = headerRowIdx + 1; i < rows.length; i++) {
+        const cell = String(rows[i]?.[dateCol] || '').trim();
+        const m = cell.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+        if (m) {
+          let yr = parseInt(m[3]);
+          fileYear = yr < 100 ? (yr < 70 ? 2000 + yr : 1900 + yr) : yr;
+          break;
+        }
+      }
+    }
+
+    const defaultYear = fileYear || providedYear || new Date().getFullYear();
+
+    // 3. Process transaction rows
     for (let i = headerRowIdx + 1; i < rows.length; i++) {
       const row = rows[i];
-      if (!row || row.length === 0) {
+      if (!row || row.length === 0 || row.every((c: any) => !String(c || '').trim())) continue;
+
+      const firstCell = String(row[0] || '').toUpperCase();
+      const secondCell = String(row[1] || '').toUpperCase();
+      const rowText = `${firstCell} ${secondCell}`;
+
+      if (rowText.includes('SALDO AWAL') || rowText.includes('START BALANCE') || rowText.includes('OPENING BALANCE')) {
         continue;
       }
 
-      const firstCell = String(row[0] || '');
-      const secondCell = String(row[1] || '');
-      const rowText = `${firstCell} ${secondCell}`.toUpperCase();
-
-      if (rowText.includes('SALDO AWAL')) {
-        continue;
-      }
-
-      if (rowText.includes('MUTASI DEBET') ||
-          rowText.includes('MUTASI KREDIT') ||
-          rowText.includes('SALDO AKHIR')) {
+      if (
+        rowText.includes('MUTASI DEBET') ||
+        rowText.includes('MUTASI DEBIT') ||
+        rowText.includes('MUTASI KREDIT') ||
+        rowText.includes('MUTASI CREDIT') ||
+        rowText.includes('MUTASI DB') ||
+        rowText.includes('MUTASI CR') ||
+        rowText.includes('SALDO AKHIR') ||
+        rowText.includes('LAST BALANCE') ||
+        rowText.includes('CLOSING BALANCE') ||
+        rowText.includes('ENDING BALANCE')
+      ) {
         break;
       }
 
       const dateVal = row[dateCol];
-      if (!dateVal) {
-        continue;
-      }
+      if (!dateVal) continue;
 
       let parsedDate = '';
-
       if (typeof dateVal === 'number') {
         const excelEpoch = new Date(1900, 0, 1);
         const daysOffset = dateVal - 2;
@@ -1576,132 +1669,127 @@ export function BankReconciliationEnhanced({
         parsedDate = `${jsDate.getFullYear()}-${String(jsDate.getMonth() + 1).padStart(2, '0')}-${String(jsDate.getDate()).padStart(2, '0')}`;
       } else {
         const dateStr = String(dateVal).trim();
-        const numericMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})$/);
-        const monthNames: Record<string, number> = {
-          'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'mei': 5,
-          'jun': 6, 'jul': 7, 'aug': 8, 'agu': 8, 'ags': 8, 'sep': 9,
-          'oct': 10, 'okt': 10, 'nov': 11, 'dec': 12, 'des': 12
-        };
-        const namedMatch = dateStr.match(/^(\d{1,2})[-\s](jan|feb|mar|apr|may|mei|jun|jul|aug|agu|ags|sep|oct|okt|nov|dec|des)/i);
         const fullDateMatch = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+        const numericMatch = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})$/);
+        const namedMatch = dateStr.match(/^(\d{1,2})[-\s]([A-Za-z]{3,4})(?:[-\s](\d{2,4}))?$/);
+        const monthNames: Record<string, number> = {
+          jan: 1, feb: 2, mar: 3, apr: 4, may: 5, mei: 5,
+          jun: 6, jul: 7, aug: 8, agu: 8, ags: 8, sep: 9,
+          oct: 10, okt: 10, nov: 11, dec: 12, des: 12
+        };
 
-        let day = 0, mon = 0;
+        let day = 0, mon = 0, yr = defaultYear;
 
         if (fullDateMatch) {
           day = parseInt(fullDateMatch[1]);
           mon = parseInt(fullDateMatch[2]);
+          let rawYr = parseInt(fullDateMatch[3]);
+          yr = rawYr < 100 ? (rawYr < 70 ? 2000 + rawYr : 1900 + rawYr) : rawYr;
         } else if (numericMatch) {
           day = parseInt(numericMatch[1]);
           mon = parseInt(numericMatch[2]);
         } else if (namedMatch) {
           day = parseInt(namedMatch[1]);
           mon = monthNames[namedMatch[2].toLowerCase()] || 0;
+          if (namedMatch[3]) {
+            let rawYr = parseInt(namedMatch[3]);
+            yr = rawYr < 100 ? (rawYr < 70 ? 2000 + rawYr : 1900 + rawYr) : rawYr;
+          }
         }
 
         if (day < 1 || day > 31 || mon < 1 || mon > 12) {
           continue;
         }
 
-        parsedDate = `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        parsedDate = `${yr}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       }
 
       let debit = 0, credit = 0;
-
       if (debitCol >= 0 && creditCol >= 0) {
         const debitStr = String(row[debitCol] || '').trim();
         const creditStr = String(row[creditCol] || '').trim();
         debit = parseIndonesianNumber(debitStr);
         credit = parseIndonesianNumber(creditStr);
       } else if (amountCol >= 0) {
-        const amountStr = String(row[amountCol] || '').trim();
-        const dbCrIndicator = row[amountCol + 1] ? String(row[amountCol + 1]).trim().toUpperCase() : '';
-        const isCR = dbCrIndicator === 'CR' || amountStr.includes(' CR');
-        const isDB = dbCrIndicator === 'DB' || amountStr.includes(' DB');
-        const amount = parseIndonesianNumber(amountStr);
+        const rawAmountStr = String(row[amountCol] || '').trim();
+        let isCR = /\bCR\b/i.test(rawAmountStr);
+        let isDB = /\bDB\b/i.test(rawAmountStr);
+
+        if (!isCR && !isDB) {
+          for (let c = 0; c < row.length; c++) {
+            if (c === amountCol || c === dateCol || c === descCol || c === branchCol || c === balanceCol) continue;
+            const cellVal = String(row[c] || '').trim();
+            if (/^CR$/i.test(cellVal)) { isCR = true; break; }
+            if (/^DB$/i.test(cellVal)) { isDB = true; break; }
+          }
+        }
+
+        const cleanAmountStr = rawAmountStr.replace(/\b(CR|DB)\b/gi, '').trim();
+        const amount = parseIndonesianNumber(cleanAmountStr);
 
         if (isCR) {
           credit = amount;
-        } else if (isDB || amount > 0) {
+          debit = 0;
+        } else if (isDB) {
           debit = amount;
+          credit = 0;
+        } else {
+          debit = 0;
+          credit = 0;
         }
       }
 
       let balance = 0;
-      if (balanceCol >= 0) {
-        const balanceStr = String(row[balanceCol] || '').trim();
-        balance = parseIndonesianNumber(balanceStr);
+      if (balanceCol >= 0 && row[balanceCol] !== undefined && row[balanceCol] !== null && String(row[balanceCol]).trim() !== '') {
+        balance = parseIndonesianNumber(row[balanceCol]);
       }
 
-      let description = '';
-      if (descCol >= 0) {
-        const type = String(row[descCol] || '').trim();
-        const details = String(row[descCol + 1] || '').trim();
-        description = type + (details ? '; ' + details : '');
-      }
+      const description = descCol >= 0 ? String(row[descCol] || '').trim() : '';
       const branch = branchCol >= 0 ? String(row[branchCol] || '').trim() : '';
+
+      const numDebit = Number(debit) || 0;
+      const numCredit = Number(credit) || 0;
+      const isValid = (numDebit > 0 && numCredit === 0) || (numCredit > 0 && numDebit === 0);
+
+      if (!isValid) {
+        throw new Error(
+          `Bank statement line at row ${i + 1} (${parsedDate}) must have exactly one positive debit or credit amount. Found debit=${numDebit}, credit=${numCredit}. Raw values: [${row.map((c: any) => String(c ?? '')).join(' | ')}]`
+        );
+      }
 
       lines.push({
         id: `temp-${i}`,
         date: parsedDate,
-        description: description,
+        description,
         reference: branch,
-        debit: debit,
-        credit: credit,
-        balance: balance,
-        currency: selectedAccount?.currency || 'IDR',
+        debit: numDebit,
+        credit: numCredit,
+        balance,
+        currency: metadata.currency || selectedAccount?.currency || 'IDR',
         status: 'unmatched',
         allocatedAmount: 0,
-        remainingAmount: debit || credit,
+        remainingAmount: numDebit || numCredit,
         allocations: [],
       });
     }
 
-
+    // 4. Summary metadata balances scan
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (!row || row.length === 0) continue;
+      const rowJoined = row.map((c: any) => String(c || '').trim()).join(' ');
 
-      const firstCell = String(row[0] || '');
+      const mStart = rowJoined.match(/(?:Saldo\s*Awal|Start\s*Balance)\s*[:=]?\s*([\d,.]+)/i);
+      if (mStart) metadata.openingBalance = parseIndonesianNumber(mStart[1]);
 
-      if (firstCell.includes('Saldo Awal') || firstCell.includes('SALDO AWAL')) {
-        for (let j = 0; j < row.length; j++) {
-          const cell = String(row[j] || '');
-          if (cell && /[\d,\.]+/.test(cell)) {
-            metadata.openingBalance = parseIndonesianNumber(cell);
-            break;
-          }
-        }
-      }
+      const mDebit = rowJoined.match(/(?:Mutasi\s*Deb[ei]t|Mutasi\s*DB)\s*[:=]?\s*([\d,.]+)/i);
+      if (mDebit) metadata.totalDebits = parseIndonesianNumber(mDebit[1]);
 
-      if (firstCell.includes('Mutasi Debet') || firstCell.includes('MUTASI DB') || firstCell.includes('Mutasi DB')) {
-        for (let j = 0; j < row.length; j++) {
-          const cell = String(row[j] || '');
-          if (cell && /[\d,\.]+/.test(cell)) {
-            metadata.totalDebits = parseIndonesianNumber(cell);
-            break;
-          }
-        }
-      }
+      const mCredit = rowJoined.match(/(?:Mutasi\s*Kredit|Mutasi\s*Credit|Mutasi\s*CR)\s*[:=]?\s*([\d,.]+)/i);
+      if (mCredit) metadata.totalCredits = parseIndonesianNumber(mCredit[1]);
 
-      if (firstCell.includes('Mutasi Kredit') || firstCell.includes('MUTASI CR') || firstCell.includes('Mutasi CR')) {
-        for (let j = 0; j < row.length; j++) {
-          const cell = String(row[j] || '');
-          if (cell && /[\d,\.]+/.test(cell)) {
-            metadata.totalCredits = parseIndonesianNumber(cell);
-            break;
-          }
-        }
-      }
-
-      if (firstCell.includes('Saldo Akhir') || firstCell.includes('SALDO AKHIR')) {
-        for (let j = 0; j < row.length; j++) {
-          const cell = String(row[j] || '');
-          if (cell && /[\d,\.]+/.test(cell)) {
-            metadata.closingBalance = parseIndonesianNumber(cell);
-            break;
-          }
-        }
-      }
+      const mLast = rowJoined.match(/(?:Saldo\s*Akhir|Last\s*Balance|Ending\s*Balance|Closing\s*Balance)\s*[:=]?\s*([\d,.]+)/i);
+      if (mLast) metadata.closingBalance = parseIndonesianNumber(mLast[1]);
     }
 
     return { lines, metadata };
