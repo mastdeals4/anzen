@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight } from 'lucide-react';
+import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, Clock } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
@@ -112,6 +112,7 @@ interface StatementLine {
     description: string;
     expense_date: string;
     voucher_number?: string;
+    approval_status?: string;
     ppn_amount?: number | null;
     pph_amount?: number | null;
     stamp_duty_amount?: number | null;
@@ -681,7 +682,7 @@ export function BankReconciliationEnhanced({
       if (expenseIds.length > 0) {
         const expenses = await loadBankReconciliationRowsInBatches<any>(expenseIds, batchIds => supabase
           .from('finance_expenses')
-          .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, suppliers(company_name)')
+          .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, approval_status, suppliers(company_name)')
           .in('id', batchIds));
         expenses.forEach(e => expenseMap.set(e.id, e));
       }
@@ -773,11 +774,18 @@ export function BankReconciliationEnhanced({
           !row.manually_unlinked &&
           Boolean(row.matched_entry_id) &&
           (row.matching_status === 'confirmed' || row.reconciliation_status === 'recorded');
-        const allocatedAmount = allocations.length > 0
-          ? allocations.reduce((sum, allocation) => sum + allocation.allocation_amount, 0)
-          : (isDirectRecorded ? bankAmount : 0);
+        const allocatedAmount = allocations.reduce((sum, allocation) => sum + allocation.allocation_amount, 0) + (isDirectRecorded && allocations.length === 0 ? bankAmount : 0);
         const remainingAmount = Math.max(0, bankAmount - allocatedAmount);
-        const status = canonicalBankReconciliationStatus(bankAmount, allocatedAmount, BANK_ALLOCATION_EPSILON, isDirectRecorded);
+        const isSuggested =
+          (row.matching_status === 'suggested' ||
+            row.reconciliation_status === 'needs_review' ||
+            row.reconciliation_status === 'suggested') &&
+          allocatedAmount <= BANK_ALLOCATION_EPSILON;
+        const status = isSuggested
+          ? 'suggested'
+          : isDirectRecorded
+            ? 'recorded'
+            : canonicalBankReconciliationStatus(bankAmount, allocatedAmount);
         const firstExpense = allocations.find(a => a.document_type === 'expense');
         const firstReceipt = allocations.find(a => a.document_type === 'receipt');
         const firstPayment = allocations.find(a => a.document_type === 'payment');
@@ -855,7 +863,7 @@ export function BankReconciliationEnhanced({
           });
         }
 
-        const expenseId = firstExpense?.document_id || null;
+        const expenseId = firstExpense?.document_id || row.matched_expense_id || null;
         const receiptId = firstReceipt?.document_id || null;
         const paymentId = firstPayment?.document_id || null;
         const fundId = firstFund?.document_id || null;
@@ -1890,7 +1898,19 @@ export function BankReconciliationEnhanced({
         return;
       }
 
-      if (bsl.matched_expense_id) await linkBankStatementLine(lineId, 'expense', bsl.matched_expense_id);
+      if (bsl.matched_expense_id) {
+        const { data: exp } = await supabase
+          .from('finance_expenses')
+          .select('id, voucher_number, approval_status')
+          .eq('id', bsl.matched_expense_id)
+          .maybeSingle();
+
+        if (exp?.approval_status === 'pending_approval') {
+          alert(`⚠️ Expense ${exp.voucher_number || ''} is pending approval.\n\nPlease approve the expense in Finance Expenses before confirming this match.\n\nBank transactions cannot automatically approve pending expenses.`);
+          return;
+        }
+        await linkBankStatementLine(lineId, 'expense', bsl.matched_expense_id);
+      }
       else if (bsl.matched_receipt_id) await linkBankStatementLine(lineId, 'receipt', bsl.matched_receipt_id);
       else if (bsl.matched_payment_id) await linkBankStatementLine(lineId, 'payment', bsl.matched_payment_id);
       else if (bsl.matched_fund_transfer_id) await linkBankStatementLine(lineId, 'fund_transfer', bsl.matched_fund_transfer_id);
@@ -3270,6 +3290,28 @@ export function BankReconciliationEnhanced({
                               → {allocation.document_type === 'expense' ? 'Expense' : allocation.document_type.replace('_', ' ')}: {allocation.label} ({formatCurrency(allocation.allocation_amount, line.currency)})
                             </span>
                           ))}
+                        </>
+                      )}
+                      {line.status === 'suggested' && (
+                        <>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                            <Clock className="w-3 h-3" /> Needs Review
+                          </span>
+                          {line.matchedExpense && (
+                            <span className="text-xs text-purple-700 font-medium">
+                              → Suggested: {line.matchedExpense.voucher_number || 'Expense'}
+                              {line.matchedExpense.approval_status === 'pending_approval' && (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
+                                  Pending Approval
+                                </span>
+                              )}
+                            </span>
+                          )}
+                          {line.notes && line.notes.startsWith('Suggested match:') && (
+                            <span className="text-[11px] text-gray-500 italic">
+                              {line.notes}
+                            </span>
+                          )}
                         </>
                       )}
                       {line.status === 'unmatched' && (
