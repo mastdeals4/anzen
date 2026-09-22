@@ -109,12 +109,28 @@ interface StatementLine {
     id: string;
     expense_category: string;
     amount: number;
+    paid_amount?: number;
     description: string;
     expense_date: string;
     voucher_number?: string;
     approval_status?: string;
+    invoice_number?: string | null;
+    payment_reference?: string | null;
+    payment_method?: string | null;
+    currency_code?: string | null;
+    transaction_currency?: string | null;
+    exchange_rate?: number | null;
+    document_urls?: string[] | null;
+    suppliers?: { company_name: string } | null;
+    finance_staff_master?: { full_name: string } | null;
+    finance_payees?: { full_name: string } | null;
+    import_containers?: { container_ref: string } | null;
+    bank_accounts?: { account_name: string; account_number: string } | null;
+    created_by_profile?: { full_name: string } | null;
     ppn_amount?: number | null;
+    ppn_rate?: number | null;
     pph_amount?: number | null;
+    pph_rate?: number | null;
     stamp_duty_amount?: number | null;
     bank_charges_amount?: number | null;
     broker_items?: import('../../utils/taxCalculations').BrokerItem[] | null;
@@ -350,6 +366,7 @@ export function BankReconciliationEnhanced({
     bankAfter: number;
     documentAfter: number;
   } | null>(null);
+  const [selectedSuggestedLine, setSelectedSuggestedLine] = useState<StatementLine | null>(null);
 
   // Refs let the stable-deps realtime effect below read latest state/loaders
   // without resubscribing on every render.
@@ -682,7 +699,7 @@ export function BankReconciliationEnhanced({
       if (expenseIds.length > 0) {
         const expenses = await loadBankReconciliationRowsInBatches<any>(expenseIds, batchIds => supabase
           .from('finance_expenses')
-          .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, approval_status, suppliers(company_name)')
+          .select('id, expense_category, amount, paid_amount, description, expense_date, voucher_number, invoice_number, payment_reference, payment_method, currency_code, transaction_currency, exchange_rate, document_urls, ppn_amount, ppn_rate, pph_amount, pph_rate, stamp_duty_amount, bank_charges_amount, broker_items, approval_status, suppliers(company_name), finance_staff_master(full_name), finance_payees(full_name), import_containers(container_ref), bank_accounts(account_name, account_number), created_by_profile:user_profiles!finance_expenses_created_by_fkey(full_name)')
           .in('id', batchIds));
         expenses.forEach(e => expenseMap.set(e.id, e));
       }
@@ -940,7 +957,7 @@ export function BankReconciliationEnhanced({
       if (!row) continue;
       for (let j = 0; j < row.length; j++) {
         const cell = String(row[j] || '');
-        if (/Period(?:e)?\s*:\s*\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/i.test(cell)) {
+        if (/Period(?:e)?\s*:\s*\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/i.test(cell)) {
           return false;
         }
       }
@@ -970,10 +987,10 @@ export function BankReconciliationEnhanced({
         break;
       }
       const cell = String(val || '').trim();
-      if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(cell)) {
+      if (/^\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}$/.test(cell)) {
         hasDateWithYear = true;
         break;
-      } else if (/^\d{1,2}[\/-]\d{1,2}$/.test(cell)) {
+      } else if (/^\d{1,2}[.\/-]\d{1,2}$/.test(cell)) {
         hasDateWithoutYear = true;
       }
     }
@@ -1059,7 +1076,18 @@ export function BankReconciliationEnhanced({
             }
           }
 
-          const { lines: parsedLines, metadata } = parseStatementDataWithMetadata(rows, statementYear);
+          // Stage 1: Parse and validate CSV data
+          let parsedLines: StatementLine[] = [];
+          let metadata: any = {};
+          try {
+            const parsed = parseStatementDataWithMetadata(rows, statementYear);
+            parsedLines = parsed.lines;
+            metadata = parsed.metadata;
+          } catch (parseErr: any) {
+            console.error('CSV parse/validation error:', parseErr);
+            alert(`❌ CSV Validation Error: ${parseErr.message}`);
+            return;
+          }
 
           if (parsedLines.length === 0) {
             alert('No transactions found in the CSV file. Check that the file has date and amount columns.');
@@ -1090,25 +1118,34 @@ export function BankReconciliationEnhanced({
             return;
           }
 
-          const { data: uploadRecord, error: uploadError } = await supabase
-            .from('bank_statement_uploads')
-            .insert({
-              bank_account_id: selectedBank,
-              statement_period: metadata.period || `${new Date().toLocaleString('default', { month: 'long' })} ${new Date().getFullYear()}`,
-              statement_start_date: startDate,
-              statement_end_date: endDate,
-              currency: stmtCurrency,
-              opening_balance: openingBal,
-              closing_balance: closingBal,
-              total_debits: metadata.totalDebits || totalDebits,
-              total_credits: metadata.totalCredits || totalCredits,
-              transaction_count: parsedLines.length,
-              status: 'completed',
-            })
-            .select()
-            .single();
+          // Stage 2: Create statement upload record
+          let uploadRecord: any = null;
+          try {
+            const { data, error: uploadError } = await supabase
+              .from('bank_statement_uploads')
+              .insert({
+                bank_account_id: selectedBank,
+                statement_period: metadata.period || `${new Date().toLocaleString('default', { month: 'long' })} ${new Date().getFullYear()}`,
+                statement_start_date: startDate,
+                statement_end_date: endDate,
+                currency: stmtCurrency,
+                opening_balance: openingBal,
+                closing_balance: closingBal,
+                total_debits: metadata.totalDebits || totalDebits,
+                total_credits: metadata.totalCredits || totalCredits,
+                transaction_count: parsedLines.length,
+                status: 'completed',
+              })
+              .select()
+              .single();
 
-          if (uploadError) throw uploadError;
+            if (uploadError) throw uploadError;
+            uploadRecord = data;
+          } catch (uploadErr: any) {
+            console.error('Error creating statement upload record:', uploadErr);
+            alert(`❌ Error creating statement upload record: ${uploadErr.message}`);
+            return;
+          }
 
           const { data: { user } } = await supabase.auth.getUser();
 
@@ -1169,18 +1206,22 @@ export function BankReconciliationEnhanced({
             return;
           }
 
-          // Use upsert with ignoreDuplicates to safely handle any remaining hash collisions
-          const { data: inserted, error: insertError } = await supabase
-            .from('bank_statement_lines')
-            .upsert(finalInsertData, { onConflict: 'transaction_hash', ignoreDuplicates: true })
-            .select();
+          // Stage 3: Insert statement lines
+          let insertedCount = 0;
+          try {
+            // Use upsert with ignoreDuplicates to safely handle any remaining hash collisions
+            const { data: inserted, error: insertError } = await supabase
+              .from('bank_statement_lines')
+              .upsert(finalInsertData, { onConflict: 'transaction_hash', ignoreDuplicates: true })
+              .select();
 
-          if (insertError) {
-            console.error('Insert error:', insertError);
-            throw insertError;
+            if (insertError) throw insertError;
+            insertedCount = inserted?.length || 0;
+          } catch (insertErr: any) {
+            console.error('Error inserting statement lines:', insertErr);
+            alert(`❌ Error importing statement lines: ${insertErr.message}`);
+            return;
           }
-
-          const insertedCount = inserted?.length || 0;
 
           setImportResult({
             totalInFile: insertData.length,
@@ -1189,22 +1230,33 @@ export function BankReconciliationEnhanced({
           });
           setShowImportResultModal(true);
 
+          // Stage 4: Reload statement lines and auto-match
           try {
             await loadStatementLines();
-          } catch (loadError) {
-            console.error('Load statement lines error:', loadError);
+          } catch (loadError: any) {
+            if (loadError?.name === 'AbortError' || loadError?.message?.includes('aborted')) {
+              console.warn('loadStatementLines request was aborted (expected during fast refresh).');
+            } else {
+              console.error('Load statement lines error:', loadError);
+            }
           }
 
           if (insertedCount > 0) {
             try {
               await autoMatchTransactions();
-            } catch (matchError) {
-              console.error('Auto-match error:', matchError);
+            } catch (matchError: any) {
+              if (matchError?.name === 'AbortError' || matchError?.message?.includes('aborted')) {
+                console.warn('autoMatchTransactions request was aborted.');
+              } else {
+                console.error('Auto-match error:', matchError);
+              }
             }
           }
         } catch (err: any) {
-          console.error('CSV parsing error:', err);
-          alert(`❌ Error parsing CSV: ${err.message}`);
+          console.error('File upload workflow error:', err);
+          if (err?.name !== 'AbortError' && !err?.message?.includes('aborted')) {
+            alert(`❌ Error processing file: ${err.message}`);
+          }
         }
       };
       reader.onerror = () => {
@@ -1568,7 +1620,7 @@ export function BankReconciliationEnhanced({
         const cell = String(row[j] || '').trim();
         if (!cell) continue;
 
-        const pMatch = cell.match(/Period(?:e)?\s*:\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s*-\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/i);
+        const pMatch = cell.match(/Period(?:e)?\s*:\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})\s*-\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/i);
         if (pMatch) {
           let sDay = parseInt(pMatch[1]), sMon = parseInt(pMatch[2]), sYr = parseInt(pMatch[3]);
           let eDay = parseInt(pMatch[4]), eMon = parseInt(pMatch[5]), eYr = parseInt(pMatch[6]);
@@ -1627,7 +1679,7 @@ export function BankReconciliationEnhanced({
     if (!fileYear) {
       for (let i = headerRowIdx + 1; i < rows.length; i++) {
         const cell = String(rows[i]?.[dateCol] || '').trim();
-        const m = cell.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+        const m = cell.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})$/);
         if (m) {
           let yr = parseInt(m[3]);
           fileYear = yr < 100 ? (yr < 70 ? 2000 + yr : 1900 + yr) : yr;
@@ -1643,9 +1695,7 @@ export function BankReconciliationEnhanced({
       const row = rows[i];
       if (!row || row.length === 0 || row.every((c: any) => !String(c || '').trim())) continue;
 
-      const firstCell = String(row[0] || '').toUpperCase();
-      const secondCell = String(row[1] || '').toUpperCase();
-      const rowText = `${firstCell} ${secondCell}`;
+      const rowText = row.map((c: any) => String(c || '').toUpperCase().trim()).join(' ');
 
       if (rowText.includes('SALDO AWAL') || rowText.includes('START BALANCE') || rowText.includes('OPENING BALANCE')) {
         continue;
@@ -1667,7 +1717,7 @@ export function BankReconciliationEnhanced({
       }
 
       const dateVal = row[dateCol];
-      if (!dateVal) continue;
+      if (!dateVal || !String(dateVal).trim()) continue;
 
       let parsedDate = '';
       if (typeof dateVal === 'number') {
@@ -1677,8 +1727,8 @@ export function BankReconciliationEnhanced({
         parsedDate = `${jsDate.getFullYear()}-${String(jsDate.getMonth() + 1).padStart(2, '0')}-${String(jsDate.getDate()).padStart(2, '0')}`;
       } else {
         const dateStr = String(dateVal).trim();
-        const fullDateMatch = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-        const numericMatch = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})$/);
+        const fullDateMatch = dateStr.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})$/);
+        const numericMatch = dateStr.match(/^(\d{1,2})[.\/-](\d{1,2})$/);
         const namedMatch = dateStr.match(/^(\d{1,2})[-\s]([A-Za-z]{3,4})(?:[-\s](\d{2,4}))?$/);
         const monthNames: Record<string, number> = {
           jan: 1, feb: 2, mar: 3, apr: 4, may: 5, mei: 5,
@@ -1819,18 +1869,24 @@ export function BankReconciliationEnhanced({
 
       await loadStatementLines();
 
-      let message = `✅ Auto-match complete!\n\n`;
-      message += `✓ Matched (85%+ confidence): ${matchedCount}\n`;
-      message += `⚠ Needs Review (70-84%): ${suggestedCount}\n`;
-      if (skippedCount > 0) {
-        message += `⏭ Skipped (already matched): ${skippedCount}\n`;
+      if (suggestedCount > 0 && activeFilter === 'unmatched') {
+        setActiveFilter('suggested');
       }
+
+      let message = `✅ Auto-match complete!\n\n`;
+      message += `✓ Matched: ${matchedCount}\n`;
+      message += `⚠ Needs Review: ${suggestedCount}\n`;
+      message += `⏭ Unmatched/Skipped: ${skippedCount}\n`;
       message += `\n🔒 Date tolerance: ±7 days maximum`;
 
       alert(message);
     } catch (err: any) {
-      console.error('Error auto-matching:', err);
-      alert('❌ Auto-match failed: ' + err.message);
+      if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
+        console.warn('Auto-match request was aborted.');
+      } else {
+        console.error('Error auto-matching:', err);
+        alert('❌ Auto-match failed: ' + err.message);
+      }
     }
   };
 
@@ -3298,14 +3354,23 @@ export function BankReconciliationEnhanced({
                             <Clock className="w-3 h-3" /> Needs Review
                           </span>
                           {line.matchedExpense && (
-                            <span className="text-xs text-purple-700 font-medium">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedSuggestedLine(line)}
+                              className="text-xs text-purple-700 font-medium hover:underline text-left inline-flex items-center gap-1 cursor-pointer"
+                              title="Click to view full match details side-by-side"
+                            >
                               → Suggested: {line.matchedExpense.voucher_number || 'Expense'}
-                              {line.matchedExpense.approval_status === 'pending_approval' && (
-                                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
+                              {line.matchedExpense.approval_status === 'pending_approval' ? (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 font-semibold">
                                   Pending Approval
                                 </span>
+                              ) : (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-green-100 text-green-800 font-semibold">
+                                  Approved
+                                </span>
                               )}
-                            </span>
+                            </button>
                           )}
                           {line.notes && line.notes.startsWith('Suggested match:') && (
                             <span className="text-[11px] text-gray-500 italic">
@@ -3343,6 +3408,14 @@ export function BankReconciliationEnhanced({
                       )}
                       {line.status === 'suggested' && (
                         <>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSuggestedLine(line)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 rounded font-medium"
+                            title="Review suggested match side-by-side"
+                          >
+                            Review
+                          </button>
                           <FinanceActionButton
                             action="approve"
                             label="Confirm Match"
@@ -4987,6 +5060,327 @@ export function BankReconciliationEnhanced({
           </div>
         </Modal>
       )}
+
+      {/* Suggested Match Review Modal / Drawer */}
+      {selectedSuggestedLine && selectedSuggestedLine.matchedExpense && (() => {
+        const line = selectedSuggestedLine;
+        const exp = line.matchedExpense;
+        if (!exp) return null;
+        const bankAmount = Number(line.debit) || Number(line.credit) || 0;
+        const expAmount = Number(exp.amount) || 0;
+        const amountDiff = Math.abs(bankAmount - expAmount);
+        const isAmountExact = amountDiff <= 0.01;
+
+        const bankDateObj = new Date(line.date);
+        const expDateObj = new Date(exp.expense_date);
+        const daysDiff = Math.round(Math.abs((bankDateObj.getTime() - expDateObj.getTime()) / (1000 * 60 * 60 * 24)));
+        const isDateExact = daysDiff === 0;
+
+        const direction = line.debit > 0 ? 'Debit' : 'Credit';
+
+        const tierMatch = line.notes?.match(/Tier\s*(\d+)/i);
+        const tierStr = tierMatch ? tierMatch[1] : (isAmountExact && isDateExact ? '1' : '2');
+        const textScoreMatch = line.notes?.match(/text score\s*(\d+)/i);
+        const textScoreStr = textScoreMatch ? textScoreMatch[1] : (exp.voucher_number && line.description.includes(exp.voucher_number) ? '8' : '4');
+
+        const isPending = exp.approval_status === 'pending_approval';
+
+        return (
+          <Modal
+            isOpen={true}
+            onClose={() => setSelectedSuggestedLine(null)}
+            title={`Suggested Match: ${exp.voucher_number || 'Expense'}`}
+            maxWidth="max-w-4xl"
+          >
+            <div className="space-y-4 text-sm">
+              {/* Pending Approval Banner */}
+              {isPending && (
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-semibold text-amber-900">
+                      Pending Approval — Confirm Match Disabled
+                    </p>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      Approve this expense in Finance before confirming the bank match. Bank transactions cannot automatically approve pending expenses.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Side-by-Side Sections */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Column 1: Bank Transaction */}
+                <div className="border border-gray-200 rounded-lg p-3.5 bg-gray-50/50 space-y-2.5">
+                  <div className="flex items-center justify-between border-b pb-2 border-gray-200">
+                    <h4 className="font-semibold text-gray-900 flex items-center gap-1.5 text-xs uppercase tracking-wide">
+                      <Landmark className="w-4 h-4 text-blue-600" />
+                      Bank Transaction
+                    </h4>
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${line.debit > 0 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                      {direction}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1.5 text-xs">
+                    <span className="text-gray-500">Date:</span>
+                    <span className="col-span-2 font-medium text-gray-800">
+                      {new Date(line.date).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })}
+                    </span>
+
+                    <span className="text-gray-500">Amount:</span>
+                    <span className={`col-span-2 font-bold ${line.debit > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {formatCurrency(bankAmount, line.currency)}
+                    </span>
+
+                    <span className="text-gray-500">Description:</span>
+                    <span className="col-span-2 text-gray-800 break-words whitespace-pre-wrap font-mono text-[11px] bg-white p-1.5 rounded border border-gray-200 max-h-24 overflow-y-auto">
+                      {line.description}
+                    </span>
+
+                    <span className="text-gray-500">Reference:</span>
+                    <span className="col-span-2 text-gray-800 font-mono">
+                      {line.reference || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Branch:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {line.reference || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Recon Status:</span>
+                    <span className="col-span-2">
+                      <span className="px-1.5 py-0.5 rounded text-[11px] bg-purple-100 text-purple-700 font-medium">
+                        Needs Review
+                      </span>
+                    </span>
+
+                    <span className="text-gray-500">Match Status:</span>
+                    <span className="col-span-2 font-medium text-purple-700">
+                      Suggested
+                    </span>
+                  </div>
+                </div>
+
+                {/* Column 2: Suggested Expense */}
+                <div className="border border-gray-200 rounded-lg p-3.5 bg-gray-50/50 space-y-2.5">
+                  <div className="flex items-center justify-between border-b pb-2 border-gray-200">
+                    <h4 className="font-semibold text-gray-900 flex items-center gap-1.5 text-xs uppercase tracking-wide">
+                      <FileText className="w-4 h-4 text-purple-600" />
+                      Suggested Expense
+                    </h4>
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${isPending ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                      {isPending ? 'Pending Approval' : 'Approved'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1.5 text-xs">
+                    <span className="text-gray-500">Voucher #:</span>
+                    <span className="col-span-2 font-bold text-gray-900 font-mono">
+                      {exp.voucher_number || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Expense Date:</span>
+                    <span className="col-span-2 font-medium text-gray-800">
+                      {new Date(exp.expense_date).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })}
+                    </span>
+
+                    <span className="text-gray-500">Amount:</span>
+                    <span className="col-span-2 font-bold text-gray-900">
+                      {formatCurrency(expAmount, exp.currency_code || 'IDR')}
+                    </span>
+
+                    <span className="text-gray-500">Category:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {exp.expense_category || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Supplier:</span>
+                    <span className="col-span-2 font-medium text-gray-800">
+                      {exp.suppliers?.company_name || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Payee / Staff:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {exp.finance_staff_master?.full_name || exp.finance_payees?.full_name || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Invoice #:</span>
+                    <span className="col-span-2 text-gray-800 font-mono">
+                      {exp.invoice_number || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Payment Ref:</span>
+                    <span className="col-span-2 text-gray-800 font-mono">
+                      {exp.payment_reference || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Container:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {exp.import_containers?.container_ref || '—'}
+                    </span>
+
+                    <span className="text-gray-500">Description:</span>
+                    <span className="col-span-2 text-gray-800 break-words whitespace-pre-wrap text-[11px] bg-white p-1.5 rounded border border-gray-200 max-h-24 overflow-y-auto">
+                      {exp.description || '—'}
+                    </span>
+
+                    <span className="text-gray-500">PPN / PPh:</span>
+                    <span className="col-span-2 text-gray-700">
+                      PPN: {Number(exp.ppn_amount) > 0 ? formatCurrency(exp.ppn_amount, exp.currency_code || 'IDR') : 'None'}
+                      {' · '}
+                      PPh: {Number(exp.pph_amount) > 0 ? formatCurrency(exp.pph_amount, exp.currency_code || 'IDR') : 'None'}
+                    </span>
+
+                    <span className="text-gray-500">Payment Method:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {exp.payment_method ? exp.payment_method.replace('_', ' ') : 'Unspecified'}
+                    </span>
+
+                    <span className="text-gray-500">Bank Account:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {exp.bank_accounts?.account_name ? `${exp.bank_accounts.account_name} (${exp.bank_accounts.account_number})` : '—'}
+                    </span>
+
+                    <span className="text-gray-500">Paid Amount:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {formatCurrency(exp.paid_amount || 0, exp.currency_code || 'IDR')}
+                    </span>
+
+                    <span className="text-gray-500">Currency / Rate:</span>
+                    <span className="col-span-2 text-gray-800">
+                      {exp.currency_code || 'IDR'} {exp.exchange_rate && exp.exchange_rate !== 1 ? `· Rate: ${exp.exchange_rate}` : ''}
+                    </span>
+
+                    <span className="text-gray-500">Created By:</span>
+                    <span className="col-span-2 text-gray-700">
+                      {exp.created_by_profile?.full_name || '—'}
+                    </span>
+
+                    {exp.document_urls && exp.document_urls.length > 0 && (
+                      <>
+                        <span className="text-gray-500">Attachments:</span>
+                        <div className="col-span-2 flex flex-col gap-1">
+                          {exp.document_urls.map((url: string, idx: number) => {
+                            const filename = url.split('/').pop() || `Document ${idx + 1}`;
+                            return (
+                              <a
+                                key={url}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline text-[11px] truncate flex items-center gap-1"
+                              >
+                                📎 {filename.substring(0, 35)}
+                              </a>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Match Analysis Section */}
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-purple-900 text-xs uppercase tracking-wider">
+                    Match Analysis
+                  </h4>
+                  <span className="text-xs text-purple-700 font-medium">
+                    Tier {tierStr} · Text Score: {textScoreStr}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <div className="bg-white p-2 rounded border border-purple-100">
+                    <span className="text-gray-500 block text-[11px]">Amount</span>
+                    <span className={`font-semibold ${isAmountExact ? 'text-green-700' : 'text-amber-700'}`}>
+                      {isAmountExact ? 'Exact ✓' : `Diff: ${formatCurrency(amountDiff, line.currency)}`}
+                    </span>
+                  </div>
+
+                  <div className="bg-white p-2 rounded border border-purple-100">
+                    <span className="text-gray-500 block text-[11px]">Date</span>
+                    <span className={`font-semibold ${isDateExact ? 'text-green-700' : 'text-blue-700'}`}>
+                      {isDateExact ? 'Exact ✓' : `${daysDiff} day${daysDiff === 1 ? '' : 's'} diff`}
+                    </span>
+                  </div>
+
+                  <div className="bg-white p-2 rounded border border-purple-100">
+                    <span className="text-gray-500 block text-[11px]">Direction</span>
+                    <span className="font-semibold text-green-700">
+                      Debit = Debit ✓
+                    </span>
+                  </div>
+
+                  <div className="bg-white p-2 rounded border border-purple-100">
+                    <span className="text-gray-500 block text-[11px]">Match Confidence</span>
+                    <span className="font-semibold text-purple-700">
+                      Tier {tierStr} (High)
+                    </span>
+                  </div>
+                </div>
+
+                {line.notes && (
+                  <p className="text-xs text-purple-800 bg-white/70 p-2 rounded border border-purple-100">
+                    <strong>Suggestion reason:</strong> {line.notes}
+                  </p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+                <div className="flex items-center gap-2">
+                  {exp.document_urls && exp.document_urls.length > 0 && (
+                    <a
+                      href={exp.document_urls[0]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 border border-gray-300 rounded text-xs font-medium hover:bg-gray-50 text-gray-700 flex items-center gap-1"
+                    >
+                      View Attachment
+                    </a>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSuggestedLine(null)}
+                    className="px-3 py-1.5 border border-gray-300 rounded text-xs font-medium hover:bg-gray-50 text-gray-700"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await rejectMatch(line.id);
+                      setSelectedSuggestedLine(null);
+                    }}
+                    className="px-3 py-1.5 border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 rounded text-xs font-medium"
+                  >
+                    Reject Suggestion
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={async () => {
+                      await confirmMatch(line.id);
+                      setSelectedSuggestedLine(null);
+                    }}
+                    className={`px-4 py-1.5 rounded text-xs font-semibold text-white ${isPending ? 'bg-gray-300 cursor-not-allowed opacity-60' : 'bg-green-600 hover:bg-green-700 shadow-sm'}`}
+                    title={isPending ? 'Approve this expense in Finance before confirming' : 'Confirm and reconcile'}
+                  >
+                    Confirm Match
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

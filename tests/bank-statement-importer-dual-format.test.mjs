@@ -217,7 +217,7 @@ const parseStatementDataWithMetadata = (rows, providedYear) => {
     ) break;
 
     const dateVal = row[dateCol];
-    if (!dateVal) continue;
+    if (!dateVal || !String(dateVal).trim()) continue;
 
     let parsedDate = '';
     if (typeof dateVal === 'number') {
@@ -227,8 +227,8 @@ const parseStatementDataWithMetadata = (rows, providedYear) => {
       parsedDate = `${jsDate.getFullYear()}-${String(jsDate.getMonth() + 1).padStart(2, '0')}-${String(jsDate.getDate()).padStart(2, '0')}`;
     } else {
       const dateStr = String(dateVal).trim();
-      const fullDateMatch = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-      const numericMatch = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})$/);
+      const fullDateMatch = dateStr.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})$/);
+      const numericMatch = dateStr.match(/^(\d{1,2})[.\/-](\d{1,2})$/);
       const namedMatch = dateStr.match(/^(\d{1,2})[-\s]([A-Za-z]{3,4})(?:[-\s](\d{2,4}))?$/);
       const monthNames = {
         jan: 1, feb: 2, mar: 3, apr: 4, may: 5, mei: 5,
@@ -441,6 +441,21 @@ console.log('===================================================================
     rejectedDouble = e.message.includes('must have exactly one positive debit or credit amount');
   }
   assert('Validation: Rejects simultaneous positive debit and credit', rejectedDouble);
+
+  // 6. Dot date formats and 2-digit years
+  const dotDateRes = parseStatementDataWithMetadata([
+    ['Transaction Date', 'Description', 'Branch', 'Amount', 'Balance'],
+    ['14.9.26', 'Payment 1', '0000', '100,000.00 DB', '900,000.00'],
+    ['09.09.2026', 'Payment 2', '0000', '200,000.00 DB', '700,000.00'],
+    ['09/09/26', 'Deposit 1', '0000', '300,000.00 CR', '1,000,000.00'],
+    ['', '', '', '', ''], // Blank row with ,,
+    ['SALDO AWAL', '0.00', '', '', ''], // Footer row
+    ['MUTASI DEBET', '300,000.00', '', '', ''], // Footer row
+  ]);
+  assert('Dot date format: 14.9.26 parses to 2026-09-14', dotDateRes.lines[0]?.date === '2026-09-14');
+  assert('Dot date format: 09.09.2026 parses to 2026-09-09', dotDateRes.lines[1]?.date === '2026-09-09');
+  assert('Slash 2-digit year: 09/09/26 parses to 2026-09-09', dotDateRes.lines[2]?.date === '2026-09-09');
+  assert('Blank rows and footer rows are ignored', dotDateRes.lines.length === 3);
 }
 
 console.log('\n====================================================================');
