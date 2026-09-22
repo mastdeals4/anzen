@@ -371,3 +371,75 @@ test('CASE 6: Record the same bank line twice -> No duplicate loan, No duplicate
 
   assert.equal(rows[0].success, 1);
 });
+
+test('CASE 7: Live LN2609-0001 must be given / 1310 / closed / 0 outstanding', () => {
+  const rows = runSql(`
+    SELECT l.loan_number, l.loan_type, l.counterparty_name, l.principal_amount, l.outstanding_balance, l.status, coa.code as coa_code
+    FROM loans l
+    JOIN chart_of_accounts coa ON coa.id = l.coa_id
+    WHERE l.loan_number = 'LN2609-0001';
+  `);
+  assert.equal(rows.length, 1);
+  const l = rows[0];
+  assert.equal(l.loan_number, 'LN2609-0001');
+  assert.equal(l.loan_type, 'given');
+  assert.equal(l.counterparty_name, 'Vijay Lunkad');
+  assert.equal(Number(l.principal_amount), 10000000);
+  assert.equal(Number(l.outstanding_balance), 0);
+  assert.equal(l.status, 'closed');
+  assert.equal(l.coa_code, '1310');
+});
+
+test('CASE 8: Live LN2601-0001 must be taken / 2105 / 20m / active', () => {
+  const rows = runSql(`
+    SELECT l.loan_number, l.loan_type, l.counterparty_name, l.principal_amount, l.outstanding_balance, l.status, coa.code as coa_code
+    FROM loans l
+    JOIN chart_of_accounts coa ON coa.id = l.coa_id
+    WHERE l.loan_number = 'LN2601-0001';
+  `);
+  assert.equal(rows.length, 1);
+  const l = rows[0];
+  assert.equal(l.loan_number, 'LN2601-0001');
+  assert.equal(l.loan_type, 'taken');
+  assert.equal(l.counterparty_name, 'Vijay Lunkad');
+  assert.equal(Number(l.principal_amount), 20000000);
+  assert.equal(Number(l.outstanding_balance), 20000000);
+  assert.equal(l.status, 'active');
+  assert.equal(l.coa_code, '2105');
+});
+
+test('CASE 9: GL 1310 has zero net balance from the September temporary loan (JE2609-0471 Dr 10m / JE2609-0472 Cr 10m)', () => {
+  const rows = runSql(`
+    SELECT 
+      SUM(CASE WHEN je.entry_number = 'JE2609-0471' THEN jel.debit - jel.credit ELSE 0 END) as je_471_net,
+      SUM(CASE WHEN je.entry_number = 'JE2609-0472' THEN jel.debit - jel.credit ELSE 0 END) as je_472_net,
+      SUM(jel.debit - jel.credit) as total_net
+    FROM journal_entry_lines jel
+    JOIN journal_entries je ON je.id = jel.journal_entry_id
+    JOIN chart_of_accounts coa ON coa.id = jel.account_id
+    WHERE coa.code = '1310' AND je.entry_number IN ('JE2609-0471', 'JE2609-0472');
+  `);
+  assert.equal(rows.length, 1);
+  assert.equal(Number(rows[0].je_471_net), 10000000);
+  assert.equal(Number(rows[0].je_472_net), -10000000);
+  assert.equal(Number(rows[0].total_net), 0);
+});
+
+test('CASE 10: GL 2210 has zero September Vijay loan entries, and zero duplicate loan_transactions', () => {
+  const rows2210 = runSql(`
+    SELECT count(*) as count
+    FROM journal_entry_lines jel
+    JOIN chart_of_accounts coa ON coa.id = jel.account_id
+    JOIN journal_entries je ON je.id = jel.journal_entry_id
+    WHERE coa.code = '2210' AND je.entry_date BETWEEN '2026-09-01' AND '2026-09-30';
+  `);
+  assert.equal(Number(rows2210[0].count), 0);
+
+  const rowsLT = runSql(`
+    SELECT count(*) as count
+    FROM loan_transactions lt
+    JOIN loans l ON l.id = lt.loan_id
+    WHERE l.loan_number = 'LN2609-0001';
+  `);
+  assert.equal(Number(rowsLT[0].count), 1);
+});
