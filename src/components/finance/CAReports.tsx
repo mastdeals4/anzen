@@ -594,7 +594,8 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
           'Qty In': row.in_qty,
           'Qty Out': row.out_qty,
           'Closing Qty': row.closing,
-          'Reserved Qty': row.reserved_qty
+          'Reserved Qty': row.reserved_qty,
+          'Current Stock': row.current_stock
         }));
         filename = `Inventory_Movement_${dateRange.from}_to_${dateRange.to}.xlsx`;
         break;
@@ -864,6 +865,7 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
                       <th className="px-1.5 py-1 text-right font-medium text-slate-700 bg-red-50">Out</th>
                       <th className="px-1.5 py-1 text-right font-medium text-slate-700 bg-blue-50">Closing</th>
                       <th className="px-1.5 py-1 text-right font-medium text-slate-700 bg-amber-50">Reserved</th>
+                      <th className="px-1.5 py-1 text-right font-medium text-slate-700 bg-slate-100">Current Stock</th>
                     </>
                   )}
                   {selectedReport === 'stock_report' && (<>
@@ -976,6 +978,9 @@ export function CAReports({ onOpenJournal, onDrillDown }: CAReportsProps) {
                     </td>
                     <td className="px-1.5 py-1 text-right text-amber-700 bg-amber-50">
                       {row.reserved_qty > 0 ? (row.reserved_qty % 1 === 0 ? row.reserved_qty : parseFloat(row.reserved_qty).toFixed(3)) : '-'}
+                    </td>
+                    <td className="px-1.5 py-1 text-right text-slate-700 font-medium bg-slate-50">
+                      {row.current_stock !== undefined && row.current_stock !== null ? (row.current_stock % 1 === 0 ? row.current_stock : parseFloat(row.current_stock).toFixed(3)) : '-'}
                     </td>
                   </tr>
                 ))}

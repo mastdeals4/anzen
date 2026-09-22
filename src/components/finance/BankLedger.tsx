@@ -153,7 +153,8 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
           .from('journal_entry_lines')
           .select('debit, credit, transaction_debit, transaction_credit, journal_entry_id, journal_entries!inner(entry_date, source_module, reference_number, is_posted, is_reversed)')
           .eq('account_id', selectedBankData.coa_id)
-          .eq('journal_entries.is_posted', true);
+          .eq('journal_entries.is_posted', true)
+          .eq('journal_entries.is_reversed', false);
         const journalIds = Array.from(new Set((glLines || []).map((line: any) => line.journal_entry_id).filter(Boolean)));
         const economicDates = journalIds.length
           ? await fetchInBatches<any>(

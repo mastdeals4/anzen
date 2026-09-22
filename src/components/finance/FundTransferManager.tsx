@@ -899,7 +899,6 @@ export function FundTransferManager({
                   })}
                   className={SAP_INPUT} required>
                   <option value="bank">Bank Account</option>
-                  <option value="cash_on_hand">Cash on Hand</option>
                   <option value="petty_cash">Petty Cash</option>
                 </select>
               </SapField>
@@ -947,7 +946,6 @@ export function FundTransferManager({
                   })}
                   className={SAP_INPUT} required>
                   <option value="petty_cash">Petty Cash</option>
-                  <option value="cash_on_hand">Cash on Hand</option>
                   <option value="bank">Bank Account</option>
                 </select>
               </SapField>

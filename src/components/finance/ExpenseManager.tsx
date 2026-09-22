@@ -2290,10 +2290,9 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     } else if (key === 'payment_status') {
       // Sort by payment status: Outstanding(0) < Partial(1) < Paid(2)
       const payRank = (e: FinanceExpense) => {
-        if (e.payment_method !== null) return 2;
         const bal = calculateCanonicalCashPayable(e) - (e.paid_amount ?? 0);
         if (bal <= 0.01) return 2;
-        if ((e.paid_amount ?? 0) > 0) return 1;
+        if ((e.paid_amount ?? 0) > 0.01) return 1;
         return 0;
       };
       aValue = payRank(a);
@@ -2363,20 +2362,31 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
            exp.bank_statement_lines?.[0]?.bank_accounts?.bank_name ||
            '');
       // Payment status (independent of reconciliation)
+      const balance = calculateCanonicalCashPayable(exp) - (exp.paid_amount ?? 0);
       let paymentStatus = 'Paid';
-      if (exp.payment_method === null) {
-        const balance = calculateCanonicalCashPayable(exp) - (exp.paid_amount ?? 0);
-        if (balance > 0.01 && (exp.paid_amount ?? 0) > 0) paymentStatus = 'Partial';
-        else if (balance > 0.01) paymentStatus = 'Outstanding';
-      }
+      if (balance > 0.01 && (exp.paid_amount ?? 0) > 0.01) paymentStatus = 'Partially Paid';
+      else if (balance > 0.01) paymentStatus = 'Outstanding';
+
       // Recon status (distinguishing Reconciled, Pending Recon, Petty Cash, and Outstanding)
-      const isReconciled = exp.bank_statement_lines && exp.bank_statement_lines.length > 0;
-      let reconStatus = 'Reconciled';
+      const reconciledAmount = (exp.bank_statement_lines || []).reduce(
+        (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+        0,
+      );
+      const reconciliationTotal = calculateCanonicalCashPayable(exp);
+      const isPartiallyReconciled = reconciledAmount > 0.01 && reconciledAmount < reconciliationTotal - 0.01;
+      const isReconciled = reconciledAmount >= reconciliationTotal - 0.01;
+
+      let reconStatus = 'Paid / Reconciled';
       if (exp.approval_status === 'cancelled' || exp.effective_posting_state === 'REVERSED') reconStatus = 'Cancelled';
       else if (exp.payment_method === 'cash') reconStatus = 'Petty Cash';
       else if (paymentStatus === 'Outstanding') reconStatus = 'Outstanding';
-      else if (isReconciled) reconStatus = 'Reconciled';
-      else reconStatus = 'Reconciliation Pending';
+      else if (paymentStatus === 'Partially Paid') {
+        reconStatus = (isPartiallyReconciled || isReconciled) ? 'Partially Paid / Reconciled' : 'Partially Paid / Reconciliation Pending';
+      } else if (isReconciled) {
+        reconStatus = 'Paid / Reconciled';
+      } else {
+        reconStatus = 'Paid / Reconciliation Pending';
+      }
       const account = exportAccounts[exp.id];
       const journal = postedJournals.get(exp.id);
       const totals = calculateExpenseTotals(exp);
@@ -2855,32 +2865,22 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           return <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-100 text-gray-500" title="Cancelled"><Banknote className="w-3 h-3" /></span>;
                         }
                         // Payment status — Banknote icon colored by status
-                        if (expense.payment_method !== null) {
-                          return (
-                            <span
-                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700"
-                              title="Paid"
-                            >
-                              <Banknote className="w-3 h-3" />
-                            </span>
-                          );
-                        }
                         const billBalance = calculateCanonicalCashPayable(expense) - (expense.paid_amount ?? 0);
-                        if (billBalance <= 0.01) {
-                          return (
-                            <span
-                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700"
-                              title="Paid"
-                            >
-                              <Banknote className="w-3 h-3" />
-                            </span>
-                          );
-                        }
-                        if ((expense.paid_amount ?? 0) > 0) {
+                        if (billBalance > 0.01 && (expense.paid_amount ?? 0) > 0.01) {
                           return (
                             <span
                               className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-100 text-yellow-700"
-                              title={`Partial · Paid ${formatCurrency(expense.paid_amount ?? 0, getExpenseCurrency(expense))} of ${formatCurrency(calculateCanonicalCashPayable(expense), getExpenseCurrency(expense))} · ${formatCurrency(billBalance, getExpenseCurrency(expense))} left`}
+                              title={`Partially Paid · Paid ${formatCurrency(expense.paid_amount ?? 0, getExpenseCurrency(expense))} of ${formatCurrency(calculateCanonicalCashPayable(expense), getExpenseCurrency(expense))} · ${formatCurrency(billBalance, getExpenseCurrency(expense))} left`}
+                            >
+                              <Banknote className="w-3 h-3" />
+                            </span>
+                          );
+                        }
+                        if (billBalance > 0.01 && (expense.paid_amount ?? 0) <= 0.01 && expense.payment_method === null) {
+                          return (
+                            <span
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-700"
+                              title="Outstanding"
                             >
                               <Banknote className="w-3 h-3" />
                             </span>
@@ -2888,8 +2888,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         }
                         return (
                           <span
-                            className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-700"
-                            title="Outstanding"
+                            className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700"
+                            title="Paid"
                           >
                             <Banknote className="w-3 h-3" />
                           </span>
@@ -2912,38 +2912,53 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                           return (
                             <span
                               className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-700"
-                              title="Petty Cash · Settled via cash drawer"
+                              title="Petty Cash"
                             >
                               <Banknote className="w-3 h-3" />
                             </span>
                           );
                         }
-                        const isPaid = expense.payment_method !== null || (expense.paid_amount ?? 0) > 0.01;
-                        if (!isPaid) {
+                        const billBalance = calculateCanonicalCashPayable(expense) - (expense.paid_amount ?? 0);
+                        const isPartiallyPaid = (expense.paid_amount ?? 0) > 0.01 && billBalance > 0.01;
+                        const isFullyPaid = billBalance <= 0.01;
+                        const isPaidAny = isFullyPaid || isPartiallyPaid;
+
+                        if (!isPaidAny) {
                           return (
                             <span
                               className="text-gray-400 text-[11px] font-semibold"
-                              title="Outstanding · Awaiting payment before bank reconciliation"
+                              title="Outstanding"
                             >
                               —
                             </span>
                           );
                         }
+                        if (isPartiallyPaid) {
+                          if (isPartiallyReconciled || isReconciled) {
+                            return (
+                              <span
+                                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-100 text-yellow-700"
+                                title="Partially Paid / Reconciled"
+                              >
+                                <Link2 className="w-3 h-3" />
+                              </span>
+                            );
+                          }
+                          return (
+                            <span
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700"
+                              title="Partially Paid / Reconciliation Pending"
+                            >
+                              <Clock className="w-3 h-3" />
+                            </span>
+                          );
+                        }
+                        // Fully Paid
                         if (isReconciled) {
                           return (
                             <span
                               className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700"
-                              title="Paid · Reconciled with bank statement"
-                            >
-                              <Link2 className="w-3 h-3" />
-                            </span>
-                          );
-                        }
-                        if (isPartiallyReconciled) {
-                          return (
-                            <span
-                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-100 text-yellow-700"
-                              title={`Paid · Partially Reconciled · ${formatCurrency(Math.max(reconciliationTotal - reconciledAmount, 0), getExpenseCurrency(expense))} remaining`}
+                              title="Paid / Reconciled"
                             >
                               <Link2 className="w-3 h-3" />
                             </span>
@@ -2952,7 +2967,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         return (
                           <span
                             className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700"
-                            title="Paid · Reconciliation Pending (Payment recorded, awaiting bank statement)"
+                            title="Paid / Reconciliation Pending"
                           >
                             <Clock className="w-3 h-3" />
                           </span>
