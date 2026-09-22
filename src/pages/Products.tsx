@@ -334,8 +334,8 @@ export function Products() {
       }
 
       const { count: movementCount } = await supabase
-        .from('inventory_transactions')
-        .select('id', { count: 'exact', head: true })
+        .from('inventory_operational_physical_ledger')
+        .select('source_id', { count: 'exact', head: true })
         .eq('product_id', product.id);
 
       if ((movementCount || 0) > 0) {

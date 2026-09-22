@@ -100,12 +100,12 @@ export function StockDrillDownModal({ product, onClose }: Props) {
     const batchRows = (data || []) as any[];
     const batchIds = batchRows.map(b => b.id);
     const { data: movements } = batchIds.length
-      ? await supabase.from('inventory_transactions').select('batch_id,transaction_type,quantity').in('batch_id', batchIds)
+      ? await supabase.from('inventory_operational_physical_ledger').select('batch_id,quantity').in('batch_id', batchIds)
       : { data: [] as any[] };
     const movementByBatch = (movements || []).reduce((acc: Record<string, { received: number; out: number }>, movement: any) => {
       const current = acc[movement.batch_id] || { received: 0, out: 0 };
       const quantity = Number(movement.quantity) || 0;
-      if (movement.transaction_type === 'purchase' && quantity > 0) current.received += quantity;
+      if (quantity > 0) current.received += quantity;
       if (quantity < 0) current.out += Math.abs(quantity);
       acc[movement.batch_id] = current;
       return acc;
