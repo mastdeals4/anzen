@@ -330,9 +330,13 @@ export function BankReconciliationEnhanced({
   const [directorLoanAccounts, setDirectorLoanAccounts] = useState<DirectorOwnerLoanOption[]>([]);
   const [directorLoanAccountId, setDirectorLoanAccountId] = useState('');
   const [recordDirectorLoanWithdrawal, setRecordDirectorLoanWithdrawal] = useState(false);
+  const [recordLoanDebit, setRecordLoanDebit] = useState(false);
   const [recordLoanRepayment, setRecordLoanRepayment] = useState(false);
+  const [loanDirection, setLoanDirection] = useState<'given' | 'taken'>('given');
+  const [loanCoaId, setLoanCoaId] = useState('');
+  const [loanAccounts, setLoanAccounts] = useState<Array<{ id: string; code: string; name: string; account_type: string }>>([]);
   const [activeLoans, setActiveLoans] = useState<Array<{
-    id: string; loan_number: string; counterparty_name: string; outstanding_balance: number; currency: string;
+    id: string; loan_number: string; counterparty_name: string; loan_type?: string; outstanding_balance: number; currency: string;
   }>>([]);
   const [repaymentLoanId, setRepaymentLoanId] = useState('');
   const [repaymentPrincipal, setRepaymentPrincipal] = useState(0);
@@ -542,7 +546,7 @@ export function BankReconciliationEnhanced({
   const loadActiveLoans = async () => {
     const { data, error } = await supabase
       .from('loans')
-      .select('id, loan_number, counterparty_name, outstanding_balance, currency')
+      .select('id, loan_number, counterparty_name, loan_type, outstanding_balance, currency')
       .eq('status', 'active')
       .gt('outstanding_balance', 0)
       .order('loan_date', { ascending: false });
@@ -551,7 +555,49 @@ export function BankReconciliationEnhanced({
       setActiveLoans([]);
       return;
     }
-    setActiveLoans(data || []);
+    setActiveLoans((data || []) as any[]);
+  };
+
+  const loadLoanAccounts = async (direction: 'given' | 'taken', currentCounterparty?: string) => {
+    try {
+      let query = supabase.from('chart_of_accounts')
+        .select('id, code, name, account_type')
+        .eq('is_active', true)
+        .eq('is_header', false);
+
+      if (direction === 'given') {
+        query = query.eq('account_type', 'asset')
+          .or('code.ilike.131%,code.ilike.116%,name.ilike.%loan%,name.ilike.%advance%');
+      } else {
+        query = query.eq('account_type', 'liability')
+          .or('code.ilike.2105%,code.ilike.221%,name.ilike.%loan%,name.ilike.%director%');
+      }
+
+      const { data, error } = await query.order('code');
+      if (error) throw error;
+      const accounts = data || [];
+      setLoanAccounts(accounts);
+
+      if (direction === 'given') {
+        const default1310 = accounts.find(a => a.code === '1310') || accounts[0];
+        if (default1310) setLoanCoaId(default1310.id);
+      } else {
+        const cp = (currentCounterparty ?? loanCounterparty).toLowerCase();
+        if (cp.includes('vijay') || cp.includes('lunkad') || cp.includes('director')) {
+          const default2105 = accounts.find(a => a.code === '2105') || accounts[0];
+          if (default2105) setLoanCoaId(default2105.id);
+        } else if (cp.match(/bank|bca|mandiri|bni|bri|cimb|danamon|permata|uob/)) {
+          const default2210 = accounts.find(a => a.code === '2210') || accounts[0];
+          if (default2210) setLoanCoaId(default2210.id);
+        } else {
+          const defaultAcc = accounts.find(a => a.code === '2105') || accounts.find(a => a.code === '2210') || accounts[0];
+          if (defaultAcc) setLoanCoaId(defaultAcc.id);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading loan accounts:', err);
+      setLoanAccounts([]);
+    }
   };
 
   useEffect(() => {
@@ -2146,6 +2192,21 @@ export function BankReconciliationEnhanced({
     setReceiptInvoices([]);
     setReceiptAllocations({});
     setRecordExchangeRate(line.currency === 'USD' ? 0 : 1);
+    setRecordLoanDebit(false);
+    setRecordLoanRepayment(false);
+    setRecordDirectorLoanWithdrawal(false);
+    setLinkToExpense(false);
+    setLinkJournalEntry(false);
+    setLinkToSupplierPayment(false);
+    setLinkToTaxPayment(false);
+    setLinkSettleBills(false);
+
+    const initialDir: 'given' | 'taken' = line.debit > 0 ? 'given' : 'taken';
+    setLoanDirection(initialDir);
+    setLoanCounterparty('');
+    setLoanCoaId('');
+    loadLoanAccounts(initialDir);
+
     setRecordModal(true);
   };
 
@@ -2340,6 +2401,93 @@ export function BankReconciliationEnhanced({
     }
   };
 
+  const handleRecordLoan = async (line: StatementLine) => {
+    if (!loanCounterparty.trim()) {
+      setActionFeedback({
+        type: 'error',
+        title: 'Missing counterparty',
+        message: 'Enter the counterparty name for this loan.',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    if (!loanCoaId) {
+      setActionFeedback({
+        type: 'error',
+        title: 'Missing account',
+        message: 'Select the accounting account for this loan.',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      if (line.currency === 'USD' && recordExchangeRate <= 1) throw new Error('Enter a valid USD-to-IDR exchange rate');
+
+      const isBank = /bank|bca|mandiri|bni|bri|cimb|danamon|permata|uob/i.test(loanCounterparty.trim());
+      const counterpartyType = isBank ? 'bank' : 'person';
+      const principalAmount = line.debit > 0 ? line.debit : line.credit;
+      const selectedAccount = loanAccounts.find(a => a.id === loanCoaId);
+
+      const result = await saveFinanceLoan({
+        loan_date: line.date,
+        counterparty_name: loanCounterparty.trim(),
+        counterparty_type: counterpartyType,
+        loan_type: loanDirection,
+        coa_id: loanCoaId,
+        principal_amount: principalAmount,
+        bank_account_id: selectedBank,
+        transaction_currency: line.currency as 'IDR' | 'USD',
+        exchange_rate: line.currency === 'IDR' ? 1 : recordExchangeRate,
+        description: line.description,
+        created_by: user.id,
+      }, line.id);
+
+      setRecordModal(false);
+      setRecordingLine(null);
+      setRecordLoanDebit(false);
+      setLoanCounterparty('');
+      setLoanCoaId('');
+
+      // Optimistic local line update
+      setStatementLines(prev => prev.map(l => l.id === line.id ? {
+        ...l,
+        status: 'recorded',
+        reconciliation_status: 'recorded',
+        matching_status: 'confirmed',
+        remainingAmount: 0,
+        allocatedAmount: principalAmount,
+      } : l));
+
+      selfActionTimestampRef.current = Date.now();
+      await loadStatementLines();
+      notifyFinanceReconciliationRefresh();
+
+      setActionFeedback({
+        type: 'success',
+        title: 'LOAN RECORDED SUCCESSFULLY',
+        details: [
+          { label: 'Counterparty', value: loanCounterparty.trim() },
+          { label: 'Direction', value: loanDirection === 'given' ? 'Loan Given' : 'Loan Received' },
+          { label: 'Amount', value: formatCurrency(principalAmount, line.currency) },
+          { label: 'Account', value: selectedAccount ? `${selectedAccount.code} — ${selectedAccount.name}` : 'Selected Account' },
+          { label: 'Status', value: 'Recorded / Open' },
+        ],
+        timestamp: Date.now(),
+      });
+    } catch (error: any) {
+      console.error('Error recording loan:', error);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record loan',
+        message: error?.message || 'Unknown error occurred',
+        timestamp: Date.now(),
+      });
+    }
+  };
+
   const handleRecordReceipt = async (line: StatementLine, type: string, customerId: string, description: string) => {
     if (recordingReceiptRef.current) return;
     recordingReceiptRef.current = true;
@@ -2409,60 +2557,38 @@ export function BankReconciliationEnhanced({
           ],
           timestamp: Date.now(),
         });
-      } else if (type === 'loan' || type === 'loan_director_owner') {
+      } else if (type === 'loan') {
+        await handleRecordLoan(line);
+        return;
+      } else if (type === 'loan_repayment_received') {
+        await handleRecordLoanRepayment(line);
+        return;
+      } else if (type === 'loan_director_owner') {
         const selectedDirectorLoan = directorLoanAccounts.find(option => option.account.id === directorLoanAccountId);
-        if (type === 'loan_director_owner' && !selectedDirectorLoan) {
+        if (!selectedDirectorLoan) {
           throw new Error('Select the existing Director / Owner loan ledger');
         }
-        if (type === 'loan' && !loanCounterparty.trim()) throw new Error('Counterparty name is required');
         if (line.currency === 'USD' && recordExchangeRate <= 1) throw new Error('Enter a valid USD-to-IDR exchange rate');
-        if (type === 'loan_director_owner') {
-          const result = await saveBankLinkedFinanceJournal(
-            line.id,
-            description || line.description,
-            selectedDirectorLoan!.account.code,
-            'debit',
-            line.currency as 'IDR' | 'USD',
-            line.currency === 'IDR' ? 1 : recordExchangeRate,
-          );
-          const { data: journal } = await supabase.from('journal_entries').select('entry_number').eq('id', result.journal_entry_id).single();
-          setActionFeedback({
-            type: 'success',
-            title: 'Director loan receipt recorded successfully',
-            details: [
-              { label: 'Journal', value: journal?.entry_number || '' },
-              { label: 'Ledger', value: selectedDirectorLoan!.account.name },
-              { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
-              { label: 'Status', value: 'Recorded' },
-            ],
-            timestamp: Date.now(),
-          });
-        } else {
-          const result = await saveFinanceLoan({
-            loan_date: line.date,
-            counterparty_name: loanCounterparty.trim(),
-            counterparty_type: 'bank',
-            principal_amount: line.credit,
-            bank_account_id: selectedBank,
-            liability_kind: 'bank',
-            transaction_currency: line.currency as 'IDR' | 'USD',
-            exchange_rate: line.currency === 'IDR' ? 1 : recordExchangeRate,
-            description: description || line.description,
-            created_by: user.id,
-          }, line.id);
-          setActionFeedback({
-            type: 'success',
-            title: 'Loan recorded successfully',
-            details: [
-              { label: 'Loan', value: result.loan_number },
-              { label: 'Counterparty', value: loanCounterparty.trim() },
-              { label: 'Date', value: new Date(line.date).toLocaleDateString('id-ID') },
-              { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
-              { label: 'Status', value: 'Recorded' },
-            ],
-            timestamp: Date.now(),
-          });
-        }
+        const result = await saveBankLinkedFinanceJournal(
+          line.id,
+          description || line.description,
+          selectedDirectorLoan.account.code,
+          'debit',
+          line.currency as 'IDR' | 'USD',
+          line.currency === 'IDR' ? 1 : recordExchangeRate,
+        );
+        const { data: journal } = await supabase.from('journal_entries').select('entry_number').eq('id', result.journal_entry_id).single();
+        setActionFeedback({
+          type: 'success',
+          title: 'Director loan receipt recorded successfully',
+          details: [
+            { label: 'Journal', value: journal?.entry_number || '' },
+            { label: 'Ledger', value: selectedDirectorLoan.account.name },
+            { label: 'Amount', value: formatCurrency(line.credit, line.currency) },
+            { label: 'Status', value: 'Recorded' },
+          ],
+          timestamp: Date.now(),
+        });
       } else {
         if (!NON_CUSTOMER_JOURNAL_TYPES.has(type)) {
           throw new Error(`Unsupported non-customer receipt type: ${type}`);
@@ -3004,11 +3130,12 @@ export function BankReconciliationEnhanced({
       });
       return;
     }
-    if (Math.abs((repaymentPrincipal + repaymentInterest) - line.debit) > 0.01) {
+    const lineAmount = line.debit > 0 ? line.debit : line.credit;
+    if (Math.abs((repaymentPrincipal + repaymentInterest) - lineAmount) > 0.01) {
       setActionFeedback({
         type: 'error',
         title: 'Invalid amount',
-        message: 'Principal plus interest must equal the bank debit amount',
+        message: 'Principal plus interest must equal the bank transaction amount',
         timestamp: Date.now(),
       });
       return;
@@ -3026,6 +3153,9 @@ export function BankReconciliationEnhanced({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
       if (line.currency === 'USD' && recordExchangeRate <= 1) throw new Error('Enter a valid USD-to-IDR exchange rate');
+
+      const targetLoan = activeLoans.find(l => l.id === repaymentLoanId);
+
       const result = await saveFinanceLoanRepayment({
         loan_id: repaymentLoanId,
         transaction_date: line.date,
@@ -3037,6 +3167,9 @@ export function BankReconciliationEnhanced({
         description: line.description,
         created_by: user.id,
       }, line.id);
+
+      const newOutstanding = Math.max(0, (targetLoan?.outstanding_balance || 0) - repaymentPrincipal);
+
       setRecordModal(false);
       setRecordingLine(null);
       setRecordLoanRepayment(false);
@@ -3046,14 +3179,16 @@ export function BankReconciliationEnhanced({
       selfActionTimestampRef.current = Date.now();
       await loadStatementLines();
       notifyFinanceReconciliationRefresh();
+
       setActionFeedback({
         type: 'success',
-        title: 'Loan repayment recorded successfully',
+        title: 'LOAN REPAYMENT RECORDED',
         details: [
-          { label: 'Transaction', value: result.transaction_number },
-          { label: 'Principal', value: formatCurrency(repaymentPrincipal, line.currency) },
-          { label: 'Interest', value: formatCurrency(repaymentInterest, line.currency) },
-          { label: 'Status', value: 'Recorded' },
+          { label: 'Counterparty', value: targetLoan?.counterparty_name || 'Loan' },
+          { label: 'Amount', value: formatCurrency(lineAmount, line.currency) },
+          { label: 'Loan', value: targetLoan?.loan_number || result.transaction_number },
+          { label: 'Outstanding', value: formatCurrency(newOutstanding, line.currency) },
+          { label: 'Status', value: newOutstanding <= 0.01 ? 'Closed' : 'Remaining' },
         ],
         timestamp: Date.now(),
       });
@@ -3959,13 +4094,13 @@ export function BankReconciliationEnhanced({
               <div>
                 <div className="grid grid-cols-3 gap-2 mb-3">
                   <button
-                    onClick={() => { setLinkToExpense(false); setLinkJournalEntry(false); setLinkToSupplierPayment(false); setLinkToTaxPayment(false); setLinkSettleBills(false); setRecordLoanRepayment(false); }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${!linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills && !recordLoanRepayment ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                    onClick={() => { setLinkToExpense(false); setLinkJournalEntry(false); setLinkToSupplierPayment(false); setLinkToTaxPayment(false); setLinkSettleBills(false); setRecordLoanRepayment(false); setRecordLoanDebit(false); setRecordDirectorLoanWithdrawal(false); }}
+                    className={`py-2 px-3 rounded-lg text-sm font-medium ${!linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills && !recordLoanRepayment && !recordLoanDebit && !recordDirectorLoanWithdrawal ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                   >
                     Create New Expense
                   </button>
                   <button
-                    onClick={() => { setRecordLoanRepayment(false); setLinkToExpense(true); setLinkJournalEntry(false); setLinkToSupplierPayment(false); setLinkToTaxPayment(false); setLinkSettleBills(false); }}
+                    onClick={() => { setRecordLoanRepayment(false); setRecordLoanDebit(false); setRecordDirectorLoanWithdrawal(false); setLinkToExpense(true); setLinkJournalEntry(false); setLinkToSupplierPayment(false); setLinkToTaxPayment(false); setLinkSettleBills(false); }}
                     className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                   >
                     Link Expense
@@ -3973,6 +4108,7 @@ export function BankReconciliationEnhanced({
                   <button
                     onClick={() => {
                       setRecordLoanRepayment(false);
+                      setRecordLoanDebit(false);
                       setRecordDirectorLoanWithdrawal(false);
                       setLinkJournalEntry(true);
                       setLinkToExpense(false);
@@ -3988,6 +4124,7 @@ export function BankReconciliationEnhanced({
                   <button
                     onClick={() => {
                       setRecordLoanRepayment(false);
+                      setRecordLoanDebit(false);
                       setRecordDirectorLoanWithdrawal(false);
                       setLinkToSupplierPayment(true);
                       setLinkToExpense(false);
@@ -4032,6 +4169,7 @@ export function BankReconciliationEnhanced({
                   <button
                     onClick={() => {
                       setRecordLoanRepayment(false);
+                      setRecordLoanDebit(false);
                       setRecordDirectorLoanWithdrawal(false);
                       setLinkToTaxPayment(true);
                       setLinkToExpense(false);
@@ -4047,6 +4185,7 @@ export function BankReconciliationEnhanced({
                   <button
                     onClick={() => {
                       setRecordLoanRepayment(false);
+                      setRecordLoanDebit(false);
                       setRecordDirectorLoanWithdrawal(false);
                       setLinkSettleBills(true);
                       setLinkToExpense(false);
@@ -4063,7 +4202,28 @@ export function BankReconciliationEnhanced({
                   <button
                     type="button"
                     onClick={() => {
+                      setRecordLoanDebit(true);
+                      setRecordLoanRepayment(false);
+                      setRecordDirectorLoanWithdrawal(false);
+                      setLinkToExpense(false);
+                      setLinkJournalEntry(false);
+                      setLinkToSupplierPayment(false);
+                      setLinkToTaxPayment(false);
+                      setLinkSettleBills(false);
+                      setLoanDirection('given');
+                      setLoanCounterparty('');
+                      setLoanCoaId('');
+                      loadLoanAccounts('given');
+                    }}
+                    className={`py-2 px-3 rounded-lg text-sm font-medium ${recordLoanDebit ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'}`}
+                  >
+                    Loan Given
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setRecordLoanRepayment(true);
+                      setRecordLoanDebit(false);
                       setRecordDirectorLoanWithdrawal(false);
                       setLinkToExpense(false);
                       setLinkJournalEntry(false);
@@ -4082,6 +4242,7 @@ export function BankReconciliationEnhanced({
                     type="button"
                     onClick={() => {
                       setRecordDirectorLoanWithdrawal(true);
+                      setRecordLoanDebit(false);
                       setRecordLoanRepayment(false);
                       setLinkToExpense(false);
                       setLinkJournalEntry(false);
@@ -4103,7 +4264,102 @@ export function BankReconciliationEnhanced({
                   </button>
                 </div>
 
-                {recordLoanRepayment ? (
+                {recordLoanDebit ? (
+                  <div className="space-y-3 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                    <h4 className="font-semibold text-sm text-slate-800 border-b pb-2">RECORD AS LOAN</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Loan Direction *</label>
+                        <select
+                          value={loanDirection}
+                          onChange={(e) => {
+                            const dir = e.target.value as 'given' | 'taken';
+                            setLoanDirection(dir);
+                            loadLoanAccounts(dir, loanCounterparty);
+                          }}
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                        >
+                          <option value="given">Loan Given / Receivable</option>
+                          <option value="taken">Loan Received / Liability</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Counterparty *</label>
+                        <input
+                          type="text"
+                          value={loanCounterparty}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setLoanCounterparty(val);
+                            const cp = val.toLowerCase();
+                            if (loanDirection === 'taken') {
+                              if (cp.includes('vijay') || cp.includes('lunkad') || cp.includes('director')) {
+                                const a = loanAccounts.find(acc => acc.code === '2105');
+                                if (a) setLoanCoaId(a.id);
+                              } else if (cp.match(/bank|bca|mandiri|bni|bri|cimb|danamon|permata|uob/)) {
+                                const a = loanAccounts.find(acc => acc.code === '2210');
+                                if (a) setLoanCoaId(a.id);
+                              }
+                            } else if (loanDirection === 'given') {
+                              const a = loanAccounts.find(acc => acc.code === '1310');
+                              if (a) setLoanCoaId(a.id);
+                            }
+                          }}
+                          placeholder="e.g. Vijay Lunkad"
+                          required
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Account *</label>
+                      <select
+                        value={loanCoaId}
+                        onChange={(e) => setLoanCoaId(e.target.value)}
+                        required
+                        className="w-full px-3 py-2 border rounded-lg text-sm font-mono bg-white"
+                      >
+                        <option value="">Select account...</option>
+                        {loanAccounts.map(acc => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.code} — {acc.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {loanDirection === 'given'
+                          ? 'Asset account for loan given (default: 1310 — Loan Receivable).'
+                          : 'Liability account for borrowings (e.g. 2105 Director Loan, 2210 Bank Loans).'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Amount</label>
+                      <div className="px-3 py-2 border rounded-lg bg-gray-50 font-mono font-bold text-gray-800">
+                        {formatCurrency(recordingLine.debit, recordingLine.currency)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Description</label>
+                      <input
+                        type="text"
+                        name="description"
+                        defaultValue={recordingLine.description}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRecordLoan(recordingLine)}
+                      className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-sm"
+                    >
+                      Record Loan
+                    </button>
+                  </div>
+                ) : recordLoanRepayment ? (
                   <div className="space-y-3">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Loan *</label>
@@ -4115,7 +4371,7 @@ export function BankReconciliationEnhanced({
                       >
                         <option value="">Select active loan...</option>
                         {activeLoans
-                          .filter(loan => loan.currency === recordingLine.currency)
+                          .filter(loan => loan.currency === recordingLine.currency && (!loan.loan_type || loan.loan_type === 'taken'))
                           .map(loan => (
                             <option key={loan.id} value={loan.id}>
                               {loan.loan_number} — {loan.counterparty_name} — {formatCurrency(loan.outstanding_balance, loan.currency)} outstanding
@@ -4588,11 +4844,18 @@ export function BankReconciliationEnhanced({
                         required
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                         onChange={(e) => {
-                          setReceiptType(e.target.value);
-                          if (e.target.value !== 'loan_director_owner') {
+                          const t = e.target.value;
+                          setReceiptType(t);
+                          if (t === 'loan') {
+                            setLoanDirection('taken');
+                            loadLoanAccounts('taken');
+                          } else if (t === 'loan_repayment_received') {
+                            loadActiveLoans();
+                          }
+                          if (t !== 'loan_director_owner') {
                             setDirectorLoanAccountId('');
                           }
-                          if (e.target.value !== 'customer_payment') {
+                          if (t !== 'customer_payment') {
                             setReceiptCustomerId('');
                             setReceiptInvoices([]);
                             setReceiptAllocations({});
@@ -4602,7 +4865,8 @@ export function BankReconciliationEnhanced({
                         <option value="">Select type...</option>
                         <option value="customer_payment">Customer Payment</option>
                         <option value="capital">Capital Injection</option>
-                        <option value="loan">Loan Received</option>
+                        <option value="loan">Loan / Financing</option>
+                        <option value="loan_repayment_received">Loan Repayment Received (Return of Loan Given)</option>
                         <option value="loan_director_owner">Money received from Director/Owner (existing COA)</option>
                         <option value="bank_interest">Bank Interest</option>
                         <option value="other_income">Other Income</option>
@@ -4660,16 +4924,123 @@ export function BankReconciliationEnhanced({
                     )}
 
                     {receiptType === 'loan' && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Counterparty *</label>
-                        <input name="counterparty" aria-label="Counterparty"
-                          type="text"
-                          value={loanCounterparty}
-                          onChange={(e) => setLoanCounterparty(e.target.value)}
-                          required
-                          className="w-full px-3 py-2 border rounded-lg"
-                          placeholder="Bank or lender name"
-                        />
+                      <div className="space-y-3 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                        <h4 className="font-semibold text-sm text-slate-800 border-b pb-2">RECORD AS LOAN</h4>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Loan Direction *</label>
+                            <select
+                              value={loanDirection}
+                              onChange={(e) => {
+                                const dir = e.target.value as 'given' | 'taken';
+                                setLoanDirection(dir);
+                                loadLoanAccounts(dir, loanCounterparty);
+                              }}
+                              className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                            >
+                              <option value="taken">Loan Received / Liability</option>
+                              <option value="given">Loan Given / Receivable</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Counterparty *</label>
+                            <input
+                              type="text"
+                              value={loanCounterparty}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setLoanCounterparty(val);
+                                const cp = val.toLowerCase();
+                                if (loanDirection === 'taken') {
+                                  if (cp.includes('vijay') || cp.includes('lunkad') || cp.includes('director')) {
+                                    const a = loanAccounts.find(acc => acc.code === '2105');
+                                    if (a) setLoanCoaId(a.id);
+                                  } else if (cp.match(/bank|bca|mandiri|bni|bri|cimb|danamon|permata|uob/)) {
+                                    const a = loanAccounts.find(acc => acc.code === '2210');
+                                    if (a) setLoanCoaId(a.id);
+                                  }
+                                } else if (loanDirection === 'given') {
+                                  const a = loanAccounts.find(acc => acc.code === '1310');
+                                  if (a) setLoanCoaId(a.id);
+                                }
+                              }}
+                              placeholder="e.g. Vijay Lunkad or BCA"
+                              required
+                              className="w-full px-3 py-2 border rounded-lg text-sm"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Account *</label>
+                          <select
+                            value={loanCoaId}
+                            onChange={(e) => setLoanCoaId(e.target.value)}
+                            required
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono bg-white"
+                          >
+                            <option value="">Select account...</option>
+                            {loanAccounts.map(acc => (
+                              <option key={acc.id} value={acc.id}>
+                                {acc.code} — {acc.name}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {loanDirection === 'given'
+                              ? 'Asset account for loan given (e.g. 1310 — Loan Receivable).'
+                              : 'Liability account for borrowings (e.g. 2105 Director Loan, 2210 Bank Loans).'}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {receiptType === 'loan_repayment_received' && (
+                      <div className="space-y-3 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                        <h4 className="font-semibold text-sm text-slate-800 border-b pb-2">LOAN REPAYMENT RECEIVED</h4>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Loan Being Returned *</label>
+                          <select
+                            value={repaymentLoanId}
+                            onChange={(e) => {
+                              const lid = e.target.value;
+                              setRepaymentLoanId(lid);
+                              const target = activeLoans.find(l => l.id === lid);
+                              if (target) {
+                                setRepaymentPrincipal(Math.min(recordingLine.credit, target.outstanding_balance));
+                                setRepaymentInterest(0);
+                              }
+                            }}
+                            className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                            required
+                          >
+                            <option value="">Select active loan given...</option>
+                            {activeLoans
+                              .filter(loan => loan.currency === recordingLine.currency && loan.loan_type === 'given')
+                              .map(loan => (
+                                <option key={loan.id} value={loan.id}>
+                                  {loan.loan_number} — {loan.counterparty_name} — {formatCurrency(loan.outstanding_balance, loan.currency)} outstanding
+                                </option>
+                              ))}
+                          </select>
+                          {activeLoans.filter(l => l.currency === recordingLine.currency && l.loan_type === 'given').length === 0 && (
+                            <p className="text-xs text-amber-700 mt-1">No active loans given with outstanding balance found.</p>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Principal *</label>
+                            <MoneyInput decimal value={repaymentPrincipal}
+                              onChange={(n) => setRepaymentPrincipal(n)}
+                              className="w-full px-3 py-2 border rounded-lg text-right text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Interest</label>
+                            <MoneyInput decimal value={repaymentInterest}
+                              onChange={(n) => setRepaymentInterest(n)}
+                              className="w-full px-3 py-2 border rounded-lg text-right text-sm" />
+                          </div>
+                        </div>
                       </div>
                     )}
 

@@ -77,7 +77,10 @@ export interface FinanceLoanPayload {
   counterparty_type: 'bank' | 'person' | 'staff' | 'company';
   principal_amount: number;
   bank_account_id: string;
-  liability_kind: 'bank';
+  loan_type?: 'taken' | 'given';
+  coa_id?: string;
+  liability_kind?: 'bank' | 'director_owner';
+  liability_account_id?: string;
   transaction_currency: FinanceCurrency;
   exchange_rate: number;
   description?: string | null;
