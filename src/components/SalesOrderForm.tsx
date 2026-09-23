@@ -1,14 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
-import { Plus, Trash2, X, FileText } from 'lucide-react';
+import { Plus, Trash2, X, FileText, History } from 'lucide-react';
 import { SearchableSelect } from './SearchableSelect';
 import { MoneyInput } from './MoneyInput';
 import { showToast } from './ToastNotification';
 import { showConfirm } from './ConfirmDialog';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
 import { parseIndonesianNumber } from '../utils/currency';
+import { CustomerPriceHistoryCard } from './pricing/CustomerPriceHistoryCard';
 
 interface Customer {
   id: string;
@@ -132,6 +133,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       notes: '',
     },
   ]);
+  const [expandedHistoryIndex, setExpandedHistoryIndex] = useState<number | null>(null);
 
   useEffect(() => {
     fetchCustomers();
@@ -904,7 +906,8 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
             </thead>
             <tbody className="divide-y divide-gray-100">
               {items.map((item, index) => (
-                <tr key={index} className="bg-white hover:bg-blue-50/40">
+                <Fragment key={index}>
+                  <tr className="bg-white hover:bg-blue-50/40">
                   <td className="px-2 py-1 align-top">
                     <SearchableSelect
                       value={item.product_id}
@@ -918,6 +921,16 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
                       required
                     />
                     {item.product_id && getStockBadge(item.product_id, item.quantity)}
+                    {item.product_id && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedHistoryIndex(expandedHistoryIndex === index ? null : index)}
+                        className="mt-1 flex items-center gap-1 text-[11px] text-blue-700 hover:text-blue-900 font-medium transition"
+                      >
+                        <History className="w-3 h-3" />
+                        <span>{expandedHistoryIndex === index ? 'Hide History' : 'Price History & Rate Card'}</span>
+                      </button>
+                    )}
                   </td>
                   <td className="px-2 py-1 align-top">
                     <SearchableSelect
@@ -961,7 +974,22 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
                   <td className="px-2 py-1 text-right align-top font-medium whitespace-nowrap">{formatCurrency(item.line_total)}</td>
                   <td className="px-2 py-1 text-center align-top">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
                 </tr>
-              ))}
+                {expandedHistoryIndex === index && item.product_id && (
+                  <tr key={`${index}-history`} className="bg-blue-50/20">
+                    <td colSpan={11} className="px-4 py-2 border-b border-blue-100">
+                      <CustomerPriceHistoryCard
+                        customerId={formData.customer_id || null}
+                        productId={item.product_id}
+                        currentCurrency={formData.currency}
+                        onApplyPrice={(price) => {
+                          handleItemChange(index, 'unit_price', price);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
             </tbody>
           </table>
         </div>

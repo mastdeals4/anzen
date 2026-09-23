@@ -1,0 +1,524 @@
+import React, { useEffect, useState } from 'react';
+import { supabase } from '../../lib/supabase';
+import { useNavigation } from '../../contexts/NavigationContext';
+import { formatCurrency } from '../../utils/currency';
+import {
+  Wallet,
+  AlertTriangle,
+  Clock,
+  ArrowRight,
+  Boxes,
+  FileCheck,
+  Ship,
+  TrendingDown,
+  Landmark,
+  CheckCircle2,
+  RefreshCw,
+  Calendar,
+  CreditCard,
+  Building2,
+} from 'lucide-react';
+
+interface AttentionData {
+  bcaIdrBalance: number;
+  bcaUsdBalance: number;
+  pettyCashBalance: number;
+  arOverdueCount: number;
+  arOverdueAmount: number;
+  apDueCount: number;
+  apDueAmount: number;
+  inventoryValuation: number;
+  expiring90dCount: number;
+  openImportReqsCount: number;
+  dcWaitingForInvoiceCount: number;
+  unreconciledBankLinesCount: number;
+  pendingSalesOrdersCount: number;
+  pendingDeliveryChallansCount: number;
+  pendingExpensesCount: number;
+  pendingPettyCashCount: number;
+  pendingMaterialReturnsCount: number;
+}
+
+export const OwnerAttentionDashboard: React.FC = () => {
+  const { setCurrentPage } = useNavigation();
+  const [data, setData] = useState<AttentionData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadData = async () => {
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const ninetyDaysFromNow = new Date();
+      ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
+      const ninetyDaysStr = ninetyDaysFromNow.toISOString().split('T')[0];
+
+      const [
+        bankBalancesRes,
+        pettyCashRes,
+        arOverdueBalancesRes,
+        arOverdueInvoicesRes,
+        apInvoicesRes,
+        inventoryValuationRes,
+        expiringBatchesRes,
+        importReqsRes,
+        dcInvoicingRes,
+        unmatchedBankLinesRes,
+        pendingSoRes,
+        pendingDcRes,
+        pendingExpensesRes,
+        pendingPettyCashRes,
+        pendingReturnsRes,
+      ] = await Promise.all([
+        supabase.rpc('get_bank_account_balances', { p_as_of_date: todayStr }),
+        supabase.rpc('get_petty_cash_balance'),
+        supabase.rpc('get_overdue_balances'),
+        supabase
+          .from('sales_invoices')
+          .select('id', { count: 'exact', head: true })
+          .in('payment_status', ['pending', 'partial'])
+          .lt('due_date', todayStr),
+        supabase
+          .from('purchase_invoices')
+          .select('id, balance_amount, total_amount, paid_amount')
+          .gt('balance_amount', 0)
+          .neq('status', 'paid'),
+        supabase
+          .from('batches')
+          .select('current_stock, landed_cost_per_unit, cost_per_unit')
+          .gt('current_stock', 0),
+        supabase
+          .from('batches')
+          .select('id', { count: 'exact', head: true })
+          .gt('current_stock', 0)
+          .lte('expiry_date', ninetyDaysStr)
+          .gte('expiry_date', todayStr),
+        supabase
+          .from('import_requirements')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+        supabase
+          .from('dc_invoicing_summary')
+          .select('challan_id', { count: 'exact', head: true })
+          .neq('dc_status', 'fully_invoiced'),
+        supabase
+          .from('bank_statement_lines')
+          .select('id', { count: 'exact', head: true })
+          .eq('reconciliation_status', 'unmatched'),
+        supabase
+          .from('sales_orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending_approval'),
+        supabase
+          .from('delivery_challans')
+          .select('id', { count: 'exact', head: true })
+          .eq('approval_status', 'pending_approval'),
+        supabase
+          .from('effective_expense_posting_state')
+          .select('expense_id', { count: 'exact', head: true })
+          .eq('effective_posting_state', 'PENDING'),
+        supabase
+          .from('petty_cash_transactions')
+          .select('id', { count: 'exact', head: true })
+          .is('fund_transfer_id', null)
+          .eq('approval_status', 'pending_approval'),
+        supabase
+          .from('material_returns')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+      ]);
+
+      // Calculate Bank Balances
+      let bcaIdr = 0;
+      let bcaUsd = 0;
+      if (bankBalancesRes.data) {
+        for (const b of bankBalancesRes.data) {
+          if (b.coa_code === '111101' || b.currency === 'IDR') {
+            bcaIdr += Number(b.book_balance) || 0;
+          } else if (b.coa_code === '111102' || b.currency === 'USD') {
+            bcaUsd += Number(b.book_balance) || 0;
+          }
+        }
+      }
+
+      // Calculate Petty Cash
+      const pettyCash = Number(pettyCashRes.data) || 0;
+
+      // Calculate AR Overdue
+      const arOverdueAmount = (arOverdueBalancesRes.data || []).reduce(
+        (sum: number, row: { balance_due: number }) => sum + (Number(row.balance_due) || 0),
+        0
+      );
+
+      // Calculate AP Due
+      const apDueAmount = (apInvoicesRes.data || []).reduce(
+        (sum: number, row: any) => sum + (Number(row.balance_amount) || (Number(row.total_amount) - Number(row.paid_amount || 0))),
+        0
+      );
+
+      // Calculate Inventory Value
+      const totalInventoryVal = (inventoryValuationRes.data || []).reduce(
+        (sum: number, b: any) =>
+          sum + (Number(b.current_stock) || 0) * (Number(b.landed_cost_per_unit) || Number(b.cost_per_unit) || 0),
+        0
+      );
+
+      setData({
+        bcaIdrBalance: bcaIdr,
+        bcaUsdBalance: bcaUsd,
+        pettyCashBalance: pettyCash,
+        arOverdueCount: arOverdueInvoicesRes.count || 0,
+        arOverdueAmount,
+        apDueCount: apInvoicesRes.data?.length || 0,
+        apDueAmount,
+        inventoryValuation: totalInventoryVal,
+        expiring90dCount: expiringBatchesRes.count || 0,
+        openImportReqsCount: importReqsRes.count || 0,
+        dcWaitingForInvoiceCount: dcInvoicingRes.count || 0,
+        unreconciledBankLinesCount: unmatchedBankLinesRes.count || 0,
+        pendingSalesOrdersCount: pendingSoRes.count || 0,
+        pendingDeliveryChallansCount: pendingDcRes.count || 0,
+        pendingExpensesCount: pendingExpensesRes.count || 0,
+        pendingPettyCashCount: pendingPettyCashRes.count || 0,
+        pendingMaterialReturnsCount: pendingReturnsRes.count || 0,
+      });
+    } catch (err) {
+      console.error('Error loading owner attention dashboard:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm mb-6 animate-pulse">
+        <div className="h-6 bg-gray-200 rounded w-64 mb-4" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 bg-gray-100 rounded-lg" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const totalPendingActions =
+    data.pendingSalesOrdersCount +
+    data.pendingDeliveryChallansCount +
+    data.pendingExpensesCount +
+    data.pendingPettyCashCount +
+    data.pendingMaterialReturnsCount;
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h2 className="text-base font-bold text-slate-900 tracking-tight uppercase">
+              What Needs My Attention
+            </h2>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+              Executive & Operational Cockpit
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Real-time critical health metrics, liquidity, working capital, pending approvals, and operational bottlenecks.
+          </p>
+        </div>
+
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      {/* Primary KPI Grid: 4 Core Financial & Asset Pillars */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5">
+        {/* 1. Cash & Bank Balances */}
+        <div
+          onClick={() => setCurrentPage('finance')}
+          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-emerald-50/40 p-4 rounded-xl border border-emerald-100/80 hover:border-emerald-300 hover:shadow-md transition"
+        >
+          <div className="flex items-center justify-between text-xs font-semibold text-emerald-900 mb-2">
+            <span className="flex items-center gap-1.5">
+              <Wallet className="w-4 h-4 text-emerald-600" />
+              Cash & Bank Liquidity
+            </span>
+            <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-700 transition group-hover:translate-x-0.5" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] text-slate-500">BCA IDR:</span>
+              <span className="font-mono font-bold text-sm text-slate-900">
+                {formatCurrency(data.bcaIdrBalance, 'IDR')}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] text-slate-500">BCA USD:</span>
+              <span className="font-mono font-bold text-xs text-blue-800">
+                ${data.bcaUsdBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between pt-1 border-t border-emerald-100/60 text-[10px]">
+              <span className="text-slate-500">Petty Cash:</span>
+              <span className="font-mono font-medium text-slate-700">
+                {formatCurrency(data.pettyCashBalance, 'IDR')}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. AR Overdue (Receivables) */}
+        <div
+          onClick={() => setCurrentPage('finance')}
+          className={`cursor-pointer group relative p-4 rounded-xl border transition ${
+            data.arOverdueCount > 0
+              ? 'bg-gradient-to-br from-rose-50/50 to-amber-50/40 border-rose-200 hover:border-rose-400 hover:shadow-md'
+              : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+          }`}
+        >
+          <div className="flex items-center justify-between text-xs font-semibold mb-2">
+            <span className={`flex items-center gap-1.5 ${data.arOverdueCount > 0 ? 'text-rose-900' : 'text-slate-700'}`}>
+              <AlertTriangle className={`w-4 h-4 ${data.arOverdueCount > 0 ? 'text-rose-600' : 'text-slate-400'}`} />
+              A/R Overdue
+            </span>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                data.arOverdueCount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-600'
+              }`}
+            >
+              {data.arOverdueCount} invoice{data.arOverdueCount === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="mt-2">
+            <div className="text-lg font-bold font-mono text-slate-900">
+              {formatCurrency(data.arOverdueAmount, 'IDR')}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+              <span>Past payment due date</span>
+              <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-600 transition group-hover:translate-x-0.5" />
+            </div>
+          </div>
+        </div>
+
+        {/* 3. A/P Outstanding (Payables) */}
+        <div
+          onClick={() => setCurrentPage('finance')}
+          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-blue-50/40 p-4 rounded-xl border border-blue-100 hover:border-blue-300 hover:shadow-md transition"
+        >
+          <div className="flex items-center justify-between text-xs font-semibold text-blue-900 mb-2">
+            <span className="flex items-center gap-1.5">
+              <CreditCard className="w-4 h-4 text-blue-600" />
+              A/P Due (Suppliers)
+            </span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+              {data.apDueCount} bills
+            </span>
+          </div>
+          <div className="mt-2">
+            <div className="text-lg font-bold font-mono text-slate-900">
+              {formatCurrency(data.apDueAmount, 'IDR')}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+              <span>Unpaid purchase invoices</span>
+              <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition group-hover:translate-x-0.5" />
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Total Inventory Value */}
+        <div
+          onClick={() => setCurrentPage('batches')}
+          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-indigo-50/40 p-4 rounded-xl border border-indigo-100 hover:border-indigo-300 hover:shadow-md transition"
+        >
+          <div className="flex items-center justify-between text-xs font-semibold text-indigo-900 mb-2">
+            <span className="flex items-center gap-1.5">
+              <Boxes className="w-4 h-4 text-indigo-600" />
+              Authoritative Stock Valuation
+            </span>
+            <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 transition group-hover:translate-x-0.5" />
+          </div>
+          <div className="mt-2">
+            <div className="text-lg font-bold font-mono text-slate-900">
+              {formatCurrency(data.inventoryValuation, 'IDR')}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+              <span>Active inventory batches</span>
+              <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                Landed Cost
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary Operational Bottlenecks: 4 Operational Alert Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        {/* Expiring Stock < 90 Days */}
+        <div
+          onClick={() => setCurrentPage('batches')}
+          className="cursor-pointer group p-3 rounded-lg border border-slate-200 bg-white hover:border-amber-300 hover:bg-amber-50/20 transition flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className={`p-2 rounded-lg ${data.expiring90dCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+              <Calendar className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-800">Expiring Stock &lt; 90d</div>
+              <div className="text-[11px] text-slate-500">Batches needing quick liquidation</div>
+            </div>
+          </div>
+          <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${data.expiring90dCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
+            {data.expiring90dCount}
+          </span>
+        </div>
+
+        {/* Open Import Requirements */}
+        <div
+          onClick={() => setCurrentPage('import-requirements')}
+          className="cursor-pointer group p-3 rounded-lg border border-slate-200 bg-white hover:border-cyan-300 hover:bg-cyan-50/20 transition flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-cyan-100 text-cyan-700">
+              <Ship className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-800">Open Import Reqs</div>
+              <div className="text-[11px] text-slate-500">Pending procurement pipeline</div>
+            </div>
+          </div>
+          <span className="text-xs font-bold font-mono px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-800 border border-cyan-200">
+            {data.openImportReqsCount}
+          </span>
+        </div>
+
+        {/* DC Waiting for Sales Invoice */}
+        <div
+          onClick={() => setCurrentPage('delivery-challans')}
+          className="cursor-pointer group p-3 rounded-lg border border-slate-200 bg-white hover:border-purple-300 hover:bg-purple-50/20 transition flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className={`p-2 rounded-lg ${data.dcWaitingForInvoiceCount > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-500'}`}>
+              <FileCheck className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-800">DC Waiting for Invoice</div>
+              <div className="text-[11px] text-slate-500">Dispatched goods unbilled</div>
+            </div>
+          </div>
+          <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${data.dcWaitingForInvoiceCount > 0 ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-600'}`}>
+            {data.dcWaitingForInvoiceCount}
+          </span>
+        </div>
+
+        {/* Unreconciled Bank Statement Lines */}
+        <div
+          onClick={() => setCurrentPage('finance')}
+          className="cursor-pointer group p-3 rounded-lg border border-slate-200 bg-white hover:border-amber-300 hover:bg-amber-50/20 transition flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className={`p-2 rounded-lg ${data.unreconciledBankLinesCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+              <Landmark className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-800">Unreconciled Bank Lines</div>
+              <div className="text-[11px] text-slate-500">Bank transactions to match</div>
+            </div>
+          </div>
+          <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${data.unreconciledBankLinesCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+            {data.unreconciledBankLinesCount}
+          </span>
+        </div>
+      </div>
+
+      {/* Tertiary Row: Pending Approvals Action Strip */}
+      <div className="p-3.5 bg-slate-50/80 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-slate-600" />
+          <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+            Pending Approvals & Sign-offs ({totalPendingActions})
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <button
+            onClick={() => setCurrentPage('sales-orders')}
+            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
+              data.pendingSalesOrdersCount > 0
+                ? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <span>Sales Orders:</span>
+            <strong className="font-mono">{data.pendingSalesOrdersCount}</strong>
+          </button>
+
+          <button
+            onClick={() => setCurrentPage('delivery-challans')}
+            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
+              data.pendingDeliveryChallansCount > 0
+                ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <span>Delivery Challans:</span>
+            <strong className="font-mono">{data.pendingDeliveryChallansCount}</strong>
+          </button>
+
+          <button
+            onClick={() => setCurrentPage('finance')}
+            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
+              data.pendingExpensesCount > 0
+                ? 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <span>Expenses:</span>
+            <strong className="font-mono">{data.pendingExpensesCount}</strong>
+          </button>
+
+          <button
+            onClick={() => setCurrentPage('finance')}
+            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
+              data.pendingPettyCashCount > 0
+                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <span>Petty Cash:</span>
+            <strong className="font-mono">{data.pendingPettyCashCount}</strong>
+          </button>
+
+          <button
+            onClick={() => setCurrentPage('material-returns')}
+            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
+              data.pendingMaterialReturnsCount > 0
+                ? 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <span>Sales Returns:</span>
+            <strong className="font-mono">{data.pendingMaterialReturnsCount}</strong>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

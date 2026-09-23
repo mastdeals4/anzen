@@ -11,6 +11,7 @@ import {
 import { type CompanySnapshot, FALLBACK_COMPANY } from '../../types/company';
 import { sendPricingWorkflowEmail, type PricingEmailAttachment } from '../../services/pricingEmail';
 import { getSignedUrlCached } from '../../utils/signedUrlCache';
+import { CustomerPriceHistoryCard } from '../pricing/CustomerPriceHistoryCard';
 
 export interface CustomerQuoteInquiry {
   id: string;
@@ -108,6 +109,8 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
   const [userName, setUserName] = useState('');
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [resolvedCustomerId, setResolvedCustomerId] = useState<string | null>(null);
+  const [resolvedProductId, setResolvedProductId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -120,7 +123,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
       }
       setUserName(name);
 
-      const [coResult, docResult] = await Promise.all([
+      const [coResult, docResult, inqResult] = await Promise.all([
         supabase.from('company_profiles')
           .select('company_name, company_address, company_phone, company_email, company_tax_id, company_logo_url, pbf_license, cdob_certificate')
           .lte('effective_from', new Date().toISOString().split('T')[0])
@@ -131,6 +134,10 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
           .select('id,document_type,display_file_name,original_file_name,storage_path')
           .eq('inquiry_id', inquiry.id)
           .order('created_at', { ascending: false }),
+        supabase.from('crm_inquiries')
+          .select('customer_id, product_name')
+          .eq('id', inquiry.id)
+          .maybeSingle(),
       ]);
       const co = (coResult.data as CompanySnapshot | null) ?? FALLBACK_COMPANY;
       setDocs((docResult.data as DocItem[]) || []);
@@ -138,6 +145,22 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
       setToEmail(inquiry.contact_email || '');
       setSubject(buildSubject(inquiry));
       setBody(buildBody(inquiry, option, name, co));
+
+      if (inqResult.data?.customer_id) {
+        setResolvedCustomerId(inqResult.data.customer_id);
+      }
+      const targetProductName = inqResult.data?.product_name || inquiry.product_name;
+      if (targetProductName) {
+        const { data: prodData } = await supabase
+          .from('products')
+          .select('id')
+          .ilike('product_name', `%${targetProductName.trim()}%`)
+          .limit(1)
+          .maybeSingle();
+        if (prodData?.id) {
+          setResolvedProductId(prodData.id);
+        }
+      }
     };
     init();
   }, [isOpen, inquiry.id]);
@@ -278,6 +301,18 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
                   </label>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Informational Customer Price History & Rate Card Benchmark */}
+          {resolvedProductId && (
+            <div className="my-2">
+              <CustomerPriceHistoryCard
+                customerId={resolvedCustomerId}
+                productId={resolvedProductId}
+                currentCurrency={option?.selling_currency || 'IDR'}
+                compact={true}
+              />
             </div>
           )}
 

@@ -49,6 +49,12 @@ interface CreditNoteViewProps {
       npwp: string;
       pharmacy_license: string;
     };
+    material_returns?: {
+      return_number: string;
+      return_date: string;
+      status: string;
+      restocked: boolean;
+    } | null;
   };
   items: CreditNoteItem[];
   onClose: () => void;
@@ -330,6 +336,14 @@ export function CreditNoteView({ creditNote, items, onClose, companyProfile }: C
                     <div className="pt-1">
                       <span className="font-bold">{language === 'id' ? 'Original Invoice:' : 'Original Invoice:'}</span>
                       <span className="ml-2">{creditNote.original_invoice_number}</span>
+                    </div>
+                  )}
+                  {creditNote.material_returns && (
+                    <div className="pt-1">
+                      <span className="font-bold">Originating Return:</span>
+                      <span className="ml-2 font-mono text-purple-700 bg-purple-50 px-1 py-0.5 rounded border border-purple-200">
+                        {creditNote.material_returns.return_number}
+                      </span>
                     </div>
                   )}
                 </div>

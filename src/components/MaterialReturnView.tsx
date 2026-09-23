@@ -46,6 +46,9 @@ interface MaterialReturnViewProps {
     delivery_challans?: {
       challan_number: string;
     };
+    sales_invoices?: {
+      invoice_number: string;
+    };
   };
   items: ReturnItem[];
   onClose: () => void;
@@ -232,6 +235,12 @@ export function MaterialReturnView({ materialReturn, items, onClose, companyProf
                       <span className="ml-2">{materialReturn.delivery_challans.challan_number}</span>
                     </div>
                   )}
+                  {materialReturn.sales_invoices && (
+                    <div className="pt-1">
+                      <span className="font-bold">Original Invoice:</span>
+                      <span className="ml-2">{materialReturn.sales_invoices.invoice_number}</span>
+                    </div>
+                  )}
                   <div className="pt-1">
                     <span className="font-bold">Return Type:</span>
                     <span className="ml-2">{materialReturn.return_type.replace('_', ' ').toUpperCase()}</span>
@@ -245,6 +254,30 @@ export function MaterialReturnView({ materialReturn, items, onClose, companyProf
                     }`}>
                       {materialReturn.status.replace('_', ' ').toUpperCase()}
                     </span>
+                  </div>
+                  <div className="pt-1">
+                    <span className="font-bold">Inventory V1:</span>
+                    <span className={`ml-2 px-2 py-0.5 rounded text-xs font-semibold ${
+                      materialReturn.restocked ? 'bg-blue-100 text-blue-800' :
+                      materialReturn.status === 'approved' ? 'bg-gray-100 text-gray-700' :
+                      'bg-amber-50 text-amber-700'
+                    }`}>
+                      {materialReturn.restocked ? 'Restocked to Batches' :
+                       materialReturn.status === 'approved' ? 'Scrapped (No Restock)' :
+                       'Awaiting Approval'}
+                    </span>
+                  </div>
+                  <div className="pt-1">
+                    <span className="font-bold">Financial CN:</span>
+                    {materialReturn.credit_note_number ? (
+                      <span className="ml-2 font-mono text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-xs font-bold">
+                        {materialReturn.credit_note_number} {materialReturn.credit_note_issued ? '(AR Reversal Posted)' : '(Draft)'}
+                      </span>
+                    ) : (
+                      <span className="ml-2 text-xs text-gray-500 italic">
+                        No Credit Note linked
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

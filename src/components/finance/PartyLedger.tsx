@@ -14,7 +14,7 @@ import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../
 interface Party {
   id: string;
   name: string;
-  type: 'customer' | 'supplier' | 'staff';
+  type: 'customer' | 'supplier' | 'staff' | 'director';
   email?: string;
   phone?: string;
   address?: string;
@@ -36,7 +36,7 @@ interface LedgerEntry {
 export default function PartyLedger() {
   const { dateRange: globalDateRange } = useFinance();
   const printRef = useRef<HTMLDivElement>(null);
-  const [partyType, setPartyType] = useState<'customer' | 'supplier' | 'staff'>('customer');
+  const [partyType, setPartyType] = useState<'customer' | 'supplier' | 'staff' | 'director'>('customer');
   const [parties, setParties] = useState<Party[]>([]);
   const [selectedParty, setSelectedParty] = useState<string>('');
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
@@ -78,6 +78,23 @@ export default function PartyLedger() {
   });
 
   const loadParties = async () => {
+    if (partyType === 'director') {
+      const { data } = await supabase
+        .from('loans')
+        .select('counterparty_name, counterparty_type')
+        .order('counterparty_name');
+      if (data) {
+        const uniqueNames = Array.from(new Set(data.map(d => d.counterparty_name).filter(Boolean)));
+        setParties(uniqueNames.map(name => ({
+          id: name,
+          name: `${name} (Director / Loan)`,
+          type: 'director' as const,
+        })));
+      }
+      setSelectedParty('');
+      return;
+    }
+
     if (partyType === 'staff') {
       const { data } = await supabase
         .from('finance_staff_master')
@@ -410,6 +427,70 @@ export default function PartyLedger() {
           });
         });
       }
+    } else if (partyType === 'director') {
+      // Subledger: query loans and loan_transactions for this counterparty.
+      // Avoids double-counting: only subledger loan records are fetched (never journal_entry_lines).
+      //
+      // 1. Loan principal issuance:
+      //    - 'taken': Company takes loan from director -> Cr (Company owes director / liability)
+      //    - 'given': Company lends to director -> Dr (Director owes company / asset)
+      const { data: loanRows } = await dateRange(
+        supabase
+          .from('loans')
+          .select('id, loan_number, loan_date, loan_type, principal_amount, currency, transaction_currency, exchange_rate, description, status')
+          .eq('counterparty_name', selectedParty),
+        'loan_date',
+      ).order('loan_date');
+
+      if (loanRows) {
+        loanRows.forEach(loan => {
+          const currency = loan.transaction_currency || loan.currency || 'IDR';
+          const functionalAmount = toFunctionalIDR(Number(loan.principal_amount || 0), currency, loan.exchange_rate);
+          const isTaken = loan.loan_type === 'taken';
+          entries.push({
+            id: `loan-${loan.id}`,
+            entry_date: loan.loan_date,
+            particulars: `Loan ${isTaken ? 'Taken (Received)' : 'Given (Disbursed)'} - ${loan.description || loan.loan_number}`,
+            reference: loan.loan_number,
+            debit: isTaken ? 0 : functionalAmount,
+            credit: isTaken ? functionalAmount : 0,
+            running_balance: 0,
+            type: isTaken ? 'receipt' : 'payment',
+          });
+        });
+      }
+
+      // 2. Loan repayments:
+      //    - If loan was 'taken': Company repays director -> Dr (Reduces company liability)
+      //    - If loan was 'given': Director repays company -> Cr (Reduces director debt)
+      const { data: txRows } = await dateRange(
+        supabase
+          .from('loan_transactions')
+          .select('id, transaction_number, transaction_date, transaction_type, amount, principal_amount, transaction_currency, exchange_rate, description, status, loans!inner(counterparty_name, loan_type, loan_number)')
+          .eq('loans.counterparty_name', selectedParty)
+          .eq('status', 'posted'),
+        'transaction_date',
+      ).order('transaction_date');
+
+      if (txRows) {
+        txRows.forEach((tx: any) => {
+          const loan = Array.isArray(tx.loans) ? tx.loans[0] : tx.loans;
+          const currency = tx.transaction_currency || 'IDR';
+          const amount = Number(tx.principal_amount || tx.amount || 0);
+          const functionalAmount = toFunctionalIDR(amount, currency, tx.exchange_rate);
+          const wasTaken = loan?.loan_type === 'taken';
+          entries.push({
+            id: `loan-tx-${tx.id}`,
+            entry_date: tx.transaction_date,
+            particulars: `Loan Repayment - ${tx.description || tx.transaction_number} (${loan?.loan_number || ''})`,
+            reference: tx.transaction_number,
+            debit: wasTaken ? functionalAmount : 0,
+            credit: wasTaken ? 0 : functionalAmount,
+            running_balance: 0,
+            type: wasTaken ? 'payment' : 'receipt',
+          });
+        });
+      }
     }
 
     entries.sort((a, b) => new Date(a.entry_date).getTime() - new Date(b.entry_date).getTime());
@@ -535,7 +616,7 @@ export default function PartyLedger() {
             {partyType === 'customer'
               ? <Users className="w-3 h-3 text-blue-600" />
               : <Building2 className="w-3 h-3 text-purple-600" />}
-            {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff'} Ledger
+            {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : partyType === 'staff' ? 'Staff' : 'Director / Loan'} Ledger
           </h1>
         </div>
         <div className="flex items-center gap-1">
@@ -573,7 +654,7 @@ export default function PartyLedger() {
             <select name="party_type" aria-label="Party Type"
               value={partyType}
               onChange={(e) => {
-                setPartyType(e.target.value as 'customer' | 'supplier' | 'staff');
+                setPartyType(e.target.value as 'customer' | 'supplier' | 'staff' | 'director');
                 setSelectedParty('');
               }}
               className="w-full px-3 py-2 border rounded-lg"
@@ -581,11 +662,12 @@ export default function PartyLedger() {
               <option value="customer">Customer (Debtor)</option>
               <option value="supplier">Supplier (Creditor)</option>
               <option value="staff">Staff (Employee)</option>
+              <option value="director">Director / Owner (Loan)</option>
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}
+              Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : partyType === 'staff' ? 'Staff Member' : 'Director / Counterparty'}
             </label>
             <select name="select_partytype_customer_cust" aria-label="Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}"
               value={selectedParty}

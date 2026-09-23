@@ -32,6 +32,14 @@ interface CreditNote {
   total_amount: number;
   status?: string;
   approved_by?: string;
+  material_return_id?: string;
+  material_returns?: {
+    id: string;
+    return_number: string;
+    return_date: string;
+    status: string;
+    restocked: boolean;
+  };
   customers?: {
     company_name: string;
     address: string;
@@ -105,6 +113,7 @@ export function CreditNotes() {
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
+  const [approvedReturns, setApprovedReturns] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     credit_note_number: '',
@@ -115,6 +124,7 @@ export function CreditNotes() {
     reason: '',
     notes: '',
     currency: 'IDR',
+    material_return_id: '',
   });
 
   const [items, setItems] = useState<Omit<CreditNoteItem, 'id'>[]>([
@@ -135,6 +145,7 @@ export function CreditNotes() {
     await loadCreditNotes();
     await loadCustomers();
     await loadProducts();
+    await loadApprovedReturns();
     setLoading(false);
   };
 
@@ -144,7 +155,8 @@ export function CreditNotes() {
         .from('credit_notes')
         .select(`
           *,
-          customers(company_name, address, city, phone, npwp, pharmacy_license)
+          customers(company_name, address, city, phone, npwp, pharmacy_license),
+          material_returns(id, return_number, return_date, status, restocked)
         `)
         .order('created_at', { ascending: false });
 
@@ -152,6 +164,34 @@ export function CreditNotes() {
       setCreditNotes(data || []);
     } catch (error) {
       console.error('Error loading credit notes:', error);
+    }
+  };
+
+  const loadApprovedReturns = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('material_returns')
+        .select(`
+          id,
+          return_number,
+          return_date,
+          customer_id,
+          original_invoice_id,
+          financial_impact,
+          return_reason,
+          status,
+          restocked,
+          customers(company_name),
+          sales_invoices(invoice_number)
+        `)
+        .eq('status', 'approved')
+        .is('credit_note_id', null)
+        .order('return_date', { ascending: false });
+
+      if (error) throw error;
+      setApprovedReturns(data || []);
+    } catch (error) {
+      console.error('Error loading approved returns:', error);
     }
   };
 
@@ -359,13 +399,23 @@ export function CreditNotes() {
     try {
       const totals = calculateTotals();
 
+      const insertPayload: Record<string, any> = {
+        credit_note_number: formData.credit_note_number,
+        credit_note_date: formData.credit_note_date,
+        customer_id: formData.customer_id,
+        original_invoice_id: formData.original_invoice_id || null,
+        original_invoice_number: formData.original_invoice_number || null,
+        reason: formData.reason,
+        notes: formData.notes || null,
+        currency: formData.currency,
+        ...totals,
+        created_by: user?.id,
+      };
+      if (formData.material_return_id) insertPayload.material_return_id = formData.material_return_id;
+
       const { data: creditNoteData, error: creditNoteError } = await supabase
         .from('credit_notes')
-        .insert({
-          ...formData,
-          ...totals,
-          created_by: user?.id,
-        })
+        .insert(insertPayload)
         .select()
         .single();
 
@@ -382,7 +432,7 @@ export function CreditNotes() {
 
       if (itemsError) throw itemsError;
 
-      showToast({ type: 'success', title: 'Created', message: 'Credit note created and is pending approval. Stock will be restored once approved.' });
+      showToast({ type: 'success', title: 'Created', message: 'Credit note created and is pending approval.' });
       setModalOpen(false);
       resetForm();
       loadData();
@@ -467,9 +517,37 @@ export function CreditNotes() {
       reason: '',
       notes: '',
       currency: 'IDR',
+      material_return_id: '',
     });
     setItems([{ product_id: '', batch_id: '', quantity: 0, unit_price: 0 }]);
   };
+
+  // Auto-populate form when navigated from Material Returns "Issue CN" button
+  useEffect(() => {
+    const returnId = sessionStorage.getItem('anzen_originating_return_id');
+    if (returnId && modalOpen) {
+      sessionStorage.removeItem('anzen_originating_return_id');
+    }
+  }, [modalOpen]);
+
+  useEffect(() => {
+    const returnId = sessionStorage.getItem('anzen_originating_return_id');
+    if (!returnId) return;
+    const ret = approvedReturns.find(r => r.id === returnId);
+    if (!ret) return;
+    sessionStorage.removeItem('anzen_originating_return_id');
+    setFormData(prev => ({
+      ...prev,
+      customer_id: ret.customer_id || '',
+      original_invoice_id: ret.original_invoice_id || '',
+      original_invoice_number: ret.sales_invoices?.invoice_number || '',
+      reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}`,
+      material_return_id: ret.id,
+    }));
+    if (ret.customer_id) loadInvoicesForCustomer(ret.customer_id);
+    if (ret.original_invoice_id) loadInvoiceItems(ret.original_invoice_id);
+    setModalOpen(true);
+  }, [approvedReturns]);
 
   const canManage = profile?.role === 'admin' || profile?.role === 'sales' || profile?.role === 'manager';
   const isManager = profile?.role === 'admin' || profile?.role === 'manager';
@@ -494,6 +572,15 @@ export function CreditNotes() {
       key: 'original_invoice_number',
       label: 'Original Invoice',
       render: (value: any, cn: CreditNote) => cn.original_invoice_number || 'N/A'
+    },
+    {
+      key: 'linked_return',
+      label: 'Linked Return',
+      render: (value: any, cn: CreditNote) => cn.material_returns ? (
+        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
+          {cn.material_returns.return_number}
+        </span>
+      ) : <span className="text-gray-400 text-xs">—</span>
     },
     {
       key: 'total_amount',
@@ -642,6 +729,50 @@ export function CreditNotes() {
                   ))}
                 </select>
               </div>
+
+              {approvedReturns.filter(r => !formData.customer_id || r.customer_id === formData.customer_id).length > 0 && (
+                <div className="sm:col-span-2 bg-purple-50 border border-purple-200 rounded-lg p-3">
+                  <label className="block text-sm font-semibold text-purple-800 mb-1">
+                    Link to Approved Material Return (Optional)
+                  </label>
+                  <p className="text-xs text-purple-600 mb-2">
+                    If this Credit Note is being issued because of a Material Return, link it here for complete financial traceability.
+                  </p>
+                  <select
+                    name="material_return_id"
+                    aria-label="Link to Approved Material Return"
+                    value={formData.material_return_id}
+                    onChange={(e) => {
+                      const retId = e.target.value;
+                      const ret = approvedReturns.find(r => r.id === retId);
+                      setFormData(prev => ({
+                        ...prev,
+                        material_return_id: retId,
+                        ...(ret && !formData.customer_id ? { customer_id: ret.customer_id } : {}),
+                        ...(ret?.original_invoice_id && !formData.original_invoice_id ? {
+                          original_invoice_id: ret.original_invoice_id,
+                          original_invoice_number: ret.sales_invoices?.invoice_number || '',
+                        } : {}),
+                        ...(ret && !formData.reason ? { reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}` } : {}),
+                      }));
+                      if (ret?.customer_id && !formData.customer_id) loadInvoicesForCustomer(ret.customer_id);
+                      if (ret?.original_invoice_id && !formData.original_invoice_id) loadInvoiceItems(ret.original_invoice_id);
+                    }}
+                    className="w-full px-3 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white"
+                  >
+                    <option value="">— No linked return —</option>
+                    {approvedReturns
+                      .filter(r => !formData.customer_id || r.customer_id === formData.customer_id)
+                      .map(ret => (
+                        <option key={ret.id} value={ret.id}>
+                          {ret.return_number} — {ret.customers?.company_name || 'Unknown'} — Rp {(ret.financial_impact || 0).toLocaleString('id-ID')}
+                          {ret.sales_invoices?.invoice_number ? ` (Invoice: ${ret.sales_invoices.invoice_number})` : ''}
+                        </option>
+                      ))
+                    }
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">

@@ -14,6 +14,7 @@ import { AlertTriangle, Clock, TrendingUp, FileText, ClipboardCheck, ClipboardLi
 import { fetchSalesOrderDeliveryAlerts, summarizeDeliveryAlerts } from '../utils/salesOrderDeliveryAlerts';
 import { TaxComplianceDashboardCards } from '../components/finance/tax/TaxComplianceDashboardCards';
 import { formatCurrency } from '../utils/currency';
+import { OwnerAttentionDashboard } from '../components/dashboard/OwnerAttentionDashboard';
 
 interface DashboardStats {
   totalProducts: number;
@@ -356,6 +357,10 @@ export function Dashboard() {
           </h1>
           <p className="text-sm text-gray-600 mt-1">Here’s what needs attention today.</p>
         </div>
+
+        {(isAdmin || isAccounts || isManager || isAuditor) && (
+          <OwnerAttentionDashboard />
+        )}
 
         {error ? (
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">

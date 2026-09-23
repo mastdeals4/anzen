@@ -443,3 +443,39 @@ test('CASE 10: GL 2210 has zero September Vijay loan entries, and zero duplicate
   `);
   assert.equal(Number(rowsLT[0].count), 1);
 });
+
+test('CASE 11: PartyLedger subledger query for Vijay Lunkad reflects loans and repayments accurately without GL double-counting', () => {
+  const rows = runSql(`
+    WITH loans_sub AS (
+      SELECT 
+        l.loan_number,
+        l.loan_type,
+        l.principal_amount,
+        CASE WHEN l.loan_type = 'given' THEN l.principal_amount ELSE 0 END as debit,
+        CASE WHEN l.loan_type = 'taken' THEN l.principal_amount ELSE 0 END as credit
+      FROM loans l
+      WHERE l.counterparty_name = 'Vijay Lunkad'
+    ),
+    repayments_sub AS (
+      SELECT 
+        lt.transaction_number,
+        l.loan_type,
+        lt.principal_amount,
+        CASE WHEN l.loan_type = 'taken' THEN lt.principal_amount ELSE 0 END as debit,
+        CASE WHEN l.loan_type = 'given' THEN lt.principal_amount ELSE 0 END as credit
+      FROM loan_transactions lt
+      JOIN loans l ON l.id = lt.loan_id
+      WHERE l.counterparty_name = 'Vijay Lunkad' AND lt.status = 'posted'
+    )
+    SELECT 
+      (SELECT count(*) FROM loans_sub) as loan_count,
+      (SELECT count(*) FROM repayments_sub) as repayment_count,
+      (SELECT SUM(debit) FROM loans_sub WHERE loan_number = 'LN2609-0001') as ln0001_dr,
+      (SELECT SUM(credit) FROM repayments_sub) as repayment_cr;
+  `);
+
+  assert.equal(rows.length, 1);
+  assert.equal(Number(rows[0].loan_count), 3);
+  assert.equal(Number(rows[0].repayment_count), 2);
+  assert.equal(Number(rows[0].ln0001_dr), 10000000);
+});

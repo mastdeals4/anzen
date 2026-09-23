@@ -217,6 +217,15 @@ interface FinanceExpense {
   sales_invoices?: { id: string; invoice_number: string } | null;
   posting_lifecycle?: EffectiveExpensePostingState | null;
   effective_posting_state?: ExpensePostingState;
+  sales_order_allocations?: SalesOrderAllocation[] | null;
+}
+
+export interface SalesOrderAllocation {
+  sales_order_id: string;
+  so_number?: string;
+  customer_name?: string;
+  total_amount?: number;
+  allocated_amount: number;
 }
 
 const getExpenseCurrency = (expense: FinanceExpense): string =>
@@ -482,6 +491,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const [, setBatches] = useState<Batch[]>([]);
   const [containers, setContainers] = useState<ImportContainer[]>([]);
   const [challans, setChallans] = useState<DeliveryChallan[]>([]);
+  const [salesOrders, setSalesOrders] = useState<Array<{ id: string; so_number: string; total_amount: number; currency: string; customers?: { company_name: string } | null }>>([]);
+  const [soAllocations, setSoAllocations] = useState<SalesOrderAllocation[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [reconciledExpenseIds, setReconciledExpenseIds] = useState<Set<string>>(new Set());
   const [selectedBankTransactionId, setSelectedBankTransactionId] = useState<string>('');
@@ -1121,7 +1132,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       if (startDate) expensesQuery = expensesQuery.gte('expense_date', startDate);
       if (endDate) expensesQuery = expensesQuery.lte('expense_date', endDate);
 
-      const [expensesRes, batchesRes, containersRes, challansRes, banksRes, bankStmtRes] = await Promise.all([
+      const [expensesRes, batchesRes, containersRes, challansRes, banksRes, bankStmtRes, salesOrdersRes] = await Promise.all([
         expensesQuery,
         supabase
           .from('batches')
@@ -1144,6 +1155,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           .from('bank_statement_lines')
           .select('matched_expense_id')
           .not('matched_expense_id', 'is', null),
+        supabase
+          .from('sales_orders')
+          .select('id, so_number, total_amount, currency, customers(company_name)')
+          .order('so_number', { ascending: false })
+          .limit(100),
       ]);
 
       if (expensesRes.error) throw expensesRes.error;
@@ -1157,6 +1173,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       setChallans((challansRes.data || []).map(challan => ({
         ...challan,
         customers: Array.isArray(challan.customers) ? challan.customers[0] || null : challan.customers,
+      })));
+      setSalesOrders((salesOrdersRes.data || []).map((so: any) => ({
+        ...so,
+        customers: Array.isArray(so.customers) ? so.customers[0] || null : so.customers,
       })));
       setBankAccounts(banksRes.data || []);
 
@@ -1243,6 +1263,75 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     await downloadStorageDocument(url, filename);
   };
 
+  const handleAddSoAllocation = () => {
+    const existingIds = new Set(soAllocations.map(a => a.sales_order_id));
+    const available = salesOrders.find(s => !existingIds.has(s.id));
+    const chosen = available || salesOrders[0];
+    if (!chosen) {
+      alert('No sales orders found.');
+      return;
+    }
+    const allocatedSoFar = soAllocations.reduce((sum, a) => sum + (Number(a.allocated_amount) || 0), 0);
+    const remaining = Math.max(0, (formData.amount || 0) - allocatedSoFar);
+    setSoAllocations([
+      ...soAllocations,
+      {
+        sales_order_id: chosen.id,
+        so_number: chosen.so_number,
+        customer_name: (chosen.customers as any)?.company_name || '',
+        total_amount: Number(chosen.total_amount) || 0,
+        allocated_amount: remaining,
+      },
+    ]);
+  };
+
+  const handleUpdateSoAllocation = (index: number, field: keyof SalesOrderAllocation, value: any) => {
+    const updated = [...soAllocations];
+    if (field === 'sales_order_id') {
+      const so = salesOrders.find(s => s.id === value);
+      updated[index] = {
+        ...updated[index],
+        sales_order_id: value,
+        so_number: so?.so_number || '',
+        customer_name: (so?.customers as any)?.company_name || '',
+        total_amount: Number(so?.total_amount) || 0,
+      };
+    } else {
+      updated[index] = {
+        ...updated[index],
+        [field]: value,
+      };
+    }
+    setSoAllocations(updated);
+  };
+
+  const handleRemoveSoAllocation = (index: number) => {
+    setSoAllocations(soAllocations.filter((_, i) => i !== index));
+  };
+
+  const handleAutoSplitProportional = () => {
+    if (soAllocations.length === 0 || !formData.amount) return;
+    const totalAmount = formData.amount;
+    const soTotalSum = soAllocations.reduce((acc, alloc) => acc + (alloc.total_amount || 0), 0);
+
+    let runningSum = 0;
+    const updated = soAllocations.map((alloc, idx) => {
+      let amt = 0;
+      if (idx === soAllocations.length - 1) {
+        amt = Math.round((totalAmount - runningSum) * 100) / 100;
+      } else {
+        if (soTotalSum > 0) {
+          amt = Math.round((totalAmount * ((alloc.total_amount || 0) / soTotalSum)) * 100) / 100;
+        } else {
+          amt = Math.round((totalAmount / soAllocations.length) * 100) / 100;
+        }
+        runningSum += amt;
+      }
+      return { ...alloc, allocated_amount: amt };
+    });
+    setSoAllocations(updated);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -1317,6 +1406,20 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           'so the amount flows correctly into the PPh Register.'
         );
         return;
+      }
+
+      // Sales Order allocations validation for sales expenses
+      if (requiresDC && soAllocations.length > 0) {
+        const allocSum = soAllocations.reduce((sum, a) => sum + (Number(a.allocated_amount) || 0), 0);
+        if (Math.abs(allocSum - (formData.amount || 0)) > 0.01) {
+          alert(
+            `❌ Sales Order Allocation Mismatch\n\n` +
+            `Sum of allocations = Rp ${allocSum.toLocaleString('id-ID')}\n` +
+            `Expense Amount = Rp ${(formData.amount || 0).toLocaleString('id-ID')}\n\n` +
+            `The total allocated across Sales Orders must equal the expense amount.`
+          );
+          return;
+        }
       }
 
       // Upload new files first
@@ -1431,6 +1534,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         exchange_rate: exchangeRate,
         bank_account_currency: selectedExpenseBank?.currency || transactionCurrency,
         payment_currency: transactionCurrency,
+        sales_order_allocations: requiresDC && soAllocations.length > 0 ? soAllocations : [],
       };
 
       console.log('=== EXPENSE DATA TO SAVE ===');
@@ -1618,6 +1722,16 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
     // Set broker items
     setBrokerItems(expense.broker_items ?? []);
+
+    // Set sales order allocations
+    setSoAllocations(
+      Array.isArray(expense.sales_order_allocations)
+        ? (expense.sales_order_allocations as SalesOrderAllocation[]).map(a => ({
+            ...a,
+            allocated_amount: Number(a.allocated_amount) || 0,
+          }))
+        : []
+    );
 
     // Dynamic-form load-back — if the expense was saved as Staff or Utility,
     // reconstruct the picker selection + period from the "[Name · Period]"
@@ -1926,6 +2040,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     setSelectedSupplier(null);
     setSelectedDocType('');
     setBrokerItems([]);
+    setSoAllocations([]);
     setSelectedStaffId('');
     setSalaryAdvances([]);
     setSalaryCalculation(null);
@@ -3588,6 +3703,132 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     )}
                   </SapRow>
 
+                  {/* ── Multi-SO Expense Allocation (Sales Order Profitability Distribution) ── */}
+                  {requiresDC && (
+                    <div className="my-2 p-3 bg-blue-50/60 border border-blue-200 rounded-lg">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-blue-900 uppercase tracking-wide">
+                            Multi-SO Expense Allocation
+                          </span>
+                          <span className="text-[11px] text-blue-700">
+                            (Prorates expense across Sales Orders for Profitability reporting)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {soAllocations.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={handleAutoSplitProportional}
+                              className="px-2.5 py-1 text-xs bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 rounded shadow-sm font-medium transition"
+                            >
+                              Auto-Split Proportional
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleAddSoAllocation}
+                            className="px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm font-medium transition flex items-center gap-1"
+                          >
+                            + Add Sales Order
+                          </button>
+                        </div>
+                      </div>
+
+                      {soAllocations.length === 0 ? (
+                        <p className="text-xs text-gray-500 italic py-1">
+                          Optional: Allocate this expense to specific Sales Orders. If left empty, it attaches generally to the selected Delivery Challan or department.
+                        </p>
+                      ) : (
+                        <div className="space-y-2 mt-2">
+                          <div className="grid grid-cols-12 gap-2 text-[11px] font-semibold text-gray-600 px-1 uppercase tracking-wider">
+                            <div className="col-span-5">Sales Order</div>
+                            <div className="col-span-3 text-right">SO Total</div>
+                            <div className="col-span-3 text-right">Allocated Amount ({formData.transaction_currency})</div>
+                            <div className="col-span-1 text-center">Action</div>
+                          </div>
+                          {soAllocations.map((alloc, idx) => (
+                            <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-white p-1.5 rounded border border-blue-100 shadow-sm">
+                              <div className="col-span-5">
+                                <select
+                                  value={alloc.sales_order_id}
+                                  onChange={(e) => handleUpdateSoAllocation(idx, 'sales_order_id', e.target.value)}
+                                  className="w-full text-xs border border-gray-300 rounded px-2 py-1 font-mono focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                >
+                                  {salesOrders.map((so) => (
+                                    <option key={so.id} value={so.id}>
+                                      {so.so_number} — {(so.customers as any)?.company_name || 'No Customer'} (Rp {Number(so.total_amount || 0).toLocaleString('id-ID')})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="col-span-3 text-right text-xs font-mono text-gray-600">
+                                Rp {Number(alloc.total_amount || 0).toLocaleString('id-ID')}
+                              </div>
+                              <div className="col-span-3">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  value={alloc.allocated_amount === 0 ? '' : alloc.allocated_amount}
+                                  onChange={(e) => handleUpdateSoAllocation(idx, 'allocated_amount', parseFloat(e.target.value) || 0)}
+                                  placeholder="0"
+                                  className="w-full text-right text-xs font-mono border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-semibold text-gray-800"
+                                />
+                              </div>
+                              <div className="col-span-1 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveSoAllocation(idx)}
+                                  className="text-red-500 hover:text-red-700 text-sm font-bold transition p-1"
+                                  title="Remove SO"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="flex items-center justify-between pt-2 border-t border-blue-200 mt-2 text-xs">
+                            <div className="flex items-center gap-3">
+                              <span>
+                                Allocated Total: <strong className="font-mono text-gray-900">Rp {soAllocations.reduce((s, a) => s + (Number(a.allocated_amount) || 0), 0).toLocaleString('id-ID')}</strong>
+                              </span>
+                              <span>
+                                Expense Amount: <strong className="font-mono text-gray-900">Rp {(formData.amount || 0).toLocaleString('id-ID')}</strong>
+                              </span>
+                            </div>
+                            <div>
+                              {(() => {
+                                const allocSum = soAllocations.reduce((s, a) => s + (Number(a.allocated_amount) || 0), 0);
+                                const diff = (formData.amount || 0) - allocSum;
+                                if (Math.abs(diff) < 0.01) {
+                                  return (
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      ✓ 100% Balanced
+                                    </span>
+                                  );
+                                } else if (diff > 0) {
+                                  return (
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                                      Remaining: Rp {diff.toLocaleString('id-ID')}
+                                    </span>
+                                  );
+                                } else {
+                                  return (
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-800 border border-rose-300">
+                                      Over-allocated: Rp {Math.abs(diff).toLocaleString('id-ID')}
+                                    </span>
+                                  );
+                                }
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {(formData.pph_amount > 0 || !!formData.pph_code_id) && (
                     <div className="my-1.5 flex flex-wrap items-center gap-2 text-xs bg-orange-50 border border-orange-200 rounded px-2.5 py-1 text-orange-900">
                       <span className="font-semibold uppercase tracking-wide text-[10px] text-orange-800">
@@ -4636,6 +4877,49 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         <td className="px-2 py-1 text-right font-mono font-bold text-gray-900">
                           {fmtMoney(viewingExpense.broker_items.reduce((sum, item) => sum + brokerLineTotal(item), 0))}
                         </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── SALES ORDER ALLOCATION TABLE ── */}
+            {viewingExpense.sales_order_allocations && viewingExpense.sales_order_allocations.length > 0 && (
+              <div className="px-4 py-2 border-b border-gray-100">
+                <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Sales Order Allocations (Multi-SO Profitability)</h3>
+                <div className="overflow-x-auto rounded border border-gray-200">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-gray-50 text-[9px] uppercase text-gray-500">
+                      <tr>
+                        <th className="px-2 py-1 text-left font-medium">SO Number</th>
+                        <th className="px-2 py-1 text-left font-medium">Customer</th>
+                        <th className="px-2 py-1 text-right font-medium">SO Total</th>
+                        <th className="px-2 py-1 text-right font-medium">Allocated Expense</th>
+                        <th className="px-2 py-1 text-right font-medium">% of Expense</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewingExpense.sales_order_allocations.map((item, i) => {
+                        const pct = viewingExpense.amount > 0 ? ((item.allocated_amount || 0) / viewingExpense.amount) * 100 : 0;
+                        return (
+                          <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
+                            <td className="px-2 py-1 font-mono font-medium text-blue-700">{item.so_number || '—'}</td>
+                            <td className="px-2 py-1 text-gray-700 truncate max-w-[160px]">{item.customer_name || '—'}</td>
+                            <td className="px-2 py-1 text-right font-mono text-gray-700">{fmtMoney(item.total_amount || 0)}</td>
+                            <td className="px-2 py-1 text-right font-mono font-bold text-gray-900">{fmtMoney(item.allocated_amount || 0)}</td>
+                            <td className="px-2 py-1 text-right font-mono text-gray-600">{pct.toFixed(1)}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-gray-200 bg-gray-50">
+                        <td colSpan={3} className="px-2 py-1 text-right text-[10px] font-semibold text-gray-600 uppercase">Total Allocated</td>
+                        <td className="px-2 py-1 text-right font-mono font-bold text-gray-900">
+                          {fmtMoney(viewingExpense.sales_order_allocations.reduce((sum, item) => sum + (Number(item.allocated_amount) || 0), 0))}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono font-bold text-gray-900">100%</td>
                       </tr>
                     </tfoot>
                   </table>
