@@ -1568,10 +1568,17 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                       <option value="">Select source account</option>
                       {postingAccounts.map((account) => (
                         <option key={account.id} value={account.id}>
-                          {account.code} - {account.name}
+                          {account.code === '2105'
+                            ? `${account.code} - Paid personally by Director (Payable to Director)`
+                            : `${account.code} - ${account.name}`}
                         </option>
                       ))}
                     </select>
+                    {postingAccounts.find(a => a.id === formData.source_account_id)?.code === '2105' && (
+                      <p className="text-[11px] text-indigo-700 mt-1">
+                        Paid personally by Director: Creates a payable to the director. When SAPJ reimburses the director via Bank Reconciliation, Dr 2105 / Cr Bank will settle it.
+                      </p>
+                    )}
                   </SapField>
                 )}
               </SapRow>
@@ -1956,7 +1963,10 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                       <span className="font-medium text-gray-900">
                         {(() => {
                           const account = postingAccounts.find(item => item.id === viewingTransaction.source_account_id);
-                          return account ? `${account.code} - ${account.name}` : viewingTransaction.source_account_id;
+                          if (!account) return viewingTransaction.source_account_id;
+                          return account.code === '2105'
+                            ? '2105 - Paid personally by Director (Payable to Director)'
+                            : `${account.code} - ${account.name}`;
                         })()}
                       </span>
                     </div>

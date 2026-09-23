@@ -201,6 +201,70 @@ export const saveCapitalContribution = (
   p_bank_statement_line_id: bankStatementLineId || null,
 });
 
+export interface DirectorBalanceSummary {
+  director_name: string;
+  due_to_director: number;
+  due_from_director: number;
+  net_position: number;
+  net_status: 'payable' | 'receivable' | 'settled';
+  active_loans: Array<{
+    id: string;
+    loan_number: string;
+    loan_type: string;
+    principal_amount: number;
+    outstanding_balance: number;
+    currency: string;
+    loan_date: string;
+    status: string;
+  }>;
+  last_transaction_date: string | null;
+}
+
+export const getDirectorRelatedPartyBalanceSummary = (directorName: string = 'Vijay Lunkad') =>
+  rpc<DirectorBalanceSummary>('get_director_related_party_balance_summary', {
+    p_director_name: directorName,
+  });
+
+export interface RecordDirectorTransactionResult {
+  success: boolean;
+  bank_line_id: string;
+  direction: 'received_from_director' | 'paid_to_director';
+  action: 'settle_due_from' | 'increase_due_to' | 'settle_due_to' | 'increase_due_from';
+  account_code: string;
+  account_name: string;
+  amount: number;
+  director_name: string;
+  loan_id: string;
+  loan_number: string;
+  loan_transaction_id: string;
+  journal_entry_id: string;
+  entry_number: string;
+  bank_statement_allocation_id: string;
+  previous_balances: {
+    due_to_director: number;
+    due_from_director: number;
+    net_position: number;
+    net_status: string;
+  };
+  new_balances: {
+    due_to_director: number;
+    due_from_director: number;
+    net_position: number;
+    net_status: string;
+  };
+}
+
+export const recordDirectorRelatedPartyBankTransaction = (
+  bankStatementLineId: string,
+  directorName: string = 'Vijay Lunkad',
+  notes?: string | null,
+) =>
+  rpc<RecordDirectorTransactionResult>('record_director_related_party_bank_transaction', {
+    p_bank_line_id: bankStatementLineId,
+    p_director_name: directorName,
+    p_notes: notes || null,
+  });
+
 export const saveBankLinkedFinanceJournal = (
   bankStatementLineId: string,
   description: string,

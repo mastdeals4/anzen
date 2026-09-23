@@ -22,7 +22,9 @@ import { formatCurrency, parseIndonesianNumber } from '../../utils/currency';
 import { FinanceActionButton } from './FinanceUI';
 import {
   approveFinanceExpense,
+  getDirectorRelatedPartyBalanceSummary,
   linkBankStatementLine,
+  recordDirectorRelatedPartyBankTransaction,
   saveCapitalContribution,
   saveBankLinkedFinanceJournal,
   saveFinanceExpense,
@@ -330,6 +332,11 @@ export function BankReconciliationEnhanced({
   const [directorLoanAccounts, setDirectorLoanAccounts] = useState<DirectorOwnerLoanOption[]>([]);
   const [directorLoanAccountId, setDirectorLoanAccountId] = useState('');
   const [recordDirectorLoanWithdrawal, setRecordDirectorLoanWithdrawal] = useState(false);
+  const [recordDirectorRelatedParty, setRecordDirectorRelatedParty] = useState(false);
+  const [directorSummary, setDirectorSummary] = useState<any>(null);
+  const [loadingDirectorSummary, setLoadingDirectorSummary] = useState(false);
+  const [selectedDirectorName, setSelectedDirectorName] = useState('Vijay Lunkad');
+  const [directorNotes, setDirectorNotes] = useState('');
   const [recordLoanDebit, setRecordLoanDebit] = useState(false);
   const [recordLoanRepayment, setRecordLoanRepayment] = useState(false);
   const [loanDirection, setLoanDirection] = useState<'given' | 'taken'>('given');
@@ -2195,6 +2202,10 @@ export function BankReconciliationEnhanced({
     setRecordLoanDebit(false);
     setRecordLoanRepayment(false);
     setRecordDirectorLoanWithdrawal(false);
+    setRecordDirectorRelatedParty(false);
+    setSelectedDirectorName('Vijay Lunkad');
+    setDirectorNotes(line.description || '');
+    setDirectorSummary(null);
     setLinkToExpense(false);
     setLinkJournalEntry(false);
     setLinkToSupplierPayment(false);
@@ -2488,6 +2499,61 @@ export function BankReconciliationEnhanced({
     }
   };
 
+  const loadDirectorSummary = async (name: string = 'Vijay Lunkad') => {
+    try {
+      setLoadingDirectorSummary(true);
+      const summaryData = await getDirectorRelatedPartyBalanceSummary(name);
+      setDirectorSummary(summaryData);
+    } catch (err) {
+      console.error('Failed to load director balance summary:', err);
+    } finally {
+      setLoadingDirectorSummary(false);
+    }
+  };
+
+  const handleRecordDirectorRelatedParty = async (line: StatementLine) => {
+    if (recordingReceiptRef.current) return;
+    recordingReceiptRef.current = true;
+    setRecordingReceipt(true);
+    try {
+      const result = await recordDirectorRelatedPartyBankTransaction(
+        line.id,
+        selectedDirectorName,
+        directorNotes || line.description
+      );
+      setActionFeedback({
+        type: 'success',
+        title: 'Director / Related Party transaction recorded',
+        details: [
+          { label: 'Journal Entry', value: result.entry_number },
+          { label: 'GL Account', value: `${result.account_code} — ${result.account_name}` },
+          { label: 'Amount', value: formatCurrency(result.amount, line.currency) },
+          { label: 'Action', value: result.action.replace(/_/g, ' ').toUpperCase() },
+          { label: 'Net Position After', value: `${formatCurrency(result.new_balances.net_position, line.currency)} (${result.new_balances.net_status})` }
+        ],
+        timestamp: Date.now(),
+      });
+      setRecordModal(false);
+      setRecordingLine(null);
+      setRecordDirectorRelatedParty(false);
+      setReceiptType('');
+      selfActionTimestampRef.current = Date.now();
+      await loadStatementLines();
+      notifyFinanceReconciliationRefresh();
+    } catch (err: any) {
+      console.error('Error recording director transaction:', err);
+      setActionFeedback({
+        type: 'error',
+        title: 'Failed to record Director transaction',
+        details: [{ label: 'Error', value: err.message || 'Unknown error' }],
+        timestamp: Date.now(),
+      });
+    } finally {
+      recordingReceiptRef.current = false;
+      setRecordingReceipt(false);
+    }
+  };
+
   const handleRecordReceipt = async (line: StatementLine, type: string, customerId: string, description: string) => {
     if (recordingReceiptRef.current) return;
     recordingReceiptRef.current = true;
@@ -2557,6 +2623,11 @@ export function BankReconciliationEnhanced({
           ],
           timestamp: Date.now(),
         });
+      } else if (type === 'director_related_party') {
+        recordingReceiptRef.current = false;
+        setRecordingReceipt(false);
+        await handleRecordDirectorRelatedParty(line);
+        return;
       } else if (type === 'loan') {
         await handleRecordLoan(line);
         return;
@@ -4092,179 +4163,292 @@ export function BankReconciliationEnhanced({
 
             {recordingLine.debit > 0 && (
               <div>
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <button
-                    onClick={() => { setLinkToExpense(false); setLinkJournalEntry(false); setLinkToSupplierPayment(false); setLinkToTaxPayment(false); setLinkSettleBills(false); setRecordLoanRepayment(false); setRecordLoanDebit(false); setRecordDirectorLoanWithdrawal(false); }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${!linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills && !recordLoanRepayment && !recordLoanDebit && !recordDirectorLoanWithdrawal ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
-                  >
-                    Create New Expense
-                  </button>
-                  <button
-                    onClick={() => { setRecordLoanRepayment(false); setRecordLoanDebit(false); setRecordDirectorLoanWithdrawal(false); setLinkToExpense(true); setLinkJournalEntry(false); setLinkToSupplierPayment(false); setLinkToTaxPayment(false); setLinkSettleBills(false); }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
-                  >
-                    Link Expense
-                  </button>
-                  <button
-                    onClick={() => {
-                      setRecordLoanRepayment(false);
-                      setRecordLoanDebit(false);
-                      setRecordDirectorLoanWithdrawal(false);
-                      setLinkJournalEntry(true);
-                      setLinkToExpense(false);
-                      setLinkToSupplierPayment(false);
-                      setLinkToTaxPayment(false);
-                      setLinkSettleBills(false);
-                      loadAvailableJournals(recordingLine);
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
-                  >
-                    Link Journal
-                  </button>
-                  <button
-                    onClick={() => {
-                      setRecordLoanRepayment(false);
-                      setRecordLoanDebit(false);
-                      setRecordDirectorLoanWithdrawal(false);
-                      setLinkToSupplierPayment(true);
-                      setLinkToExpense(false);
-                      setLinkJournalEntry(false);
-                      setLinkToTaxPayment(false);
-                      setLinkSettleBills(false);
-                      loadSupplierPayments(recordingLine);
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToSupplierPayment ? 'bg-orange-600 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200'}`}
-                  >
-                    Supplier Payment
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onRecordContra?.({
-                      bankAccountId: selectedBank,
-                      statementLineId: recordingLine.id,
-                      date: recordingLine.date,
-                      amount: recordingLine.debit,
-                      description: recordingLine.description,
-                      direction: 'from',
-                    })}
-                    className="py-2 px-3 rounded-lg text-sm font-medium bg-cyan-50 text-cyan-700 border border-cyan-200"
-                  >
-                    Record Contra
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onRecordPayment?.({
-                      bankAccountId: selectedBank,
-                      statementLineId: recordingLine.id,
-                      date: recordingLine.date,
-                      amount: recordingLine.debit,
-                      currency: recordingLine.currency as 'IDR' | 'USD',
-                      reference: recordingLine.reference,
-                      description: recordingLine.description,
-                    })}
-                    className="py-2 px-3 rounded-lg text-sm font-medium bg-rose-50 text-rose-700 border border-rose-200"
-                  >
-                    Record Payment
-                  </button>
-                  <button
-                    onClick={() => {
-                      setRecordLoanRepayment(false);
-                      setRecordLoanDebit(false);
-                      setRecordDirectorLoanWithdrawal(false);
-                      setLinkToTaxPayment(true);
-                      setLinkToExpense(false);
-                      setLinkJournalEntry(false);
-                      setLinkToSupplierPayment(false);
-                      setLinkSettleBills(false);
-                      loadAvailableTaxPayments(recordingLine);
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToTaxPayment ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 border border-purple-200'}`}
-                  >
-                    Tax Payment
-                  </button>
-                  <button
-                    onClick={() => {
-                      setRecordLoanRepayment(false);
-                      setRecordLoanDebit(false);
-                      setRecordDirectorLoanWithdrawal(false);
-                      setLinkSettleBills(true);
-                      setLinkToExpense(false);
-                      setLinkJournalEntry(false);
-                      setLinkToSupplierPayment(false);
-                      setLinkToTaxPayment(false);
-                      setBillAllocations([]);
-                      loadOutstandingBills();
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${linkSettleBills ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}
-                  >
-                    Settle Bills
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRecordLoanDebit(true);
-                      setRecordLoanRepayment(false);
-                      setRecordDirectorLoanWithdrawal(false);
-                      setLinkToExpense(false);
-                      setLinkJournalEntry(false);
-                      setLinkToSupplierPayment(false);
-                      setLinkToTaxPayment(false);
-                      setLinkSettleBills(false);
-                      setLoanDirection('given');
-                      setLoanCounterparty('');
-                      setLoanCoaId('');
-                      loadLoanAccounts('given');
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${recordLoanDebit ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'}`}
-                  >
-                    Loan Given
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRecordLoanRepayment(true);
-                      setRecordLoanDebit(false);
-                      setRecordDirectorLoanWithdrawal(false);
-                      setLinkToExpense(false);
-                      setLinkJournalEntry(false);
-                      setLinkToSupplierPayment(false);
-                      setLinkToTaxPayment(false);
-                      setLinkSettleBills(false);
-                      setRepaymentPrincipal(recordingLine.debit);
-                      setRepaymentInterest(0);
-                      loadActiveLoans();
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${recordLoanRepayment ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'}`}
-                  >
-                    Loan Repayment
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRecordDirectorLoanWithdrawal(true);
-                      setRecordLoanDebit(false);
-                      setRecordLoanRepayment(false);
-                      setLinkToExpense(false);
-                      setLinkJournalEntry(false);
-                      setLinkToSupplierPayment(false);
-                      setLinkToTaxPayment(false);
-                      setLinkSettleBills(false);
-                      setDirectorLoanAccountId('');
-                    }}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium ${recordDirectorLoanWithdrawal ? 'bg-violet-600 text-white' : 'bg-violet-50 text-violet-700 border border-violet-200'}`}
-                  >
-                    Director Loan Withdrawal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRecordOwnerWithdrawal(recordingLine)}
-                    className="py-2 px-3 rounded-lg text-sm font-medium bg-violet-50 text-violet-700 border border-violet-200"
-                  >
-                    Owner Withdrawal
-                  </button>
+                <div className="space-y-2 mb-3">
+                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Money Out Actions</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(false);
+                        setRecordLoanRepayment(false);
+                        setRecordLoanDebit(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                        setLinkToSupplierPayment(true);
+                        setLinkToExpense(false);
+                        setLinkJournalEntry(false);
+                        setLinkToTaxPayment(false);
+                        setLinkSettleBills(false);
+                        loadSupplierPayments(recordingLine);
+                      }}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToSupplierPayment ? 'bg-orange-600 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200'}`}
+                    >
+                      Supplier Payment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(true);
+                        setRecordLoanDebit(false);
+                        setRecordLoanRepayment(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                        setLinkToExpense(false);
+                        setLinkJournalEntry(false);
+                        setLinkToSupplierPayment(false);
+                        setLinkToTaxPayment(false);
+                        setLinkSettleBills(false);
+                        loadDirectorSummary(selectedDirectorName);
+                        setDirectorNotes(recordingLine.description || '');
+                      }}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium ${recordDirectorRelatedParty ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'}`}
+                    >
+                      Director / Related Party
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(false);
+                        setRecordLoanRepayment(false);
+                        setRecordLoanDebit(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                        setLinkToTaxPayment(true);
+                        setLinkToExpense(false);
+                        setLinkJournalEntry(false);
+                        setLinkToSupplierPayment(false);
+                        setLinkSettleBills(false);
+                        loadAvailableTaxPayments(recordingLine);
+                      }}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToTaxPayment ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 border border-purple-200'}`}
+                    >
+                      Tax Payment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(false);
+                        setLinkToExpense(false);
+                        setLinkJournalEntry(false);
+                        setLinkToSupplierPayment(false);
+                        setLinkToTaxPayment(false);
+                        setLinkSettleBills(false);
+                        setRecordLoanRepayment(false);
+                        setRecordLoanDebit(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                      }}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium ${!linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills && !recordDirectorRelatedParty ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                    >
+                      Create New Expense
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(false);
+                        setRecordLoanRepayment(false);
+                        setRecordLoanDebit(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                        setLinkToExpense(true);
+                        setLinkJournalEntry(false);
+                        setLinkToSupplierPayment(false);
+                        setLinkToTaxPayment(false);
+                        setLinkSettleBills(false);
+                      }}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium ${linkToExpense && !linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !linkSettleBills && !recordDirectorRelatedParty ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                    >
+                      Link Expense
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(false);
+                        setRecordLoanRepayment(false);
+                        setRecordLoanDebit(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                        setLinkSettleBills(true);
+                        setLinkToExpense(false);
+                        setLinkJournalEntry(false);
+                        setLinkToSupplierPayment(false);
+                        setLinkToTaxPayment(false);
+                        setBillAllocations([]);
+                        loadOutstandingBills();
+                      }}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium ${linkSettleBills ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}
+                    >
+                      Settle Bills
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordDirectorRelatedParty(false);
+                        setRecordLoanRepayment(false);
+                        setRecordLoanDebit(false);
+                        setRecordDirectorLoanWithdrawal(false);
+                        setLinkJournalEntry(true);
+                        setLinkToExpense(false);
+                        setLinkToSupplierPayment(false);
+                        setLinkToTaxPayment(false);
+                        setLinkSettleBills(false);
+                        loadAvailableJournals(recordingLine);
+                      }}
+                      className={`py-1.5 px-3 rounded-lg text-xs font-medium ${linkJournalEntry && !linkToSupplierPayment && !linkToTaxPayment && !recordDirectorRelatedParty ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                    >
+                      Link Journal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRecordContra?.({
+                        bankAccountId: selectedBank,
+                        statementLineId: recordingLine.id,
+                        date: recordingLine.date,
+                        amount: recordingLine.debit,
+                        description: recordingLine.description,
+                        direction: 'from',
+                      })}
+                      className="py-1.5 px-3 rounded-lg text-xs font-medium bg-cyan-50 text-cyan-700 border border-cyan-200"
+                    >
+                      Record Contra
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRecordPayment?.({
+                        bankAccountId: selectedBank,
+                        statementLineId: recordingLine.id,
+                        date: recordingLine.date,
+                        amount: recordingLine.debit,
+                        currency: recordingLine.currency as 'IDR' | 'USD',
+                        reference: recordingLine.reference,
+                        description: recordingLine.description,
+                      })}
+                      className="py-1.5 px-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200"
+                    >
+                      Other Payment
+                    </button>
+                  </div>
                 </div>
 
-                {recordLoanDebit ? (
+                {recordDirectorRelatedParty ? (
+                  <div className="space-y-4 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                    <div className="border-b pb-2 flex items-center justify-between">
+                      <div>
+                        <h4 className="font-semibold text-sm text-slate-800">DIRECTOR / RELATED PARTY TRANSACTION</h4>
+                        <p className="text-xs text-slate-500">Money moving between SAPJ and Director / Owner</p>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-xs font-semibold bg-rose-100 text-rose-800">
+                        Money Paid To Director (Cash Outflow)
+                      </span>
+                    </div>
+
+                    {/* Live Balance Summary */}
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                      <div className="flex items-center justify-between text-xs text-slate-600 mb-2">
+                        <span className="font-medium">Director Position ({selectedDirectorName}):</span>
+                        {loadingDirectorSummary && <span className="text-slate-400">Loading live balances...</span>}
+                      </div>
+                      {directorSummary && (
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="bg-white p-2 rounded border border-slate-200">
+                            <span className="block text-[11px] text-slate-500 font-medium">Due TO Director (2105)</span>
+                            <span className="text-xs font-bold text-rose-600">
+                              {formatCurrency(directorSummary.due_to_director, recordingLine.currency)}
+                            </span>
+                          </div>
+                          <div className="bg-white p-2 rounded border border-slate-200">
+                            <span className="block text-[11px] text-slate-500 font-medium">Due FROM Director (1310)</span>
+                            <span className="text-xs font-bold text-blue-600">
+                              {formatCurrency(directorSummary.due_from_director, recordingLine.currency)}
+                            </span>
+                          </div>
+                          <div className="bg-white p-2 rounded border border-slate-200">
+                            <span className="block text-[11px] text-slate-500 font-medium">Net Position</span>
+                            <span className={`text-xs font-bold ${directorSummary.net_status === 'payable' ? 'text-rose-700' : directorSummary.net_status === 'receivable' ? 'text-blue-700' : 'text-slate-700'}`}>
+                              {formatCurrency(directorSummary.net_position, recordingLine.currency)} ({directorSummary.net_status})
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Form Fields */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Director / Related Party *</label>
+                        <select
+                          value={selectedDirectorName}
+                          onChange={(e) => {
+                            const name = e.target.value;
+                            setSelectedDirectorName(name);
+                            loadDirectorSummary(name);
+                          }}
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                        >
+                          <option value="Vijay Lunkad">Vijay Lunkad</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Transaction Direction</label>
+                        <div className="px-3 py-2 border rounded-lg bg-rose-50 text-rose-800 text-sm font-medium">
+                          🔴 Money Paid To Director
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Amount</label>
+                        <div className="px-3 py-2 border rounded-lg bg-gray-50 font-mono font-bold text-gray-800 text-sm">
+                          {formatCurrency(recordingLine.debit, recordingLine.currency)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Date</label>
+                        <div className="px-3 py-2 border rounded-lg bg-gray-50 text-gray-800 text-sm">
+                          {new Date(recordingLine.date).toLocaleDateString('id-ID')}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Description / Notes</label>
+                      <input
+                        type="text"
+                        value={directorNotes}
+                        onChange={(e) => setDirectorNotes(e.target.value)}
+                        placeholder="e.g. Settle Vijay balance / advance"
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+
+                    {/* Automatic Accounting Treatment Preview */}
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 space-y-1">
+                      <div className="font-semibold flex items-center gap-1">
+                        <span>⚡ Automatic Accounting Treatment:</span>
+                      </div>
+                      {directorSummary && directorSummary.due_to_director > 0 ? (
+                        <p>
+                          SAPJ currently owes {selectedDirectorName} {formatCurrency(directorSummary.due_to_director, recordingLine.currency)}.
+                          This payment will <strong>settle Director Payable (Dr 2105)</strong> up to {formatCurrency(Math.min(recordingLine.debit, directorSummary.due_to_director), recordingLine.currency)}.
+                          {recordingLine.debit > directorSummary.due_to_director && (
+                            <span> The remaining {formatCurrency(recordingLine.debit - directorSummary.due_to_director, recordingLine.currency)} will be recorded as <strong>Due from Director (Dr 1310)</strong>.</span>
+                          )}
+                        </p>
+                      ) : (
+                        <p>
+                          SAPJ has no outstanding payable to {selectedDirectorName}. This payment will be recorded as <strong>Due from Director / Receivable (Dr 1310)</strong>.
+                        </p>
+                      )}
+                      <p className="text-[11px] text-blue-700 italic">Double-entry: Dr 2105/1310, Cr Bank. No P&L impact.</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={recordingReceipt}
+                      onClick={() => handleRecordDirectorRelatedParty(recordingLine)}
+                      className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-sm disabled:opacity-50"
+                    >
+                      {recordingReceipt ? 'Recording...' : 'Record Money Paid To Director'}
+                    </button>
+                  </div>
+                ) : recordLoanDebit ? (
                   <div className="space-y-3 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-sm text-slate-800 border-b pb-2">RECORD AS LOAN</h4>
                     <div className="grid grid-cols-2 gap-3">
@@ -4846,7 +5030,10 @@ export function BankReconciliationEnhanced({
                         onChange={(e) => {
                           const t = e.target.value;
                           setReceiptType(t);
-                          if (t === 'loan') {
+                          if (t === 'director_related_party') {
+                            loadDirectorSummary(selectedDirectorName);
+                            setDirectorNotes(recordingLine.description || '');
+                          } else if (t === 'loan') {
                             setLoanDirection('taken');
                             loadLoanAccounts('taken');
                           } else if (t === 'loan_repayment_received') {
@@ -4863,17 +5050,143 @@ export function BankReconciliationEnhanced({
                         }}
                       >
                         <option value="">Select type...</option>
-                        <option value="customer_payment">Customer Payment</option>
-                        <option value="capital">Capital Injection</option>
-                        <option value="loan">Loan / Financing</option>
-                        <option value="loan_repayment_received">Loan Repayment Received (Return of Loan Given)</option>
-                        <option value="loan_director_owner">Money received from Director/Owner (existing COA)</option>
-                        <option value="bank_interest">Bank Interest</option>
-                        <option value="other_income">Other Income</option>
-                        <option value="misc_income">Miscellaneous Income</option>
-                        <option value="refund">Refund / Cash Return</option>
+                        <optgroup label="MONEY IN">
+                          <option value="customer_payment">Customer Receipt</option>
+                          <option value="director_related_party">Director / Related Party</option>
+                          <option value="capital">Capital Contribution</option>
+                        </optgroup>
+                        <optgroup label="OTHER RECEIPTS">
+                          <option value="bank_interest">Bank Interest</option>
+                          <option value="other_income">Other Income</option>
+                          <option value="misc_income">Miscellaneous Income</option>
+                          <option value="refund">Refund / Cash Return</option>
+                        </optgroup>
                       </select>
                     </div>
+
+                    {receiptType === 'director_related_party' && (
+                      <div className="space-y-4 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                        <div className="border-b pb-2 flex items-center justify-between">
+                          <div>
+                            <h4 className="font-semibold text-sm text-slate-800">DIRECTOR / RELATED PARTY TRANSACTION</h4>
+                            <p className="text-xs text-slate-500">Money moving between Director / Owner and SAPJ</p>
+                          </div>
+                          <span className="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
+                            Money Received From Director (Cash Inflow)
+                          </span>
+                        </div>
+
+                        {/* Live Balance Summary */}
+                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                          <div className="flex items-center justify-between text-xs text-slate-600 mb-2">
+                            <span className="font-medium">Director Position ({selectedDirectorName}):</span>
+                            {loadingDirectorSummary && <span className="text-slate-400">Loading live balances...</span>}
+                          </div>
+                          {directorSummary && (
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                              <div className="bg-white p-2 rounded border border-slate-200">
+                                <span className="block text-[11px] text-slate-500 font-medium">Due TO Director (2105)</span>
+                                <span className="text-xs font-bold text-rose-600">
+                                  {formatCurrency(directorSummary.due_to_director, recordingLine.currency)}
+                                </span>
+                              </div>
+                              <div className="bg-white p-2 rounded border border-slate-200">
+                                <span className="block text-[11px] text-slate-500 font-medium">Due FROM Director (1310)</span>
+                                <span className="text-xs font-bold text-blue-600">
+                                  {formatCurrency(directorSummary.due_from_director, recordingLine.currency)}
+                                </span>
+                              </div>
+                              <div className="bg-white p-2 rounded border border-slate-200">
+                                <span className="block text-[11px] text-slate-500 font-medium">Net Position</span>
+                                <span className={`text-xs font-bold ${directorSummary.net_status === 'payable' ? 'text-rose-700' : directorSummary.net_status === 'receivable' ? 'text-blue-700' : 'text-slate-700'}`}>
+                                  {formatCurrency(directorSummary.net_position, recordingLine.currency)} ({directorSummary.net_status})
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Form Fields */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Director / Related Party *</label>
+                            <select
+                              value={selectedDirectorName}
+                              onChange={(e) => {
+                                const name = e.target.value;
+                                setSelectedDirectorName(name);
+                                loadDirectorSummary(name);
+                              }}
+                              className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                            >
+                              <option value="Vijay Lunkad">Vijay Lunkad</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Transaction Direction</label>
+                            <div className="px-3 py-2 border rounded-lg bg-emerald-50 text-emerald-800 text-sm font-medium">
+                              🟢 Money Received From Director
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Amount</label>
+                            <div className="px-3 py-2 border rounded-lg bg-gray-50 font-mono font-bold text-gray-800 text-sm">
+                              {formatCurrency(recordingLine.credit, recordingLine.currency)}
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">Date</label>
+                            <div className="px-3 py-2 border rounded-lg bg-gray-50 text-gray-800 text-sm">
+                              {new Date(recordingLine.date).toLocaleDateString('id-ID')}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Description / Notes</label>
+                          <input
+                            type="text"
+                            value={directorNotes}
+                            onChange={(e) => setDirectorNotes(e.target.value)}
+                            placeholder="e.g. Director funding / settlement"
+                            className="w-full px-3 py-2 border rounded-lg text-sm"
+                          />
+                        </div>
+
+                        {/* Automatic Accounting Treatment Preview */}
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 space-y-1">
+                          <div className="font-semibold flex items-center gap-1">
+                            <span>⚡ Automatic Accounting Treatment:</span>
+                          </div>
+                          {directorSummary && directorSummary.due_from_director > 0 ? (
+                            <p>
+                              {selectedDirectorName} currently owes SAPJ {formatCurrency(directorSummary.due_from_director, recordingLine.currency)}.
+                              This receipt will <strong>settle Due from Director (Cr 1310)</strong> up to {formatCurrency(Math.min(recordingLine.credit, directorSummary.due_from_director), recordingLine.currency)}.
+                              {recordingLine.credit > directorSummary.due_from_director && (
+                                <span> The remaining {formatCurrency(recordingLine.credit - directorSummary.due_from_director, recordingLine.currency)} will be recorded as <strong>Director Funding (Cr 2105)</strong>.</span>
+                              )}
+                            </p>
+                          ) : (
+                            <p>
+                              No outstanding receivable from {selectedDirectorName}. This receipt will be recorded as <strong>Director Funding (Cr 2105 — Director Loan – Vijay)</strong>.
+                            </p>
+                          )}
+                          <p className="text-[11px] text-emerald-700 italic">Double-entry: Dr Bank, Cr 1310/2105. No P&L impact.</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={recordingReceipt}
+                          onClick={() => handleRecordDirectorRelatedParty(recordingLine)}
+                          className="w-full py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium text-sm disabled:opacity-50"
+                        >
+                          {recordingReceipt ? 'Recording...' : 'Record Money Received From Director'}
+                        </button>
+                      </div>
+                    )}
                     {receiptType === 'customer_payment' && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Customer *</label>
@@ -5101,23 +5414,27 @@ export function BankReconciliationEnhanced({
                       <div className="text-xs text-gray-500 text-center py-2">Loading invoices...</div>
                     )}
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                      <input
-                        type="text"
-                        name="description"
-                        defaultValue={recordingLine.description}
-                        className="w-full px-3 py-2 border rounded-lg"
-                        placeholder="Optional: Override description"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={recordingReceipt}
-                      className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {recordingReceipt ? 'Recording...' : 'Record Receipt'}
-                    </button>
+                    {receiptType !== 'director_related_party' && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                          <input
+                            type="text"
+                            name="description"
+                            defaultValue={recordingLine.description}
+                            className="w-full px-3 py-2 border rounded-lg"
+                            placeholder="Optional: Override description"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={recordingReceipt}
+                          className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {recordingReceipt ? 'Recording...' : 'Record Receipt'}
+                        </button>
+                      </>
+                    )}
                   </form>
                 )}
               </div>

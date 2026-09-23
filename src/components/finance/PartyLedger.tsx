@@ -10,6 +10,7 @@ import { FINANCE_RECONCILIATION_REFRESH_EVENT } from './bankTransactionLinking';
 import { formatCurrency } from '../../utils/currency';
 import { calculateCanonicalCashPayable } from '../../utils/taxCalculations';
 import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../../services/expensePostingLifecycle';
+import DirectorLedgerView from './DirectorLedgerView';
 
 interface Party {
   id: string;
@@ -662,32 +663,36 @@ export default function PartyLedger() {
               <option value="customer">Customer (Debtor)</option>
               <option value="supplier">Supplier (Creditor)</option>
               <option value="staff">Staff (Employee)</option>
-              <option value="director">Director / Owner (Loan)</option>
+              <option value="director">Director / Related Party</option>
             </select>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : partyType === 'staff' ? 'Staff Member' : 'Director / Counterparty'}
-            </label>
-            <select name="select_partytype_customer_cust" aria-label="Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}"
-              value={selectedParty}
-              onChange={(e) => setSelectedParty(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg"
-            >
-              <option value="">Select Party</option>
-              {parties.map(party => (
-                <option key={party.id} value={party.id}>
-                  {party.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="col-span-2">
-            <p className="text-xs text-gray-500 mt-6">Period is controlled by global date range at top</p>
-          </div>
+          {partyType !== 'director' && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}
+                </label>
+                <select name="select_partytype_customer_cust" aria-label="Select Party"
+                  value={selectedParty}
+                  onChange={(e) => setSelectedParty(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg"
+                >
+                  <option value="">Select Party</option>
+                  {parties.map(party => (
+                    <option key={party.id} value={party.id}>
+                      {party.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <p className="text-xs text-gray-500 mt-6">Period is controlled by global date range at top</p>
+              </div>
+            </>
+          )}
         </div>
 
-        {selectedPartyData && ledgerEntries.length > 0 && (
+        {partyType !== 'director' && selectedPartyData && ledgerEntries.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg">
             <div>
               <p className="text-xs font-medium text-gray-600 uppercase">Opening Balance</p>
@@ -709,7 +714,10 @@ export default function PartyLedger() {
         )}
       </div>
 
-      {selectedParty && (
+      {partyType === 'director' ? (
+        <DirectorLedgerView />
+      ) : (
+        selectedParty && (
         <>
           {/* Screen View */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -938,7 +946,7 @@ export default function PartyLedger() {
             </div>
           )}
         </>
-      )}
+      ))}
     </div>
   );
 }
