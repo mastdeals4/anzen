@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
+import { StockMovementsModal } from '../components/StockMovementsModal';
 import { useLanguage } from '../contexts/LanguageContext';
 import { supabase } from '../lib/supabase';
-import { Package, AlertTriangle, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { Package, AlertTriangle, Search, ChevronDown, ChevronUp, History } from 'lucide-react';
 import { useNavigation } from '../contexts/NavigationContext';
 import { formatDate } from '../utils/dateFormat';
 import { formatUnit } from '../utils/unitDisplay';
@@ -45,6 +46,34 @@ export function Stock() {
   const [expandedLoading, setExpandedLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [stockMovementsTarget, setStockMovementsTarget] = useState<{
+    productId?: string;
+    productName: string;
+    productCode?: string;
+    batchId?: string;
+    batchNumber?: string;
+    unit?: string;
+  } | null>(null);
+
+  const openBatchMovements = (batch: StockBatchDetail, product: StockSummary) => {
+    setStockMovementsTarget({
+      productId: product.product_id,
+      productName: product.product_name,
+      productCode: product.product_code,
+      batchId: batch.id,
+      batchNumber: batch.batch_number,
+      unit: batch.unit || product.unit,
+    });
+  };
+
+  const openProductMovements = (product: StockSummary) => {
+    setStockMovementsTarget({
+      productId: product.product_id,
+      productName: product.product_name,
+      productCode: product.product_code,
+      unit: product.unit,
+    });
+  };
 
   useEffect(() => {
     loadStockSummary();
@@ -244,12 +273,13 @@ export function Stock() {
                     <th className="text-right px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Available</th>
                     <th className="text-center px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Batches</th>
                     <th className="text-right px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Nearest Expiry</th>
+                    <th className="text-center px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase w-24">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {filteredData.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-gray-400 text-sm">
+                      <td colSpan={7} className="px-3 py-6 text-center text-gray-400 text-sm">
                         <Package className="w-10 h-10 mx-auto mb-2 text-gray-300" />
                         No stock available
                       </td>
@@ -318,10 +348,21 @@ export function Stock() {
                             <AlertTriangle className="w-3 h-3 inline ml-0.5" />
                           )}
                         </td>
+                        <td className="px-3 py-2 text-sm text-center" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => openProductMovements(item)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors"
+                            title={`View all movements for ${item.product_name}`}
+                          >
+                            <History className="w-3 h-3" />
+                            Movements
+                          </button>
+                        </td>
                       </tr>
                       {isExpanded && (
                         <tr>
-                          <td colSpan={6} className="bg-gray-50 px-3 py-2">
+                          <td colSpan={7} className="bg-gray-50 px-3 py-2">
                             {expandedLoading ? (
                               <div className="py-3 text-center text-xs text-gray-500">Loading Make / Batch details…</div>
                             ) : makeGroups.length === 0 ? (
@@ -339,6 +380,7 @@ export function Stock() {
                                       <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Stock</th>
                                       <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Reserved</th>
                                       <th className="text-right px-3 py-1.5 font-semibold text-gray-500 uppercase">Available</th>
+                                      <th className="text-center px-3 py-1.5 font-semibold text-gray-500 uppercase w-24">Action</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-gray-100">
@@ -350,17 +392,35 @@ export function Stock() {
                                           <td className="px-3 py-1.5 text-right font-semibold">{group.stock.toLocaleString()} {formatUnit(item.unit)}</td>
                                           <td className="px-3 py-1.5 text-right">{group.reserved.toLocaleString()} {formatUnit(item.unit)}</td>
                                           <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(group.stock - group.reserved).toLocaleString()} {formatUnit(item.unit)}</td>
+                                          <td className="px-3 py-1.5"></td>
                                         </tr>
                                         {group.batches.map(batch => (
-                                          <tr key={batch.id} className="hover:bg-gray-50">
+                                          <tr
+                                            key={batch.id}
+                                            onClick={() => openBatchMovements(batch, item)}
+                                            className="hover:bg-blue-50/60 cursor-pointer transition-colors group/batchrow"
+                                            title="Click to view batch movements"
+                                          >
                                             <td className="px-3 py-1.5 pl-6 text-gray-500">↳</td>
-                                            <td className="px-3 py-1.5 font-mono text-blue-700">{batch.batch_number || '—'}</td>
+                                            <td className="px-3 py-1.5 font-mono text-blue-700 font-medium group-hover/batchrow:underline">
+                                              {batch.batch_number || '—'}
+                                            </td>
                                             <td className={`px-3 py-1.5 ${batch.expiry_date && isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' : batch.expiry_date && isNearExpiry(batch.expiry_date) ? 'text-orange-600 font-semibold' : 'text-gray-600'}`}>{batch.expiry_date ? formatDate(batch.expiry_date) : '—'}</td>
                                             <td className="px-3 py-1.5 text-right">{batch.import_quantity.toLocaleString()}</td>
                                             <td className="px-3 py-1.5">{formatUnit(batch.unit)}</td>
                                             <td className="px-3 py-1.5 text-right font-semibold">{batch.current_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
                                             <td className="px-3 py-1.5 text-right">{batch.reserved_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
                                             <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(batch.current_stock - batch.reserved_stock).toLocaleString()} {formatUnit(batch.unit)}</td>
+                                            <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                                              <button
+                                                type="button"
+                                                onClick={() => openBatchMovements(batch, item)}
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors"
+                                              >
+                                                <History className="w-3 h-3" />
+                                                Movements
+                                              </button>
+                                            </td>
                                           </tr>
                                         ))}
                                       </Fragment>
@@ -382,6 +442,18 @@ export function Stock() {
         </div>
       </div>
 
+      {stockMovementsTarget && (
+        <StockMovementsModal
+          isOpen={true}
+          onClose={() => setStockMovementsTarget(null)}
+          productId={stockMovementsTarget.productId}
+          productName={stockMovementsTarget.productName}
+          productCode={stockMovementsTarget.productCode}
+          batchId={stockMovementsTarget.batchId}
+          batchNumber={stockMovementsTarget.batchNumber}
+          unit={stockMovementsTarget.unit}
+        />
+      )}
     </Layout>
   );
 }
