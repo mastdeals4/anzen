@@ -657,6 +657,21 @@ export default function SalesOrders() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      const targetOrder = salesOrders.find(o => o.id === orderId);
+      if (targetOrder && targetOrder.currency === 'IDR' && (targetOrder.commercial_usd_to_idr_rate == null || targetOrder.commercial_usd_to_idr_rate <= 0)) {
+        const hasQuotedUsd = targetOrder.sales_order_items?.some(
+          (item: any) => item.quoted_usd_unit_price != null && Number(item.quoted_usd_unit_price) > 0
+        );
+        if (hasQuotedUsd) {
+          showToast({
+            type: 'error',
+            title: 'FX Rate Required',
+            message: 'Set the commercial USD→IDR exchange rate before approving this Sales Order.',
+          });
+          return;
+        }
+      }
+
       const { data: reserveResult, error: reserveError } = await supabase
         .rpc('approve_sales_order_product_reservation_v2', {
           p_so_id: orderId,
@@ -685,10 +700,10 @@ export default function SalesOrders() {
         body: { type: 'so_approved', data: { so_id: orderId } }
       }).catch(() => {});
 
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
+    } catch (error: any) {
+      const msg = error?.message || (error instanceof Error ? error.message : 'Unknown error');
       console.error('Error approving order:', msg);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to approve order' });
+      showToast({ type: 'error', title: 'Error', message: msg || 'Failed to approve order' });
     }
   };
 

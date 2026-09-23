@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
-import { X, Printer, Download, DollarSign } from 'lucide-react';
+import { X, Printer, Download, DollarSign, AlertTriangle } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { type CompanySnapshot } from '../types/company';
 import { useResolvedCompanyLogo, waitForImages } from '../utils/companyLogoUrl';
@@ -340,6 +340,10 @@ export function ProformaInvoiceView({
 
   const customer = salesOrder.customers;
   const hasAnyDiscount = items.some(item => (item.discount_amount || 0) > 0);
+  const hasQuotedUsdWithoutRate =
+    currency === 'IDR' &&
+    (currentRate == null || currentRate <= 0) &&
+    items.some(item => item.quoted_usd_unit_price != null && Number(item.quoted_usd_unit_price) > 0);
 
   return (
     <div className="doc-print-root fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 print:static print:bg-white print:overflow-visible">
@@ -384,6 +388,24 @@ export function ProformaInvoiceView({
               </button>
             </div>
           </div>
+
+          {hasQuotedUsdWithoutRate && (
+            <div className="doc-print-hide mx-6 mt-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 shadow-sm">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                <span className="font-semibold">
+                  USD quoted prices exist, but the commercial USD→IDR exchange rate has not been set.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRateModal(true)}
+                className="ml-3 rounded bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700 transition"
+              >
+                Set Rate
+              </button>
+            </div>
+          )}
 
           <div id="proforma-print-content" ref={printRef} className="p-8">
             {/* Header Section - Your Company Details */}
@@ -456,6 +478,11 @@ export function ProformaInvoiceView({
                         {currentRate != null ? 'Edit' : 'Set Rate'}
                       </button>
                     </div>
+                    {hasQuotedUsdWithoutRate && (
+                      <div className="text-[10px] text-amber-700 font-semibold mt-1">
+                        USD quoted prices exist, but the commercial USD→IDR exchange rate has not been set.
+                      </div>
+                    )}
                     <div className="text-[9px] text-gray-500 font-normal">
                       Commercial FX Rate (pricing reference)
                     </div>
@@ -534,10 +561,16 @@ export function ProformaInvoiceView({
                           {(() => {
                             const secondaryUsd = getSecondaryUsdUnitPrice(item);
                             if (!secondaryUsd) return null;
+                            const isDirectQuoted = item.quoted_usd_unit_price != null && Number(item.quoted_usd_unit_price) > 0;
+                            const tooltip = isDirectQuoted
+                              ? currentRate != null
+                                ? 'USD quoted price'
+                                : 'USD quoted price (commercial USD→IDR exchange rate not set)'
+                              : 'Commercial USD reference based on commercial FX rate';
                             return (
                               <div
                                 className="screenOnly printHidden text-[10px] text-gray-500 font-medium whitespace-nowrap mt-0.5"
-                                title="Commercial USD reference based on commercial FX rate"
+                                title={tooltip}
                               >
                                 {secondaryUsd}
                               </div>

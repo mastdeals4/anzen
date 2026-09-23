@@ -481,6 +481,20 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       'cancelled',
     ].includes(existingOrder.status);
 
+    // Prevent inconsistent approval: IDR SO with quoted USD prices requires commercial FX rate before approval
+    if ((wasApproved || submitForApproval) && formData.currency === 'IDR') {
+      const hasQuotedUsd = items.some(item => item.quoted_usd_unit_price != null && Number(item.quoted_usd_unit_price) > 0);
+      const hasRate = formData.commercial_usd_to_idr_rate != null && Number(formData.commercial_usd_to_idr_rate) > 0;
+      if (hasQuotedUsd && !hasRate) {
+        showToast({
+          type: 'error',
+          title: 'FX Rate Required',
+          message: 'Set the commercial USD→IDR exchange rate before approving this Sales Order.',
+        });
+        return;
+      }
+    }
+
     if (wasApproved && existingOrder) {
       // SO item IDs are the durable identity of reservation history. Keep an
       // already prepared DC and its source item together until it is reversed.
