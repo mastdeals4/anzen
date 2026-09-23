@@ -334,7 +334,7 @@ export default function PartyLedger() {
           });
         });
       }
-    } else {
+    } else if (partyType === 'staff') {
       // Staff ledger — one running account per staff member:
       //   Cr  salary / staff bills recorded as outstanding (company owes staff)
       //   Dr  salary advance applications and final payments

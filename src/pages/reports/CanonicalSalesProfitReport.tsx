@@ -25,7 +25,11 @@ import { ExportSalesProfitModal } from '../../components/ExportSalesProfitModal'
 
 export interface CompanyProfitabilitySummary {
   gross_sales: number;
+  sales_returns?: number;
+  net_sales?: number;
   product_cost: number;
+  return_cogs?: number;
+  net_product_cost?: number;
   sales_expenses: number;
   unallocated_sales_expenses: number;
   gross_profit: number;
@@ -524,6 +528,29 @@ export function CanonicalSalesProfitReport() {
         </div>
       )}
 
+      {/* ─── Return-Aware Financial Lineage Banner (if returns exist) ─── */}
+      {Boolean(company?.sales_returns && company.sales_returns > 0) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2 shadow-sm">
+          <div className="flex items-center gap-1.5 font-medium">
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-500"></span>
+            <span>Sales Returns Deducted:</span>
+            <span className="font-bold text-amber-950">-{formatCurrency(company?.sales_returns || 0)}</span>
+            <span className="text-amber-700">from revenue</span>
+            {Boolean(company?.return_cogs && company.return_cogs > 0) && (
+              <>
+                <span className="text-amber-300">|</span>
+                <span>Restocked COGS Credit:</span>
+                <span className="font-bold text-emerald-800">-{formatCurrency(company?.return_cogs || 0)}</span>
+                <span className="text-emerald-700">from product cost</span>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded font-mono">
+            Net Sales: {formatCurrency(company?.net_sales || (company?.gross_sales || 0) - (company?.sales_returns || 0))} &minus; Net Cost: {formatCurrency(company?.net_product_cost || (company?.product_cost || 0) - (company?.return_cogs || 0))} = GP: {formatCurrency(company?.gross_profit || 0)}
+          </div>
+        </div>
+      )}
+
       {/* ─── Compact Company Summary KPIs ─── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
         {/* Gross Sales */}
@@ -535,6 +562,11 @@ export function CanonicalSalesProfitReport() {
           <p className="text-sm lg:text-base font-bold text-gray-900 mt-0.5 leading-tight">
             {formatCurrency(company?.gross_sales || 0)}
           </p>
+          {Boolean(company?.sales_returns && company.sales_returns > 0) && (
+            <p className="text-[10px] text-amber-700 font-medium mt-0.5 truncate" title={`Less Returns: -${formatCurrency(company?.sales_returns || 0)}`}>
+              Net: {formatCurrency(company?.net_sales || (company?.gross_sales || 0) - (company?.sales_returns || 0))}
+            </p>
+          )}
         </div>
 
         {/* Product Cost */}
@@ -546,6 +578,11 @@ export function CanonicalSalesProfitReport() {
           <p className="text-sm lg:text-base font-bold text-gray-800 mt-0.5 leading-tight">
             {formatCurrency(company?.product_cost || 0)}
           </p>
+          {Boolean(company?.return_cogs && company.return_cogs > 0) && (
+            <p className="text-[10px] text-emerald-700 font-medium mt-0.5 truncate" title={`Less Return COGS: -${formatCurrency(company?.return_cogs || 0)}`}>
+              Net: {formatCurrency(company?.net_product_cost || (company?.product_cost || 0) - (company?.return_cogs || 0))}
+            </p>
+          )}
         </div>
 
         {/* Sales Expenses */}
@@ -562,8 +599,8 @@ export function CanonicalSalesProfitReport() {
         {/* Gross Profit */}
         <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
           <p className="text-[11px] text-gray-500 font-medium flex items-center justify-between">
-            <TooltipHeader title="Gross Profit" tooltip="Gross Sales minus Product Cost." />
-            <span className="text-[10px] text-gray-400">Pre-exp</span>
+            <TooltipHeader title="Gross Profit" tooltip="Net Sales (Gross Sales minus Sales Returns) minus Net Product Cost (Product Cost minus Return COGS)." />
+            <span className="text-[10px] text-gray-400">{Boolean(company?.sales_returns && company.sales_returns > 0) ? 'Net GP' : 'Pre-exp'}</span>
           </p>
           <p className={`text-sm lg:text-base font-bold mt-0.5 leading-tight ${(company?.gross_profit || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
             {formatCurrency(company?.gross_profit || 0)}
@@ -573,7 +610,7 @@ export function CanonicalSalesProfitReport() {
         {/* Profit After Sales Expenses — Highlight KPI */}
         <div className="bg-emerald-50/70 border-2 border-emerald-500 rounded-lg px-3 py-2 shadow-sm">
           <p className="text-[11px] font-semibold text-emerald-900 flex items-center justify-between">
-            <TooltipHeader title="Profit After Expenses" tooltip="Primary bottom line: Gross Sales minus Product Cost minus Attributable Sales Expenses." />
+            <TooltipHeader title="Profit After Expenses" tooltip="Primary bottom line: Net Sales minus Net Product Cost minus Attributable Sales Expenses." />
             <span className="text-[10px] text-emerald-700 font-medium">Net</span>
           </p>
           <p className={`text-sm lg:text-base font-extrabold mt-0.5 leading-tight ${(company?.profit_after_sales_expenses || 0) >= 0 ? 'text-emerald-800' : 'text-red-600'}`}>
@@ -585,7 +622,7 @@ export function CanonicalSalesProfitReport() {
         <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[11px] text-gray-500 font-medium">
-              <TooltipHeader title="Profit Margin" tooltip="Profit After Sales Expenses divided by Gross Sales × 100." />
+              <TooltipHeader title="Profit Margin" tooltip="Profit After Sales Expenses divided by Net Sales × 100." />
             </p>
             <p className="text-[10px] text-gray-400 mt-0.5">{formatNumber(company?.total_qty_sold || 0, 0)} units sold</p>
           </div>

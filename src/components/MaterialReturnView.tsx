@@ -37,6 +37,10 @@ interface MaterialReturnViewProps {
     status: string;
     notes?: string;
     financial_impact?: number;
+    restocked?: boolean;
+    credit_note_number?: string | null;
+    credit_note_issued?: boolean;
+    credit_note_amount?: number;
     customers?: {
       company_name: string;
       address: string;
