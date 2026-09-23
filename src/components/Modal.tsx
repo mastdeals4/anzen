@@ -6,13 +6,15 @@ interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
+  subtitle?: React.ReactNode;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   maxWidth?: string;
+  maxHeight?: string;
   noPadding?: boolean;
 }
 
-export function Modal({ isOpen, onClose, title, children, size = 'md', maxWidth, noPadding }: ModalProps) {
+export function Modal({ isOpen, onClose, title, subtitle, children, size = 'md', maxWidth, maxHeight, noPadding }: ModalProps) {
   const { t } = useLanguage();
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', maxWidth,
   };
 
   const widthClass = maxWidth || sizeClasses[size];
+  const heightClass = maxHeight || 'max-h-[90vh]';
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -48,11 +51,14 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', maxWidth,
         />
 
         <div
-          className={`relative bg-white rounded-lg shadow-xl ${widthClass} w-full max-h-[90vh] flex flex-col`}
+          className={`relative bg-white rounded-lg shadow-xl ${widthClass} w-full ${heightClass} flex flex-col`}
         >
           {!noPadding && (
-            <div className="flex items-center justify-between p-3 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 leading-tight">{title}</h3>
+                {subtitle && <div className="text-xs text-gray-500 font-normal mt-0.5">{subtitle}</div>}
+              </div>
               <button
                 onClick={onClose}
                 className="p-1 rounded hover:bg-gray-100 transition"

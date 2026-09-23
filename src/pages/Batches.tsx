@@ -118,8 +118,11 @@ export function Batches() {
   const [selectedBatchDocs, setSelectedBatchDocs] = useState<BatchDocument[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
-  const [selectedProductForHistory, setSelectedProductForHistory] = useState<{id: string; name: string; code: string; batchId?: string; batchNumber?: string} | null>(null);
+  const [selectedProductForHistory, setSelectedProductForHistory] = useState<{id: string; name: string; code: string; batchId?: string; batchNumber?: string; unit?: string} | null>(null);
   const [transactionHistory, setTransactionHistory] = useState<any[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'in' | 'out' | 'reservations' | 'adjustments'>('all');
+  const [historySearch, setHistorySearch] = useState('');
+  const [expandedHistoryRows, setExpandedHistoryRows] = useState<Set<string>>(new Set());
   const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
   const [batchSearch, setBatchSearch] = useState('');
@@ -769,8 +772,11 @@ export function Batches() {
     priceFieldRef.current = null;
   };
 
-  const showTransactionHistory = async (productId: string, productName: string, productCode: string, batchId?: string, batchNumber?: string) => {
-    setSelectedProductForHistory({ id: productId, name: productName, code: productCode, batchId, batchNumber });
+  const showTransactionHistory = async (productId: string, productName: string, productCode: string, batchId?: string, batchNumber?: string, unit?: string) => {
+    setSelectedProductForHistory({ id: productId, name: productName, code: productCode, batchId, batchNumber, unit: unit || 'KG' });
+    setHistoryFilter('all');
+    setHistorySearch('');
+    setExpandedHistoryRows(new Set());
     setTransactionHistoryModal(true);
 
     let txnQuery = supabase
@@ -883,11 +889,53 @@ export function Batches() {
       customer_name: r.sales_orders?.customers?.company_name,
     }));
 
-    const combined = [...enrichedTxns, ...reservationEntries].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    // Group repeated reservation events for the same SO on this batch
+    const soReservationTimelineMap: Record<string, any[]> = {};
+    reservationEntries.forEach((r: any) => {
+      if (r.so_number) {
+        if (!soReservationTimelineMap[r.so_number]) {
+          soReservationTimelineMap[r.so_number] = [];
+        }
+        soReservationTimelineMap[r.so_number].push(r);
+      }
+    });
+
+    // Sort chronologically (oldest first) to compute accurate running physical stock
+    const chronological = [...enrichedTxns, ...reservationEntries].sort((a: any, b: any) => {
+      const timeA = new Date(a.created_at || a.transaction_date).getTime();
+      const timeB = new Date(b.created_at || b.transaction_date).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      const qtyA = parseFloat(a.quantity) || 0;
+      const qtyB = parseFloat(b.quantity) || 0;
+      return qtyB - qtyA;
+    });
+
+    let runningPhysicalStock = 0;
+    const enrichedWithStock = chronological.map((item: any) => {
+      const isPhysical = item._type === 'transaction' && item.is_effective !== false;
+      const qty = parseFloat(item.quantity) || 0;
+      const stockBefore = runningPhysicalStock;
+      if (isPhysical) {
+        runningPhysicalStock += qty;
+      }
+      const stockAfter = runningPhysicalStock;
+      const soNum = item.so_number || item.sales_orders?.so_number;
+      const soTimeline = soNum && soReservationTimelineMap[soNum] ? soReservationTimelineMap[soNum] : [];
+
+      return {
+        ...item,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        so_timeline: soTimeline,
+      };
+    });
+
+    // Default: Newest first
+    const newestFirst = enrichedWithStock.sort(
+      (a: any, b: any) => new Date(b.created_at || b.transaction_date).getTime() - new Date(a.created_at || a.transaction_date).getTime()
     );
 
-    setTransactionHistory(combined);
+    setTransactionHistory(newestFirst);
   };
 
   const toggleProduct = (productId: string) => {
@@ -1254,7 +1302,7 @@ export function Batches() {
                                     <tr key={batch.id} className={`border-t border-gray-100 hover:bg-gray-50 ${isArchived ? 'opacity-50 bg-gray-50' : isSoldOut ? 'bg-orange-50/30' : ''}`}>
                                       <td className="px-3 py-1.5">
                                         <button
-                                          onClick={() => showTransactionHistory(batch.product_id, batch.products?.product_name || '', batch.products?.product_code || '', batch.id, batch.batch_number)}
+                                          onClick={() => showTransactionHistory(batch.product_id, batch.products?.product_name || '', batch.products?.product_code || '', batch.id, batch.batch_number, batch.products?.unit || 'KG')}
                                           className="font-mono text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
                                         >
                                           {batch.batch_number}
@@ -2011,171 +2059,589 @@ export function Batches() {
           </div>
         </Modal>
 
-        {/* Transaction History Modal */}
+        {/* Stock Movements Ledger Modal */}
         <Modal
           isOpen={transactionHistoryModal}
           onClose={() => {
             setTransactionHistoryModal(false);
             setSelectedProductForHistory(null);
             setTransactionHistory([]);
+            setHistoryFilter('all');
+            setHistorySearch('');
+            setExpandedHistoryRows(new Set());
           }}
-          title={`Transaction History - ${selectedProductForHistory?.name || ''} ${selectedProductForHistory?.batchNumber ? `[${selectedProductForHistory.batchNumber}]` : `(${selectedProductForHistory?.code || ''})`}`}
+          title="Stock Movements"
+          subtitle={
+            selectedProductForHistory
+              ? `${selectedProductForHistory.name} · Batch ${selectedProductForHistory.batchNumber || selectedProductForHistory.code || ''}`
+              : undefined
+          }
+          size="xl"
+          maxWidth="max-w-5xl"
+          maxHeight="max-h-[75vh]"
         >
-          <div className="space-y-3 max-h-[600px] overflow-y-auto">
-            {(() => {
-              const stockTxns = transactionHistory.filter((t: any) => t._type === 'transaction');
-              const resTxns = transactionHistory.filter((t: any) => t._type === 'reservation');
-              const activeRes = resTxns.filter((t: any) => t.status === 'active');
-              const totalIn = stockTxns.filter((t: any) => parseFloat(t.quantity) > 0).reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
-              const totalOut = stockTxns.filter((t: any) => parseFloat(t.quantity) < 0).reduce((s: number, t: any) => s + Math.abs(parseFloat(t.quantity)), 0);
-              const totalReserved = activeRes.reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
-              const currentStock = totalIn - totalOut;
-              const freeStock = currentStock - totalReserved;
+          {(() => {
+            const stockTxns = transactionHistory.filter((t: any) => t._type === 'transaction');
+            const resTxns = transactionHistory.filter((t: any) => t._type === 'reservation');
+            const activeRes = resTxns.filter((t: any) => t.status === 'active');
+            const totalIn = stockTxns.filter((t: any) => parseFloat(t.quantity) > 0).reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
+            const totalOut = stockTxns.filter((t: any) => parseFloat(t.quantity) < 0).reduce((s: number, t: any) => s + Math.abs(parseFloat(t.quantity)), 0);
+            const totalReserved = activeRes.reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
+            const currentStock = totalIn - totalOut;
+            const freeStock = currentStock - totalReserved;
+            const unit = selectedProductForHistory?.unit || 'KG';
+
+            const formatQtyValue = (val: number | string) => {
+              const num = typeof val === 'string' ? parseFloat(val) : val;
+              if (isNaN(num)) return '0';
+              return Number.isInteger(num)
+                ? num.toLocaleString()
+                : num.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 3 });
+            };
+
+            const getMovementCategory = (item: any): 'in' | 'out' | 'reservations' | 'adjustments' | 'other' => {
+              if (item._type === 'reservation') return 'reservations';
+              const type = (item.transaction_type || '').toLowerCase();
+              if (type === 'adjustment') return 'adjustments';
+              const qty = parseFloat(item.quantity) || 0;
+              if (type === 'sales_return' || type === 'return' || qty > 0) return 'in';
+              if (qty < 0) return 'out';
+              return 'other';
+            };
+
+            const counts = {
+              all: transactionHistory.length,
+              in: transactionHistory.filter((t: any) => getMovementCategory(t) === 'in').length,
+              out: transactionHistory.filter((t: any) => getMovementCategory(t) === 'out').length,
+              reservations: transactionHistory.filter((t: any) => getMovementCategory(t) === 'reservations').length,
+              adjustments: transactionHistory.filter((t: any) => getMovementCategory(t) === 'adjustments').length,
+            };
+
+            const filteredHistory = transactionHistory.filter((item: any) => {
+              if (historyFilter !== 'all') {
+                const cat = getMovementCategory(item);
+                if (cat !== historyFilter) return false;
+              }
+
+              if (historySearch.trim()) {
+                const query = historySearch.toLowerCase().trim();
+                const refNum = (item.reference_number || '').toLowerCase();
+                const soNum = (item.so_number || item.sales_orders?.so_number || '').toLowerCase();
+                const dcNum = (item.delivery_challans?.challan_number || '').toLowerCase();
+                const invNum = (item.invoice?.invoice_number || '').toLowerCase();
+                const custName = (item.customer?.company_name || item.customer_name || '').toLowerCase();
+                const notes = (item.notes || '').toLowerCase();
+                const reason = (item.release_reason || '').toLowerCase();
+                const typeStr = (item.transaction_type || '').toLowerCase();
+
+                const matches = refNum.includes(query) ||
+                  soNum.includes(query) ||
+                  dcNum.includes(query) ||
+                  invNum.includes(query) ||
+                  custName.includes(query) ||
+                  notes.includes(query) ||
+                  reason.includes(query) ||
+                  typeStr.includes(query);
+
+                if (!matches) return false;
+              }
+
+              return true;
+            });
+
+            const toggleRow = (id: string) => {
+              setExpandedHistoryRows(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            };
+
+            const renderTypeBadge = (item: any) => {
+              if (item._type === 'reservation') {
+                const isActive = item.status === 'active';
+                return (
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase ${
+                    isActive
+                      ? 'bg-amber-50 text-amber-800 border border-amber-300/70'
+                      : 'bg-slate-100 text-slate-600 border border-slate-300/70'
+                  }`}>
+                    {isActive ? 'RESERVATION' : 'RESERVATION RELEASED'}
+                  </span>
+                );
+              }
+
+              const type = (item.transaction_type || '').toLowerCase();
+              const qty = parseFloat(item.quantity) || 0;
+
+              let badgeStyle = 'bg-gray-100 text-gray-700 border-gray-300';
+              let label = type.replace(/_/g, ' ').toUpperCase();
+              let sign = '';
+
+              if (type === 'sales_return' || type === 'return') {
+                badgeStyle = 'bg-teal-50 text-teal-800 border-teal-300';
+                label = 'RETURN';
+                sign = '+';
+              } else if (type === 'purchase' || type === 'certified_opening' || (qty > 0 && type !== 'adjustment')) {
+                badgeStyle = 'bg-emerald-50 text-emerald-800 border-emerald-300';
+                label = 'INWARD';
+                sign = '+';
+              } else if (type === 'delivery_challan') {
+                badgeStyle = 'bg-rose-50 text-rose-800 border-rose-300';
+                label = 'DELIVERY';
+                sign = '-';
+              } else if (type === 'sale') {
+                badgeStyle = 'bg-rose-50 text-rose-800 border-rose-300';
+                label = 'SALE';
+                sign = '-';
+              } else if (type === 'adjustment') {
+                badgeStyle = 'bg-purple-50 text-purple-800 border-purple-300';
+                label = 'ADJUSTMENT';
+                sign = qty > 0 ? '+' : qty < 0 ? '-' : '';
+              }
 
               return (
-                <>
-                  {selectedProductForHistory?.batchId && transactionHistory.length > 0 && (
-                    <div className="grid grid-cols-4 gap-2 mb-3">
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-center">
-                        <div className="text-xs text-green-600 font-medium">In</div>
-                        <div className="text-sm font-bold text-green-700">{totalIn.toLocaleString()}</div>
-                      </div>
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-center">
-                        <div className="text-xs text-red-600 font-medium">Out</div>
-                        <div className="text-sm font-bold text-red-700">{totalOut.toLocaleString()}</div>
-                      </div>
-                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-center">
-                        <div className="text-xs text-amber-600 font-medium">Reserved</div>
-                        <div className="text-sm font-bold text-amber-700">{totalReserved.toLocaleString()}</div>
-                      </div>
-                      <div className={`${freeStock < 0 ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'} border rounded-lg p-2 text-center`}>
-                        <div className={`text-xs font-medium ${freeStock < 0 ? 'text-red-600' : 'text-blue-600'}`}>Free</div>
-                        <div className={`text-sm font-bold ${freeStock < 0 ? 'text-red-700' : 'text-blue-700'}`}>{freeStock.toLocaleString()}</div>
+                <div className="flex items-center gap-1">
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase border ${badgeStyle}`}>
+                    {sign && <span className="mr-0.5 font-bold">{sign}</span>}
+                    {label}
+                  </span>
+                  {item.is_effective === false && (
+                    <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-medium bg-gray-100 text-gray-500 border border-gray-300">
+                      Historical
+                    </span>
+                  )}
+                </div>
+              );
+            };
+
+            return (
+              <div className="flex flex-col -m-4">
+                {/* 1. Top Stock Summary Cards */}
+                <div className="p-4 pb-2 bg-gray-50/70 border-b border-gray-200">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="bg-emerald-50/90 border border-emerald-200 rounded-lg p-2.5 text-center shadow-xs">
+                      <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">IN</div>
+                      <div className="text-base font-extrabold text-emerald-900 leading-tight mt-0.5">
+                        {formatQtyValue(totalIn)} <span className="text-xs font-semibold text-emerald-700">{unit}</span>
                       </div>
                     </div>
-                  )}
-                </>
-              );
-            })()}
-            {transactionHistory.length > 0 ? (
-              <div className="space-y-2">
-                {transactionHistory.map((txn: any) => {
-                  const isReservation = txn._type === 'reservation';
-                  const isEvidenceOnly = !isReservation && txn.is_effective === false;
-                  const qty = parseFloat(txn.quantity);
-                  const isPositive = !isReservation && qty > 0;
-                  const isNegative = !isReservation && qty < 0;
-                  const isActiveRes = isReservation && txn.status === 'active';
-                  const isReleasedRes = isReservation && txn.status !== 'active';
+                    <div className="bg-rose-50/90 border border-rose-200 rounded-lg p-2.5 text-center shadow-xs">
+                      <div className="text-[11px] font-bold text-rose-700 uppercase tracking-wider">OUT</div>
+                      <div className="text-base font-extrabold text-rose-900 leading-tight mt-0.5">
+                        {formatQtyValue(totalOut)} <span className="text-xs font-semibold text-rose-700">{unit}</span>
+                      </div>
+                    </div>
+                    <div className="bg-amber-50/90 border border-amber-200 rounded-lg p-2.5 text-center shadow-xs">
+                      <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">RESERVED</div>
+                      <div className="text-base font-extrabold text-amber-900 leading-tight mt-0.5">
+                        {formatQtyValue(totalReserved)} <span className="text-xs font-semibold text-amber-700">{unit}</span>
+                      </div>
+                    </div>
+                    <div className={`${freeStock < 0 ? 'bg-red-50/90 border-red-200' : 'bg-blue-50/90 border-blue-200'} border rounded-lg p-2.5 text-center shadow-xs`}>
+                      <div className={`text-[11px] font-bold uppercase tracking-wider ${freeStock < 0 ? 'text-red-700' : 'text-blue-700'}`}>
+                        FREE
+                      </div>
+                      <div className={`text-base font-extrabold leading-tight mt-0.5 ${freeStock < 0 ? 'text-red-900' : 'text-blue-900'}`}>
+                        {formatQtyValue(freeStock)} <span className={`text-xs font-semibold ${freeStock < 0 ? 'text-red-700' : 'text-blue-700'}`}>{unit}</span>
+                      </div>
+                    </div>
+                  </div>
 
-                  let bgClass = 'bg-gray-50 border-gray-300';
-                  let qtyColor = 'text-gray-700';
-                  if (isPositive) { bgClass = 'bg-green-50 border-green-500'; qtyColor = 'text-green-700'; }
-                  if (isNegative) { bgClass = 'bg-red-50 border-red-500'; qtyColor = 'text-red-700'; }
-                  if (isActiveRes) { bgClass = 'bg-amber-50 border-amber-500'; qtyColor = 'text-amber-700'; }
-                  if (isReleasedRes) { bgClass = 'bg-gray-50 border-gray-400'; qtyColor = 'text-gray-500'; }
+                  {/* 2. Compact Filter Pills & Search Input */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-3">
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                      {[
+                        { id: 'all', label: 'All', count: counts.all },
+                        { id: 'in', label: 'In', count: counts.in },
+                        { id: 'out', label: 'Out', count: counts.out },
+                        { id: 'reservations', label: 'Reservations', count: counts.reservations },
+                        { id: 'adjustments', label: 'Adjustments', count: counts.adjustments },
+                      ].map(tab => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setHistoryFilter(tab.id as any)}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                            historyFilter === tab.id
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                          }`}
+                        >
+                          <span>{tab.label}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                            historyFilter === tab.id ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {tab.count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
 
-                  return (
-                    <div key={txn.id} className={`p-3 rounded-lg border-l-4 ${bgClass}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`font-semibold ${qtyColor}`}>
-                              {isReservation ? (isActiveRes ? `Res: ${qty.toLocaleString()}` : `Res Released: ${qty.toLocaleString()}`) : `${qty > 0 ? '+' : ''}${qty.toFixed(3)}`}
-                            </span>
-                            <span className={`text-xs px-2 py-0.5 rounded uppercase ${
-                              isActiveRes ? 'bg-amber-200 text-amber-800' :
-                              isReleasedRes ? 'bg-gray-200 text-gray-600 line-through' :
-                              'bg-gray-200 text-gray-700'
-                            }`}>
-                              {txn.transaction_type.replace(/_/g, ' ').replace(/^delivery challan$/i, 'Delivery')}
-                            </span>
-                            {isEvidenceOnly && (
-                              <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">
-                                Historical evidence · 0 effective qty
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm text-gray-600 space-y-0.5">
-                            {txn.transaction_date && (
-                              <div><strong>Date:</strong> {formatDate(txn.transaction_date)}</div>
-                            )}
-                            {isReservation && txn.customer_name && (
-                              <div className="text-xs font-medium text-gray-700">
-                                Customer: {txn.customer_name}
-                              </div>
-                            )}
-                            {isReservation && isReleasedRes && txn.release_reason && (
-                              <div className="text-xs text-gray-500">Reason: {txn.release_reason}</div>
-                            )}
-                            {!isReservation && txn.reference_number && (
-                              <div className="flex items-center gap-1">
-                                <strong>Ref:</strong>
-                                {txn.transaction_type === 'sale' && txn.reference_number ? (
+                    <div className="relative min-w-[200px] sm:w-64">
+                      <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={historySearch}
+                        onChange={(e) => setHistorySearch(e.target.value)}
+                        placeholder="Search reference, SO, customer..."
+                        className="w-full pl-8 pr-3 py-1 text-xs bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Main Movements Table */}
+                <div className="overflow-x-auto max-h-[calc(75vh-200px)] min-h-[180px] overflow-y-auto">
+                  {filteredHistory.length > 0 ? (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-gray-100 text-gray-600 font-semibold sticky top-0 z-10 border-b border-gray-200 shadow-xs">
+                        <tr>
+                          <th className="py-2 px-3 whitespace-nowrap">DATE</th>
+                          <th className="py-2 px-3 whitespace-nowrap">TYPE</th>
+                          <th className="py-2 px-3 text-right whitespace-nowrap">QTY</th>
+                          <th className="py-2 px-3 whitespace-nowrap">REFERENCE</th>
+                          <th className="py-2 px-3 whitespace-nowrap">CUSTOMER / DESCRIPTION</th>
+                          <th className="py-2 px-3 text-right whitespace-nowrap">STOCK</th>
+                          <th className="py-2 px-2 text-center w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {filteredHistory.map((item: any) => {
+                          const isReservation = item._type === 'reservation';
+                          const isEvidenceOnly = !isReservation && item.is_effective === false;
+                          const qty = parseFloat(item.quantity) || 0;
+                          const isActiveRes = isReservation && item.status === 'active';
+                          const isReleasedRes = isReservation && item.status !== 'active';
+                          const isExpanded = expandedHistoryRows.has(item.id);
+
+                          // Visual styling for row
+                          let rowBg = 'hover:bg-blue-50/30';
+                          if (isActiveRes) rowBg = 'bg-amber-50/25 hover:bg-amber-50/50';
+                          else if (isReleasedRes) rowBg = 'bg-slate-50/40 hover:bg-slate-50/70 text-gray-500';
+                          else if (isEvidenceOnly) rowBg = 'bg-gray-50/40 hover:bg-gray-50/70 text-gray-500';
+
+                          return (
+                            <tr
+                              key={item.id}
+                              onClick={() => toggleRow(item.id)}
+                              className={`cursor-pointer transition-colors ${rowBg} ${isExpanded ? 'bg-blue-50/40' : ''}`}
+                            >
+                              <td className="py-2 px-3 whitespace-nowrap text-gray-600 font-medium">
+                                {formatDate(item.transaction_date || item.created_at)}
+                              </td>
+
+                              <td className="py-2 px-3 whitespace-nowrap">
+                                {renderTypeBadge(item)}
+                              </td>
+
+                              <td className="py-2 px-3 text-right whitespace-nowrap font-mono">
+                                {isReservation ? (
+                                  isActiveRes ? (
+                                    <span className="font-semibold text-amber-700">
+                                      {formatQtyValue(qty)} {unit}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-400 font-normal">—</span>
+                                  )
+                                ) : qty > 0 ? (
+                                  <span className="font-bold text-emerald-700">
+                                    +{formatQtyValue(qty)} {unit}
+                                  </span>
+                                ) : qty < 0 ? (
+                                  <span className="font-bold text-rose-700">
+                                    -{formatQtyValue(Math.abs(qty))} {unit}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400 font-normal">
+                                    0 {unit}
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="py-2 px-3 whitespace-nowrap">
+                                {item.reference_number ? (
+                                  item.reference_number.startsWith('DO-') ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openQuickViewDC(item.reference_number);
+                                      }}
+                                      className="font-mono font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                                    >
+                                      {item.reference_number}
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </button>
+                                  ) : item.reference_number.startsWith('INV-') || item.reference_number.startsWith('SAPJ-') || item.transaction_type === 'sale' ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openQuickViewInvoice(item.reference_number);
+                                      }}
+                                      className="font-mono font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                                    >
+                                      {item.reference_number}
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </button>
+                                  ) : item.reference_number.startsWith('SO-') ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openQuickViewSO(item.reference_number);
+                                      }}
+                                      className="font-mono font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                                    >
+                                      {item.reference_number}
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </button>
+                                  ) : (
+                                    <span className="font-mono text-gray-700">{item.reference_number}</span>
+                                  )
+                                ) : item.so_number ? (
                                   <button
-                                    onClick={() => openQuickViewInvoice(txn.reference_number)}
-                                    className="text-blue-600 hover:text-blue-800 hover:underline font-medium inline-flex items-center gap-0.5"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openQuickViewSO(item.so_number);
+                                    }}
+                                    className="font-mono font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
                                   >
-                                    {txn.reference_number}
-                                    <ExternalLink className="w-3 h-3" />
+                                    {item.so_number}
+                                    <ExternalLink className="w-2.5 h-2.5" />
                                   </button>
                                 ) : (
-                                  <span>{txn.reference_number}</span>
+                                  <span className="text-gray-400">—</span>
                                 )}
-                              </div>
-                            )}
-                            {!isReservation && txn.customer?.company_name && (
-                              <div className="text-xs font-medium text-gray-700">
-                                Customer: {txn.customer.company_name}
-                              </div>
-                            )}
-                            {!isReservation && txn.sales_orders && (
-                              <button
-                                onClick={() => openQuickViewSO(txn.sales_orders.so_number)}
-                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
-                              >
-                                SO: {txn.sales_orders.so_number}
-                                <ExternalLink className="w-3 h-3" />
-                              </button>
-                            )}
-                            {!isReservation && txn.delivery_challans && (
-                              <button
-                                onClick={() => openQuickViewDC(txn.delivery_challans.challan_number)}
-                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
-                              >
-                                DO: {txn.delivery_challans.challan_number}
-                                <ExternalLink className="w-3 h-3" />
-                              </button>
-                            )}
-                            {isReservation && txn.so_number && (
-                              <button
-                                onClick={() => openQuickViewSO(txn.so_number)}
-                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
-                              >
-                                SO: {txn.so_number}
-                                <ExternalLink className="w-3 h-3" />
-                              </button>
-                            )}
-                            {txn.notes && !txn.notes.includes('[backfilled]') && (
-                              <div className="text-xs text-gray-500 italic">{txn.notes}</div>
-                            )}
+                              </td>
+
+                              <td className="py-2 px-3 max-w-[220px] truncate">
+                                {isReservation ? (
+                                  isReleasedRes ? (
+                                    <span className="text-gray-600">
+                                      <strong className="font-medium text-gray-700">{formatQtyValue(qty)} {unit} released</strong>
+                                      {item.customer_name ? ` · ${item.customer_name}` : ''}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-800 font-medium">{item.customer_name || 'Active Reservation'}</span>
+                                  )
+                                ) : (
+                                  <span className="text-gray-800 font-medium">
+                                    {item.customer?.company_name || (item.notes && !item.notes.includes('[backfilled]') ? item.notes : 'Stock Movement')}
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="py-2 px-3 text-right whitespace-nowrap font-mono font-bold text-gray-900">
+                                {formatQtyValue(item.stock_after)} <span className="text-[11px] font-normal text-gray-500">{unit}</span>
+                              </td>
+
+                              <td className="py-2 px-2 text-center text-gray-400">
+                                {isExpanded ? (
+                                  <ChevronDown className="w-4 h-4 mx-auto text-blue-600" />
+                                ) : (
+                                  <ChevronRight className="w-4 h-4 mx-auto hover:text-gray-600" />
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="text-center py-10 text-gray-500">
+                      <Package className="w-10 h-10 mx-auto mb-2 text-gray-300" />
+                      <p className="text-sm font-medium">No stock movements found</p>
+                      {historySearch && (
+                        <p className="text-xs text-gray-400 mt-1">Try clearing your search filter</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Row Expansion Details Drawer (Rendered inline below selected row when expanded) */}
+                {Array.from(expandedHistoryRows).map((rowId) => {
+                  const item = filteredHistory.find((h: any) => h.id === rowId);
+                  if (!item) return null;
+                  const soNum = item.so_number || item.sales_orders?.so_number;
+                  const soTimeline = item.so_timeline || [];
+
+                  return (
+                    <div key={`expanded-${item.id}`} className="bg-blue-50/30 border-t border-b border-blue-200/80 p-3.5 text-xs">
+                      <div className="flex items-center justify-between pb-2 mb-2 border-b border-blue-200/50">
+                        <div className="font-semibold text-gray-900 flex items-center gap-2">
+                          <span>Details:</span>
+                          <span className="font-mono text-gray-600 font-normal">
+                            {formatDate(item.transaction_date || item.created_at)} ({new Date(item.created_at).toLocaleTimeString()})
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => toggleRow(item.id)}
+                          className="text-gray-400 hover:text-gray-600 text-xs"
+                        >
+                          Close Details
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {/* Col 1: Movement Stock Audit */}
+                        <div className="bg-white p-2.5 rounded border border-gray-200 shadow-xs space-y-1">
+                          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            Physical Stock Impact
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Stock Before:</span>
+                            <span className="font-mono font-semibold text-gray-800">{formatQtyValue(item.stock_before)} {unit}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Movement Qty:</span>
+                            <span className="font-mono font-semibold">
+                              {item._type === 'reservation' ? (
+                                <span className="text-amber-700">{formatQtyValue(item.quantity)} {unit} (Reservation)</span>
+                              ) : parseFloat(item.quantity) > 0 ? (
+                                <span className="text-emerald-700">+{formatQtyValue(item.quantity)} {unit}</span>
+                              ) : (
+                                <span className="text-rose-700">-{formatQtyValue(Math.abs(parseFloat(item.quantity)))} {unit}</span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex justify-between pt-1 border-t border-gray-100">
+                            <span className="text-gray-700 font-medium">Stock After:</span>
+                            <span className="font-mono font-bold text-gray-900">{formatQtyValue(item.stock_after)} {unit}</span>
                           </div>
                         </div>
-                        <div className="text-right text-xs text-gray-400">
-                          {new Date(txn.created_at).toLocaleString()}
+
+                        {/* Col 2: Document Lineage & Customer */}
+                        <div className="bg-white p-2.5 rounded border border-gray-200 shadow-xs space-y-1">
+                          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            Document References
+                          </div>
+                          {(item.customer?.company_name || item.customer_name) && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Customer:</span>
+                              <span className="font-medium text-gray-800 text-right">{item.customer?.company_name || item.customer_name}</span>
+                            </div>
+                          )}
+                          {item.reference_number && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-500">Reference:</span>
+                              <span className="font-mono font-medium text-gray-800">{item.reference_number}</span>
+                            </div>
+                          )}
+                          {soNum && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-500">Sales Order:</span>
+                              <button
+                                onClick={() => openQuickViewSO(soNum)}
+                                className="font-mono text-blue-600 hover:text-blue-800 hover:underline font-semibold inline-flex items-center gap-0.5"
+                              >
+                                {soNum}
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
+                          {item.delivery_challans?.challan_number && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-500">Delivery Challan:</span>
+                              <button
+                                onClick={() => openQuickViewDC(item.delivery_challans.challan_number)}
+                                className="font-mono text-blue-600 hover:text-blue-800 hover:underline font-semibold inline-flex items-center gap-0.5"
+                              >
+                                {item.delivery_challans.challan_number}
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
+                          {item.invoice?.invoice_number && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-500">Sales Invoice:</span>
+                              <button
+                                onClick={() => openQuickViewInvoice(item.invoice.invoice_number)}
+                                className="font-mono text-blue-600 hover:text-blue-800 hover:underline font-semibold inline-flex items-center gap-0.5"
+                              >
+                                {item.invoice.invoice_number}
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Col 3: Reasons & Technical Audit */}
+                        <div className="bg-white p-2.5 rounded border border-gray-200 shadow-xs space-y-1">
+                          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            Notes & Classification
+                          </div>
+                          {item.release_reason && (
+                            <div>
+                              <span className="text-gray-500">Release Reason: </span>
+                              <span className="text-gray-800 font-medium">{item.release_reason}</span>
+                            </div>
+                          )}
+                          {item.notes && (
+                            <div>
+                              <span className="text-gray-500">Notes: </span>
+                              <span className="text-gray-700 italic">{item.notes}</span>
+                            </div>
+                          )}
+                          {item.is_effective === false && (
+                            <div className="p-1.5 bg-amber-50 rounded border border-amber-200 text-[10px] text-amber-800 mt-1">
+                              Historical evidence · Preserved for lineage · 0 effective physical stock impact
+                            </div>
+                          )}
                         </div>
                       </div>
+
+                      {/* Group Repeated Reservation Events for the same SO */}
+                      {soTimeline.length > 1 && (
+                        <div className="mt-2.5 p-2.5 bg-amber-50/70 border border-amber-200 rounded-md">
+                          <div className="font-semibold text-amber-900 text-[11px] mb-1.5 flex items-center justify-between">
+                            <span>{soNum} · Reservation History</span>
+                            <span className="text-[10px] font-normal text-amber-700">{soTimeline.length} events recorded</span>
+                          </div>
+                          <div className="space-y-1">
+                            {soTimeline.map((rel: any) => (
+                              <div key={rel.id} className="flex items-center justify-between text-[11px] py-0.5 border-b border-amber-100 last:border-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`w-1.5 h-1.5 rounded-full ${rel.status === 'active' ? 'bg-amber-500' : 'bg-gray-400'}`} />
+                                  <span className="font-medium text-gray-800">
+                                    {rel.status === 'active' ? 'Reserved' : 'Released'} {formatQtyValue(rel.quantity)} {unit}
+                                  </span>
+                                  {rel.release_reason && (
+                                    <span className="text-gray-500 text-[10px]">({rel.release_reason})</span>
+                                  )}
+                                </div>
+                                <span className="text-gray-400 font-mono text-[10px]">
+                                  {formatDate(rel.released_at || rel.created_at)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+
+                {/* 5. Sticky Footer: Current Stock Summary */}
+                <div className="bg-gray-50 border-t border-gray-200 px-4 py-2.5 flex flex-wrap items-center justify-between text-xs text-gray-600 gap-2">
+                  <div className="flex items-center gap-3">
+                    <span>
+                      Current Stock: <strong className="text-gray-900">{formatQtyValue(currentStock)} {unit}</strong>
+                    </span>
+                    <span className="text-gray-300">|</span>
+                    <span>
+                      Reserved: <strong className="text-amber-800">{formatQtyValue(totalReserved)} {unit}</strong>
+                    </span>
+                    <span className="text-gray-300">|</span>
+                    <span>
+                      Free: <strong className={freeStock < 0 ? 'text-red-700' : 'text-blue-700'}>{formatQtyValue(freeStock)} {unit}</strong>
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-gray-500 font-medium">
+                    Showing {filteredHistory.length} of {transactionHistory.length} movements
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                <p>No transactions found for this batch</p>
-              </div>
-            )}
-          </div>
+            );
+          })()}
         </Modal>
       </div>
 
