@@ -57,7 +57,7 @@ export function StockMovementsModal({
     try {
       let txnQuery = supabase
         .from('inventory_v1_effective_ledger')
-        .select('*, batches(batch_number)')
+        .select('*')
         .or('metadata->>superseded.is.null,metadata->>superseded.neq.true')
         .order('transaction_date', { ascending: false })
         .order('created_at', { ascending: false });
@@ -70,7 +70,7 @@ export function StockMovementsModal({
 
       let resQuery = supabase
         .from('stock_reservations')
-        .select('id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason, batches(batch_number), sales_orders(so_number, customers(company_name))')
+        .select('id, batch_id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason, batches(batch_number), sales_orders(so_number, customers(company_name))')
         .order('reserved_at', { ascending: false });
 
       if (batchId) {
@@ -85,6 +85,31 @@ export function StockMovementsModal({
         console.error('Error loading transaction history:', txnResult.error);
         showToast({ type: 'error', title: 'Error', message: 'Error loading transaction history: ' + txnResult.error.message });
         return;
+      }
+
+      // In product-level view, resolve batch numbers from batches table separately
+      const batchNumberMap = new Map<string, string>();
+      if (!batchId && txnResult.data && txnResult.data.length > 0) {
+        const batchIds = Array.from(
+          new Set(
+            txnResult.data
+              .map((r: any) => r.batch_id)
+              .filter(Boolean)
+          )
+        );
+        if (batchIds.length > 0) {
+          const { data: batchList } = await supabase
+            .from('batches')
+            .select('id, batch_number')
+            .in('id', batchIds);
+          if (batchList) {
+            batchList.forEach((b: any) => {
+              if (b.id && b.batch_number) {
+                batchNumberMap.set(b.id, b.batch_number);
+              }
+            });
+          }
+        }
       }
 
       const enrichedTxns = await Promise.all((txnResult.data || []).map(async (txn: any) => {
@@ -142,9 +167,13 @@ export function StockMovementsModal({
           if (so?.customers) customerData = so.customers;
         }
 
+        const resolvedBatchNumber = batchId
+          ? batchNumber
+          : (batchNumberMap.get(txn.batch_id) || batchNumber);
+
         return {
           ...txn,
-          batch_number: txn.batches?.batch_number || batchNumber,
+          batch_number: resolvedBatchNumber,
           delivery_challans: dcData,
           sales_orders: soData,
           customer: customerData,
@@ -153,21 +182,27 @@ export function StockMovementsModal({
         };
       }));
 
-      const reservationEntries = (resResult.data || []).map((r: any) => ({
-        id: r.id,
-        _type: 'reservation' as const,
-        quantity: r.reserved_quantity,
-        status: r.status,
-        is_released: r.is_released,
-        released_at: r.released_at,
-        release_reason: r.release_reason,
-        created_at: r.reserved_at,
-        transaction_date: r.reserved_at?.split('T')[0] || '',
-        transaction_type: r.status === 'active' ? 'reserved' : 'reservation_released',
-        batch_number: r.batches?.batch_number || batchNumber,
-        so_number: r.sales_orders?.so_number,
-        customer_name: r.sales_orders?.customers?.company_name,
-      }));
+      const reservationEntries = (resResult.data || []).map((r: any) => {
+        const resolvedBatchNumber = batchId
+          ? batchNumber
+          : (r.batches?.batch_number || batchNumberMap.get(r.batch_id) || batchNumber);
+
+        return {
+          id: r.id,
+          _type: 'reservation' as const,
+          quantity: r.reserved_quantity,
+          status: r.status,
+          is_released: r.is_released,
+          released_at: r.released_at,
+          release_reason: r.release_reason,
+          created_at: r.reserved_at,
+          transaction_date: r.reserved_at?.split('T')[0] || '',
+          transaction_type: r.status === 'active' ? 'reserved' : 'reservation_released',
+          batch_number: resolvedBatchNumber,
+          so_number: r.sales_orders?.so_number,
+          customer_name: r.sales_orders?.customers?.company_name,
+        };
+      });
 
       // Group repeated reservation events for the same SO on this batch/product
       const soReservationTimelineMap: Record<string, any[]> = {};

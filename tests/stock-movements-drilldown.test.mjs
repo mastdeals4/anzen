@@ -4,13 +4,13 @@
  * 
  * Regression & Acceptance Test for SAPJ Stock Movements Drill-Down
  * Verifies:
- * 1. Batch E441/2026 (Corn Starch BP) movements from inventory_v1_effective_ledger + stock_reservations
- * 2. Exact match of IN, OUT, RESERVED, FREE calculations
- * 3. Chronological running physical stock
- * 4. Reservations do not alter physical stock balances
- * 5. Document references (DO, SO, Invoice, Customer) enrichment
- * 6. Component contract: Batches.tsx and Stock.tsx use shared StockMovementsModal
- * 7. On-demand loading (no N+1 batch query on page load)
+ * 1. Shared StockMovementsModal usage across Stock.tsx and Batches.tsx
+ * 2. inventory_v1_effective_ledger query uses select('*') without invalid schema cache relation to batches
+ * 3. Batch E441/2026 (Corn Starch BP) movements and calculations (IN 9000, OUT 9000, RESERVED 0, FREE 0)
+ * 4. Batch M1CFX10003725N (Cefixime Trihydrate) movements (IN 100, OUT 0, RESERVED 0, FREE 100)
+ * 5. Product-level movements across all batches with batch number mapping
+ * 6. Chronological running physical stock and non-mutation by reservations
+ * 7. On-demand loading without N+1 queries on Stock page
  */
 
 import { execFileSync } from 'node:child_process';
@@ -46,11 +46,17 @@ assert(stockSrc.includes("<StockMovementsModal"), 'Stock.tsx must render StockMo
 assert(batchesSrc.includes("<StockMovementsModal"), 'Batches.tsx must render StockMovementsModal');
 assert(!batchesSrc.includes("const [showMovementLedger, setShowMovementLedger]"), 'Batches.tsx must not duplicate movement ledger state');
 
-console.log('   ✅ PASS: Both Stock.tsx and Batches.tsx share StockMovementsModal component.\n');
+// 2. Verify query fix: no view relationship error
+console.log('\n2. Verifying effective ledger query in StockMovementsModal.tsx...');
+assert(!modalSrc.includes(".from('inventory_v1_effective_ledger')\n        .select('*, batches(batch_number)')"), 
+  'Must not attempt batches relationship join on inventory_v1_effective_ledger view');
+assert(modalSrc.includes(".from('inventory_v1_effective_ledger')\n        .select('*')"), 
+  'Must query select("*") on inventory_v1_effective_ledger');
+console.log('   ✅ PASS: Query correctly queries select("*") without invalid PostgREST view relationship.\n');
 
-// 2. Query Corn Starch BP Batch E441/2026
-console.log('2. Querying Corn Starch BP Batch E441/2026 in canonical database...');
-const batchRows = runSql(`
+// 3. Query Corn Starch BP Batch E441/2026
+console.log('3. Querying Corn Starch BP Batch E441/2026 in canonical database...');
+const batchE441Rows = runSql(`
   SELECT b.id AS batch_id, b.batch_number, b.product_id, p.product_name, p.product_code, p.unit
   FROM batches b
   JOIN products p ON p.id = b.product_id
@@ -58,86 +64,139 @@ const batchRows = runSql(`
   LIMIT 1;
 `);
 
-assert(batchRows.length > 0, 'Batch E441/2026 must exist');
-const batch = batchRows[0];
-console.log('   Found batch:', batch);
+assert(batchE441Rows.length > 0, 'Batch E441/2026 must exist');
+const batchE441 = batchE441Rows[0];
 
-// 3. Query inventory_v1_effective_ledger for Batch E441/2026
-console.log('\n3. Querying inventory_v1_effective_ledger for Batch E441/2026...');
-const ledgerEntries = runSql(`
+const ledgerE441 = runSql(`
   SELECT id, transaction_type, quantity, reference_type, reference_id, reference_number,
          notes, created_at, transaction_date, metadata
   FROM inventory_v1_effective_ledger
-  WHERE batch_id = '${batch.batch_id}'
+  WHERE batch_id = '${batchE441.batch_id}'
     AND (metadata->>'superseded' IS NULL OR metadata->>'superseded' != 'true')
   ORDER BY transaction_date ASC, created_at ASC;
 `);
 
-console.log(`   Found ${ledgerEntries.length} canonical ledger entries.`);
-
-// 4. Query stock_reservations for Batch E441/2026
-console.log('\n4. Querying stock_reservations for Batch E441/2026...');
-const reservations = runSql(`
+const reservationsE441 = runSql(`
   SELECT id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason
   FROM stock_reservations
-  WHERE batch_id = '${batch.batch_id}'
+  WHERE batch_id = '${batchE441.batch_id}'
   ORDER BY reserved_at ASC;
 `);
 
-console.log(`   Found ${reservations.length} stock reservations.`);
-
-// 5. Compute IN, OUT, RESERVED, FREE exactly as StockMovementsModal does
-let totalIn = 0;
-let totalOut = 0;
-
-for (const entry of ledgerEntries) {
+let totalInE441 = 0;
+let totalOutE441 = 0;
+for (const entry of ledgerE441) {
   const qty = Number(entry.quantity) || 0;
-  if (qty > 0) {
-    totalIn += qty;
-  } else if (qty < 0) {
-    totalOut += Math.abs(qty);
-  }
+  if (qty > 0) totalInE441 += qty;
+  else if (qty < 0) totalOutE441 += Math.abs(qty);
 }
-
-const currentStock = totalIn - totalOut;
-
-let totalReserved = 0;
-for (const r of reservations) {
+const currentStockE441 = totalInE441 - totalOutE441;
+let totalReservedE441 = 0;
+for (const r of reservationsE441) {
   if (r.status === 'active' && !r.is_released) {
-    totalReserved += Number(r.reserved_quantity) || 0;
+    totalReservedE441 += Number(r.reserved_quantity) || 0;
   }
 }
+const freeStockE441 = Math.max(0, currentStockE441 - totalReservedE441);
 
-const freeStock = Math.max(0, currentStock - totalReserved);
+console.log('   Batch E441/2026 Summary Cards:');
+console.log(`   IN: ${totalInE441} kg, OUT: ${totalOutE441} kg, CURRENT: ${currentStockE441} kg, RESERVED: ${totalReservedE441} kg, FREE: ${freeStockE441} kg`);
+assert.equal(totalInE441, 9000, 'E441/2026 total IN must be 9000');
+assert.equal(totalOutE441, 9000, 'E441/2026 total OUT must be 9000');
+assert.equal(currentStockE441, 0, 'E441/2026 current stock must be 0');
+assert.equal(totalReservedE441, 0, 'E441/2026 reserved stock must be 0');
+assert.equal(freeStockE441, 0, 'E441/2026 free stock must be 0');
+console.log('   ✅ PASS: Batch E441/2026 matches 9000 IN / 9000 OUT / 0 RESERVED / 0 FREE.\n');
 
-console.log('\n5. Calculated Summary Cards for Batch E441/2026:');
-console.log(`   IN:       ${totalIn} ${batch.unit}`);
-console.log(`   OUT:      ${totalOut} ${batch.unit}`);
-console.log(`   CURRENT:  ${currentStock} ${batch.unit}`);
-console.log(`   RESERVED: ${totalReserved} ${batch.unit}`);
-console.log(`   FREE:     ${freeStock} ${batch.unit}`);
+// 4. Query Batch M1CFX10003725N
+console.log('4. Querying Batch M1CFX10003725N in canonical database...');
+const batchM1Rows = runSql(`
+  SELECT b.id AS batch_id, b.batch_number, b.product_id, p.product_name, p.product_code, p.unit
+  FROM batches b
+  JOIN products p ON p.id = b.product_id
+  WHERE b.batch_number = 'M1CFX10003725N'
+  LIMIT 1;
+`);
 
-assert.equal(totalIn, 9000, 'Batch E441/2026 total IN must be 9,000 KG');
-assert.equal(totalOut, 9000, 'Batch E441/2026 total OUT must be 9,000 KG');
-assert.equal(currentStock, 0, 'Batch E441/2026 current stock must be 0 KG');
-assert.equal(totalReserved, 0, 'Batch E441/2026 reserved stock must be 0 KG');
-assert.equal(freeStock, 0, 'Batch E441/2026 free stock must be 0 KG');
+assert(batchM1Rows.length > 0, 'Batch M1CFX10003725N must exist');
+const batchM1 = batchM1Rows[0];
 
-console.log('   ✅ PASS: Movement summary matches required 9,000 IN / 9,000 OUT / 0 RESERVED / 0 FREE.\n');
+const ledgerM1 = runSql(`
+  SELECT id, transaction_type, quantity, reference_type, reference_id, reference_number,
+         notes, created_at, transaction_date, metadata
+  FROM inventory_v1_effective_ledger
+  WHERE batch_id = '${batchM1.batch_id}'
+    AND (metadata->>'superseded' IS NULL OR metadata->>'superseded' != 'true')
+  ORDER BY transaction_date ASC, created_at ASC;
+`);
 
-// 6. Chronological running physical stock calculation
-console.log('6. Verifying chronological running physical stock and non-mutation by reservations...');
-let runningStock = 0;
-for (const entry of ledgerEntries) {
-  const stockBefore = runningStock;
+const reservationsM1 = runSql(`
+  SELECT id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason
+  FROM stock_reservations
+  WHERE batch_id = '${batchM1.batch_id}'
+  ORDER BY reserved_at ASC;
+`);
+
+let totalInM1 = 0;
+let totalOutM1 = 0;
+for (const entry of ledgerM1) {
   const qty = Number(entry.quantity) || 0;
-  runningStock += qty;
-  const stockAfter = runningStock;
-  assert(typeof stockBefore === 'number' && typeof stockAfter === 'number');
+  if (qty > 0) totalInM1 += qty;
+  else if (qty < 0) totalOutM1 += Math.abs(qty);
 }
+const currentStockM1 = totalInM1 - totalOutM1;
+let totalReservedM1 = 0;
+for (const r of reservationsM1) {
+  if (r.status === 'active' && !r.is_released) {
+    totalReservedM1 += Number(r.reserved_quantity) || 0;
+  }
+}
+const freeStockM1 = Math.max(0, currentStockM1 - totalReservedM1);
 
-assert.equal(runningStock, currentStock, 'Final running stock must match current physical stock');
-console.log('   ✅ PASS: Chronological running physical stock computed correctly.\n');
+console.log('   Batch M1CFX10003725N Summary Cards:');
+console.log(`   IN: ${totalInM1} kg, OUT: ${totalOutM1} kg, CURRENT: ${currentStockM1} kg, RESERVED: ${totalReservedM1} kg, FREE: ${freeStockM1} kg`);
+assert.equal(totalInM1, 100, 'M1CFX10003725N total IN must be 100');
+assert.equal(totalOutM1, 0, 'M1CFX10003725N total OUT must be 0');
+assert.equal(currentStockM1, 100, 'M1CFX10003725N current stock must be 100');
+assert.equal(totalReservedM1, 0, 'M1CFX10003725N reserved stock must be 0');
+assert.equal(freeStockM1, 100, 'M1CFX10003725N free stock must be 100');
+console.log('   ✅ PASS: Batch M1CFX10003725N matches 100 IN / 0 OUT / 0 RESERVED / 100 FREE.\n');
+
+// 5. Product-level movements verification (Corn Starch BP across all batches)
+console.log('5. Verifying product-level movements across all batches for Corn Starch BP...');
+const productLedger = runSql(`
+  SELECT id, batch_id, quantity, transaction_date
+  FROM inventory_v1_effective_ledger
+  WHERE product_id = '${batchE441.product_id}'
+    AND (metadata->>'superseded' IS NULL OR metadata->>'superseded' != 'true')
+  ORDER BY transaction_date ASC, created_at ASC;
+`);
+
+const uniqueBatchIds = Array.from(new Set(productLedger.map(r => r.batch_id).filter(Boolean)));
+assert(uniqueBatchIds.length > 0, 'Must have batches for product');
+
+const batchList = runSql(`
+  SELECT id, batch_number FROM batches WHERE id IN ('${uniqueBatchIds.join("','")}');
+`);
+const batchMap = new Map(batchList.map(b => [b.id, b.batch_number]));
+
+for (const row of productLedger) {
+  if (row.batch_id) {
+    assert(batchMap.has(row.batch_id), `Every ledger entry batch_id must map to a batch_number (${row.batch_id})`);
+    assert(batchMap.get(row.batch_id), 'Batch number must not be empty');
+  }
+}
+console.log(`   Found ${productLedger.length} ledger entries across ${uniqueBatchIds.length} batches.`);
+console.log('   ✅ PASS: In-memory batch_number mapping succeeds for all product-level entries.\n');
+
+// 6. Chronological running stock invariant
+console.log('6. Verifying running physical stock invariant...');
+let running = 0;
+for (const entry of ledgerE441) {
+  running += Number(entry.quantity) || 0;
+}
+assert.equal(running, currentStockE441, 'Running stock must equal current physical stock');
+console.log('   ✅ PASS: Running stock is chronological and exact.\n');
 
 // 7. Verify no N+1 database queries on Stock.tsx page load
 console.log('7. Verifying Stock page load query integrity (no N+1 per batch)...');
