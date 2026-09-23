@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useFinance } from '../../contexts/FinanceContext';
 import { 
   DollarSign, TrendingUp, TrendingDown, ArrowRight, ArrowUpRight, ArrowDownLeft, 
   Calendar, Download, Search, AlertCircle, RefreshCw, Filter, Eye, Layers, 
@@ -102,17 +103,15 @@ export function FXBusinessDashboard({
   onViewInvoice,
   onViewPayment,
 }: FXBusinessDashboardProps) {
-  const [dateRange, setDateRange] = useState({
-    startDate: '2025-11-29',
-    endDate: new Date().toISOString().split('T')[0],
-  });
+  const { dateRange } = useFinance();
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [currencyFilter, setCurrencyFilter] = useState<'all' | 'USD' | 'IDR'>('all');
+  const [currencyFilter, setCurrencyFilter] = useState<'all' | 'USD' | 'IDR'>('USD');
   const [statusFilter, setStatusFilter] = useState<'all' | 'complete' | 'missing_so_rate' | 'pending_payment' | 'unmatched' | 'idr_sale'>('all');
   const [customerFilter, setCustomerFilter] = useState<string>('all');
   const [supplierFilter, setSupplierFilter] = useState<string>('all');
   const [productFilter, setProductFilter] = useState<string>('all');
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const [transactions, setTransactions] = useState<CommercialFxTransaction[]>([]);
   const [selectedTx, setSelectedTx] = useState<CommercialFxTransaction | null>(null);
@@ -525,7 +524,8 @@ export function FXBusinessDashboard({
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
       // Date filter (based on SO Date)
-      if (t.so_date < dateRange.startDate || t.so_date > dateRange.endDate) return false;
+      if (dateRange?.startDate && t.so_date < dateRange.startDate) return false;
+      if (dateRange?.endDate && t.so_date > dateRange.endDate) return false;
 
       // Currency filter
       if (currencyFilter !== 'all' && t.sale_currency !== currencyFilter) return false;
@@ -688,17 +688,36 @@ export function FXBusinessDashboard({
     const ws = XLSX.utils.json_to_sheet(sanitized);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'FX Business Analysis');
-    XLSX.writeFile(wb, `FX_Business_Dashboard_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `FX_Business_Dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   return (
-    <div className="space-y-6">
-      {/* Top View Mode Switcher */}
-      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-2.5 shadow-sm">
+    <div className="space-y-3">
+      {/* 1. Single Compact Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-200">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-bold text-slate-900 tracking-tight">
+              FX Management
+            </h1>
+            <span className="text-[11px] font-semibold px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full border border-blue-200">
+              Commercial FX
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Commercial FX — Sell Rate vs Supplier Payment Rate
+            {dateRange?.startDate && dateRange?.endDate && (
+              <span className="ml-1.5 text-slate-400 font-mono text-[11px]">
+                ({fmtDate(dateRange.startDate)} – {fmtDate(dateRange.endDate)})
+              </span>
+            )}
+          </p>
+        </div>
+
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-2"
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
           >
             <TrendingUp className="w-3.5 h-3.5" />
             Commercial FX
@@ -707,377 +726,246 @@ export function FXBusinessDashboard({
             <button
               type="button"
               onClick={onSwitchToAccountingReport}
-              className="px-4 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-semibold transition-all flex items-center gap-2"
+              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5"
+              title="Open official Accounting FX Report"
             >
-              <Layers className="w-3.5 h-3.5 text-indigo-500" />
+              <Layers className="w-3.5 h-3.5 text-indigo-600" />
               Accounting FX
             </button>
           )}
-        </div>
-        <div className="text-xs text-slate-500 font-medium hidden sm:flex items-center gap-2">
-          <span className="text-blue-600 font-bold">Commercial View:</span>
-          <span>Customer Sale Currency → Quotation Rate → Supplier Settlement</span>
-        </div>
-      </div>
-
-      {/* Top Action & Navigation Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <div className="flex items-center gap-3">
-            <span className="px-3 py-1 bg-blue-500/20 text-blue-300 border border-blue-400/30 rounded-full text-xs font-semibold uppercase tracking-wider">
-              Management Commercial FX
-            </span>
-            <span className="text-xs text-slate-300 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" /> Customer FX Contracts & Realized Settlements
-            </span>
-          </div>
-          <h1 className="text-2xl md:text-3xl font-bold mt-2 tracking-tight">
-            FX Business Dashboard
-          </h1>
-          <p className="text-slate-300 text-sm mt-1 max-w-2xl leading-relaxed">
-            Strictly separates <span className="text-blue-300 font-semibold">USD Sales Orders</span> (quoted in USD, invoiced in IDR) from <span className="text-amber-300 font-semibold">IDR Sales Orders</span>. Traces commercial quotation rates against actual IDR↔USD settlement conversions.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {onSwitchToAccountingReport && (
-            <button
-              onClick={onSwitchToAccountingReport}
-              className="px-4 py-2.5 bg-slate-800/80 hover:bg-slate-700/90 text-slate-200 border border-slate-600 rounded-xl text-xs font-medium transition-all shadow-sm flex items-center gap-2"
-              title="Open the official GL Accounting FX Report with journal references"
-            >
-              <Layers className="w-4 h-4 text-indigo-400" />
-              Accounting FX Report
-            </button>
-          )}
-
           <button
+            type="button"
             onClick={handleExportExcel}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-all shadow-md flex items-center gap-2"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs flex items-center gap-1.5"
+            title="Export all records with full trace metadata to Excel"
           >
-            <Download className="w-4 h-4" />
-            Export to Excel
+            <Download className="w-3.5 h-3.5" />
+            Excel
           </button>
-
           <button
+            type="button"
             onClick={loadData}
-            className="p-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded-xl transition-all shadow-sm"
+            className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg transition-colors"
             title="Refresh Data"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* 7 Key Business Questions Summary Panel */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <HelpCircle className="w-4 h-4 text-blue-600" />
-          Management Executive Answers
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 text-sm">
-          <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-            <span className="text-xs text-slate-500 block">1. Avg Import Rate</span>
-            <span className="font-bold text-slate-900 text-base mt-0.5 block">
-              {kpis.avgImportRate > 0 ? `Rp ${fmt(kpis.avgImportRate)}` : '—'}
-            </span>
-          </div>
-          <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
-            <span className="text-xs text-blue-700 block">2. Avg SO Rate</span>
-            <span className="font-bold text-blue-900 text-base mt-0.5 block">
-              {kpis.avgSoRate > 0 ? (
-                `Rp ${fmt(kpis.avgSoRate)}`
-              ) : (
-                <span className="text-amber-600 text-xs font-medium">Missing ({kpis.missingSoRateCount})</span>
-              )}
-            </span>
-          </div>
-          <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl">
-            <span className="text-xs text-emerald-700 block">3. Avg Paid Rate</span>
-            <span className="font-bold text-emerald-900 text-base mt-0.5 block">
-              {kpis.avgPvRate > 0 ? `Rp ${fmt(kpis.avgPvRate)}` : '—'}
-            </span>
-          </div>
-          <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl">
-            <span className="text-xs text-indigo-700 block">4. Rate Diff</span>
-            <span className="font-bold text-base mt-0.5 block">
-              {kpis.avgSoRate > 0 && kpis.avgPvRate > 0 ? (
-                <span className={kpis.avgSoRate - kpis.avgPvRate >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                  {kpis.avgSoRate - kpis.avgPvRate >= 0 ? '+' : ''}{fmt(kpis.avgSoRate - kpis.avgPvRate)}
-                </span>
-              ) : (
-                <span className="text-slate-400 text-xs font-normal">Pending SO Rate</span>
-              )}
-            </span>
-          </div>
-          <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-xl">
-            <span className="text-xs text-amber-700 block">5. FX Impact</span>
-            <span className="font-bold text-base mt-0.5 block">
-              {kpis.hasValidImpact ? (
-                <span className={kpis.totalFxImpact >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                  Rp {fmt(kpis.totalFxImpact)}
-                </span>
-              ) : (
-                <span className="text-slate-400 text-xs font-normal">Pending data</span>
-              )}
-            </span>
-          </div>
-          <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-            <span className="text-xs text-slate-500 block">6. Settled USD</span>
-            <span className="font-bold text-slate-900 text-base mt-0.5 block">
-              {fmtUsd(kpis.totalUsdPaid)}
-            </span>
-          </div>
-          <div className="p-3 bg-rose-50/40 border border-rose-100 rounded-xl">
-            <span className="text-xs text-rose-700 block">7. Unpaid USD</span>
-            <span className="font-bold text-rose-900 text-base mt-0.5 block">
-              {fmtUsd(kpis.totalUnpaidUsd)}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Top 6 KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total USD Sold</span>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-slate-900">{fmtUsd(kpis.totalUsdSold)}</div>
-            <span className="text-[11px] text-slate-400">Genuine USD orders only</span>
+      {/* 2. Compact 5-KPI Strip (~75px height) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+        {/* 1. USD Sold */}
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">USD Sold</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-slate-900 leading-tight">{fmtUsd(kpis.totalUsdSold)}</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Unpaid: {fmtUsd(kpis.totalUnpaidUsd)}</div>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total USD Paid</span>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-slate-900">{fmtUsd(kpis.totalUsdPaid)}</div>
-            <span className="text-[11px] text-emerald-600 font-medium">FX settled to suppliers</span>
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <span className="text-xs font-semibold text-amber-600 uppercase tracking-wide">Avg Import Rate</span>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-slate-900">Rp {fmt(kpis.avgImportRate)}</div>
-            <span className="text-[11px] text-slate-400">Weighted purchase rate</span>
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <span className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Avg Sales Order Rate</span>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-blue-900">
+        {/* 2. Avg Sell Rate */}
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide">Avg Sell Rate</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-blue-900 leading-tight">
               {kpis.avgSoRate > 0 ? `Rp ${fmt(kpis.avgSoRate)}` : '—'}
             </div>
-            <span className="text-[11px] text-slate-400">
-              {kpis.missingSoRateCount > 0 ? `${kpis.missingSoRateCount} pending rate` : 'Quotation rate'}
-            </span>
+            <div className="text-[10px] text-slate-400 mt-0.5">
+              {kpis.missingSoRateCount > 0 ? `${kpis.missingSoRateCount} pending rate` : 'Customer quotation'}
+            </div>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">Avg Payment Rate</span>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-emerald-900">
+        {/* 3. Avg Payment Rate */}
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">Avg Payment Rate</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-emerald-900 leading-tight">
               {kpis.avgPvRate > 0 ? `Rp ${fmt(kpis.avgPvRate)}` : '—'}
             </div>
-            <span className="text-[11px] text-slate-400">Weighted FX conversion</span>
+            <div className="text-[10px] text-slate-400 mt-0.5">Settled: {fmtUsd(kpis.totalUsdPaid)}</div>
           </div>
         </div>
 
-        {/* MOST IMPORTANT KPI: TOTAL SO -> PAYMENT FX IMPACT */}
-        <div className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between ${
-          !kpis.hasValidImpact
-            ? 'bg-slate-50 border-slate-200 text-slate-900'
+        {/* 4. Rate Difference */}
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wide">Rate Difference</span>
+          <div className="mt-1">
+            <div className={`text-base font-bold leading-tight ${
+              kpis.avgSoRate > 0 && kpis.avgPvRate > 0
+                ? (kpis.avgSoRate - kpis.avgPvRate >= 0 ? 'text-emerald-700' : 'text-rose-700')
+                : 'text-slate-400'
+            }`}>
+              {kpis.avgSoRate > 0 && kpis.avgPvRate > 0
+                ? `${kpis.avgSoRate - kpis.avgPvRate >= 0 ? '+' : ''}Rp ${fmt(kpis.avgSoRate - kpis.avgPvRate)}`
+                : '—'}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Sell Rate - Payment Rate</div>
+          </div>
+        </div>
+
+        {/* 5. FX Impact */}
+        <div className={`px-3.5 py-2 rounded-xl border shadow-xs flex flex-col justify-between min-h-[72px] col-span-2 sm:col-span-1 ${
+          !kpis.hasValidImpact 
+            ? 'bg-white border-slate-200' 
             : kpis.totalFxImpact >= 0 
-            ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950' 
-            : 'bg-rose-50/80 border-rose-300 text-rose-950'
+            ? 'bg-emerald-50/70 border-emerald-200' 
+            : 'bg-rose-50/70 border-rose-200'
         }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wide">SO → Payment FX Impact</span>
-            {kpis.hasValidImpact ? (
-              kpis.totalFxImpact >= 0 ? (
-                <span className="px-2 py-0.5 bg-emerald-200/80 text-emerald-800 rounded text-[10px] font-extrabold uppercase">Favorable</span>
-              ) : (
-                <span className="px-2 py-0.5 bg-rose-200/80 text-rose-800 rounded text-[10px] font-extrabold uppercase">Unfavorable</span>
-              )
-            ) : (
-              <span className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-medium uppercase">Pending</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">FX Impact</span>
+            {kpis.hasValidImpact && (
+              <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                kpis.totalFxImpact >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+              }`}>
+                {kpis.totalFxImpact >= 0 ? 'Favorable' : 'Unfavorable'}
+              </span>
             )}
           </div>
-          <div className="mt-2">
-            <div className={`text-2xl font-black tracking-tight ${
-              !kpis.hasValidImpact ? 'text-slate-400 text-lg font-semibold' : kpis.totalFxImpact >= 0 ? 'text-emerald-700' : 'text-rose-700'
+          <div className="mt-1">
+            <div className={`text-base font-bold leading-tight ${
+              !kpis.hasValidImpact ? 'text-slate-400' : kpis.totalFxImpact >= 0 ? 'text-emerald-700' : 'text-rose-700'
             }`}>
-              {kpis.hasValidImpact ? (
-                `${kpis.totalFxImpact >= 0 ? '+' : ''}Rp ${fmt(kpis.totalFxImpact)}`
-              ) : (
-                'Pending SO Rate'
-              )}
+              {kpis.hasValidImpact ? `${kpis.totalFxImpact >= 0 ? '+' : ''}Rp ${fmt(kpis.totalFxImpact)}` : 'Pending'}
             </div>
-            <span className="text-[11px] opacity-80 block mt-0.5">
-              {kpis.hasValidImpact ? (
-                kpis.totalFxImpact >= 0 ? 'Margin preserved/gained' : 'Margin eroded at settlement'
-              ) : (
-                'Requires USD SO quote rate'
-              )}
-            </span>
+            <div className="text-[10px] text-slate-500 mt-0.5">Settlement FX impact</div>
           </div>
         </div>
       </div>
 
-      {/* Filter Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Filter className="w-4 h-4 text-slate-500" />
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Scope & Currency Filter</span>
-            
-            {/* Currency Selector */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl gap-1">
+      {/* 3. Compact Filter Bar */}
+      <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-xs space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search Box */}
+            <div className="relative w-44 sm:w-56">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search SO, customer, product..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-8 pr-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Currency Scope Selector */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
               <button
-                onClick={() => setCurrencyFilter('all')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                  currencyFilter === 'all'
-                    ? 'bg-white text-slate-900 shadow-sm'
+                type="button"
+                onClick={() => setCurrencyFilter('USD')}
+                className={`px-2.5 py-0.5 rounded-md transition-all ${
+                  currencyFilter === 'USD'
+                    ? 'bg-blue-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                All Scope ({transactions.length})
+                USD Sales ({transactions.filter(t => t.sale_currency === 'USD').length})
               </button>
               <button
-                onClick={() => setCurrencyFilter('USD')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                  currencyFilter === 'USD'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-blue-700 hover:bg-blue-50'
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-blue-300"></span>
-                USD Sales Orders ({transactions.filter(t => t.sale_currency === 'USD').length})
-              </button>
-              <button
+                type="button"
                 onClick={() => setCurrencyFilter('IDR')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 py-0.5 rounded-md transition-all ${
                   currencyFilter === 'IDR'
-                    ? 'bg-slate-800 text-white shadow-sm'
-                    : 'text-slate-700 hover:bg-slate-200'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                IDR Sales Orders ({transactions.filter(t => t.sale_currency === 'IDR').length})
+                IDR Sales ({transactions.filter(t => t.sale_currency === 'IDR').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrencyFilter('all')}
+                className={`px-2.5 py-0.5 rounded-md transition-all ${
+                  currencyFilter === 'all'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All ({transactions.length})
               </button>
             </div>
+
+            {/* Status Selector */}
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as any)}
+              className="px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="all">All Statuses</option>
+              <option value="complete">Complete</option>
+              <option value="pending_payment">Pending Payment</option>
+              <option value="missing_so_rate">Missing SO Rate</option>
+              <option value="unmatched">Unmatched</option>
+              <option value="idr_sale">IDR Orders</option>
+            </select>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Status Pills */}
-            {([
-              { id: 'all', label: 'All Statuses' },
-              { id: 'complete', label: 'Complete' },
-              { id: 'missing_so_rate', label: 'Missing SO Rate' },
-              { id: 'pending_payment', label: 'Pending Payment' },
-              { id: 'unmatched', label: 'Unmatched' },
-              { id: 'idr_sale', label: 'IDR Orders' },
-            ] as const).map(st => (
-              <button
-                key={st.id}
-                onClick={() => setStatusFilter(st.id)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${
-                  statusFilter === st.id
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {st.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 pt-2">
-          {/* Search Box */}
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search SO, customer, PI, PV..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Customer Dropdown */}
-          <select
-            value={customerFilter}
-            onChange={e => setCustomerFilter(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Customers ({customersList.length})</option>
-            {customersList.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-
-          {/* Supplier Dropdown */}
-          <select
-            value={supplierFilter}
-            onChange={e => setSupplierFilter(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Suppliers ({suppliersList.length})</option>
-            {suppliersList.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-
-          {/* Product Dropdown */}
-          <select
-            value={productFilter}
-            onChange={e => setProductFilter(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Products ({productsList.length})</option>
-            {productsList.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-
-          {/* Date Range */}
-          <div className="flex items-center gap-1.5">
-            <input
-              type="date"
-              value={dateRange.startDate}
-              onChange={e => setDateRange(d => ({ ...d, startDate: e.target.value }))}
-              className="w-1/2 px-2 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
-            />
-            <span className="text-slate-400 text-xs">to</span>
-            <input
-              type="date"
-              value={dateRange.endDate}
-              onChange={e => setDateRange(d => ({ ...d, endDate: e.target.value }))}
-              className="w-1/2 px-2 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Transaction Table */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold text-slate-900">Commercial FX Transactions</h2>
-            <span className="px-2.5 py-0.5 bg-slate-100 text-slate-700 text-xs rounded-full font-semibold">
+            <button
+              type="button"
+              onClick={() => setShowMoreFilters(!showMoreFilters)}
+              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors flex items-center gap-1.5 ${
+                showMoreFilters || customerFilter !== 'all' || supplierFilter !== 'all' || productFilter !== 'all'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200 font-semibold'
+                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 font-medium'
+              }`}
+            >
+              <Filter className="w-3 h-3" />
+              <span>More Filters</span>
+              {(customerFilter !== 'all' || supplierFilter !== 'all' || productFilter !== 'all') && (
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+              )}
+            </button>
+            <span className="text-xs text-slate-400 font-medium">
               {filteredTransactions.length} records
             </span>
           </div>
-          <span className="text-xs text-slate-400">
-            Click any row to open the complete SO → Purchase → Payment drilldown
-          </span>
         </div>
 
+        {/* Collapsible Secondary Filters */}
+        {showMoreFilters && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-slate-100 text-xs">
+            <select
+              value={customerFilter}
+              onChange={e => setCustomerFilter(e.target.value)}
+              className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:bg-white focus:outline-none"
+            >
+              <option value="all">All Customers ({customersList.length})</option>
+              {customersList.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            <select
+              value={supplierFilter}
+              onChange={e => setSupplierFilter(e.target.value)}
+              className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:bg-white focus:outline-none"
+            >
+              <option value="all">All Suppliers ({suppliersList.length})</option>
+              {suppliersList.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+
+            <select
+              value={productFilter}
+              onChange={e => setProductFilter(e.target.value)}
+              className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:bg-white focus:outline-none"
+            >
+              <option value="all">All Products ({productsList.length})</option>
+              {productsList.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* 4. Primary Report Table (Optimized for 14-inch laptop) */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
         {loading ? (
-          <div className="p-16 text-center text-slate-400 text-sm flex flex-col items-center gap-3">
-            <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
+          <div className="p-12 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
+            <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
             Loading and tracing FX transactions...
           </div>
         ) : filteredTransactions.length === 0 ? (
-          <div className="p-16 text-center text-slate-400 text-sm">
+          <div className="p-12 text-center text-slate-400 text-xs">
             No transactions matched the selected filters.
           </div>
         ) : (
@@ -1085,21 +973,15 @@ export function FXBusinessDashboard({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold text-[11px]">
-                  <th className="py-3 px-4">Sales Order</th>
-                  <th className="py-3 px-4">Customer & Product</th>
-                  <th className="py-3 px-4 text-center">Sale Currency</th>
-                  <th className="py-3 px-4 text-right">USD SO Value</th>
-                  <th className="py-3 px-4 text-right">SO Rate</th>
-                  <th className="py-3 px-4 text-right">Commercial IDR Equiv.</th>
-                  <th className="py-3 px-4 text-right">Actual IDR Invoiced</th>
-                  <th className="py-3 px-4">Supplier & PI</th>
-                  <th className="py-3 px-4 text-right">Import Rate</th>
-                  <th className="py-3 px-4">Payment Voucher</th>
-                  <th className="py-3 px-4 text-right">Payment Rate</th>
-                  <th className="py-3 px-4 text-right">USD Settled</th>
-                  <th className="py-3 px-4 text-right font-bold text-slate-900">SO → Payment FX Impact</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-3 text-center">Action</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">SO / Date</th>
+                  <th className="py-2.5 px-3">Customer / Product</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Sale</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Sell Rate</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Payment Rate</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Rate Diff</th>
+                  <th className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">FX Impact</th>
+                  <th className="py-2.5 px-3 text-center whitespace-nowrap">Status</th>
+                  <th className="py-2.5 px-2 text-center w-16 whitespace-nowrap">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1113,266 +995,135 @@ export function FXBusinessDashboard({
                       onClick={() => setSelectedTx(tx)}
                       className="hover:bg-blue-50/40 cursor-pointer transition-colors group"
                     >
-                      {/* Sales Order */}
-                      <td className="py-3.5 px-4 whitespace-nowrap">
+                      {/* SO / Date */}
+                      <td className="py-2 px-3 whitespace-nowrap">
                         <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
                           {tx.so_number}
                         </span>
-                        <div className="text-[11px] text-slate-400">{fmtDate(tx.so_date)}</div>
-                        {tx.si_number && (
-                          <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
-                            Inv: {tx.si_number}
-                          </span>
-                        )}
+                        <div className="text-[10px] text-slate-400">{fmtDate(tx.so_date)}</div>
                       </td>
 
-                      {/* Customer & Product */}
-                      <td className="py-3.5 px-4 max-w-[180px]">
+                      {/* Customer / Product */}
+                      <td className="py-2 px-3 max-w-[220px]">
                         <div className="font-semibold text-slate-900 truncate" title={tx.customer_name}>
                           {tx.customer_name}
                         </div>
-                        <div className="text-slate-500 truncate mt-0.5" title={tx.product_name}>
-                          {tx.product_name}
+                        <div className="text-slate-500 text-[11px] truncate mt-0.5" title={tx.product_name}>
+                          {tx.product_name} <span className="text-slate-400">({fmt(tx.so_quantity)} {tx.product_unit})</span>
                         </div>
-                        <span className="text-[10px] text-slate-400">
-                          {fmt(tx.so_quantity)} {tx.product_unit}
-                        </span>
                       </td>
 
-                      {/* Sale Currency */}
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                      {/* Sale */}
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
                         {isIdr ? (
-                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded font-bold text-[10px] uppercase tracking-wide">
-                            IDR
-                          </span>
+                          <span className="font-bold text-slate-800">Rp {fmt(tx.idr_sales_value)}</span>
                         ) : (
-                          <span className="px-2 py-0.5 bg-blue-100 text-blue-800 border border-blue-200 rounded font-bold text-[10px] uppercase tracking-wide">
-                            USD
-                          </span>
+                          <span className="font-bold text-blue-900">{fmtUsd(tx.usd_sales_amount)}</span>
                         )}
                       </td>
 
-                      {/* USD SO Value */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        {isIdr ? (
-                          <div>
-                            <span className="text-slate-400 font-normal">—</span>
-                            <div className="text-[11px] font-semibold text-slate-800">
-                              Rp {fmt(tx.idr_sales_value)}
-                            </div>
-                          </div>
-                        ) : (
-                          <div>
-                            <span className="font-bold text-blue-900">{fmtUsd(tx.usd_sales_amount)}</span>
-                            <div className="text-[10px] text-slate-400">USD Deal</div>
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Sales Order Commercial Rate */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      {/* Sell Rate */}
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
                         {isIdr ? (
                           tx.so_rate ? (
-                            <div>
-                              <span className="text-slate-700 font-medium">Rp {fmt(tx.so_rate)}</span>
-                              <div className="text-[10px] text-slate-400">Quotation Ref</div>
-                            </div>
+                            <span className="text-slate-700 font-medium">Rp {fmt(tx.so_rate)}</span>
                           ) : (
                             <span className="text-slate-400">—</span>
                           )
-                        ) : (
-                          tx.so_rate ? (
-                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 font-bold rounded border border-blue-200/60">
-                              Rp {fmt(tx.so_rate)}
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 bg-amber-50 text-amber-700 font-bold rounded border border-amber-200 text-xs">
-                              Missing SO Rate
-                            </span>
-                          )
-                        )}
-                      </td>
-
-                      {/* Commercial IDR Equivalent */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        {isIdr ? (
-                          <span className="text-slate-400">—</span>
-                        ) : (
-                          tx.idr_commercial_equivalent !== null ? (
-                            <div>
-                              <span className="font-semibold text-slate-900">
-                                Rp {fmt(tx.idr_commercial_equivalent)}
-                              </span>
-                              <div className="text-[10px] text-slate-400">USD × SO Rate</div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400 italic">Missing Rate</span>
-                          )
-                        )}
-                      </td>
-
-                      {/* Actual IDR Invoiced */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        {tx.actual_invoiced_idr !== null ? (
-                          <div>
-                            <span className="font-semibold text-slate-800">
-                              Rp {fmt(tx.actual_invoiced_idr)}
-                            </span>
-                            {tx.si_number && (
-                              <div className="text-[10px] text-slate-400">{tx.si_number}</div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic">Uninvoiced</span>
-                        )}
-                      </td>
-
-                      {/* Supplier & PI */}
-                      <td className="py-3.5 px-4 max-w-[170px]">
-                        <div className="font-semibold text-slate-800 truncate" title={tx.supplier_name}>
-                          {tx.supplier_name}
-                        </div>
-                        {tx.pi_number ? (
-                          <div className="text-slate-500 text-[11px]">
-                            {tx.pi_number} ({fmtDate(tx.pi_date)})
-                          </div>
-                        ) : (
-                          <div className="text-slate-400 text-[11px]">Unlinked PI</div>
-                        )}
-                        {tx.batch_number && (
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
-                            Batch: {tx.batch_number}
+                        ) : tx.so_rate ? (
+                          <span className="font-semibold text-blue-900">
+                            Rp {fmt(tx.so_rate)}
                           </span>
-                        )}
-                      </td>
-
-                      {/* Import Rate */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        {tx.import_rate && tx.import_rate > 1 ? (
-                          <div>
-                            <span className="font-bold text-amber-800">
-                              Rp {fmt(tx.import_rate)}
-                            </span>
-                            {!isIdr && tx.commercial_spread !== null && (
-                              <div className="text-[10px] text-slate-400 mt-0.5">
-                                Spread: {tx.commercial_spread >= 0 ? '+' : ''}{fmt(tx.commercial_spread)}
-                              </div>
-                            )}
-                          </div>
                         ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
-
-                      {/* Payment Voucher */}
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        {isIdr ? (
-                          <span className="text-slate-400 italic">N/A (IDR Sale)</span>
-                        ) : tx.pv_number ? (
-                          <div>
-                            <span className="font-bold text-slate-800">{tx.pv_number}</span>
-                            <div className="text-[11px] text-slate-400">{fmtDate(tx.pv_date)}</div>
-                            {tx.is_multiple_payments && (
-                              <span className="inline-block mt-0.5 px-1.5 py-0.2 bg-indigo-50 text-indigo-700 rounded text-[10px] font-medium">
-                                Multi-payment
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic">Pending</span>
+                          <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 font-bold rounded text-[10px] border border-amber-200">
+                            Missing
+                          </span>
                         )}
                       </td>
 
                       {/* Payment Rate */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
                         {isIdr ? (
                           <span className="text-slate-400">—</span>
                         ) : tx.payment_rate ? (
-                          <span className="font-bold text-emerald-800">
+                          <span className="font-semibold text-emerald-800">
                             Rp {fmt(tx.payment_rate)}
                           </span>
                         ) : (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-400 italic text-[11px]">Pending</span>
                         )}
                       </td>
 
-                      {/* USD Settled */}
-                      <td className="py-3.5 px-4 text-right font-medium whitespace-nowrap">
+                      {/* Rate Diff */}
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
                         {isIdr ? (
                           <span className="text-slate-400">—</span>
-                        ) : tx.usd_settled > 0 ? (
-                          <div>
-                            <span className="text-slate-900">{fmtUsd(tx.usd_settled)}</span>
-                            {tx.idr_supplier_payment > 0 && (
-                              <div className="text-[10px] text-slate-400">
-                                Rp {fmt(tx.idr_supplier_payment)}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">$0.00</span>
-                        )}
-                      </td>
-
-                      {/* SO -> Payment FX Impact */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        {isIdr ? (
-                          <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-xs font-semibold">
-                            N/A
+                        ) : tx.rate_diff_so_payment !== null ? (
+                          <span className={`font-bold ${
+                            tx.rate_diff_so_payment >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                          }`}>
+                            {tx.rate_diff_so_payment >= 0 ? '+' : ''}Rp {fmt(tx.rate_diff_so_payment)}
                           </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+
+                      {/* FX Impact */}
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
+                        {isIdr ? (
+                          <span className="text-slate-400 text-xs">N/A</span>
                         ) : tx.fx_impact_so_payment !== null ? (
-                          <span className={`px-2.5 py-1 rounded-lg font-bold border text-xs ${
+                          <span className={`px-2 py-0.5 rounded font-bold text-xs ${
                             isPositive 
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                              : 'bg-rose-50 text-rose-700 border-rose-200'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
                           }`}>
                             {isPositive ? '+' : ''}Rp {fmt(tx.fx_impact_so_payment)}
                           </span>
                         ) : (
-                          <span className="text-slate-400 italic text-xs">Pending data</span>
+                          <span className="text-slate-400 italic text-[11px]">Pending</span>
                         )}
                       </td>
 
                       {/* Status */}
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                      <td className="py-2 px-3 text-center whitespace-nowrap">
                         {tx.settlement_status === 'IDR Sale' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-[11px] font-semibold">
-                            <CheckCircle2 className="w-3 h-3 text-slate-500" /> IDR Order
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-full text-[10px] font-semibold">
+                            IDR Order
                           </span>
                         )}
                         {tx.settlement_status === 'Complete' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-[11px] font-bold">
-                            <CheckCircle2 className="w-3 h-3" /> Complete
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
+                            Complete
                           </span>
                         )}
                         {tx.settlement_status === 'Missing SO Rate' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full text-[11px] font-bold">
-                            <AlertCircle className="w-3 h-3 text-amber-600" /> Missing SO Rate
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold">
+                            Missing SO Rate
                           </span>
                         )}
                         {tx.settlement_status === 'Pending Payment' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-800 rounded-full text-[11px] font-medium">
-                            <Clock className="w-3 h-3" /> Pending Payment
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-[10px] font-medium">
+                            Pending Payment
                           </span>
                         )}
                         {tx.settlement_status === 'Unmatched' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full text-[11px] font-medium">
-                            <AlertCircle className="w-3 h-3" /> Unmatched
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full text-[10px] font-medium">
+                            Unmatched
                           </span>
                         )}
                       </td>
 
-                      {/* Action */}
-                      <td className="py-3.5 px-3 text-center">
+                      {/* Details Action */}
+                      <td className="py-2 px-2 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedTx(tx);
-                          }}
-                          className="p-1.5 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
-                          title="View Drilldown Trace"
+                          type="button"
+                          onClick={() => setSelectedTx(tx)}
+                          className="px-2 py-0.5 bg-slate-50 hover:bg-blue-50 text-blue-700 hover:text-blue-800 rounded border border-slate-200 hover:border-blue-300 text-[11px] font-semibold transition-colors inline-flex items-center gap-1"
                         >
-                          <Eye className="w-4 h-4" />
+                          <Eye className="w-3 h-3" />
+                          View
                         </button>
                       </td>
                     </tr>
@@ -1384,12 +1135,12 @@ export function FXBusinessDashboard({
         )}
       </div>
 
-      {/* Drill-down Trace Drawer / Modal */}
+      {/* 5. Compact Expandable Details Modal */}
       {selectedTx && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-3xl rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
             {/* Modal Header */}
-            <div className="px-6 py-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between">
+            <div className="px-5 py-3 bg-slate-900 text-white flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
@@ -1397,303 +1148,217 @@ export function FXBusinessDashboard({
                       ? 'bg-blue-500/30 text-blue-300 border-blue-400/40'
                       : 'bg-slate-700 text-slate-200 border-slate-600'
                   }`}>
-                    {selectedTx.sale_currency === 'USD' ? 'USD Commercial FX Trace' : 'IDR Order Commercial Trace'}
+                    {selectedTx.sale_currency === 'USD' ? 'USD Commercial FX' : 'IDR Order'}
                   </span>
-                  <span className="text-xs text-slate-300">
-                    {selectedTx.product_name}
+                  <span className="text-xs text-slate-300 font-medium">
+                    {selectedTx.customer_name} · {selectedTx.product_name}
                   </span>
                 </div>
-                <h3 className="text-xl font-bold mt-1">
-                  Trace: {selectedTx.so_number} ({selectedTx.sale_currency}) → {selectedTx.pi_number || 'Unlinked PI'} → {selectedTx.pv_number || 'Pending Settlement'}
+                <h3 className="text-base font-bold mt-0.5">
+                  Details: {selectedTx.so_number}
                 </h3>
               </div>
               <button
                 onClick={() => setSelectedTx(null)}
-                className="p-2 hover:bg-white/10 rounded-xl transition-colors text-slate-300 hover:text-white"
+                className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-slate-300 hover:text-white"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6">
-              {/* IDR Order Notice Banner */}
+            <div className="p-5 overflow-y-auto space-y-3.5 text-xs">
+              {/* IDR Order Notice */}
               {selectedTx.sale_currency === 'IDR' ? (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
-                  <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-                    <CheckCircle2 className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                    <CheckCircle2 className="w-4 h-4 text-blue-600 flex-shrink-0" />
                     Domestic IDR Customer Sale — Commercial FX Impact is N/A
                   </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    This order (<strong>{selectedTx.so_number}</strong>) was quoted, agreed, and invoiced in domestic Indonesian Rupiah (<strong>Rp {fmt(selectedTx.idr_sales_value)}</strong>).
-                    Therefore, the customer commercial transaction bears zero USD FX exposure.
-                    Any supplier import FX from upstream purchase invoices is tracked separately in the supplier purchase accounting flow.
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    This order (<strong>{selectedTx.so_number}</strong>) was quoted and invoiced in domestic Indonesian Rupiah (<strong>Rp {fmt(selectedTx.idr_sales_value)}</strong>).
+                    It bears zero USD customer FX exposure. Any supplier import FX is tracked separately in the purchase accounting flow.
                   </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                    <div className="bg-white p-3 rounded-lg border border-slate-200">
-                      <span className="text-[11px] text-slate-500 block">Sale Currency</span>
-                      <span className="text-sm font-bold text-slate-900 mt-0.5 block">IDR</span>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-slate-200">
-                      <span className="text-[11px] text-slate-500 block">Actual IDR SO Value</span>
-                      <span className="text-sm font-bold text-slate-900 mt-0.5 block">Rp {fmt(selectedTx.idr_sales_value)}</span>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-slate-200">
-                      <span className="text-[11px] text-slate-500 block">SO → Payment FX Impact</span>
-                      <span className="text-sm font-bold text-slate-500 mt-0.5 block">N/A</span>
-                    </div>
-                  </div>
                 </div>
-              ) : (
-                <>
-                  {/* Visual 3-Stage Rate Progression Card (For genuine USD orders) */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">
-                      The Three Rates Progression (USD Customer Order)
-                    </h4>
+              ) : null}
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative">
-                      {/* Step 1: Import Rate */}
-                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative">
-                        <span className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider block">
-                          A. Import / Purchase Rate
-                        </span>
-                        <div className="text-2xl font-black text-slate-900 mt-1">
-                          {selectedTx.import_rate && selectedTx.import_rate > 1 ? `Rp ${fmt(selectedTx.import_rate)}` : '—'}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-2 space-y-0.5">
-                          <div>PI: <span className="font-semibold text-slate-700">{selectedTx.pi_number || '—'}</span></div>
-                          <div>Supplier: <span className="font-semibold text-slate-700">{selectedTx.supplier_name}</span></div>
-                        </div>
-                      </div>
-
-                      {/* Step 2: Sales Order Rate */}
-                      <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-200 shadow-sm relative">
-                        <span className="text-[11px] font-semibold text-blue-700 uppercase tracking-wider block">
-                          B. Sales Order Rate
-                        </span>
-                        <div className="text-2xl font-black text-blue-950 mt-1">
-                          {selectedTx.so_rate ? (
-                            `Rp ${fmt(selectedTx.so_rate)}`
-                          ) : (
-                            <span className="text-amber-600 text-lg font-bold">Missing SO Rate</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-600 mt-2 space-y-0.5">
-                          <div>SO: <span className="font-semibold text-slate-800">{selectedTx.so_number}</span></div>
-                          <div>Customer: <span className="font-semibold text-slate-800">{selectedTx.customer_name}</span></div>
-                        </div>
-                      </div>
-
-                      {/* Step 3: Supplier Payment Rate */}
-                      <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-200 shadow-sm relative">
-                        <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider block">
-                          C. Supplier Payment Rate
-                        </span>
-                        <div className="text-2xl font-black text-emerald-950 mt-1">
-                          {selectedTx.payment_rate ? `Rp ${fmt(selectedTx.payment_rate)}` : 'Pending'}
-                        </div>
-                        <div className="text-xs text-slate-600 mt-2 space-y-0.5">
-                          <div>Voucher: <span className="font-semibold text-slate-800">{selectedTx.pv_number || 'Unpaid'}</span></div>
-                          <div>Settled: <span className="font-semibold text-slate-800">{fmtUsd(selectedTx.usd_settled)}</span></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Arithmetic Breakdown Card */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* 1. Commercial Pricing Spread */}
-                    <div className="p-4 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
-                      <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">
-                        1. Commercial Rate Spread (Pricing Margin)
-                      </span>
-                      <div className="text-xs text-slate-600 space-y-1 mt-1">
-                        <div>Formula: <code className="bg-white px-1.5 py-0.5 rounded border">Sales Order Rate - Import Rate</code></div>
-                        <div className="font-semibold text-slate-800">
-                          {selectedTx.so_rate && selectedTx.import_rate && selectedTx.import_rate > 1 ? (
-                            `Rp ${fmt(selectedTx.so_rate)} - Rp ${fmt(selectedTx.import_rate)} = Rp ${fmt(selectedTx.so_rate - selectedTx.import_rate)} / USD`
-                          ) : (
-                            <span className="text-slate-400 italic">Requires both SO Rate and Import Rate</span>
-                          )}
-                        </div>
-                        <div className="text-sm font-bold text-amber-900 pt-1">
-                          Spread Value: {selectedTx.commercial_spread_value !== null ? `Rp ${fmt(selectedTx.commercial_spread_value)}` : '—'}
-                        </div>
-                        <p className="text-[11px] text-amber-700 pt-1">
-                          Commercial pricing spread established at sales order creation against initial import reference.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* 2. Realized Settlement Impact */}
-                    <div className={`p-4 rounded-xl border space-y-2 ${
-                      selectedTx.fx_impact_so_payment !== null && selectedTx.fx_impact_so_payment >= 0 
-                        ? 'bg-emerald-50/70 border-emerald-200' 
-                        : selectedTx.fx_impact_so_payment !== null 
-                        ? 'bg-rose-50/70 border-rose-200'
-                        : 'bg-slate-50 border-slate-200'
-                    }`}>
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                        2. SO → Payment FX Impact (Settlement Margin)
-                      </span>
-                      <div className="text-xs text-slate-600 space-y-1 mt-1">
-                        <div>Formula: <code className="bg-white px-1.5 py-0.5 rounded border">USD Settled × (SO Rate - Payment Rate)</code></div>
-                        <div className="font-semibold text-slate-800">
-                          {selectedTx.so_rate && selectedTx.payment_rate ? (
-                            `${fmtUsd(selectedTx.usd_settled)} × (Rp ${fmt(selectedTx.so_rate)} - Rp ${fmt(selectedTx.payment_rate)})`
-                          ) : (
-                            <span className="text-slate-400 italic">Requires both valid SO Rate and Supplier Payment</span>
-                          )}
-                        </div>
-                        <div className={`text-base font-black pt-1 ${
-                          selectedTx.fx_impact_so_payment !== null
-                            ? selectedTx.fx_impact_so_payment >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                            : 'text-slate-400'
-                        }`}>
-                          {selectedTx.fx_impact_so_payment !== null
-                            ? `${selectedTx.fx_impact_so_payment >= 0 ? '+' : ''}Rp ${fmt(selectedTx.fx_impact_so_payment)}`
-                            : 'Pending data'}
-                        </div>
-                        <p className="text-[11px] text-slate-600 pt-1">
-                          {selectedTx.fx_impact_so_payment !== null ? (
-                            selectedTx.fx_impact_so_payment >= 0 
-                              ? 'Favorable: The supplier settlement rate was lower than the rate quoted to the customer, preserving/increasing profit margin.'
-                              : 'Unfavorable: The supplier settlement rate was higher than the rate quoted to the customer, eroding commercial margin.'
-                          ) : (
-                            'Cannot calculate FX impact until commercial sales order rate is specified and supplier payment is settled.'
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Multiple Payments Breakdown (if applicable) */}
-                  {selectedTx.is_multiple_payments && selectedTx.all_payments && selectedTx.all_payments.length > 1 && (
-                    <div className="bg-white border border-indigo-200 rounded-xl p-4 shadow-sm">
-                      <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wider mb-2">
-                        Multi-Payment Voucher Allocations ({selectedTx.all_payments.length} Payments)
-                      </h4>
-                      <table className="w-full text-xs text-left">
-                        <thead>
-                          <tr className="border-b text-slate-500 font-semibold">
-                            <th className="py-2">Voucher</th>
-                            <th className="py-2">Date</th>
-                            <th className="py-2 text-right">Payment Rate</th>
-                            <th className="py-2 text-right">USD Amount</th>
-                            <th className="py-2 text-right">IDR Paid</th>
-                            <th className="py-2 text-right">Payment FX Impact</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {selectedTx.all_payments.map((p, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50">
-                              <td className="py-2 font-bold text-slate-800">{p.pv_number}</td>
-                              <td className="py-2 text-slate-500">{fmtDate(p.pv_date)}</td>
-                              <td className="py-2 text-right font-semibold text-emerald-800">
-                                {p.is_real_fx ? `Rp ${fmt(p.rate)}` : '1.00 (Same Currency)'}
-                              </td>
-                              <td className="py-2 text-right font-medium">{fmtUsd(p.usd_amount)}</td>
-                              <td className="py-2 text-right text-slate-600">
-                                {p.is_real_fx ? `Rp ${fmt(p.idr_paid)}` : '—'}
-                              </td>
-                              <td className="py-2 text-right font-bold">
-                                {p.impact !== null ? (
-                                  <span className={p.impact >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                                    {p.impact >= 0 ? '+' : ''}Rp {fmt(p.impact)}
-                                  </span>
-                                ) : '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Detailed Traced Documents Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                {/* SO Box */}
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-                  <div className="flex items-center justify-between font-bold text-slate-800 border-b pb-1.5">
-                    <span>Sales Order Details</span>
+              {/* 4-Section Structured Grid matching user spec */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 1. SALES */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-1">
+                    <span className="uppercase text-[11px] tracking-wide text-blue-700">Sales</span>
                     {onViewSalesOrder && (
-                      <button onClick={() => onViewSalesOrder(selectedTx.so_id)} className="text-blue-600 hover:underline flex items-center gap-0.5">
-                        Open <ExternalLink className="w-3 h-3" />
+                      <button onClick={() => onViewSalesOrder(selectedTx.so_id)} className="text-blue-600 hover:underline flex items-center gap-0.5 text-[11px]">
+                        Open SO <ExternalLink className="w-3 h-3" />
                       </button>
                     )}
                   </div>
-                  <div>SO Number: <span className="font-semibold text-slate-800">{selectedTx.so_number}</span></div>
-                  <div>SO Date: <span className="text-slate-700">{fmtDate(selectedTx.so_date)}</span></div>
-                  <div>Customer: <span className="text-slate-700">{selectedTx.customer_name}</span></div>
-                  <div>Sale Currency: <span className="font-bold text-slate-900">{selectedTx.sale_currency}</span></div>
-                  <div>Product Qty: <span className="text-slate-700">{fmt(selectedTx.so_quantity)} {selectedTx.product_unit}</span></div>
-                  {selectedTx.sale_currency === 'USD' ? (
-                    <>
-                      <div>Original SO USD: <span className="font-bold text-blue-900">{fmtUsd(selectedTx.usd_sales_amount)}</span></div>
-                      <div>Commercial IDR: <span className="text-slate-700">{selectedTx.idr_commercial_equivalent ? `Rp ${fmt(selectedTx.idr_commercial_equivalent)}` : 'Missing Rate'}</span></div>
-                      <div>Invoiced IDR: <span className="text-slate-700">{selectedTx.actual_invoiced_idr ? `Rp ${fmt(selectedTx.actual_invoiced_idr)}` : '—'}</span></div>
-                    </>
-                  ) : (
-                    <div>Actual IDR Value: <span className="font-bold text-slate-900">Rp {fmt(selectedTx.idr_sales_value)}</span></div>
-                  )}
-                </div>
-
-                {/* Purchase Invoice Box */}
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-                  <div className="flex items-center justify-between font-bold text-slate-800 border-b pb-1.5">
-                    <span>Purchase Invoice Details</span>
-                    {selectedTx.pi_id && onViewInvoice && (
-                      <button onClick={() => onViewInvoice(selectedTx.pi_id!)} className="text-blue-600 hover:underline flex items-center gap-0.5">
-                        Open <ExternalLink className="w-3 h-3" />
-                      </button>
+                  <div className="grid grid-cols-2 gap-1 pt-0.5">
+                    <div>SO Number: <strong className="text-slate-800">{selectedTx.so_number}</strong></div>
+                    <div>SO Date: <span className="text-slate-700">{fmtDate(selectedTx.so_date)}</span></div>
+                    <div>Customer: <span className="text-slate-700">{selectedTx.customer_name}</span></div>
+                    <div>Product: <span className="text-slate-700">{selectedTx.product_name}</span></div>
+                    <div>Quantity: <span className="text-slate-700">{fmt(selectedTx.so_quantity)} {selectedTx.product_unit}</span></div>
+                    <div>Currency: <strong className="text-slate-900">{selectedTx.sale_currency}</strong></div>
+                    {selectedTx.sale_currency === 'USD' ? (
+                      <>
+                        <div>USD Amount: <strong className="text-blue-900">{fmtUsd(selectedTx.usd_sales_amount)}</strong></div>
+                        <div>Sell Rate: <strong className="text-blue-900">{selectedTx.so_rate ? `Rp ${fmt(selectedTx.so_rate)}` : 'Missing'}</strong></div>
+                        <div>Commercial IDR: <span className="text-slate-700">{selectedTx.idr_commercial_equivalent ? `Rp ${fmt(selectedTx.idr_commercial_equivalent)}` : '—'}</span></div>
+                        <div>Invoiced IDR: <span className="text-slate-700">{selectedTx.actual_invoiced_idr ? `Rp ${fmt(selectedTx.actual_invoiced_idr)}` : '—'}</span></div>
+                      </>
+                    ) : (
+                      <div>IDR Value: <strong className="text-slate-900">Rp {fmt(selectedTx.idr_sales_value)}</strong></div>
                     )}
                   </div>
-                  <div>Supplier: <span className="font-semibold text-slate-800">{selectedTx.supplier_name}</span></div>
-                  <div>Invoice #: <span className="text-slate-700">{selectedTx.pi_number || '—'}</span></div>
-                  <div>Invoice Date: <span className="text-slate-700">{fmtDate(selectedTx.pi_date)}</span></div>
-                  <div>Batch: <span className="text-slate-700">{selectedTx.batch_number || '—'}</span></div>
-                  <div>Import Rate: <span className="font-bold text-amber-800">{selectedTx.import_rate && selectedTx.import_rate > 1 ? `Rp ${fmt(selectedTx.import_rate)}` : '—'}</span></div>
-                  <div>PI Total USD: <span className="text-slate-700">{fmtUsd(selectedTx.pi_total_usd)}</span></div>
                 </div>
 
-                {/* Payment Voucher Box */}
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-                  <div className="flex items-center justify-between font-bold text-slate-800 border-b pb-1.5">
-                    <span>Payment Voucher Details</span>
+                {/* 2. SUPPLIER SETTLEMENT */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-1">
+                    <span className="uppercase text-[11px] tracking-wide text-emerald-700">Supplier Settlement</span>
                     {selectedTx.pv_id && onViewPayment && (
-                      <button onClick={() => onViewPayment(selectedTx.pv_id!)} className="text-blue-600 hover:underline flex items-center gap-0.5">
-                        Open <ExternalLink className="w-3 h-3" />
+                      <button onClick={() => onViewPayment(selectedTx.pv_id!)} className="text-blue-600 hover:underline flex items-center gap-0.5 text-[11px]">
+                        Open PV <ExternalLink className="w-3 h-3" />
                       </button>
                     )}
                   </div>
                   {selectedTx.sale_currency === 'IDR' ? (
                     <div className="text-slate-500 italic py-2">
-                      Supplier payment vouchers are tracked separately in the purchase accounting flow and not linked to customer IDR sales.
+                      Supplier payment vouchers are tracked separately in the purchase accounting flow.
                     </div>
                   ) : (
-                    <>
-                      <div>Voucher #: <span className="font-semibold text-slate-800">{selectedTx.pv_number || 'Not Paid'}</span></div>
+                    <div className="grid grid-cols-2 gap-1 pt-0.5">
+                      <div>Supplier: <span className="text-slate-700">{selectedTx.supplier_name}</span></div>
+                      <div>PI Number: <span className="text-slate-700">{selectedTx.pi_number || 'Unlinked'}</span></div>
+                      <div>Payment Voucher: <strong className="text-slate-800">{selectedTx.pv_number || 'Pending'}</strong></div>
                       <div>Voucher Date: <span className="text-slate-700">{fmtDate(selectedTx.pv_date)}</span></div>
-                      <div>Payment Rate: <span className="font-bold text-emerald-800">{selectedTx.payment_rate ? `Rp ${fmt(selectedTx.payment_rate)}` : '—'}</span></div>
-                      <div>USD Settled: <span className="font-bold text-slate-900">{fmtUsd(selectedTx.usd_settled)}</span></div>
-                      <div>IDR Paid: <span className="text-slate-700">Rp {fmt(selectedTx.idr_supplier_payment)}</span></div>
+                      <div>USD Settled: <strong className="text-slate-900">{fmtUsd(selectedTx.usd_settled)}</strong></div>
+                      <div>Payment Rate: <strong className="text-emerald-800">{selectedTx.payment_rate ? `Rp ${fmt(selectedTx.payment_rate)}` : 'Pending'}</strong></div>
+                      <div>Actual IDR Paid: <span className="text-slate-700">{selectedTx.idr_supplier_payment > 0 ? `Rp ${fmt(selectedTx.idr_supplier_payment)}` : '—'}</span></div>
                       <div>Status: <span className="font-semibold text-slate-800">{selectedTx.settlement_status}</span></div>
-                    </>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. TRACE */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-1">
+                    <span className="uppercase text-[11px] tracking-wide text-slate-700">Trace</span>
+                    {selectedTx.pi_id && onViewInvoice && (
+                      <button onClick={() => onViewInvoice(selectedTx.pi_id!)} className="text-blue-600 hover:underline flex items-center gap-0.5 text-[11px]">
+                        Open PI <ExternalLink className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 pt-0.5">
+                    <div>Batch: <span className="font-mono text-slate-800">{selectedTx.batch_number || '—'}</span></div>
+                    <div>Sales Invoice: <span className="text-slate-700">{selectedTx.si_number || '—'}</span></div>
+                    <div>Purchase Invoice: <span className="text-slate-700">{selectedTx.pi_number || '—'}</span></div>
+                    <div>Import Rate: <span className="text-slate-700">{selectedTx.import_rate && selectedTx.import_rate > 1 ? `Rp ${fmt(selectedTx.import_rate)}` : '—'}</span></div>
+                  </div>
+                </div>
+
+                {/* 4. CALCULATION */}
+                <div className={`p-3 rounded-xl border space-y-1.5 ${
+                  selectedTx.sale_currency === 'IDR'
+                    ? 'bg-slate-50 border-slate-200'
+                    : selectedTx.fx_impact_so_payment !== null && selectedTx.fx_impact_so_payment >= 0
+                    ? 'bg-emerald-50/60 border-emerald-200'
+                    : selectedTx.fx_impact_so_payment !== null
+                    ? 'bg-rose-50/60 border-rose-200'
+                    : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <div className="font-bold text-slate-800 border-b border-slate-200 pb-1 uppercase text-[11px] tracking-wide">
+                    Calculation
+                  </div>
+                  {selectedTx.sale_currency === 'IDR' ? (
+                    <div className="text-slate-500 italic py-2">
+                      FX Impact is N/A for domestic IDR sales.
+                    </div>
+                  ) : (
+                    <div className="space-y-1 pt-0.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Sell Rate:</span>
+                        <strong className="text-blue-900">{selectedTx.so_rate ? `Rp ${fmt(selectedTx.so_rate)}` : 'Missing'}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Payment Rate:</span>
+                        <strong className="text-emerald-900">{selectedTx.payment_rate ? `Rp ${fmt(selectedTx.payment_rate)}` : 'Pending'}</strong>
+                      </div>
+                      <div className="flex justify-between pt-0.5 border-t border-slate-200">
+                        <span className="text-slate-600 font-semibold">Rate Difference:</span>
+                        <strong className={selectedTx.rate_diff_so_payment !== null && selectedTx.rate_diff_so_payment >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                          {selectedTx.rate_diff_so_payment !== null ? `${selectedTx.rate_diff_so_payment >= 0 ? '+' : ''}Rp ${fmt(selectedTx.rate_diff_so_payment)} / USD` : '—'}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between items-center pt-1 border-t border-slate-200">
+                        <span className="font-bold text-slate-800">FX Impact:</span>
+                        <span className={`text-sm font-black ${
+                          selectedTx.fx_impact_so_payment !== null
+                            ? selectedTx.fx_impact_so_payment >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                            : 'text-slate-400'
+                        }`}>
+                          {selectedTx.fx_impact_so_payment !== null ? `${selectedTx.fx_impact_so_payment >= 0 ? '+' : ''}Rp ${fmt(selectedTx.fx_impact_so_payment)}` : 'Pending'}
+                        </span>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
+
+              {/* Multi-Payment Table (if multiple payments) */}
+              {selectedTx.is_multiple_payments && selectedTx.all_payments && selectedTx.all_payments.length > 1 && (
+                <div className="bg-white border border-indigo-200 rounded-xl p-3 shadow-xs">
+                  <h4 className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider mb-2">
+                    Payment Voucher Allocations ({selectedTx.all_payments.length} Payments)
+                  </h4>
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="border-b text-slate-500 font-semibold">
+                        <th className="py-1.5">Voucher</th>
+                        <th className="py-1.5">Date</th>
+                        <th className="py-1.5 text-right">Payment Rate</th>
+                        <th className="py-1.5 text-right">USD Amount</th>
+                        <th className="py-1.5 text-right">IDR Paid</th>
+                        <th className="py-1.5 text-right">FX Impact</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedTx.all_payments.map((p, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-1.5 font-bold text-slate-800">{p.pv_number}</td>
+                          <td className="py-1.5 text-slate-500">{fmtDate(p.pv_date)}</td>
+                          <td className="py-1.5 text-right font-semibold text-emerald-800">
+                            {p.is_real_fx ? `Rp ${fmt(p.rate)}` : '1.00'}
+                          </td>
+                          <td className="py-1.5 text-right font-medium">{fmtUsd(p.usd_amount)}</td>
+                          <td className="py-1.5 text-right text-slate-600">
+                            {p.is_real_fx ? `Rp ${fmt(p.idr_paid)}` : '—'}
+                          </td>
+                          <td className="py-1.5 text-right font-bold">
+                            {p.impact !== null ? (
+                              <span className={p.impact >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                                {p.impact >= 0 ? '+' : ''}Rp {fmt(p.impact)}
+                              </span>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
+            <div className="px-5 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
               <button
                 onClick={() => setSelectedTx(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition-all shadow-sm"
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors"
               >
-                Close Trace
+                Close
               </button>
             </div>
           </div>
