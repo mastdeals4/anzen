@@ -136,7 +136,7 @@ export function DataTable<T extends object>({
               {columns.map((column) => (
                 <th
                   key={column.key}
-                  className={`${compact ? 'px-3 py-2' : 'px-6 py-3'} text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${column.thClassName || ''}`}
+                  className={`${compact ? 'px-2.5 py-1.5' : 'px-3.5 py-2'} text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider ${column.thClassName || ''}`}
                 >
                   {column.sortable ? (
                     <button
@@ -146,12 +146,12 @@ export function DataTable<T extends object>({
                       {column.label}
                       {sortConfig?.key === column.key ? (
                         sortConfig.direction === 'asc' ? (
-                          <ChevronUp className="w-4 h-4" />
+                          <ChevronUp className="w-3.5 h-3.5" />
                         ) : (
-                          <ChevronDown className="w-4 h-4" />
+                          <ChevronDown className="w-3.5 h-3.5" />
                         )
                       ) : (
-                        <ChevronDown className="w-4 h-4 opacity-30" />
+                        <ChevronDown className="w-3.5 h-3.5 opacity-30" />
                       )}
                     </button>
                   ) : (
@@ -160,18 +160,18 @@ export function DataTable<T extends object>({
                 </th>
               ))}
               {actions && (
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className={`${compact ? 'px-2.5 py-1.5' : 'px-3.5 py-2'} text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider`}>
                   {t('common.actions')}
                 </th>
               )}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-white divide-y divide-gray-100">
             {filteredAndSortedData.length === 0 ? (
               <tr>
                 <td
                   colSpan={columns.length + (actions ? 1 : 0)}
-                  className={`${compact ? 'px-3 py-5' : 'px-6 py-8'} text-center text-gray-500`}
+                  className="px-4 py-8 text-center text-xs text-gray-500"
                 >
                   {t('common.noData')}
                 </td>
@@ -181,7 +181,7 @@ export function DataTable<T extends object>({
                 <tr
                   key={index}
                   onClick={() => onRowClick?.(item)}
-                  className={onRowClick ? 'cursor-pointer hover:bg-gray-50' : ''}
+                  className={`transition-colors ${onRowClick ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50/60'}`}
                 >
                   {columns.map((column) => {
                     const value = getValue(item, column.key);
@@ -195,13 +195,13 @@ export function DataTable<T extends object>({
                           ? value
                           : JSON.stringify(value);
                     return (
-                      <td key={column.key} className={`${compact ? 'px-3 py-2' : 'px-6 py-4'} whitespace-nowrap text-sm text-gray-900 ${column.tdClassName || ''}`}>
+                      <td key={column.key} className={`${compact ? 'px-2.5 py-1.5 text-xs' : 'px-3.5 py-2 text-xs sm:text-sm'} whitespace-nowrap text-gray-900 ${column.tdClassName || ''}`}>
                         {rendered}
                       </td>
                     );
                   })}
                   {actions && (
-                    <td className={`${compact ? 'px-2 py-2' : 'px-6 py-4'} whitespace-nowrap text-sm`}>
+                    <td className={`${compact ? 'px-2 py-1.5' : 'px-3 py-2'} whitespace-nowrap text-xs`}>
                       {actions(item)}
                     </td>
                   )}

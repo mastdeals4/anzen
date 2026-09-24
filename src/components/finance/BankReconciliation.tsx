@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { formatCurrency } from '../../utils/currency';
+import { useFinance } from '../../contexts/FinanceContext';
 
 interface BankAccount {
   id: string;
@@ -36,10 +37,11 @@ export function BankReconciliation({ canManage }: BankReconciliationProps) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'matched' | 'needs_review' | 'unmatched' | 'no_link'>('all');
-  const [dateRange, setDateRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-  });
+  const { dateRange: financeDateRange } = useFinance();
+  const dateRange = {
+    start: financeDateRange.startDate,
+    end: financeDateRange.endDate,
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -355,22 +357,7 @@ export function BankReconciliation({ canManage }: BankReconciliationProps) {
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-2 text-sm">
-            <Calendar className="w-4 h-4 text-gray-400" />
-            <input name="date_range" aria-label="Date Range"
-              type="date"
-              value={dateRange.start}
-              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-              className="px-2 py-1 border rounded text-sm"
-            />
-            <span className="text-gray-400">to</span>
-            <input name="date_range" aria-label="Date Range"
-              type="date"
-              value={dateRange.end}
-              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-              className="px-2 py-1 border rounded text-sm"
-            />
-          </div>
+          <span className="text-xs text-slate-500 font-mono">({dateRange.start} – {dateRange.end})</span>
         </div>
         <div className="flex items-center gap-2">
           <button

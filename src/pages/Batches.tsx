@@ -836,11 +836,11 @@ export function Batches() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Import Batches</h1>
-            <p className="text-gray-600 mt-1">
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Import Batches</h1>
+            <p className="text-xs text-gray-500 mt-0.5">
               {canViewCosting ? 'Manage import batches with USD pricing and document tracking' : 'Manage import batches and document tracking'}
             </p>
           </div>
@@ -850,50 +850,42 @@ export function Batches() {
                 resetForm();
                 setModalOpen(true);
               }}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+              className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-3.5 h-3.5" />
               Add Batch
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">Active Batches</p>
-                <p className="text-xl font-bold text-gray-900 mt-0.5">{batches.filter(b => b.is_active).length}</p>
-              </div>
-              <Package className="w-6 h-6 text-blue-600" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Active Batches</p>
+              <p className="text-base font-bold text-gray-900 mt-0.5">{batches.filter(b => b.is_active).length}</p>
             </div>
+            <Package className="w-4 h-4 text-blue-600" />
           </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">Sold Out</p>
-                <p className="text-xl font-bold text-orange-600 mt-0.5">{batches.filter(b => b.is_active && b.current_stock <= 0).length}</p>
-              </div>
-              <Archive className="w-6 h-6 text-orange-500" />
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Sold Out</p>
+              <p className="text-base font-bold text-orange-600 mt-0.5">{batches.filter(b => b.is_active && b.current_stock <= 0).length}</p>
             </div>
+            <Archive className="w-4 h-4 text-orange-500" />
           </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">Low Stock</p>
-                <p className="text-xl font-bold text-amber-600 mt-0.5">{batches.filter(b => b.is_active && isLowStock(b) && b.current_stock > 0).length}</p>
-              </div>
-              <AlertTriangle className="w-6 h-6 text-amber-500" />
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Low Stock</p>
+              <p className="text-base font-bold text-amber-600 mt-0.5">{batches.filter(b => b.is_active && isLowStock(b) && b.current_stock > 0).length}</p>
             </div>
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
           </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">Near Expiry</p>
-                <p className="text-xl font-bold text-red-600 mt-0.5">{batches.filter(b => b.is_active && isNearExpiry(b)).length}</p>
-              </div>
-              <AlertTriangle className="w-6 h-6 text-red-500" />
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Near Expiry</p>
+              <p className="text-base font-bold text-red-600 mt-0.5">{batches.filter(b => b.is_active && isNearExpiry(b)).length}</p>
             </div>
+            <AlertTriangle className="w-4 h-4 text-red-500" />
           </div>
         </div>
 

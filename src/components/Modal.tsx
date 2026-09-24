@@ -40,30 +40,31 @@ export function Modal({ isOpen, onClose, title, subtitle, children, size = 'md',
   };
 
   const widthClass = maxWidth || sizeClasses[size];
-  const heightClass = maxHeight || 'max-h-[90vh]';
+  const heightClass = maxHeight || 'max-h-[85vh]';
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="flex min-h-screen items-center justify-center p-3 sm:p-4">
         <div
           className="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity"
           onClick={onClose}
         />
 
         <div
-          className={`relative bg-white rounded-lg shadow-xl ${widthClass} w-full ${heightClass} flex flex-col`}
+          className={`relative bg-white rounded-xl shadow-2xl ${widthClass} w-full ${heightClass} flex flex-col overflow-hidden`}
         >
           {!noPadding && (
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+            <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-gray-200 shrink-0 bg-slate-50/50">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 leading-tight">{title}</h3>
+                <h3 className="text-base font-bold text-gray-900 leading-tight">{title}</h3>
                 {subtitle && <div className="text-xs text-gray-500 font-normal mt-0.5">{subtitle}</div>}
               </div>
               <button
                 onClick={onClose}
-                className="p-1 rounded hover:bg-gray-100 transition"
+                aria-label={t('common.close')}
+                className="p-1 rounded-lg hover:bg-gray-200/60 text-gray-500 hover:text-gray-700 transition"
               >
-                <X className="w-5 h-5 text-gray-500" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           )}

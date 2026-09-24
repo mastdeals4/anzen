@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { sanitizeExportRows } from '../../utils/csvSafe';
+import { useFinance } from '../../contexts/FinanceContext';
 
 interface SupplierFxLine {
   id: string;
@@ -120,11 +121,8 @@ const fmt2 = (n: number) => n.toLocaleString('id-ID', { minimumFractionDigits: 2
 const fmtDate = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDashboard }: FXReportProps) {
+  const { dateRange } = useFinance();
   const [activeTab, setActiveTab] = useState<'summary' | 'supplier' | 'customer' | 'exposure' | 'monthly' | 'by_supplier' | 'posted_gl'>('summary');
-  const [dateRange, setDateRange] = useState({
-    startDate: '2025-11-29',
-    endDate: new Date().toISOString().split('T')[0],
-  });
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentMarketRate, setCurrentMarketRate] = useState<number>(17800);
@@ -615,15 +613,35 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
   };
 
   return (
-    <div className="space-y-5">
-      {/* Top View Mode Switcher */}
-      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-2.5 shadow-sm">
+    <div className="space-y-3">
+      {/* 1. Single Compact Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-200">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-bold text-slate-900 tracking-tight">
+              FX Management
+            </h1>
+            <span className="text-[11px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200">
+              Accounting FX
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Foreign Exchange Accounting Gain & Loss (GL 7300 & 4930)
+            {dateRange?.startDate && dateRange?.endDate && (
+              <span className="ml-1.5 text-slate-400 font-mono text-[11px]">
+                ({fmtDate(dateRange.startDate)} – {fmtDate(dateRange.endDate)})
+              </span>
+            )}
+          </p>
+        </div>
+
         <div className="flex items-center gap-2">
           {onSwitchToCommercialDashboard && (
             <button
               type="button"
               onClick={onSwitchToCommercialDashboard}
-              className="px-4 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-semibold transition-all flex items-center gap-2"
+              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5"
+              title="Switch to Commercial FX Dashboard"
             >
               <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
               Commercial FX
@@ -631,146 +649,83 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
           )}
           <button
             type="button"
-            className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-2"
+            className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
           >
             <Layers className="w-3.5 h-3.5" />
             Accounting FX
           </button>
-        </div>
-        <div className="text-xs text-slate-500 font-medium hidden sm:flex items-center gap-2">
-          <span className="text-indigo-600 font-bold">Accounting View:</span>
-          <span>PI Carrying Rate → Bank Settlement Rate → Realized FX Gain / Loss (GL 7300 & 4930)</span>
-        </div>
-      </div>
-
-      {/* Header & Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <div className="flex items-center gap-2">
-            <DollarSign className="w-5 h-5 text-indigo-600" />
-            <h1 className="text-xl font-bold text-slate-900">Foreign Exchange (FX) Accounting Gain & Loss Report</h1>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Complete auditable realized FX tracking separating import recognition rates, commercial pricing, and actual bank settlements.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-medium">
-            <Calendar className="w-3.5 h-3.5 text-slate-500" />
-            <input
-              type="date"
-              value={dateRange.startDate}
-              onChange={e => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
-              className="bg-transparent border-none text-xs p-0 text-slate-700 focus:outline-none"
-            />
-            <span className="text-slate-400">→</span>
-            <input
-              type="date"
-              value={dateRange.endDate}
-              onChange={e => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
-              className="bg-transparent border-none text-xs p-0 text-slate-700 focus:outline-none"
-            />
-          </div>
-
           <button
+            type="button"
             onClick={exportToExcel}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-500 shadow-sm transition-all"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs flex items-center gap-1.5"
+            title="Export all records to Excel"
           >
             <Download className="w-3.5 h-3.5" />
-            Export to Excel
+            Excel
           </button>
-
           <button
+            type="button"
             onClick={loadData}
-            title="Refresh"
-            className="p-2 text-slate-600 hover:text-slate-900 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+            className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg transition-colors"
+            title="Refresh Data"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Posted FX Loss (GL 7300)</span>
-            <div className="p-2 rounded-xl bg-red-50 text-red-600">
-              <ArrowUpRight className="w-4 h-4" />
-            </div>
+      {/* 2. Compact 4-KPI Strip (~72px height) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Posted FX Loss (GL 7300)</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-red-700 leading-tight">Rp {fmt(summary.postedGl7300Loss)}</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Posted in General Ledger</div>
           </div>
-          <div className="text-2xl font-black mt-2 text-red-700 tabular-nums">
-            Rp {fmt(summary.postedGl7300Loss)}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Posted in General Ledger (e.g. JE2609-0054)
-          </p>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Total Settlement Variance</span>
-            <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
-              <TrendingDown className="w-4 h-4" />
-            </div>
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Settlement Variance</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-rose-700 leading-tight">Rp {fmt(summary.supplierLoss)}</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">{supplierLines.length} settlement allocations</div>
           </div>
-          <div className="text-2xl font-black mt-2 text-rose-700 tabular-nums">
-            Rp {fmt(summary.supplierLoss)}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Rate variance across {supplierLines.length} settlement allocations
-          </p>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Total USD Settled</span>
-            <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-              <DollarSign className="w-4 h-4" />
-            </div>
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Total USD Settled</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-slate-900 leading-tight">${fmt2(summary.totalUsdSettled)}</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Paid: Rp {fmt(summary.totalActualIdrPaid)}</div>
           </div>
-          <div className="text-2xl font-black mt-2 text-slate-900 tabular-nums">
-            ${fmt2(summary.totalUsdSettled)}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Settlement paid: Rp {fmt(summary.totalActualIdrPaid)}
-          </p>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Open USD Exposure</span>
-            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
-              <Layers className="w-4 h-4" />
-            </div>
+        <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between min-h-[72px]">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Open USD Exposure</span>
+          <div className="mt-1">
+            <div className="text-base font-bold text-amber-800 leading-tight">${fmt2(summary.totalOpenUsd)}</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Carrying: Rp {fmt(summary.totalOpenCarrying)}</div>
           </div>
-          <div className="text-2xl font-black mt-2 text-amber-800 tabular-nums">
-            ${fmt2(summary.totalOpenUsd)}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Carrying value: Rp {fmt(summary.totalOpenCarrying)}
-          </p>
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex flex-wrap border-b border-slate-200 bg-white px-3 pt-2 rounded-t-2xl gap-1">
+      {/* 3. Compact Navigation Tabs */}
+      <div className="flex flex-wrap border-b border-slate-200 bg-white px-2.5 pt-1.5 rounded-t-xl gap-1">
         {[
-          { key: 'summary', label: '1. FX Summary' },
-          { key: 'supplier', label: `2. Supplier FX Settlements (${supplierLines.length})` },
-          { key: 'posted_gl', label: `3. Posted GL FX Activity (${postedGlLines.length})` },
-          { key: 'customer', label: `4. Customer FX Detail (${customerLines.length})` },
-          { key: 'exposure', label: `5. Open USD Exposure (${openExposures.length})` },
-          { key: 'monthly', label: `6. FX by Month (${monthlyData.length})` },
-          { key: 'by_supplier', label: `7. FX by Supplier (${bySupplierData.length})` },
+          { key: 'summary', label: '1. Summary' },
+          { key: 'supplier', label: `2. Supplier Settlements (${supplierLines.length})` },
+          { key: 'posted_gl', label: `3. Posted GL Activity (${postedGlLines.length})` },
+          { key: 'customer', label: `4. Customer Detail (${customerLines.length})` },
+          { key: 'exposure', label: `5. Open Exposure (${openExposures.length})` },
+          { key: 'monthly', label: `6. By Month (${monthlyData.length})` },
+          { key: 'by_supplier', label: `7. By Supplier (${bySupplierData.length})` },
         ].map(t => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key as any)}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 -mb-px transition-colors rounded-t-lg ${
+            className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px transition-colors rounded-t-lg ${
               activeTab === t.key
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/40 font-bold'
+                ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50 font-bold'
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50'
             }`}
           >

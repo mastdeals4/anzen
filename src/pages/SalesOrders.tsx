@@ -811,37 +811,37 @@ export default function SalesOrders() {
 
   return (
     <Layout>
-      <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Sales Orders</h1>
-          <p className="text-gray-600 mt-1">Manage customer purchase orders and track delivery</p>
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Sales Orders</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Manage customer purchase orders and track delivery</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab('fx_backfill')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition shadow-xs text-xs ${
+                activeTab === 'fx_backfill'
+                  ? 'bg-amber-700 text-white'
+                  : 'bg-amber-600 hover:bg-amber-700 text-white'
+              }`}
+              title="Open Historical Exchange Rate Backfill"
+            >
+              <DollarSign className="w-3.5 h-3.5" />
+              Backfill FX Rates
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Sales Order
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setActiveTab('fx_backfill')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium transition shadow-sm text-sm ${
-              activeTab === 'fx_backfill'
-                ? 'bg-amber-700 text-white'
-                : 'bg-amber-600 hover:bg-amber-700 text-white'
-            }`}
-            title="Open Historical Exchange Rate Backfill"
-          >
-            <DollarSign className="w-4 h-4" />
-            Backfill FX Rates
-          </button>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-          >
-            <Plus className="w-5 h-5" />
-            New Sales Order
-          </button>
-        </div>
-      </div>
 
-      <div className="mb-4 border-b border-gray-200">
-        <nav className="flex gap-4">
+        <div className="border-b border-gray-200">
+          <nav className="flex gap-2">
           <button
             onClick={() => setActiveTab('active')}
             className={`px-4 py-2 font-medium border-b-2 transition ${
@@ -880,7 +880,7 @@ export default function SalesOrders() {
         </nav>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
         {summaryCards.map((card) => {
           const isActive = statusFilter === card.key;
           return (
@@ -888,12 +888,12 @@ export default function SalesOrders() {
               key={card.key}
               type="button"
               onClick={() => setStatusFilter(card.key)}
-              className={`bg-white p-2.5 rounded-lg shadow text-left transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''
+              className={`bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs text-left transition hover:border-slate-300 min-h-[64px] flex flex-col justify-between focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                isActive ? 'ring-1 ring-blue-500 bg-blue-50/50 border-blue-300' : ''
               }`}
             >
-              <div className="text-xs md:text-sm text-gray-600 truncate">{card.label}</div>
-              <div className={`text-xl md:text-2xl font-bold ${card.valueClass}`}>{card.value}</div>
+              <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide truncate">{card.label}</div>
+              <div className={`text-base font-bold ${card.valueClass}`}>{card.value}</div>
             </button>
           );
         })}

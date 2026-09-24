@@ -175,18 +175,64 @@ export function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [datePickerOpen]);
 
-  // Auto-collapse sidebar the FIRST time the user lands on a dense page.
-  // Track pages we've already auto-collapsed so a manual expand isn't reverted.
-  const autoCollapsiblePages = ['crm', 'command-center', 'finance'];
-  const autoCollapsedPagesRef = useRef<Set<string>>(new Set());
+  // Viewport breakpoint classification & responsive auto-collapse
+  // >= 1440px: Expanded allowed (default expanded)
+  // 1280–1439px: Auto-collapse by default (compact)
+  // 1024–1279px: Compact icon rail (default compact)
+  // < 1024px: Drawer navigation with overlay
+  const getBreakpointBucket = (w: number) => {
+    if (w < 1024) return 'drawer';
+    if (w < 1440) return 'compact';
+    return 'wide';
+  };
+
+  const prevBucketRef = useRef<string>(getBreakpointBucket(typeof window !== 'undefined' ? window.innerWidth : 1440));
+
   useEffect(() => {
-    if (autoCollapsiblePages.includes(currentPage)
-        && !sidebarCollapsed
-        && !autoCollapsedPagesRef.current.has(currentPage)) {
-      autoCollapsedPagesRef.current.add(currentPage);
+    const handleResize = () => {
+      const width = window.innerWidth;
+      const currentBucket = getBreakpointBucket(width);
+
+      // Only evaluate when crossing a major viewport breakpoint
+      if (currentBucket !== prevBucketRef.current) {
+        prevBucketRef.current = currentBucket;
+        const savedOverride = localStorage.getItem(`sapj_sidebar_pref_${currentBucket}`);
+        if (savedOverride) {
+          setSidebarCollapsed(savedOverride === 'collapsed');
+        } else {
+          // Default responsive behavior
+          if (currentBucket === 'compact') {
+            setSidebarCollapsed(true);
+          } else if (currentBucket === 'wide') {
+            setSidebarCollapsed(false);
+          }
+        }
+      }
+    };
+
+    // Initial check on mount
+    const width = window.innerWidth;
+    const bucket = getBreakpointBucket(width);
+    const saved = localStorage.getItem(`sapj_sidebar_pref_${bucket}`);
+    if (saved) {
+      setSidebarCollapsed(saved === 'collapsed');
+    } else if (bucket === 'compact') {
       setSidebarCollapsed(true);
+    } else if (bucket === 'wide') {
+      setSidebarCollapsed(false);
     }
-  }, [currentPage]);
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [setSidebarCollapsed]);
+
+  const handleToggleSidebar = () => {
+    const nextCollapsed = !sidebarCollapsed;
+    setSidebarCollapsed(nextCollapsed);
+    setHoverExpanded(false);
+    const bucket = getBreakpointBucket(window.innerWidth);
+    localStorage.setItem(`sapj_sidebar_pref_${bucket}`, nextCollapsed ? 'collapsed' : 'expanded');
+  };
 
   const isCollapsed = sidebarCollapsed && !hoverExpanded;
 
@@ -201,7 +247,7 @@ export function Layout({ children }: LayoutProps) {
     hoverTimerRef.current = setTimeout(() => setHoverExpanded(false), 120);
   };
 
-  // All menu items — order/IDs unchanged
+  // All menu items — order/IDs unchanged, fully localized
   const allItems: MenuItem[] = [
     { id: 'dashboard',           label: t('nav.dashboard'),           icon: LayoutDashboard },
     { id: 'crm',                 label: t('nav.crm'),                  icon: UserCircle },
@@ -217,30 +263,28 @@ export function Layout({ children }: LayoutProps) {
     { id: 'import-requirements', label: t('nav.importRequirements'),   icon: TrendingUp },
     { id: 'import-containers',   label: t('nav.importContainers'),     icon: Package },
     { id: 'finance',             label: t('nav.finance'),              icon: DollarSign },
-    { id: 'purchase-invoices',   label: 'Purchase Invoices',            icon: FileText, path: '/finance/purchase' },
-    { id: 'tax-compliance',      label: 'Tax Compliance',               icon: FileText, path: '/finance/tax' },
-    { id: 'price-calculator',    label: 'Price Calculator',            icon: Calculator },
-    { id: 'pricing-dashboard',   label: 'Pricing Overview',            icon: Tags },
-    { id: 'sourcing-outbox',     label: 'Sourcing Outbox',             icon: Tags },
-    { id: 'pricing-worksheet',   label: 'Pricing Worksheet',           icon: Tags },
-    { id: 'pricing-ledger',      label: 'Price History',               icon: Tags },
-    // Hidden from daily users — routes stay live for admin/debug.
-    // { id: 'price-requests', ... }, { id: 'pricing-desk', ... }, { id: 'pricing-parser-review', ... }
-    { id: 'reports',             label: 'Reports',                    icon: BarChart2 },
+    { id: 'purchase-invoices',   label: t('nav.purchaseInvoices', 'Purchase Invoices'), icon: FileText, path: '/finance/purchase' },
+    { id: 'tax-compliance',      label: t('nav.taxCompliance', 'Tax Compliance'),       icon: FileText, path: '/finance/tax' },
+    { id: 'price-calculator',    label: t('nav.priceCalculator', 'Price Calculator'),   icon: Calculator },
+    { id: 'pricing-dashboard',   label: t('nav.pricingOverview', 'Pricing Overview'),   icon: Tags },
+    { id: 'sourcing-outbox',     label: t('nav.sourcingOutbox', 'Sourcing Outbox'),     icon: Tags },
+    { id: 'pricing-worksheet',   label: t('nav.pricingWorksheet', 'Pricing Worksheet'), icon: Tags },
+    { id: 'pricing-ledger',      label: t('nav.pricingLedger', 'Price History'),       icon: Tags },
+    { id: 'reports',             label: t('nav.reports', 'Reports'),                    icon: BarChart2 },
     { id: 'tasks',               label: t('nav.tasks'),                icon: CheckSquare },
     { id: 'command-center',      label: t('nav.commandCenter'),        icon: Zap },
     { id: 'settings',            label: t('nav.settings'),             icon: Settings },
   ];
 
   const groups: MenuGroup[] = [
-    { label: 'Main',      items: allItems.filter(i => ['dashboard', 'crm', 'customers'].includes(i.id)) },
-    { label: 'Sales',     items: allItems.filter(i => ['sales-orders', 'delivery-challan', 'sales'].includes(i.id)) },
-    { label: 'Stock',     items: allItems.filter(i => ['products', 'batches', 'stock'].includes(i.id)) },
-    { label: 'Purchases', items: allItems.filter(i => ['purchase-orders', 'import-requirements', 'import-containers'].includes(i.id)) },
-    { label: 'Finance',   items: allItems.filter(i => ['finance', 'purchase-invoices', 'tax-compliance', 'price-calculator'].includes(i.id)) },
-    { label: 'Pricing',   items: allItems.filter(i => ['pricing-dashboard'].includes(i.id)) },
-    { label: 'Reports',   items: allItems.filter(i => ['reports'].includes(i.id)) },
-    { label: 'System',    items: allItems.filter(i => ['tasks', 'command-center', 'settings'].includes(i.id)) },
+    { label: t('nav.groupMain', 'Main'),           items: allItems.filter(i => ['dashboard', 'crm', 'customers'].includes(i.id)) },
+    { label: t('nav.groupSales', 'Sales'),         items: allItems.filter(i => ['sales-orders', 'delivery-challan', 'sales'].includes(i.id)) },
+    { label: t('nav.groupStock', 'Stock'),         items: allItems.filter(i => ['products', 'batches', 'stock'].includes(i.id)) },
+    { label: t('nav.groupPurchases', 'Purchases'), items: allItems.filter(i => ['purchase-orders', 'import-requirements', 'import-containers'].includes(i.id)) },
+    { label: t('nav.groupFinance', 'Finance'),     items: allItems.filter(i => ['finance', 'purchase-invoices', 'tax-compliance', 'price-calculator'].includes(i.id)) },
+    { label: t('nav.groupPricing', 'Pricing'),     items: allItems.filter(i => ['pricing-dashboard'].includes(i.id)) },
+    { label: t('nav.groupReports', 'Reports'),     items: allItems.filter(i => ['reports'].includes(i.id)) },
+    { label: t('nav.groupSystem', 'System'),       items: allItems.filter(i => ['tasks', 'command-center', 'settings'].includes(i.id)) },
   ];
 
   const toggleLanguage = () => {
@@ -287,7 +331,8 @@ export function Layout({ children }: LayoutProps) {
         className={`fixed top-0 left-0 z-30 h-full bg-white border-r border-gray-200 flex flex-col
           transform transition-[width,transform] duration-200 ease-in-out
           lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          ${isCollapsed ? 'w-16' : 'w-[200px]'}`}
+          ${isCollapsed ? 'w-16' : 'w-[200px]'}
+          ${hoverExpanded ? 'shadow-xl ring-1 ring-black/5 z-30' : ''}`}
       >
         {/* Company header */}
         <div className={`flex items-center border-b border-gray-200 flex-shrink-0 ${isCollapsed ? 'justify-center px-2 py-2' : 'gap-1.5 px-2.5 py-2'}`} style={{ minHeight: 48 }}>
@@ -392,7 +437,7 @@ export function Layout({ children }: LayoutProps) {
                 <Menu className="w-4 h-4" />
               </button>
               <button
-                onClick={() => { setSidebarCollapsed(!sidebarCollapsed); setHoverExpanded(false); }}
+                onClick={handleToggleSidebar}
                 className="hidden lg:block p-1 rounded hover:bg-gray-100"
                 title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -495,7 +540,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
         </header>
 
-        <main className="p-3 lg:p-4">
+        <main className="p-2.5 sm:p-3">
           {children}
         </main>
       </div>

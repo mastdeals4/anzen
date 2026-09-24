@@ -1375,11 +1375,11 @@ export function DeliveryChallan() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Delivery Challan (Surat Jalan)</h1>
-            <p className="text-gray-600 mt-1">Manage delivery orders and dispatch records</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Delivery Challan (Surat Jalan)</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Manage delivery orders and dispatch records</p>
           </div>
           {canManage && (
             <button
@@ -1389,18 +1389,18 @@ export function DeliveryChallan() {
                 setFormData(prev => ({ ...prev, challan_number: nextChallanNumber }));
                 setModalOpen(true);
               }}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+              className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-3.5 h-3.5" />
               New Delivery Challan
             </button>
           )}
         </div>
 
         <>
-        <div className="bg-white rounded-lg shadow p-3">
-          <p className="text-sm text-gray-600">Total Delivery Challans</p>
-          <p className="text-2xl font-bold text-gray-900 mt-1">{stats.total}</p>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between max-w-xs">
+          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Total Delivery Challans</span>
+          <div className="text-base font-bold text-gray-900 mt-0.5">{stats.total}</div>
         </div>
 
         <DataTable

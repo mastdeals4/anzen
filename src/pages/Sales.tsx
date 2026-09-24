@@ -1772,14 +1772,14 @@ export function Sales() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">{t('sales.title')}</h1>
-            <p className="text-gray-600 mt-1">{t('sales.invoices')}</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('sales.title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">{t('sales.invoices')}</p>
           </div>
           {canManage && (
-            <div className="flex gap-3">
+            <div className="flex items-center gap-2">
               <button
                 onClick={async () => {
                   resetForm();
@@ -1787,50 +1787,54 @@ export function Sales() {
                   setFormData(prev => ({ ...prev, invoice_number: nextInvoiceNumber }));
                   setModalOpen(true);
                 }}
-                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+                className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-3.5 h-3.5" />
                 {t('sales.createInvoice')}
               </button>
               <button
                 onClick={() => {
                   setCurrentPage('credit-notes');
                 }}
-                className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+                className="flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-red-700 shadow-xs transition"
               >
-                <FileX className="w-5 h-5" />
+                <FileX className="w-3.5 h-3.5" />
                 {t('nav.creditNotes')}
               </button>
             </div>
           )}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-white rounded-lg shadow px-3 py-2 border border-gray-100">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">{t('sales.invoices')}</p>
-            <p className="text-xl font-bold text-gray-900 mt-0.5">{stats.total}</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('sales.invoices')}</span>
+            <div className="text-base font-bold text-gray-900 mt-0.5">{stats.total}</div>
           </div>
           {isAdmin && (
-            <div className="bg-blue-50 rounded-lg shadow px-3 py-2 border border-blue-100">
-              <p className="text-xs text-blue-500 uppercase tracking-wide">{t('common.total')} Revenue</p>
-              <p className="text-base font-bold text-blue-700 mt-0.5 leading-tight">
+            <div className="bg-white rounded-xl border border-blue-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+              <span className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide">{t('common.total')} Revenue</span>
+              <div className="text-base font-bold text-blue-700 mt-0.5 leading-tight">
                 Rp {stats.totalRevenue.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-              </p>
+              </div>
             </div>
           )}
-          <div className="bg-red-50 rounded-lg shadow px-3 py-2 border border-red-100">
-            <p className="text-xs text-red-500 uppercase tracking-wide">{t('common.pending')}</p>
-            <p className="text-xl font-bold text-red-600 mt-0.5">{stats.pending}</p>
-            <p className="text-xs text-red-400 mt-0.5 leading-tight">
-              Rp {stats.pendingValue.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-            </p>
+          <div className="bg-white rounded-xl border border-red-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">{t('common.pending')}</span>
+            <div className="mt-0.5">
+              <span className="text-base font-bold text-red-600">{stats.pending}</span>
+              <span className="text-[10px] text-red-500 ml-1.5 font-medium">
+                (Rp {stats.pendingValue.toLocaleString('id-ID', { maximumFractionDigits: 0 })})
+              </span>
+            </div>
           </div>
-          <div className="bg-green-50 rounded-lg shadow px-3 py-2 border border-green-100">
-            <p className="text-xs text-green-500 uppercase tracking-wide">{t('common.paid')}</p>
-            <p className="text-xl font-bold text-green-600 mt-0.5">{stats.paid}</p>
-            <p className="text-xs text-green-400 mt-0.5 leading-tight">
-              Rp {stats.paidValue.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-            </p>
+          <div className="bg-white rounded-xl border border-green-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-green-600 uppercase tracking-wide">{t('common.paid')}</span>
+            <div className="mt-0.5">
+              <span className="text-base font-bold text-green-600">{stats.paid}</span>
+              <span className="text-[10px] text-green-500 ml-1.5 font-medium">
+                (Rp {stats.paidValue.toLocaleString('id-ID', { maximumFractionDigits: 0 })})
+              </span>
+            </div>
           </div>
         </div>
 

@@ -220,22 +220,22 @@ export function Stock() {
           </button>
         </div>
 
-        <div className="grid grid-cols-4 gap-3">
-          <div className="bg-blue-600 rounded-lg p-3 text-white">
-            <p className="text-blue-100 text-xs">Products In Stock</p>
-            <p className="text-xl font-bold">{totalProducts}</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Products In Stock</span>
+            <div className="text-base font-bold text-gray-900 mt-0.5">{totalProducts}</div>
           </div>
-          <div className="bg-green-600 rounded-lg p-3 text-white">
-            <p className="text-green-100 text-xs">Total Stock</p>
-            <p className="text-xl font-bold">{totalStock.toLocaleString()}</p>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">Total Stock</span>
+            <div className="text-base font-bold text-emerald-700 mt-0.5">{totalStock.toLocaleString()}</div>
           </div>
-          <div className="bg-orange-500 rounded-lg p-3 text-white">
-            <p className="text-orange-100 text-xs">Low Stock</p>
-            <p className="text-xl font-bold">{lowStockProducts}</p>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide">Low Stock</span>
+            <div className="text-base font-bold text-amber-700 mt-0.5">{lowStockProducts}</div>
           </div>
-          <div className="bg-red-500 rounded-lg p-3 text-white">
-            <p className="text-red-100 text-xs">Near Expiry</p>
-            <p className="text-xl font-bold">{productsWithNearExpiry}</p>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
+            <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">Near Expiry</span>
+            <div className="text-base font-bold text-red-700 mt-0.5">{productsWithNearExpiry}</div>
           </div>
         </div>
 
