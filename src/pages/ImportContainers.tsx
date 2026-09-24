@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Layout } from '../components/Layout';
-import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, FileText, X, Search } from 'lucide-react';
+import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, FileText, X, Search, ChevronDown } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { MoneyInput } from '../components/MoneyInput';
@@ -110,6 +110,8 @@ export default function ImportContainers() {
   const [availablePIs, setAvailablePIs] = useState<SelectablePI[]>([]);
   const [selectedPiIds, setSelectedPiIds] = useState<string[]>([]);
   const [piSearchQuery, setPiSearchQuery] = useState('');
+  const [isPiDropdownOpen, setIsPiDropdownOpen] = useState(false);
+  const piDropdownRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingContainer, setEditingContainer] = useState<ImportContainer | null>(null);
@@ -155,6 +157,21 @@ export default function ImportContainers() {
       supabase.removeChannel(pettyCashSubscription);
     };
   }, [canViewCosting]);
+
+  // Close PI multi-select dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (piDropdownRef.current && !piDropdownRef.current.contains(event.target as Node)) {
+        setIsPiDropdownOpen(false);
+      }
+    };
+    if (isPiDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isPiDropdownOpen]);
 
   const fetchContainers = async () => {
     try {
@@ -215,6 +232,27 @@ export default function ImportContainers() {
 
   const fetchAvailablePIs = async () => {
     try {
+      // Query existing import relationships: import containers and receiving allocations
+      const [{ data: icRows }, { data: piraRows }] = await Promise.all([
+        supabase.from('import_containers').select('purchase_invoice_ids'),
+        supabase
+          .from('purchase_invoice_receiving_allocations')
+          .select('purchase_invoice_id')
+          .not('import_container_id', 'is', null),
+      ]);
+
+      const importPiIds = new Set<string>();
+      (icRows || []).forEach((ic: any) => {
+        if (Array.isArray(ic.purchase_invoice_ids)) {
+          ic.purchase_invoice_ids.forEach((id: string) => {
+            if (id) importPiIds.add(id);
+          });
+        }
+      });
+      (piraRows || []).forEach((r: any) => {
+        if (r.purchase_invoice_id) importPiIds.add(r.purchase_invoice_id);
+      });
+
       const { data, error } = await supabase
         .from('purchase_invoices')
         .select(`
@@ -226,6 +264,7 @@ export default function ImportContainers() {
           exchange_rate,
           subtotal,
           total_amount,
+          purchase_type,
           purchase_orders(po_number),
           suppliers(company_name),
           purchase_invoice_items(id)
@@ -234,7 +273,14 @@ export default function ImportContainers() {
 
       if (error) throw error;
 
-      const formatted: SelectablePI[] = (data || []).map((pi: any) => ({
+      // Filter only to PIs belonging to the SAPJ Import workflow:
+      // Either purchase_type === 'import' OR linked to an import container / receiving allocation
+      // Strictly excludes domestic/local purchase invoices (e.g. PT. Kairos Tritunggal, PT. Anugerah Mentari Distrindo)
+      const importPIs = (data || []).filter((pi: any) =>
+        pi.purchase_type === 'import' || importPiIds.has(pi.id)
+      );
+
+      const formatted: SelectablePI[] = importPIs.map((pi: any) => ({
         id: pi.id,
         invoice_number: pi.invoice_number,
         invoice_date: pi.invoice_date,
@@ -351,11 +397,25 @@ export default function ImportContainers() {
       }
 
       // Sync links in purchase_invoice_receiving_allocations
-      if (containerId && selectedPiIds.length > 0) {
-        await supabase
-          .from('purchase_invoice_receiving_allocations')
-          .update({ import_container_id: containerId })
-          .in('purchase_invoice_id', selectedPiIds);
+      if (containerId) {
+        const uniquePiIds = Array.from(new Set(selectedPiIds));
+        if (uniquePiIds.length > 0) {
+          await supabase
+            .from('purchase_invoice_receiving_allocations')
+            .update({ import_container_id: containerId })
+            .in('purchase_invoice_id', uniquePiIds);
+        }
+        if (editingContainer) {
+          const prevIds = (editingContainer.purchase_invoice_ids || []) as string[];
+          const removedIds = prevIds.filter(id => !selectedPiIds.includes(id));
+          if (removedIds.length > 0) {
+            await supabase
+              .from('purchase_invoice_receiving_allocations')
+              .update({ import_container_id: null })
+              .in('purchase_invoice_id', removedIds)
+              .eq('import_container_id', containerId);
+          }
+        }
       }
 
       setShowModal(false);
@@ -380,6 +440,7 @@ export default function ImportContainers() {
     });
     setSelectedPiIds([]);
     setPiSearchQuery('');
+    setIsPiDropdownOpen(false);
     setLinkedExpenses([]);
     setLinkedPettyCash([]);
     setInclusionMap({});
@@ -395,14 +456,27 @@ export default function ImportContainers() {
       if (expError) throw expError;
       if (pcError) throw pcError;
 
+      // Filter to import shipment categories only to exclude any domestic/local purchase costs
+      const importExpenseCategories = new Set([
+        'pib_import', 'freight_charges', 'clearing_forwarding', 'port_charges',
+        'container_handling', 'transportation', 'loading_import', 'bpom_ski_fees',
+        'import_broker', 'other_import_costs'
+      ]);
+
       const states = await getEffectiveExpensePostingStates((expData || []).map(e => e.id));
-      const activeExpenses = (expData || []).filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state));
+      const activeExpenses = (expData || [])
+        .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
+        .filter(e => importExpenseCategories.has(e.expense_category));
+
+      const filteredPettyCash = (pcData || [])
+        .filter((pc: any) => !pc.expense_category || importExpenseCategories.has(pc.expense_category));
+
       setLinkedExpenses(activeExpenses);
-      setLinkedPettyCash((pcData || []) as LinkedPettyCash[]);
+      setLinkedPettyCash(filteredPettyCash as LinkedPettyCash[]);
 
       const map: Record<string, boolean> = {};
       for (const e of activeExpenses) map[e.id] = e.include_in_landed_cost === true;
-      for (const pc of (pcData || [])) map[pc.id] = pc.include_in_landed_cost === true;
+      for (const pc of filteredPettyCash) map[pc.id] = pc.include_in_landed_cost === true;
       setInclusionMap(map);
     } catch {
       setLinkedExpenses([]);
@@ -663,98 +737,103 @@ export default function ImportContainers() {
             maxWidth="max-w-4xl"
           >
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* SEARCHABLE MULTI-PI SELECTOR SECTION */}
-              <div className="bg-blue-50/70 border border-blue-200 rounded-lg p-3.5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-                      <FileText className="w-4 h-4 text-blue-700" />
-                      Link Purchase Invoices (PIs)
-                    </h3>
-                    <p className="text-[11px] text-blue-700 mt-0.5">
-                      Select one or more PIs. The supplier, currency, exchange rate, and goods subtotal will be derived automatically.
-                    </p>
-                  </div>
-                  {selectedPiIds.length > 0 && (
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-600 text-white">
-                      {selectedPiIds.length} Linked
+              {/* COMPACT SEARCHABLE MULTI-PI SELECTOR DROPDOWN */}
+              <div className="space-y-1 relative" ref={piDropdownRef}>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Link Purchase Invoices (PIs)
+                </label>
+
+                {/* Single-line compact dropdown trigger */}
+                <button
+                  type="button"
+                  onClick={() => setIsPiDropdownOpen(prev => !prev)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition shadow-2xs"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    <span className="text-gray-700 truncate font-normal">
+                      {selectedPiIds.length === 0
+                        ? 'Select Purchase Invoices (PIs)...'
+                        : `${selectedPiIds.length} PI${selectedPiIds.length > 1 ? 's' : ''} selected`}
                     </span>
-                  )}
-                </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-500 shrink-0 ml-2">
+                    {selectedPiIds.length > 0 && (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                        {selectedPiIds.length} selected
+                      </span>
+                    )}
+                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isPiDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+                </button>
 
-                {/* Search input for PIs */}
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
-                  <input
-                    type="text"
-                    placeholder="Search PI #, Supplier, or PO #..."
-                    value={piSearchQuery}
-                    onChange={(e) => setPiSearchQuery(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 bg-white border border-blue-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                  />
-                </div>
+                {/* Floating Multi-Select Dropdown Panel */}
+                {isPiDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden divide-y divide-gray-100">
+                    {/* Search box inside dropdown */}
+                    <div className="p-2.5 bg-gray-50 border-b border-gray-200 relative">
+                      <Search className="w-3.5 h-3.5 text-gray-400 absolute left-5 top-4.5" />
+                      <input
+                        type="text"
+                        placeholder="Search PI #, Supplier, or PO #..."
+                        value={piSearchQuery}
+                        onChange={(e) => setPiSearchQuery(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none"
+                        autoFocus
+                      />
+                    </div>
 
-                {/* Available PIs list */}
-                <div className="max-h-36 overflow-y-auto border border-blue-200 rounded bg-white divide-y divide-gray-100">
-                  {filteredPIs.length === 0 ? (
-                    <div className="p-3 text-xs text-gray-500 text-center">No matching Purchase Invoices found.</div>
-                  ) : (
-                    filteredPIs.slice(0, 15).map(pi => {
-                      const isSelected = selectedPiIds.includes(pi.id);
-                      return (
-                        <div
-                          key={pi.id}
-                          onClick={() => handleSelectPI(pi.id)}
-                          className={`p-2 flex items-center justify-between text-xs cursor-pointer transition ${
-                            isSelected ? 'bg-blue-100 font-medium' : 'hover:bg-gray-50'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => {}}
-                              className="rounded border-gray-300 text-blue-600 pointer-events-none"
-                            />
-                            <div>
-                              <span className="font-semibold text-gray-900">{pi.invoice_number}</span>
-                              <span className="text-gray-500 ml-2">({pi.supplier_name})</span>
-                              {pi.po_number && <span className="text-blue-600 ml-1.5 font-mono text-[10px]">PO: {pi.po_number}</span>}
+                    {/* Scrollable Checkbox List of Available Import PIs */}
+                    <div className="max-h-56 overflow-y-auto divide-y divide-gray-50">
+                      {filteredPIs.length === 0 ? (
+                        <div className="p-4 text-xs text-gray-500 text-center">No matching import purchase invoices found.</div>
+                      ) : (
+                        filteredPIs.map(pi => {
+                          const isSelected = selectedPiIds.includes(pi.id);
+                          return (
+                            <div
+                              key={pi.id}
+                              onClick={() => handleSelectPI(pi.id)}
+                              className={`p-2.5 flex items-center justify-between text-xs cursor-pointer transition ${
+                                isSelected ? 'bg-blue-50 font-medium' : 'hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {}}
+                                  className="rounded border-gray-300 text-blue-600 pointer-events-none shrink-0"
+                                />
+                                <div className="truncate">
+                                  <span className="font-semibold text-gray-900">{pi.invoice_number}</span>
+                                  <span className="text-gray-500 ml-1.5 truncate">— {pi.supplier_name}</span>
+                                  {pi.po_number && <span className="text-blue-600 ml-1.5 font-mono text-[10px]">PO: {pi.po_number}</span>}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="font-semibold text-gray-800">
+                                  {formatCurrency(pi.subtotal, pi.currency)}
+                                </span>
+                                <span className="text-gray-400 ml-1.5 text-[10px]">({formatDate(pi.invoice_date)})</span>
+                              </div>
                             </div>
-                          </div>
-                          <div className="text-right">
-                            <span className="font-semibold text-gray-800">
-                              {formatCurrency(pi.subtotal, pi.currency)}
-                            </span>
-                            <span className="text-gray-400 ml-1.5 text-[10px]">({formatDate(pi.invoice_date)})</span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                          );
+                        })
+                      )}
+                    </div>
 
-                {/* Selected PIs Badges */}
-                {selectedPiObjects.length > 0 && (
-                  <div className="pt-2 border-t border-blue-200">
-                    <div className="text-[11px] font-semibold text-blue-900 mb-1.5">Currently Linked PIs:</div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedPiObjects.map(pi => (
-                        <div
-                          key={pi.id}
-                          className="flex items-center gap-1.5 bg-white border border-blue-300 rounded px-2.5 py-1 text-xs shadow-2xs"
-                        >
-                          <span className="font-bold text-blue-900">{pi.invoice_number}</span>
-                          <span className="text-gray-600 text-[10px]">— {formatCurrency(pi.subtotal, pi.currency)}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePI(pi.id)}
-                            className="text-gray-400 hover:text-red-600 ml-1"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
+                    {/* Footer summary & close button */}
+                    <div className="p-2 bg-gray-50 flex items-center justify-between text-xs text-gray-500">
+                      <span>{selectedPiIds.length} PI(s) selected</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsPiDropdownOpen(false)}
+                        className="text-blue-600 hover:text-blue-800 font-semibold px-2 py-0.5 rounded hover:bg-blue-100 transition"
+                      >
+                        Done
+                      </button>
                     </div>
                   </div>
                 )}

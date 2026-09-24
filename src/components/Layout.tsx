@@ -177,61 +177,32 @@ export function Layout({ children }: LayoutProps) {
 
   // Viewport breakpoint classification & responsive auto-collapse
   // >= 1440px: Expanded allowed (default expanded)
-  // 1280–1439px: Auto-collapse by default (compact)
-  // 1024–1279px: Compact icon rail (default compact)
-  // < 1024px: Drawer navigation with overlay
-  const getBreakpointBucket = (w: number) => {
-    if (w < 1024) return 'drawer';
-    if (w < 1440) return 'compact';
-    return 'wide';
-  };
+  // Auto collapse/expand based on page route:
+  // - Dashboard/Home = sidebar OPEN / full menu
+  // - Every other page/route = sidebar automatically COLLAPSED / icon-only
+  // - Returning to Dashboard = automatically OPEN again
+  useEffect(() => {
+    if (currentPage === 'dashboard') {
+      setSidebarCollapsed(false);
+    } else {
+      setSidebarCollapsed(true);
+    }
+  }, [currentPage, setSidebarCollapsed]);
 
-  const prevBucketRef = useRef<string>(getBreakpointBucket(typeof window !== 'undefined' ? window.innerWidth : 1440));
-
+  // Close mobile drawer on desktop resize
   useEffect(() => {
     const handleResize = () => {
-      const width = window.innerWidth;
-      const currentBucket = getBreakpointBucket(width);
-
-      // Only evaluate when crossing a major viewport breakpoint
-      if (currentBucket !== prevBucketRef.current) {
-        prevBucketRef.current = currentBucket;
-        const savedOverride = localStorage.getItem(`sapj_sidebar_pref_${currentBucket}`);
-        if (savedOverride) {
-          setSidebarCollapsed(savedOverride === 'collapsed');
-        } else {
-          // Default responsive behavior
-          if (currentBucket === 'compact') {
-            setSidebarCollapsed(true);
-          } else if (currentBucket === 'wide') {
-            setSidebarCollapsed(false);
-          }
-        }
+      if (window.innerWidth >= 1024) {
+        setSidebarOpen(false);
       }
     };
-
-    // Initial check on mount
-    const width = window.innerWidth;
-    const bucket = getBreakpointBucket(width);
-    const saved = localStorage.getItem(`sapj_sidebar_pref_${bucket}`);
-    if (saved) {
-      setSidebarCollapsed(saved === 'collapsed');
-    } else if (bucket === 'compact') {
-      setSidebarCollapsed(true);
-    } else if (bucket === 'wide') {
-      setSidebarCollapsed(false);
-    }
-
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [setSidebarCollapsed]);
+  }, []);
 
   const handleToggleSidebar = () => {
-    const nextCollapsed = !sidebarCollapsed;
-    setSidebarCollapsed(nextCollapsed);
+    setSidebarCollapsed(!sidebarCollapsed);
     setHoverExpanded(false);
-    const bucket = getBreakpointBucket(window.innerWidth);
-    localStorage.setItem(`sapj_sidebar_pref_${bucket}`, nextCollapsed ? 'collapsed' : 'expanded');
   };
 
   const isCollapsed = sidebarCollapsed && !hoverExpanded;

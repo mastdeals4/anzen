@@ -516,7 +516,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const [accountingExpanded, setAccountingExpanded] = useState(false);
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
-  const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'pending_recon' | 'outstanding' | 'petty_cash'>('all');
+  const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'pending_recon' | 'outstanding'>('all');
   const [approvalFilter, setApprovalFilter] = useState<'all' | 'approved' | 'pending_approval'>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState<'operational' | 'cancelled'>('operational');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -2309,8 +2309,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       const isCancelled = exp.approval_status === 'cancelled';
       const isPaid = (exp.payment_method !== null) || ((exp.paid_amount ?? 0) > 0.01);
       if (isCancelled || isPaid) return false;
-    } else if (reconFilter === 'petty_cash') {
-      if (exp.payment_method !== 'cash') return false;
     }
 
     // Filter by approval status
@@ -2708,7 +2706,6 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             { value: 'reconciled', label: 'Reconciled' },
             { value: 'pending_recon', label: 'Pending Recon' },
             { value: 'outstanding', label: 'Outstanding' },
-            { value: 'petty_cash', label: 'Petty Cash' },
           ].map((filter) => (
             <button
               key={filter.value}
