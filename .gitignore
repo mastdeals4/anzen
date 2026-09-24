@@ -11,3 +11,10 @@ dist
 **/.openwa/
 **/openwa-session/
 *.session.data.json
+
+# Test & Build Caches
+.cache/
+test-results/
+playwright-report/
+blob-report/
+
