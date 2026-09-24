@@ -7,6 +7,7 @@ interface Option {
   value: string;
   label: string;
   group?: string;
+  keywords?: string[];
 }
 
 interface SearchableSelectProps {
@@ -69,6 +70,7 @@ export function SearchableSelect({
     return options.filter(opt => {
       const raw = opt.label.toLowerCase();
       if (raw.includes(q)) return true;
+      if (opt.keywords && opt.keywords.some(k => k.toLowerCase().includes(q))) return true;
       const stripped = normalize(opt.label);
       if (stripped.includes(normalizedQ)) return true;
       if (qTokens.length === 0) return false;

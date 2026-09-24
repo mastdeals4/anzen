@@ -15,6 +15,7 @@ import { MoneyInput } from '../components/MoneyInput';
 import { canSeeInventoryCosting } from '../utils/permissions';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
 import { formatUnit, abbreviateUnit, formatPackagingDetails } from '../utils/unitDisplay';
+import { PACKAGING_TYPES, normalizePackagingType } from '../constants/masterData';
 
 interface Batch {
   id: string;
@@ -60,6 +61,9 @@ interface Product {
   product_code: string;
   unit: string;
   duty_percent: number;
+  packaging_type?: string | null;
+  pack_type?: string | null;
+  per_pack_weight?: number | null;
 }
 
 interface ImportContainer {
@@ -220,6 +224,19 @@ export function Batches() {
     }
 
     const product = products.find(p => p.id === row.product_id);
+    const rawPackType = product?.pack_type || product?.packaging_type;
+    const defaultPackType = (normalizePackagingType(rawPackType) || 'Bag').toLowerCase();
+    const defaultPerPack = product?.per_pack_weight != null ? String(product.per_pack_weight) : '';
+    let packagingDetails = '';
+    if (row.pending && defaultPerPack) {
+      const perPack = parseFloat(defaultPerPack);
+      if (perPack > 0) {
+        const packs = (row.pending / perPack).toFixed(0);
+        const inwardUnit = abbreviateUnit(product?.unit || row.unit || 'KG');
+        packagingDetails = `${packs} ${defaultPackType}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}${inwardUnit}`;
+      }
+    }
+
     setEditingBatch(null);
     setPendingInwardContext({ invoice_id: row.invoice_id, item_id: row.item_id });
     setProductMakes(makes || []);
@@ -231,7 +248,7 @@ export function Batches() {
       import_container_id: row.import_container_id || '',
       import_date: new Date().toISOString().split('T')[0],
       import_quantity: row.pending,
-      packaging_details: '',
+      packaging_details: packagingDetails,
       import_price_usd: row.currency === 'USD' ? row.unit_price : 0,
       import_price_idr: row.currency === 'USD' ? 0 : row.unit_price,
       exchange_rate_usd_to_idr: row.currency === 'USD' ? row.exchange_rate : 0,
@@ -243,8 +260,8 @@ export function Batches() {
       other_charges: 0,
       other_charge_type: 'fixed',
       expiry_date: row.expiry_date || '',
-      per_pack_weight: '',
-      pack_type: 'bag',
+      per_pack_weight: defaultPerPack,
+      pack_type: defaultPackType,
     });
     setModalOpen(true);
   };
@@ -357,7 +374,7 @@ export function Batches() {
     try {
       const { data, error } = await supabase
         .from('products')
-        .select('id, product_name, product_code, unit, duty_percent')
+        .select('id, product_name, product_code, unit, duty_percent, packaging_type, pack_type, per_pack_weight')
         .eq('is_active', true)
         .order('product_name');
 
@@ -1328,12 +1345,29 @@ export function Batches() {
                     value={formData.product_id}
                     onChange={async (value) => {
                       const selectedProduct = products.find(p => p.id === value);
-                      setFormData({
+                      const rawPackType = selectedProduct?.pack_type || selectedProduct?.packaging_type;
+                      const normPackType = (normalizePackagingType(rawPackType) || 'Bag').toLowerCase();
+                      const defaultPerPack = selectedProduct?.per_pack_weight != null ? String(selectedProduct.per_pack_weight) : '';
+
+                      const newFormData = {
                         ...formData,
                         product_id: value,
                         make_id: '',
-                        duty_percent: selectedProduct?.duty_percent || 0
-                      });
+                        duty_percent: selectedProduct?.duty_percent || 0,
+                        pack_type: normPackType,
+                        per_pack_weight: defaultPerPack,
+                      };
+
+                      if (formData.import_quantity && defaultPerPack) {
+                        const perPack = parseFloat(defaultPerPack);
+                        if (perPack > 0) {
+                          const packs = (formData.import_quantity / perPack).toFixed(0);
+                          const prodUnit = abbreviateUnit(selectedProduct?.unit || 'KG');
+                          newFormData.packaging_details = `${packs} ${normPackType}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}${prodUnit}`;
+                        }
+                      }
+
+                      setFormData(newFormData);
                       await loadProductMakes(value);
                     }}
                     options={products.map(p => ({
@@ -1470,12 +1504,9 @@ export function Batches() {
                     }}
                     className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                   >
-                    <option value="bag">Bag</option>
-                    <option value="drum">Drum</option>
-                    <option value="tin">Tin</option>
-                    <option value="box">Box</option>
-                    <option value="carton">Carton</option>
-                    <option value="pallet">Pallet</option>
+                    {PACKAGING_TYPES.map(type => (
+                      <option key={type} value={type.toLowerCase()}>{type}</option>
+                    ))}
                   </select>
                 </div>
 

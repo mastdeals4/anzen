@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { DataTable } from '../components/DataTable';
 import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -9,6 +10,13 @@ import { Plus, Pencil as Edit, Trash2, Upload, X, ExternalLink, Download, FileTe
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
+import {
+  PACKAGING_TYPES,
+  COUNTRIES,
+  normalizePackagingType,
+  normalizeCountry,
+  formatProductPackaging,
+} from '../constants/masterData';
 
 interface Product {
   id: string;
@@ -18,6 +26,8 @@ interface Product {
   category: string;
   unit: string;
   packaging_type: string;
+  pack_type?: string | null;
+  per_pack_weight?: number | null;
   default_supplier: string;
   description: string;
   min_stock_level: number | null;
@@ -74,7 +84,8 @@ export function Products() {
     hsn_code: '',
     category: 'api',
     unit: 'kg',
-    packaging_type: '',
+    packaging_type: 'Bag',
+    default_pack_size: '',
     default_supplier: '',
     description: '',
     min_stock_level: '',
@@ -222,12 +233,15 @@ export function Products() {
     setEditingProduct(product);
     const cat = product.category || 'api';
     const unt = product.unit || '';
+    const normPackaging = normalizePackagingType(product.packaging_type || product.pack_type) || product.packaging_type || 'Bag';
+    const packSize = product.per_pack_weight != null ? String(product.per_pack_weight) : '';
     setFormData({
       product_name: product.product_name,
       hsn_code: product.hsn_code,
       category: cat,
       unit: unt,
-      packaging_type: product.packaging_type || '',
+      packaging_type: normPackaging,
+      default_pack_size: packSize,
       default_supplier: product.default_supplier || '',
       description: product.description || '',
       min_stock_level: product.min_stock_level?.toString() || '',
@@ -375,7 +389,8 @@ export function Products() {
       hsn_code: '',
       category: 'api',
       unit: 'kg',
-      packaging_type: '',
+      packaging_type: 'Bag',
+      default_pack_size: '',
       default_supplier: '',
       description: '',
       min_stock_level: '',
@@ -389,13 +404,17 @@ export function Products() {
 
     try {
       const minStock = parseFloat(formData.min_stock_level) || null;
+      const perPack = parseFloat(formData.default_pack_size) || null;
+      const canonicalPackaging = normalizePackagingType(formData.packaging_type) || formData.packaging_type || 'Bag';
 
       const dataToSave = {
         product_name: formData.product_name,
         hsn_code: formData.hsn_code,
         category: formData.category,
         unit: formData.unit,
-        packaging_type: formData.packaging_type,
+        packaging_type: canonicalPackaging,
+        pack_type: canonicalPackaging,
+        per_pack_weight: perPack,
         default_supplier: formData.default_supplier,
         description: formData.description,
         min_stock_level: minStock,
@@ -450,6 +469,7 @@ export function Products() {
         if (!source.source_name.trim()) continue;
 
         let sourceId: string;
+        const canonicalCountry = normalizeCountry(source.country) || (source.country ? source.country.trim() : null);
 
         if (source.id) {
           // Update existing source
@@ -459,7 +479,7 @@ export function Products() {
               supplier_name: source.source_name,
               grade: source.grade,
               supplier_id: source.supplier_id,
-              country: source.country || null,
+              country: canonicalCountry,
               remarks: source.remarks || null,
             })
             .eq('id', source.id)
@@ -479,7 +499,7 @@ export function Products() {
               supplier_name: source.source_name,
               grade: source.grade,
               supplier_id: source.supplier_id,
-              country: source.country || null,
+              country: canonicalCountry,
               remarks: source.remarks || null,
               created_by: profile?.id
             }])
@@ -636,6 +656,15 @@ export function Products() {
     { key: 'category', label: t('products.category'), render: (value: unknown, _row: Product) => displayValue(value, ['name', 'category_name', 'label']) },
     { key: 'unit', label: t('products.unit'), render: (value: unknown, _row: Product) => displayValue(value, ['name', 'unit_name', 'label', 'short_name']) },
     {
+      key: 'packaging_type',
+      label: t('products.packagingType'),
+      render: (_value: unknown, row: Product) => (
+        <span className="text-gray-700 text-xs font-medium">
+          {formatProductPackaging(row.packaging_type || row.pack_type, row.per_pack_weight, row.unit)}
+        </span>
+      )
+    },
+    {
       key: 'current_stock',
       label: t('products.currentStock'),
       render: (value: unknown, _row: Product) => {
@@ -704,30 +733,34 @@ export function Products() {
           <div className="bg-gray-50 p-4 rounded-lg space-y-4">
             <h3 className="font-semibold text-gray-900">Product Details</h3>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
                   {t('products.productName')} *
                 </label>
-                <input name="t_products_productname" aria-label="{t('products.productName')}"
+                <input
+                  name="product_name"
+                  aria-label={t('products.productName')}
                   type="text"
                   required
                   value={formData.product_name}
                   onChange={(e) => { setFormData({ ...formData, product_name: e.target.value }); setDuplicateError(null); }}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${duplicateError ? 'border-red-500' : ''}`}
+                  className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 ${duplicateError ? 'border-red-500' : ''}`}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
                   {t('products.hsnCode')} *
                 </label>
-                <input name="t_products_hsncode" aria-label="{t('products.hsnCode')}"
+                <input
+                  name="hsn_code"
+                  aria-label={t('products.hsnCode')}
                   type="text"
                   required
                   value={formData.hsn_code}
                   onChange={(e) => { setFormData({ ...formData, hsn_code: e.target.value }); setDuplicateError(null); }}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${duplicateError ? 'border-red-500' : ''}`}
+                  className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 ${duplicateError ? 'border-red-500' : ''}`}
                 />
               </div>
             </div>
@@ -739,14 +772,16 @@ export function Products() {
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('products.category')} *</label>
-                <select name="t_products_category" aria-label="{t('products.category')}"
+                <label className="block text-xs font-medium text-gray-700 mb-1">{t('products.category')} *</label>
+                <select
+                  name="category"
+                  aria-label={t('products.category')}
                   required
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="api">API</option>
                   <option value="excipient">Excipients</option>
@@ -756,12 +791,14 @@ export function Products() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('products.unit')} *</label>
-                <select name="t_products_unit" aria-label="{t('products.unit')}"
+                <label className="block text-xs font-medium text-gray-700 mb-1">{t('products.unit')} *</label>
+                <select
+                  name="unit"
+                  aria-label={t('products.unit')}
                   required
                   value={formData.unit}
                   onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="kg">KG</option>
                   <option value="litre">Liter</option>
@@ -775,56 +812,91 @@ export function Products() {
                   <option value="box">Box</option>
                 </select>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  {t('products.packagingType')} *
+                </label>
+                <SearchableSelect
+                  value={formData.packaging_type}
+                  onChange={(value) => setFormData({ ...formData, packaging_type: value })}
+                  options={PACKAGING_TYPES.map(type => ({
+                    value: type,
+                    label: t(`products.packagingTypes.${type.toLowerCase()}`) || type,
+                  }))}
+                  placeholder={t('products.selectPackagingType') || 'Select Packaging Type'}
+                  className="text-sm"
+                  required
+                />
+              </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  {t('products.defaultPackSize') || 'Default Pack Size'}
+                </label>
+                <div className="relative">
+                  <input
+                    name="default_pack_size"
+                    aria-label="Default Pack Size"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={formData.default_pack_size}
+                    onChange={(e) => setFormData({ ...formData, default_pack_size: e.target.value })}
+                    placeholder="e.g., 25"
+                    className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 pr-14"
+                  />
+                  <span className="absolute right-3 top-2 text-xs font-semibold text-gray-500 uppercase pointer-events-none">
+                    {formData.unit || 'KG'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
                   {t('products.minStockLevel')}
                 </label>
-                <input name="t_products_minstocklevel" aria-label="{t('products.minStockLevel')}"
+                <input
+                  name="min_stock_level"
+                  aria-label={t('products.minStockLevel')}
                   type="number"
                   step="0.01"
                   value={formData.min_stock_level}
                   onChange={(e) => setFormData({ ...formData, min_stock_level: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('products.packagingType')}
-                </label>
-                <input name="t_products_packagingtype" aria-label="{t('products.packagingType')}"
-                  type="text"
-                  value={formData.packaging_type}
-                  onChange={(e) => setFormData({ ...formData, packaging_type: e.target.value })}
-                  placeholder="e.g., 25kg drum"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g., 100"
+                  className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
                   {t('products.dutyA1')} (%)
                 </label>
-                <input name="t_products_dutya1" aria-label="{t('products.dutyA1')} (%)"
+                <input
+                  name="duty_a1"
+                  aria-label={`${t('products.dutyA1')} (%)`}
                   type="text"
                   value={formData.duty_a1}
                   onChange={(e) => setFormData({ ...formData, duty_a1: e.target.value })}
                   placeholder="e.g., 5.0"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <textarea name="description" aria-label="Description"
+              <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                name="description"
+                aria-label="Description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 rows={2}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
           </div>
@@ -832,11 +904,11 @@ export function Products() {
           {/* Make / Manufacturer Section */}
           <div className="bg-blue-50 p-4 rounded-lg space-y-4">
             <div className="flex justify-between items-center">
-              <h3 className="font-semibold text-gray-900">Make / Manufacturer</h3>
+              <h3 className="font-semibold text-sm text-gray-900">{t('products.makeManufacturer') || 'Make / Manufacturer'}</h3>
               <button
                 type="button"
                 onClick={addSourceRow}
-                className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                className="flex items-center gap-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
               >
                 <Plus className="w-3 h-3" />
                 Add Make
@@ -846,26 +918,30 @@ export function Products() {
             {sources.map((source, index) => (
               <div key={source.id || `new-source-${index}`} className="bg-white p-4 rounded-lg border border-blue-200 space-y-3">
                 <div className="flex justify-between items-start">
-                  <div className="flex-1 grid grid-cols-2 gap-3">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
                         Make / Supplier Name
                       </label>
-                      <input name="make_supplier_name" aria-label="Make / Supplier Name"
+                      <input
+                        name="make_supplier_name"
+                        aria-label="Make / Supplier Name"
                         type="text"
                         value={source.source_name}
                         onChange={(e) => updateSource(index, 'source_name', e.target.value)}
-                        placeholder="e.g., Everest Organics"
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., Anqiu Luan Pharmaceutical Co., Ltd."
+                        className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
-                      <select name="grade" aria-label="Grade"
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Grade</label>
+                      <select
+                        name="grade"
+                        aria-label="Grade"
                         value={source.grade}
                         onChange={(e) => updateSource(index, 'grade', e.target.value)}
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="BP">BP (British Pharmacopoeia)</option>
                         <option value="USP">USP (United States Pharmacopeia)</option>
@@ -884,29 +960,40 @@ export function Products() {
                       type="button"
                       onClick={() => removeSourceRow(index)}
                       className="ml-2 p-1 text-red-600 hover:bg-red-50 rounded"
+                      title="Remove Make"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
-                    <input name="country" aria-label="Country"
-                      type="text"
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      {t('products.country') || 'Country'}
+                    </label>
+                    <SearchableSelect
                       value={source.country}
-                      onChange={(e) => updateSource(index, 'country', e.target.value)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      onChange={(value) => updateSource(index, 'country', value)}
+                      options={COUNTRIES.map(c => ({
+                        value: c.name,
+                        label: `${c.name} (${c.code})`,
+                        keywords: [c.code, c.code3, ...(c.aliases || [])],
+                      }))}
+                      placeholder={t('products.selectCountry') || 'Select Country (e.g. CN, IN, ID)'}
+                      className="text-sm"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
-                    <input name="remarks" aria-label="Remarks"
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Remarks</label>
+                    <input
+                      name="remarks"
+                      aria-label="Remarks"
                       type="text"
                       value={source.remarks}
                       onChange={(e) => updateSource(index, 'remarks', e.target.value)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder="Optional remarks"
+                      className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
@@ -1015,26 +1102,32 @@ export function Products() {
         {viewingProduct && (
           <div className="space-y-6">
             {/* Compact Product Details */}
-            <div className="grid grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-4 bg-gray-50 rounded-lg">
               <div>
                 <p className="text-xs text-gray-500">HSN Code</p>
-                <p className="font-medium">{viewingProduct.hsn_code}</p>
+                <p className="font-medium text-sm">{viewingProduct.hsn_code}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">Category</p>
-                <p className="font-medium">{(() => {
+                <p className="font-medium text-sm">{(() => {
                   return displayValue(viewingProduct.category).toUpperCase();
                 })()}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">Unit</p>
-                <p className="font-medium">{(() => {
+                <p className="font-medium text-sm">{(() => {
                   return displayValue(viewingProduct.unit).toUpperCase();
                 })()}</p>
               </div>
               <div>
+                <p className="text-xs text-gray-500">Packaging</p>
+                <p className="font-medium text-sm text-blue-700">
+                  {formatProductPackaging(viewingProduct.packaging_type || viewingProduct.pack_type, viewingProduct.per_pack_weight, viewingProduct.unit)}
+                </p>
+              </div>
+              <div>
                 <p className="text-xs text-gray-500">Current Stock</p>
-                <p className="font-medium">{(() => {
+                <p className="font-medium text-sm">{(() => {
                   const n = Number(viewingProduct.current_stock ?? 0);
                   return Number.isFinite(n) ? n.toFixed(2) : '0.00';
                 })()}</p>
@@ -1061,6 +1154,9 @@ export function Products() {
                           Grade
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Country
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                           Documents
                         </th>
                       </tr>
@@ -1068,8 +1164,9 @@ export function Products() {
                     <tbody className="divide-y divide-gray-200">
                       {viewingSources.map((source) => (
                         <tr key={source.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 font-medium">{source.supplier_name}</td>
-                          <td className="px-4 py-3">{source.grade}</td>
+                          <td className="px-4 py-3 font-medium text-sm">{source.supplier_name}</td>
+                          <td className="px-4 py-3 text-sm">{source.grade}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{source.country || '—'}</td>
                           <td className="px-4 py-3">
                             {source.documents.length === 0 ? (
                               <span className="text-gray-400 text-sm">No documents</span>
