@@ -352,28 +352,66 @@ async function checkAndCreateEnquiryTaskReminders() {
   }
 }
 
+const activeOrAttemptedTodayInSession = new Set<string>();
+
+export function hasDailyNotificationCheckAttempted(userId: string, date: Date = new Date()): boolean {
+  try {
+    const guardKey = getDailyNotificationGuardKey(userId, date);
+    if (activeOrAttemptedTodayInSession.has(guardKey)) return true;
+    if (typeof sessionStorage !== 'undefined') {
+      const sessionKey = `notif_attempt_${userId}_${getLocalCalendarDate(date)}`;
+      if (sessionStorage.getItem(sessionKey)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function markDailyNotificationCheckAttempted(userId: string, date: Date = new Date()): void {
+  try {
+    const guardKey = getDailyNotificationGuardKey(userId, date);
+    activeOrAttemptedTodayInSession.add(guardKey);
+    if (typeof sessionStorage !== 'undefined') {
+      const sessionKey = `notif_attempt_${userId}_${getLocalCalendarDate(date)}`;
+      sessionStorage.setItem(sessionKey, '1');
+    }
+  } catch {}
+}
+
 let isCheckingNotifications = false;
 
 /**
  * Initializes notification checks ONCE PER USER PER CALENDAR DAY.
  *
- * Daily execution guard:
+ * Daily execution guard & circuit breaker:
  * - Checks localStorage for `notification_check_<user_id>_<YYYY-MM-DD>`.
  * - If today's check has already completed: returns false immediately (NO queries, NO RPCs).
+ * - Circuit breaker: if already attempted today in this session or tab, returns false immediately
+ *   to prevent retry storms and pounding degraded database instances.
  * - If not completed: executes the alert checks once, marks the day as completed,
  *   and dispatches a 'notifications-checked' window event.
- * - If any check genuinely fails, does NOT mark the day as completed to allow retry on next startup.
  * - Strictly NO timer intervals, NO polling, NO repeated checks.
  */
-export async function initializeNotificationChecks(): Promise<boolean> {
+export async function initializeNotificationChecks(providedUserId?: string): Promise<boolean> {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    let user: { id: string } | null = providedUserId ? { id: providedUserId } : null;
+    if (!user) {
+      const { data } = await supabase.auth.getUser();
+      user = data.user;
+    }
     if (!user) return false;
 
     // Daily execution guard: run at most ONCE per user per calendar day
     if (isDailyNotificationCheckCompleted(user.id)) {
       return false;
     }
+
+    // Circuit breaker: prevent repeated notification check storms during degraded DB/session state
+    if (hasDailyNotificationCheckAttempted(user.id)) {
+      return false;
+    }
+    markDailyNotificationCheckAttempted(user.id);
 
     if (isCheckingNotifications) {
       return false;
@@ -401,7 +439,6 @@ export async function initializeNotificationChecks(): Promise<boolean> {
   } catch (error) {
     if (isNavigationAbort(error)) return false;
     console.error('Error during daily notification checks:', error);
-    // If check failed, do NOT mark completed so it can retry on next initialization
     return false;
   }
 }

@@ -53,6 +53,8 @@ function LoadingFallback() {
   );
 }
 
+const hasTriggeredNotificationCheckForUser = new Set<string>();
+
 function AppContent() {
   const { user, profile, loading, accessibleModules } = useAuth();
   const { currentPage } = useNavigation();
@@ -61,16 +63,22 @@ function AppContent() {
   useEffect(() => {
     let cleanup: (() => void) | undefined;
 
-    if (user && profile) {
-      const intervalId = setTimeout(() => {
-        initializeNotificationChecks();
-      }, 2000);
+    const userId = user?.id;
+    if (userId && profile) {
+      const today = new Date().toISOString().split('T')[0];
+      const sessionKey = `${userId}_${today}`;
+      if (!hasTriggeredNotificationCheckForUser.has(sessionKey)) {
+        hasTriggeredNotificationCheckForUser.add(sessionKey);
+        const timeoutId = setTimeout(() => {
+          initializeNotificationChecks(userId);
+        }, 2000);
 
-      cleanup = () => clearTimeout(intervalId);
+        cleanup = () => clearTimeout(timeoutId);
+      }
     }
 
     return cleanup;
-  }, [user, profile]);
+  }, [user?.id, profile?.id]);
 
   if (location.pathname === '/calculator') {
     return (
