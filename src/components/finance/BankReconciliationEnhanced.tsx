@@ -1746,8 +1746,10 @@ export function BankReconciliationEnhanced({
 
         const pMatch = cell.match(/Period(?:e)?\s*:\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})\s*-\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/i);
         if (pMatch) {
-          let sDay = parseInt(pMatch[1]), sMon = parseInt(pMatch[2]), sYr = parseInt(pMatch[3]);
-          let eDay = parseInt(pMatch[4]), eMon = parseInt(pMatch[5]), eYr = parseInt(pMatch[6]);
+          const sDay = parseInt(pMatch[1]), sMon = parseInt(pMatch[2]);
+          let sYr = parseInt(pMatch[3]);
+          const eDay = parseInt(pMatch[4]), eMon = parseInt(pMatch[5]);
+          let eYr = parseInt(pMatch[6]);
           if (sYr < 100) sYr += 2000;
           if (eYr < 100) eYr += 2000;
           fileYear = sYr;
@@ -1805,7 +1807,7 @@ export function BankReconciliationEnhanced({
         const cell = String(rows[i]?.[dateCol] || '').trim();
         const m = cell.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})$/);
         if (m) {
-          let yr = parseInt(m[3]);
+          const yr = parseInt(m[3]);
           fileYear = yr < 100 ? (yr < 70 ? 2000 + yr : 1900 + yr) : yr;
           break;
         }
@@ -1865,7 +1867,7 @@ export function BankReconciliationEnhanced({
         if (fullDateMatch) {
           day = parseInt(fullDateMatch[1]);
           mon = parseInt(fullDateMatch[2]);
-          let rawYr = parseInt(fullDateMatch[3]);
+          const rawYr = parseInt(fullDateMatch[3]);
           yr = rawYr < 100 ? (rawYr < 70 ? 2000 + rawYr : 1900 + rawYr) : rawYr;
         } else if (numericMatch) {
           day = parseInt(numericMatch[1]);
@@ -1874,7 +1876,7 @@ export function BankReconciliationEnhanced({
           day = parseInt(namedMatch[1]);
           mon = monthNames[namedMatch[2].toLowerCase()] || 0;
           if (namedMatch[3]) {
-            let rawYr = parseInt(namedMatch[3]);
+            const rawYr = parseInt(namedMatch[3]);
             yr = rawYr < 100 ? (rawYr < 70 ? 2000 + rawYr : 1900 + rawYr) : rawYr;
           }
         }

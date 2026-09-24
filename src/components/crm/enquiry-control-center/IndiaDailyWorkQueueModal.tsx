@@ -100,7 +100,7 @@ export const IndiaDailyWorkQueueModal: React.FC<IndiaDailyWorkQueueModalProps> =
 
       // 2. Fetch linked tasks for these requests
       const reqIds = (reqData || []).map(r => r.id);
-      let tasksByReqId: Record<string, any> = {};
+      const tasksByReqId: Record<string, any> = {};
 
       if (reqIds.length > 0) {
         const { data: taskData } = await supabase

@@ -600,7 +600,7 @@ export function CanonicalSalesProfitReport() {
         <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
           <p className="text-[11px] text-gray-500 font-medium flex items-center justify-between">
             <TooltipHeader title="Gross Profit" tooltip="Net Sales (Gross Sales minus Sales Returns) minus Net Product Cost (Product Cost minus Return COGS)." />
-            <span className="text-[10px] text-gray-400">{Boolean(company?.sales_returns && company.sales_returns > 0) ? 'Net GP' : 'Pre-exp'}</span>
+            <span className="text-[10px] text-gray-400">{company?.sales_returns && company.sales_returns > 0 ? 'Net GP' : 'Pre-exp'}</span>
           </p>
           <p className={`text-sm lg:text-base font-bold mt-0.5 leading-tight ${(company?.gross_profit || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
             {formatCurrency(company?.gross_profit || 0)}

@@ -74,20 +74,11 @@ function resolveTargetedTests(rawArgs) {
       matched.add(changed);
     } else if (changed.startsWith('src/') || changed.startsWith('supabase/')) {
       const baseName = basename(changed).split('.')[0].toLowerCase();
-      // Match keywords in test filenames
+      // Match keywords in test filenames (e.g. stock, expense, etc.)
       for (const testFile of allTests) {
         if (testFile.toLowerCase().includes(baseName)) {
           matched.add(testFile);
         }
-      }
-      // Scan test files for direct references to the changed file
-      for (const testFile of allTests) {
-        try {
-          const content = readFileSync(testFile, 'utf8');
-          if (content.includes(basename(changed))) {
-            matched.add(testFile);
-          }
-        } catch {}
       }
     }
   }

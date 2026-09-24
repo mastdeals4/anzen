@@ -278,7 +278,7 @@ export const EnquiryDetailDrawer: React.FC<EnquiryDetailDrawerProps> = ({
 
       // 5. Fetch request-message provenance links (enquiry_request_messages)
       const messageIds = (msgRows || []).map(m => m.id);
-      let requestLinksByMessageId: Record<string, any[]> = {};
+      const requestLinksByMessageId: Record<string, any[]> = {};
       const reqMessageMap: Record<string, RequestLinkedMessageItem[]> = {};
 
       if (messageIds.length > 0) {

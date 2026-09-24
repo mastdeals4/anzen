@@ -50,7 +50,7 @@ export class OpenWAProvider implements WhatsAppProvider {
 
     try {
       // Dynamically attempt to load @open-wa/wa-automate if available in environment
-      // @ts-ignore
+      // @ts-expect-error optional runtime dependency
       const openwa = await import('@open-wa/wa-automate').catch(() => null);
 
       if (!openwa) {

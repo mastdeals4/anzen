@@ -414,7 +414,9 @@ export function markDailyNotificationCheckAttempted(userId: string, date: Date =
       const sessionKey = `notif_attempt_${userId}_${getLocalCalendarDate(date)}`;
       sessionStorage.setItem(sessionKey, '1');
     }
-  } catch {}
+  } catch {
+    // Ignore storage quota or access errors in restricted browser contexts
+  }
 }
 
 let isCheckingNotifications = false;
