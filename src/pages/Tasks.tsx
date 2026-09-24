@@ -301,18 +301,18 @@ export function Tasks() {
 
   return (
     <Layout>
-      <div className="space-y-6">
+      <div className="space-y-3">
         {/* Header */}
-        <div className="flex justify-between items-start">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">{t('tasks.title')}</h1>
-            <p className="text-gray-600 mt-1">Manage and track team assignments</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('tasks.title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Manage and track team assignments</p>
           </div>
           <button
             onClick={() => setShowCreateTask(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
           >
-            <Plus className="w-5 h-5" />
+            <Plus className="w-3.5 h-3.5" />
             {t('tasks.addTask')}
           </button>
         </div>

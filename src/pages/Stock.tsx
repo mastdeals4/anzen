@@ -216,25 +216,25 @@ export function Stock() {
             className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition text-sm"
           >
             <Package className="w-4 h-4" />
-            View Batches
+            {t('stock.viewBatches')}
           </button>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Products In Stock</span>
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('stock.productsInStock')}</span>
             <div className="text-base font-bold text-gray-900 mt-0.5">{totalProducts}</div>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">Total Stock</span>
+            <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">{t('stock.totalStock')}</span>
             <div className="text-base font-bold text-emerald-700 mt-0.5">{totalStock.toLocaleString()}</div>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide">Low Stock</span>
+            <span className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide">{t('stock.lowStock')}</span>
             <div className="text-base font-bold text-amber-700 mt-0.5">{lowStockProducts}</div>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">Near Expiry</span>
+            <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">{t('stock.nearExpiry')}</span>
             <div className="text-base font-bold text-red-700 mt-0.5">{productsWithNearExpiry}</div>
           </div>
         </div>

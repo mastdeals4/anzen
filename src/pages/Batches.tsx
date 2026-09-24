@@ -839,7 +839,7 @@ export function Batches() {
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Import Batches</h1>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('batches.title')}</h1>
             <p className="text-xs text-gray-500 mt-0.5">
               {canViewCosting ? 'Manage import batches with USD pricing and document tracking' : 'Manage import batches and document tracking'}
             </p>
@@ -853,7 +853,7 @@ export function Batches() {
               className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
             >
               <Plus className="w-3.5 h-3.5" />
-              Add Batch
+              {t('batches.addBatch')}
             </button>
           )}
         </div>
@@ -861,28 +861,28 @@ export function Batches() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Active Batches</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('batches.activeBatches')}</p>
               <p className="text-base font-bold text-gray-900 mt-0.5">{batches.filter(b => b.is_active).length}</p>
             </div>
             <Package className="w-4 h-4 text-blue-600" />
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Sold Out</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('batches.soldOut')}</p>
               <p className="text-base font-bold text-orange-600 mt-0.5">{batches.filter(b => b.is_active && b.current_stock <= 0).length}</p>
             </div>
             <Archive className="w-4 h-4 text-orange-500" />
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Low Stock</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('batches.lowStock')}</p>
               <p className="text-base font-bold text-amber-600 mt-0.5">{batches.filter(b => b.is_active && isLowStock(b) && b.current_stock > 0).length}</p>
             </div>
             <AlertTriangle className="w-4 h-4 text-amber-500" />
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Near Expiry</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('batches.nearExpiry')}</p>
               <p className="text-base font-bold text-red-600 mt-0.5">{batches.filter(b => b.is_active && isNearExpiry(b)).length}</p>
             </div>
             <AlertTriangle className="w-4 h-4 text-red-500" />
@@ -1195,15 +1195,15 @@ export function Batches() {
 
         {/* Summary Section */}
         {canViewCosting && batches.length > 0 && (
-          <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-lg shadow-lg p-6 border-2 border-blue-200">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-blue-600" />
+          <div className="bg-white rounded-xl shadow-xs p-3.5 border border-slate-200">
+            <h3 className="text-sm font-bold text-gray-900 mb-2.5 flex items-center gap-1.5">
+              <DollarSign className="w-4 h-4 text-blue-600" />
               Total Import Value Summary
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <p className="text-sm text-gray-600 font-medium">Total Value (USD)</p>
-                <p className="text-3xl font-bold text-green-700">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                <p className="text-xs text-gray-500 font-medium">Total Value (USD)</p>
+                <p className="text-lg font-bold text-green-700 mt-0.5">
                   {formatCurrency(
                     batches.reduce((sum, batch) => {
                       const totalUSD = batch.import_price_usd ? batch.import_price_usd * batch.import_quantity : 0;
@@ -1213,9 +1213,9 @@ export function Batches() {
                   )}
                 </p>
               </div>
-              <div className="space-y-2">
-                <p className="text-sm text-gray-600 font-medium">Total Value (IDR)</p>
-                <p className="text-3xl font-bold text-blue-700">
+              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                <p className="text-xs text-gray-500 font-medium">Total Value (IDR)</p>
+                <p className="text-lg font-bold text-blue-700 mt-0.5">
                   {formatCurrency(
                     batches.reduce((sum, batch) => {
                       const totalIDR = batch.import_price * batch.import_quantity;
@@ -1226,8 +1226,8 @@ export function Batches() {
               </div>
             </div>
             {/* Stock in Hand Value at Landed Cost */}
-            <div className="mt-4 pt-4 border-t border-blue-200">
-              <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1">
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <h4 className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1">
                 <Package className="w-4 h-4 text-gray-500" />
                 Stock in Hand Value (at Landed Cost)
               </h4>

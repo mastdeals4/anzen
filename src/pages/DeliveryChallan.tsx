@@ -122,6 +122,7 @@ const isExpired = (expiryDate: string | null): boolean => {
 
 export function DeliveryChallan() {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const { navigationData, clearNavigationData, setCurrentPage, setNavigationData } = useNavigation();
   const { dateRange } = useFinance();
   const [challans, setChallans] = useState<DeliveryChallan[]>([]);
@@ -1378,8 +1379,8 @@ export function DeliveryChallan() {
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Delivery Challan (Surat Jalan)</h1>
-            <p className="text-xs text-gray-500 mt-0.5">Manage delivery orders and dispatch records</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('deliveryChallan.title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">{t('deliveryChallan.manageSubtitle')}</p>
           </div>
           {canManage && (
             <button
@@ -1392,14 +1393,14 @@ export function DeliveryChallan() {
               className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
             >
               <Plus className="w-3.5 h-3.5" />
-              New Delivery Challan
+              {t('deliveryChallan.createDC')}
             </button>
           )}
         </div>
 
         <>
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between max-w-xs">
-          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Total Delivery Challans</span>
+          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('deliveryChallan.totalChallans')}</span>
           <div className="text-base font-bold text-gray-900 mt-0.5">{stats.total}</div>
         </div>
 

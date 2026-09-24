@@ -802,11 +802,11 @@ export default function SalesOrders() {
     value: number;
     valueClass: string;
   }> = [
-    { key: 'all', label: 'Total Orders', value: stats.total, valueClass: 'text-gray-900' },
-    { key: 'processing', label: 'Processing', value: stats.processing, valueClass: 'text-blue-600' },
-    { key: 'shortage', label: 'Shortage', value: stats.shortage, valueClass: 'text-orange-600' },
-    { key: 'completed', label: 'Completed', value: stats.completed, valueClass: 'text-green-600' },
-    { key: 'overdue', label: 'Overdue', value: stats.overdue, valueClass: 'text-red-600' },
+    { key: 'all', label: t('salesOrders.totalOrders'), value: stats.total, valueClass: 'text-gray-900' },
+    { key: 'processing', label: t('salesOrders.processing'), value: stats.processing, valueClass: 'text-blue-600' },
+    { key: 'shortage', label: t('salesOrders.shortage'), value: stats.shortage, valueClass: 'text-orange-600' },
+    { key: 'completed', label: t('salesOrders.completed'), value: stats.completed, valueClass: 'text-green-600' },
+    { key: 'overdue', label: t('salesOrders.overdue'), value: stats.overdue, valueClass: 'text-red-600' },
   ];
 
   return (
@@ -814,7 +814,7 @@ export default function SalesOrders() {
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Sales Orders</h1>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('salesOrders.title')}</h1>
             <p className="text-xs text-gray-500 mt-0.5">Manage customer purchase orders and track delivery</p>
           </div>
           <div className="flex items-center gap-2">
@@ -835,7 +835,7 @@ export default function SalesOrders() {
               className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs"
             >
               <Plus className="w-3.5 h-3.5" />
-              New Sales Order
+              {t('salesOrders.createSalesOrder')}
             </button>
           </div>
         </div>
@@ -850,7 +850,7 @@ export default function SalesOrders() {
                 : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
-            Active Orders
+            {t('salesOrders.activeOrders')}
           </button>
           <button
             onClick={() => setActiveTab('archived')}
@@ -860,7 +860,7 @@ export default function SalesOrders() {
                 : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
-            Archived Orders
+            {t('salesOrders.archivedOrders')}
           </button>
           <button
             onClick={() => setActiveTab('fx_backfill')}

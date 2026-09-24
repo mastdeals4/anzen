@@ -615,11 +615,11 @@ export function CreditNotes() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Credit Notes</h1>
-            <p className="text-gray-600 mt-1">Manage credit notes for returns and adjustments after invoicing</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('creditNotes.title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Manage credit notes for returns and adjustments after invoicing</p>
           </div>
           {canManage && (
             <button
@@ -627,10 +627,10 @@ export function CreditNotes() {
                 resetForm();
                 setModalOpen(true);
               }}
-              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+              className="flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-red-700 shadow-xs transition"
             >
-              <Plus className="w-5 h-5" />
-              Create Credit Note
+              <Plus className="w-3.5 h-3.5" />
+              {t('creditNotes.createCreditNote')}
             </button>
           )}
         </div>

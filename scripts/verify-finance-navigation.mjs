@@ -9,7 +9,7 @@ const expectedMenuItems = [
   'purchase', 'receipt', 'payment', 'journal', 'contra', 'expenses', 'petty_cash',
   'ledger', 'journal_register', 'bank_ledger', 'party_ledger', 'bank_recon',
   'ca_reports', 'trial_balance', 'pnl', 'balance_sheet', 'receivables', 'payables',
-  'ageing', 'tax', 'integrity_monitor', 'exception_correction',
+  'ageing', 'tax', 'fx_dashboard', 'integrity_monitor', 'exception_correction',
   'coa', 'expense_categories', 'suppliers', 'banks', 'staff_master', 'payee_master', 'utility_master',
 ];
 

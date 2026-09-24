@@ -729,11 +729,11 @@ export default function MaterialReturns() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Material Returns</h1>
-          <p className="text-gray-600 mt-1">Customer return authorizations with canonical Inventory V1 restocking & validation</p>
+          <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('materialReturns.title')}</h1>
+          <p className="text-xs text-gray-500 mt-0.5">Customer return authorizations with canonical Inventory V1 restocking & validation</p>
         </div>
         {canManage && (
           <button
@@ -741,10 +741,10 @@ export default function MaterialReturns() {
               resetForm();
               setModalOpen(true);
             }}
-            className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition shadow-sm"
+            className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-green-700 transition shadow-xs"
           >
-            <Plus className="w-5 h-5" />
-            Create Material Return
+            <Plus className="w-3.5 h-3.5" />
+            {t('materialReturns.createReturn')}
           </button>
         )}
       </div>

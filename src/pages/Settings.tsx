@@ -626,26 +626,26 @@ export function Settings() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-            <p className="text-gray-600 mt-1">Configure system settings and manage users</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('settings.title') || 'Settings'}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Configure system settings and manage users</p>
           </div>
           {isAdmin && (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowRestoreModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-xs transition text-xs font-semibold"
               >
-                <Upload className="w-4 h-4" />
+                <Upload className="w-3.5 h-3.5" />
                 Restore Backup
               </button>
               <button
                 onClick={handleDownloadBackup}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition text-sm font-medium"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 shadow-xs transition text-xs font-semibold"
               >
-                <Download className="w-4 h-4" />
+                <Download className="w-3.5 h-3.5" />
                 Download Backup
               </button>
             </div>
