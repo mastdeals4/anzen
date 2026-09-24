@@ -111,6 +111,47 @@ async function dailyNotifExistsToday(userId: string, type: string): Promise<bool
   return !!(data && data.length > 0);
 }
 
+/**
+ * Checks whether an alert for a specific underlying entity has already been
+ * created for the user (whether active/unread or already read/acknowledged).
+ *
+ * Once marked as read / acknowledged, THE SAME UNDERLYING ALERT MUST NEVER
+ * CREATE ANOTHER NOTIFICATION.
+ *
+ * If ANY row exists with (user_id, type, reference_id, reference_type):
+ * - If is_read = true: the user already acknowledged it.
+ * - If is_read = false: the alert is already active in the unread bell.
+ *
+ * In either case, returns true so duplicate notifications are suppressed.
+ */
+export async function isNotificationAcknowledged(
+  userId: string,
+  type: string,
+  referenceId?: string | null,
+  referenceType?: string | null
+): Promise<boolean> {
+  try {
+    let query = supabase
+      .from('notifications')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('type', type);
+
+    if (referenceId) {
+      query = query.eq('reference_id', referenceId);
+    }
+    if (referenceType) {
+      query = query.eq('reference_type', referenceType);
+    }
+
+    const { data, error } = await query.limit(1);
+    if (error) return false;
+    return !!(data && data.length > 0);
+  } catch {
+    return false;
+  }
+}
+
 export async function checkAndCreateLowStockNotifications() {
   try {
     const recipientIds = await resolveNotificationRecipients(['admin', 'warehouse']);
@@ -123,36 +164,28 @@ export async function checkAndCreateLowStockNotifications() {
 
     if (!products || products.length === 0) return;
 
-    const lowStockProducts: { product_name: string; current_stock: number; min_stock_level: number }[] = [];
-
-    for (const product of products) {
-      const stock = product.current_stock ?? 0;
-      if (stock < product.min_stock_level) {
-        lowStockProducts.push({
-          product_name: product.product_name,
-          current_stock: stock,
-          min_stock_level: product.min_stock_level,
-        });
-      }
-    }
+    const lowStockProducts = products.filter(
+      p => (p.current_stock ?? 0) < p.min_stock_level
+    );
 
     if (lowStockProducts.length === 0) return;
 
-    // Build a descriptive message listing the product names
-    const productList = lowStockProducts.map(p => p.product_name).join(', ');
-    const message = lowStockProducts.length === 1
-      ? `${productList} is running low on stock.`
-      : `${lowStockProducts.length} products low on stock: ${productList}.`;
+    for (const prod of lowStockProducts) {
+      const message = `${prod.product_name} is running low on stock (${prod.current_stock ?? 0} / min ${prod.min_stock_level}).`;
 
-    for (const userId of recipientIds) {
-      if (await dailyNotifExistsToday(userId, 'low_stock')) continue;
+      for (const userId of recipientIds) {
+        // If already acknowledged (marked read) or already in bell, never create again
+        if (await isNotificationAcknowledged(userId, 'low_stock', prod.id, 'product')) continue;
 
-      await createNotification({
-        userId,
-        type: 'low_stock',
-        title: 'Low Stock Alert',
-        message,
-      });
+        await createNotification({
+          userId,
+          type: 'low_stock',
+          title: 'Low Stock Alert',
+          message,
+          referenceId: prod.id,
+          referenceType: 'product',
+        });
+      }
     }
   } catch (error) {
     if (isNavigationAbort(error)) return;
@@ -186,17 +219,23 @@ export async function checkAndCreateExpiryNotifications() {
 
     if (!nearExpiryBatches || nearExpiryBatches.length === 0) return;
 
-    const message = `${nearExpiryBatches.length} batch(es) will expire within ${alertDays} days.`;
+    for (const batch of nearExpiryBatches) {
+      const productName = (batch.products as { product_name?: string } | null)?.product_name || 'Batch';
+      const message = `${productName} (Batch ${batch.batch_number}) will expire within ${alertDays} days.`;
 
-    for (const userId of recipientIds) {
-      if (await dailyNotifExistsToday(userId, 'near_expiry')) continue;
+      for (const userId of recipientIds) {
+        // If already acknowledged (marked read) or already in bell, never create again
+        if (await isNotificationAcknowledged(userId, 'near_expiry', batch.id, 'batch')) continue;
 
-      await createNotification({
-        userId,
-        type: 'near_expiry',
-        title: 'Products Near Expiry',
-        message,
-      });
+        await createNotification({
+          userId,
+          type: 'near_expiry',
+          title: 'Products Near Expiry',
+          message,
+          referenceId: batch.id,
+          referenceType: 'batch',
+        });
+      }
     }
   } catch (error) {
     if (isNavigationAbort(error)) return;
@@ -221,18 +260,24 @@ export async function checkAndCreateFollowUpNotifications() {
 
     if (!dueActivities || dueActivities.length === 0) return;
 
-    const message = `You have ${dueActivities.length} follow-up(s) due today.`;
+    for (const act of dueActivities) {
+      const contactObj = Array.isArray(act.crm_contacts) ? act.crm_contacts[0] : act.crm_contacts;
+      const contactName = (contactObj as { company_name?: string } | null)?.company_name;
+      const message = `Follow-up due for ${contactName || 'contact'} (${act.activity_type || 'activity'}).`;
 
-    for (const userId of recipientIds) {
-      // Skip if already sent any follow_up notification today (read or unread)
-      if (await dailyNotifExistsToday(userId, 'follow_up')) continue;
+      for (const userId of recipientIds) {
+        // If already acknowledged (marked read) or already in bell, never create again
+        if (await isNotificationAcknowledged(userId, 'follow_up', act.id, 'crm_activity')) continue;
 
-      await createNotification({
-        userId,
-        type: 'follow_up',
-        title: 'Follow-ups Due',
-        message,
-      });
+        await createNotification({
+          userId,
+          type: 'follow_up',
+          title: 'Follow-ups Due',
+          message,
+          referenceId: act.id,
+          referenceType: 'crm_activity',
+        });
+      }
     }
   } catch (error) {
     if (isNavigationAbort(error)) return;
@@ -249,37 +294,30 @@ export async function checkAndCreateDeliveryDueNotifications() {
     const alerts = await fetchSalesOrderDeliveryAlerts();
     if (alerts.length === 0) return;
 
-    const { dueSoon, overdue } = summarizeDeliveryAlerts(alerts);
+    for (const alert of alerts) {
+      const soId = alert.soId;
+      const isOverdue = alert.level === 'overdue';
+      const title = isOverdue ? `Delivery Overdue: ${alert.soNumber}` : `Delivery Due Soon: ${alert.soNumber}`;
+      const message = `${alert.customerName} - SO ${alert.soNumber} is ${isOverdue ? `${Math.abs(alert.daysUntilDue)} days overdue` : `due in ${alert.daysUntilDue} days`}.`;
 
-    const parts = [
-      overdue.length ? `${overdue.length} overdue` : '',
-      dueSoon.length ? `${dueSoon.length} due soon` : '',
-    ].filter(Boolean);
-    const sample = alerts.slice(0, 3).map(alert => alert.soNumber).join(', ');
-    const message = `${parts.join(', ')} sales order deliver${alerts.length === 1 ? 'y needs' : 'ies need'} attention${sample ? `: ${sample}` : ''}.`;
+      for (const userId of recipientIds) {
+        // If already acknowledged/marked as read or active for this user + sales order, NEVER create again
+        const alreadyAcknowledged = await isNotificationAcknowledged(
+          userId,
+          'delivery_due',
+          soId,
+          'sales_order'
+        );
+        if (alreadyAcknowledged) continue;
 
-    for (const userId of recipientIds) {
-      if (await dailyNotifExistsToday(userId, 'delivery_due')) continue;
-
-      await createNotification({
-        userId,
-        type: 'delivery_due',
-        title: overdue.length ? 'Delivery Overdue' : 'Delivery Due Soon',
-        message,
-      });
-    }
-
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    if (currentUser && recipientIds.includes(currentUser.id)) {
-      const toastKey = `delivery_due_toast_${new Date().toISOString().split('T')[0]}`;
-      if (sessionStorage.getItem(toastKey) !== 'shown') {
-        showToast({
-          type: overdue.length ? 'error' : 'warning',
-          title: overdue.length ? 'Delivery Overdue' : 'Delivery Due Soon',
+        await createNotification({
+          userId,
+          type: 'delivery_due',
+          title,
           message,
-          duration: 8000,
+          referenceId: soId,
+          referenceType: 'sales_order',
         });
-        sessionStorage.setItem(toastKey, 'shown');
       }
     }
   } catch (error) {

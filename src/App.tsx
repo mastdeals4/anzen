@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense } from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LanguageProvider } from './contexts/LanguageContext';
@@ -8,7 +8,6 @@ import { Login } from './components/Login';
 import { ToastContainer } from './components/ToastNotification';
 import { ConfirmDialogContainer } from './components/ConfirmDialog';
 import { ApprovalNotifications } from './components/ApprovalNotifications';
-import { initializeNotificationChecks } from './utils/notifications';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const Products = lazy(() => import('./pages/Products').then(m => ({ default: m.Products })));
@@ -53,32 +52,10 @@ function LoadingFallback() {
   );
 }
 
-const hasTriggeredNotificationCheckForUser = new Set<string>();
-
 function AppContent() {
   const { user, profile, loading, accessibleModules } = useAuth();
   const { currentPage } = useNavigation();
   const location = useLocation();
-
-  useEffect(() => {
-    let cleanup: (() => void) | undefined;
-
-    const userId = user?.id;
-    if (userId && profile) {
-      const today = new Date().toISOString().split('T')[0];
-      const sessionKey = `${userId}_${today}`;
-      if (!hasTriggeredNotificationCheckForUser.has(sessionKey)) {
-        hasTriggeredNotificationCheckForUser.add(sessionKey);
-        const timeoutId = setTimeout(() => {
-          initializeNotificationChecks(userId);
-        }, 2000);
-
-        cleanup = () => clearTimeout(timeoutId);
-      }
-    }
-
-    return cleanup;
-  }, [user?.id, profile?.id]);
 
   if (location.pathname === '/calculator') {
     return (
