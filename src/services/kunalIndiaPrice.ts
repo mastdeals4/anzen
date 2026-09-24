@@ -84,6 +84,54 @@ export interface KunalGmailMessage {
   threadMessages?: KunalGmailThreadMessage[];
 }
 
+export interface AgentScanSummary {
+  success: boolean;
+  scanned: number;
+  pricing: number;
+  documents: number;
+  needs_review: number;
+  no_action: number;
+  last_checked: string;
+  next_check: string;
+  duration_ms?: number;
+  status?: string;
+  message?: string;
+  results?: any[];
+}
+
+/**
+ * Invoke the sapj-gmail-agent orchestrator Edge Function (used by [ CHECK NOW ]).
+ * Uses the exact same background agent as the 3x daily scheduled cron jobs.
+ */
+export async function runSapjGmailAgent(options?: {
+  connectionId?: string;
+  maxMessages?: number;
+  forceReprocess?: boolean;
+  forceMessageId?: string;
+}): Promise<AgentScanSummary> {
+  const { data: session } = await supabase.auth.getSession();
+  if (!session.session) {
+    throw new Error('Not signed in.');
+  }
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const resp = await fetch(`${supabaseUrl}/functions/v1/sapj-gmail-agent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.session.access_token}`,
+    },
+    body: JSON.stringify(options || {}),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Agent run failed: ${resp.status} - ${errText}`);
+  }
+
+  return (await resp.json()) as AgentScanSummary;
+}
+
 export interface KunalIndiaReviewRow extends KunalGmailMessage {
   aiType: IndiaAiType;
   product: string | null;
@@ -112,6 +160,42 @@ export interface KunalIndiaReviewRow extends KunalGmailMessage {
    *  mode shows messages even before they've been analyzed, in which case this
    *  is false and the UI renders an "Unanalyzed" badge. */
   analyzed: boolean;
+  /** Prepared pricing extraction rows ready for Review & Save */
+  extractionRows?: IndiaExtractionRow[];
+  /** Detected document attachments with classification and matching */
+  detectedDocuments?: Array<{
+    attachmentId: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    documentType: 'COA' | 'MSDS' | 'GMP' | 'TDS' | 'SPEC' | 'COC' | 'ISO' | 'DMF' | 'CATALOGUE' | 'PRICE_LIST' | 'OTHER';
+    batchNumber: string | null;
+    matchStatus: 'MATCHED' | 'AVAILABLE' | 'MISSING' | 'REVIEW' | 'MISMATCH';
+    matchConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'BLOCK';
+    matchedProduct: string | null;
+    matchedMake: string | null;
+    matchReasons: string[];
+  }>;
+  /** Alternative make comparison if detected */
+  alternativeMake?: {
+    detected: boolean;
+    requestedMake: string | null;
+    offeredMake: string | null;
+    price: number | null;
+    currency: string | null;
+  } | null;
+  /** Evidence retained for [ WHY? ] view */
+  evidence?: {
+    sourceQuote: string;
+    matchedSignals: string[];
+    why: string;
+  } | null;
+  /** Email direction */
+  direction?: string;
+  /** True if email was previously processed and cached */
+  isPreviouslyProcessed?: boolean;
+  /** Raw AI result payload */
+  rawResult?: any;
 }
 
 export interface IndiaExtractionRow extends ParsedSourceRow {
@@ -1145,6 +1229,24 @@ export function hydrateReviewAsRow(p: PersistedReview, fullMessage: Partial<Kuna
     needsManualLink: p.action_status === 'needs_manual_link' && p.ai_type !== 'No Action',
     hasMultipleSimilarCandidates: !!raw.hasMultipleSimilarCandidates,
     analyzed: true,
+    extractionRows: Array.isArray(raw.extractionRows)
+      ? raw.extractionRows.map((r: any) => ({
+          ...r,
+          selectedInquiryId: p.matched_inquiry_id || raw.suggestedInquiryId || null,
+          suggestedInquiryId: raw.suggestedInquiryId || null,
+          candidates: Array.isArray(raw.candidates) ? raw.candidates : [],
+          saved: p.action_status === 'price_saved',
+          saveError: null,
+          needsManualLink: p.action_status === 'needs_manual_link',
+          hasMultipleSimilarCandidates: !!raw.hasMultipleSimilarCandidates,
+        }))
+      : [],
+    detectedDocuments: Array.isArray(raw.detectedDocuments) ? raw.detectedDocuments : [],
+    alternativeMake: raw.alternativeMake || null,
+    evidence: raw.evidence || null,
+    direction: raw.direction || null,
+    isPreviouslyProcessed: Boolean(p.action_status && ['price_saved', 'document_saved', 'no_action', 'pending_review', 'needs_manual_link'].includes(p.action_status)),
+    rawResult: raw,
   };
 }
 
