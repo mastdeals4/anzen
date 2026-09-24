@@ -20,10 +20,64 @@ function isNavigationAbort(error: unknown): boolean {
   return /AbortError|The user aborted|signal is aborted|net::ERR_ABORTED|Failed to fetch/i.test(blob);
 }
 
+let cachedRole: { userId: string; role: string; expiresAt: number } | null = null;
+
+async function getCurrentUserRole(): Promise<{ userId: string; role: string } | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const now = Date.now();
+  if (cachedRole && cachedRole.userId === user.id && cachedRole.expiresAt > now) {
+    return { userId: user.id, role: cachedRole.role };
+  }
+
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  const role = profile?.role || '';
+  cachedRole = { userId: user.id, role, expiresAt: now + 60000 };
+  return { userId: user.id, role };
+}
+
+// Resolves recipient user IDs based on the caller's role:
+// - Admins/managers can notify all users with target roles
+// - Regular users can only notify themselves if their role is in target roles
+// - Users outside target roles generate no notifications
+async function resolveNotificationRecipients(targetRoles: string[]): Promise<string[]> {
+  const caller = await getCurrentUserRole();
+  if (!caller) return [];
+
+  if (['admin', 'manager'].includes(caller.role)) {
+    const { data: users } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .eq('is_active', true)
+      .in('role', targetRoles);
+    return (users || []).map(u => u.id);
+  }
+
+  if (targetRoles.includes(caller.role)) {
+    return [caller.userId];
+  }
+
+  return [];
+}
+
 // Uses a DB-side RPC with ON CONFLICT DO NOTHING so duplicates are silently
 // skipped at the database level — no 409 HTTP errors, no console noise.
 export async function createNotification(params: NotificationParams) {
   try {
+    const caller = await getCurrentUserRole();
+    if (!caller) return;
+
+    // Caller can only notify others if they are admin or manager
+    if (params.userId !== caller.userId && !['admin', 'manager'].includes(caller.role)) {
+      return;
+    }
+
     const { error } = await supabase.rpc('upsert_notification', {
       p_user_id: params.userId,
       p_type: params.type,
@@ -59,6 +113,9 @@ async function dailyNotifExistsToday(userId: string, type: string): Promise<bool
 
 export async function checkAndCreateLowStockNotifications() {
   try {
+    const recipientIds = await resolveNotificationRecipients(['admin', 'warehouse']);
+    if (recipientIds.length === 0) return;
+
     const { data: products } = await supabase
       .from('products')
       .select('id, product_name, min_stock_level, current_stock')
@@ -81,25 +138,17 @@ export async function checkAndCreateLowStockNotifications() {
 
     if (lowStockProducts.length === 0) return;
 
-    const { data: users } = await supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('is_active', true)
-      .in('role', ['admin', 'warehouse']);
-
-    if (!users) return;
-
     // Build a descriptive message listing the product names
     const productList = lowStockProducts.map(p => p.product_name).join(', ');
     const message = lowStockProducts.length === 1
       ? `${productList} is running low on stock.`
       : `${lowStockProducts.length} products low on stock: ${productList}.`;
 
-    for (const user of users) {
-      if (await dailyNotifExistsToday(user.id, 'low_stock')) continue;
+    for (const userId of recipientIds) {
+      if (await dailyNotifExistsToday(userId, 'low_stock')) continue;
 
       await createNotification({
-        userId: user.id,
+        userId,
         type: 'low_stock',
         title: 'Low Stock Alert',
         message,
@@ -113,6 +162,9 @@ export async function checkAndCreateLowStockNotifications() {
 
 export async function checkAndCreateExpiryNotifications() {
   try {
+    const recipientIds = await resolveNotificationRecipients(['admin', 'warehouse', 'sales']);
+    if (recipientIds.length === 0) return;
+
     const { data: settings } = await supabase
       .from('app_settings')
       .select('expiry_alert_days')
@@ -133,21 +185,13 @@ export async function checkAndCreateExpiryNotifications() {
 
     if (!nearExpiryBatches || nearExpiryBatches.length === 0) return;
 
-    const { data: users } = await supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('is_active', true)
-      .in('role', ['admin', 'warehouse', 'sales']);
-
-    if (!users) return;
-
     const message = `${nearExpiryBatches.length} batch(es) will expire within ${alertDays} days.`;
 
-    for (const user of users) {
-      if (await dailyNotifExistsToday(user.id, 'near_expiry')) continue;
+    for (const userId of recipientIds) {
+      if (await dailyNotifExistsToday(userId, 'near_expiry')) continue;
 
       await createNotification({
-        userId: user.id,
+        userId,
         type: 'near_expiry',
         title: 'Products Near Expiry',
         message,
@@ -161,6 +205,9 @@ export async function checkAndCreateExpiryNotifications() {
 
 export async function checkAndCreateFollowUpNotifications() {
   try {
+    const recipientIds = await resolveNotificationRecipients(['admin', 'sales']);
+    if (recipientIds.length === 0) return;
+
     const today = new Date().toISOString().split('T')[0];
 
     const { data: dueActivities } = await supabase
@@ -172,22 +219,14 @@ export async function checkAndCreateFollowUpNotifications() {
 
     if (!dueActivities || dueActivities.length === 0) return;
 
-    const { data: users } = await supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('is_active', true)
-      .in('role', ['admin', 'sales']);
-
-    if (!users) return;
-
     const message = `You have ${dueActivities.length} follow-up(s) due today.`;
 
-    for (const user of users) {
+    for (const userId of recipientIds) {
       // Skip if already sent any follow_up notification today (read or unread)
-      if (await dailyNotifExistsToday(user.id, 'follow_up')) continue;
+      if (await dailyNotifExistsToday(userId, 'follow_up')) continue;
 
       await createNotification({
-        userId: user.id,
+        userId,
         type: 'follow_up',
         title: 'Follow-ups Due',
         message,
@@ -201,17 +240,13 @@ export async function checkAndCreateFollowUpNotifications() {
 
 export async function checkAndCreateDeliveryDueNotifications() {
   try {
+    const recipientIds = await resolveNotificationRecipients(['sales', 'warehouse', 'admin', 'manager']);
+    if (recipientIds.length === 0) return;
+
     const alerts = await fetchSalesOrderDeliveryAlerts();
     if (alerts.length === 0) return;
 
     const { dueSoon, overdue } = summarizeDeliveryAlerts(alerts);
-    const { data: users } = await supabase
-      .from('user_profiles')
-      .select('id, role')
-      .eq('is_active', true)
-      .in('role', ['sales', 'warehouse', 'admin', 'manager']);
-
-    if (!users || users.length === 0) return;
 
     const parts = [
       overdue.length ? `${overdue.length} overdue` : '',
@@ -220,11 +255,11 @@ export async function checkAndCreateDeliveryDueNotifications() {
     const sample = alerts.slice(0, 3).map(alert => alert.soNumber).join(', ');
     const message = `${parts.join(', ')} sales order deliver${alerts.length === 1 ? 'y needs' : 'ies need'} attention${sample ? `: ${sample}` : ''}.`;
 
-    for (const user of users) {
-      if (await dailyNotifExistsToday(user.id, 'delivery_due')) continue;
+    for (const userId of recipientIds) {
+      if (await dailyNotifExistsToday(userId, 'delivery_due')) continue;
 
       await createNotification({
-        userId: user.id,
+        userId,
         type: 'delivery_due',
         title: overdue.length ? 'Delivery Overdue' : 'Delivery Due Soon',
         message,
@@ -232,7 +267,7 @@ export async function checkAndCreateDeliveryDueNotifications() {
     }
 
     const { data: { user: currentUser } } = await supabase.auth.getUser();
-    if (currentUser && users.some(user => user.id === currentUser.id)) {
+    if (currentUser && recipientIds.includes(currentUser.id)) {
       const toastKey = `delivery_due_toast_${new Date().toISOString().split('T')[0]}`;
       if (sessionStorage.getItem(toastKey) !== 'shown') {
         showToast({
@@ -254,6 +289,9 @@ let notificationInterval: ReturnType<typeof setInterval> | null = null;
 
 async function checkAndCreateTaxNotifications() {
   try {
+    const caller = await getCurrentUserRole();
+    if (!caller || !['admin', 'manager', 'accounts'].includes(caller.role)) return;
+
     const { error } = await supabase.rpc('generate_tax_notifications');
     if (error) throw error;
   } catch (error) {
