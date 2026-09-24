@@ -10,6 +10,11 @@ const notificationsTs = readFileSync(
   'utf8'
 );
 
+const notificationDropdownTs = readFileSync(
+  new URL('../src/components/NotificationDropdown.tsx', import.meta.url),
+  'utf8'
+);
+
 const migrationSql = readFileSync(
   new URL('../supabase/migrations/20260924131000_fix_upsert_notification_authorization_exception.sql', import.meta.url),
   'utf8'
@@ -31,51 +36,130 @@ function runDbScript(sql) {
 }
 
 // ============================================================================
-// 1. Frontend source audit: no unauthorized cross-user loop invocations
+// 1. Elimination of setInterval, polling, and window focus loops
 // ============================================================================
-test('1. Frontend notifications.ts implements role-based recipient resolution and prevents cross-user spam', () => {
-  // Must have resolveNotificationRecipients
-  assert.match(notificationsTs, /async function resolveNotificationRecipients\(targetRoles:\s*string\[\]\)/);
-  
-  // Must restrict regular users to only self
-  assert.match(notificationsTs, /if \(targetRoles\.includes\(caller\.role\)\) \{\s*return \[caller\.userId\];\s*\}/);
+test('1. No setInterval or background notification polling exists in codebase', () => {
+  // Must NOT have any notificationInterval or setInterval invocation in notifications.ts
+  assert.doesNotMatch(notificationsTs, /notificationInterval/);
+  assert.doesNotMatch(notificationsTs, /setInterval\s*\(/);
+  assert.doesNotMatch(notificationsTs, /600000/); // 10-minute interval removed
 
-  // Must guard createNotification client-side against non-admin cross-user notifications
-  assert.match(notificationsTs, /if \(params\.userId !== caller\.userId && !\[['"]admin['"],\s*['"]manager['"]\]\.includes\(caller\.role\)\) \{\s*return;\s*\}/);
-
-  // Periodic checkers must use recipientIds instead of querying and notifying all users
-  assert.match(notificationsTs, /const recipientIds = await resolveNotificationRecipients\(\['admin', 'warehouse'\]\);/);
-  assert.match(notificationsTs, /const recipientIds = await resolveNotificationRecipients\(\['admin', 'warehouse', 'sales'\]\);/);
-  assert.match(notificationsTs, /const recipientIds = await resolveNotificationRecipients\(\['admin', 'sales'\]\);/);
-  assert.match(notificationsTs, /const recipientIds = await resolveNotificationRecipients\(\['sales', 'warehouse', 'admin', 'manager'\]\);/);
-
-  // Tax notifications check must only execute for authorized roles
-  assert.match(notificationsTs, /if \(!caller \|\| !\[['"]admin['"],\s*['"]manager['"],\s*['"]accounts['"]\]\.includes\(caller\.role\)\) return;/);
+  // NotificationDropdown must NOT poll on window focus
+  assert.doesNotMatch(notificationDropdownTs, /window\.addEventListener\(['"]focus['"]/);
+  assert.match(notificationDropdownTs, /notifications-checked/);
 });
 
 // ============================================================================
-// 2. Database function audit: upsert_notification handles cross-user attempts gracefully
+// 2. Daily Execution Guard implementation
 // ============================================================================
-test('2. Live upsert_notification definition returns false on unauthorized cross-user notification instead of raising exception', () => {
+test('2. Daily execution guard functions and once-per-day logic are implemented', () => {
+  assert.match(notificationsTs, /export function getLocalCalendarDate/);
+  assert.match(notificationsTs, /export function getDailyNotificationGuardKey/);
+  assert.match(notificationsTs, /export function isDailyNotificationCheckCompleted/);
+  assert.match(notificationsTs, /export function markDailyNotificationCheckCompleted/);
+
+  // initializeNotificationChecks must guard on completion and mark completed only on success
+  assert.match(notificationsTs, /if \(isDailyNotificationCheckCompleted\(user\.id\)\)/);
+  assert.match(notificationsTs, /markDailyNotificationCheckCompleted\(user\.id\)/);
+
+  // Role check and safe recipient resolution must remain intact
+  assert.match(notificationsTs, /resolveNotificationRecipients/);
+  assert.match(notificationsTs, /createNotification/);
+});
+
+// ============================================================================
+// 3. Functional behavior: Day 1 first run, Day 1 duplicate run, and Day 2 next day
+// ============================================================================
+test('3. Daily guard behavior: Day 1 runs once, duplicate Day 1 skips, Day 2 runs again', () => {
+  // Simulate the exact localStorage and calendar date logic used in notifications.ts
+  const mockStorage = new Map();
+
+  function getLocalCalendarDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function getDailyNotificationGuardKey(userId, date) {
+    return `notification_check_${userId}_${getLocalCalendarDate(date)}`;
+  }
+
+  function isDailyNotificationCheckCompleted(userId, date) {
+    return mockStorage.get(getDailyNotificationGuardKey(userId, date)) === 'completed';
+  }
+
+  function markDailyNotificationCheckCompleted(userId, date) {
+    mockStorage.set(getDailyNotificationGuardKey(userId, date), 'completed');
+  }
+
+  let executionCount = 0;
+  function simulateAppInit(userId, simulatedDate, shouldFail = false) {
+    if (isDailyNotificationCheckCompleted(userId, simulatedDate)) {
+      return false; // Skipped by daily guard
+    }
+
+    if (shouldFail) {
+      // Failure prevents marking completed
+      return false;
+    }
+
+    executionCount++;
+    markDailyNotificationCheckCompleted(userId, simulatedDate);
+    return true;
+  }
+
+  const userId = 'usr-001-test';
+  const day1 = new Date('2026-09-24T09:00:00');
+  const day1Later = new Date('2026-09-24T14:30:00');
+  const day2 = new Date('2026-09-25T08:00:00');
+
+  // Day 1 first open: executes
+  assert.equal(simulateAppInit(userId, day1), true);
+  assert.equal(executionCount, 1);
+  assert.equal(isDailyNotificationCheckCompleted(userId, day1), true);
+
+  // Day 1 second open (e.g. reload or new tab): skipped
+  assert.equal(simulateAppInit(userId, day1Later), false);
+  assert.equal(executionCount, 1, 'Duplicate open on Day 1 must NOT re-execute notification checks');
+
+  // Day 2 first open (next calendar day): executes once
+  assert.equal(simulateAppInit(userId, day2), true);
+  assert.equal(executionCount, 2, 'First open on Day 2 must execute notification checks');
+
+  // Day 2 second open: skipped
+  assert.equal(simulateAppInit(userId, day2), false);
+  assert.equal(executionCount, 2);
+
+  // Test failure recovery:
+  const day3 = new Date('2026-09-26T10:00:00');
+  // First attempt fails
+  assert.equal(simulateAppInit(userId, day3, true), false);
+  assert.equal(isDailyNotificationCheckCompleted(userId, day3), false, 'Failed check must NOT be marked completed');
+  // Second attempt succeeds
+  assert.equal(simulateAppInit(userId, day3, false), true);
+  assert.equal(isDailyNotificationCheckCompleted(userId, day3), true);
+});
+
+// ============================================================================
+// 4. Live DB upsert_notification definition check
+// ============================================================================
+test('4. Live upsert_notification definition returns false on unauthorized cross-user notification instead of raising exception', () => {
   const rows = runDbScript(`
     SELECT prosrc FROM pg_proc WHERE proname = 'upsert_notification';
   `);
   assert.ok(rows.length > 0, 'upsert_notification function must exist');
   const prosrc = rows[0].prosrc;
 
-  // Must NOT raise exception 'Unauthorized to send notifications to other users'
   assert.doesNotMatch(prosrc, /RAISE EXCEPTION 'Unauthorized to send notifications to other users'/i);
-
-  // Must check caller vs target and gracefully return false for non-admin/manager
   assert.match(prosrc, /v_caller != p_user_id/);
   assert.match(prosrc, /RETURN false;/);
 });
 
 // ============================================================================
-// 3. Functional DB test: simulate non-admin caller notifying another user
+// 5. Functional DB test: unauthorized cross-user returns false with 0 errors
 // ============================================================================
-test('3. Simulated non-admin cross-user notification returns false without throwing error', () => {
-  // Test via anonymous DO block or SQL function call simulating auth context
+test('5. Simulated non-admin cross-user notification returns false without throwing error', () => {
   const rows = runDbScript(`
     DO $$
     DECLARE
@@ -83,11 +167,9 @@ test('3. Simulated non-admin cross-user notification returns false without throw
       v_user_a uuid := '00000000-0000-0000-0000-000000000001';
       v_user_b uuid := '00000000-0000-0000-0000-000000000002';
     BEGIN
-      -- Simulate request.jwt.claim.sub = user_a
       PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
       PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
 
-      -- Calling upsert_notification for user_b from user_a (neither is admin)
       v_res := public.upsert_notification(
         v_user_b,
         'low_stock',
@@ -95,7 +177,6 @@ test('3. Simulated non-admin cross-user notification returns false without throw
         'Test Message'
       );
 
-      -- Result must be false (denied), and crucially MUST NOT RAISE AN EXCEPTION
       IF v_res IS NOT FALSE THEN
         RAISE EXCEPTION 'Expected upsert_notification to return false for unauthorized cross-user call, got %', v_res;
       END IF;

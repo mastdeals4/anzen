@@ -157,6 +157,7 @@ export async function checkAndCreateLowStockNotifications() {
   } catch (error) {
     if (isNavigationAbort(error)) return;
     console.error('Error checking low stock:', error);
+    throw error;
   }
 }
 
@@ -200,6 +201,7 @@ export async function checkAndCreateExpiryNotifications() {
   } catch (error) {
     if (isNavigationAbort(error)) return;
     console.error('Error checking expiry dates:', error);
+    throw error;
   }
 }
 
@@ -235,6 +237,7 @@ export async function checkAndCreateFollowUpNotifications() {
   } catch (error) {
     if (isNavigationAbort(error)) return;
     console.error('Error checking follow-ups:', error);
+    throw error;
   }
 }
 
@@ -282,10 +285,47 @@ export async function checkAndCreateDeliveryDueNotifications() {
   } catch (error) {
     if (isNavigationAbort(error)) return;
     console.error('Error checking delivery due alerts:', error);
+    throw error;
   }
 }
 
-let notificationInterval: ReturnType<typeof setInterval> | null = null;
+export function getLocalCalendarDate(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getDailyNotificationGuardKey(userId: string, date: Date = new Date()): string {
+  return `notification_check_${userId}_${getLocalCalendarDate(date)}`;
+}
+
+export function isDailyNotificationCheckCompleted(userId: string, date: Date = new Date()): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(getDailyNotificationGuardKey(userId, date)) === 'completed';
+  } catch {
+    return false;
+  }
+}
+
+export function markDailyNotificationCheckCompleted(userId: string, date: Date = new Date()): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const key = getDailyNotificationGuardKey(userId, date);
+    localStorage.setItem(key, 'completed');
+
+    // Clean up older date keys for this user to keep localStorage bounded
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(`notification_check_${userId}_`) && k !== key) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // localStorage unavailable — silently ignore
+  }
+}
 
 async function checkAndCreateTaxNotifications() {
   try {
@@ -297,6 +337,7 @@ async function checkAndCreateTaxNotifications() {
   } catch (error) {
     if (isNavigationAbort(error)) return;
     console.error('Error generating tax notifications:', error);
+    throw error;
   }
 }
 
@@ -307,27 +348,60 @@ async function checkAndCreateEnquiryTaskReminders() {
   } catch (error) {
     if (isNavigationAbort(error)) return;
     console.error('Error evaluating enquiry task reminders:', error);
+    throw error;
   }
 }
 
-export async function initializeNotificationChecks() {
-  if (notificationInterval) {
-    clearInterval(notificationInterval);
+let isCheckingNotifications = false;
+
+/**
+ * Initializes notification checks ONCE PER USER PER CALENDAR DAY.
+ *
+ * Daily execution guard:
+ * - Checks localStorage for `notification_check_<user_id>_<YYYY-MM-DD>`.
+ * - If today's check has already completed: returns false immediately (NO queries, NO RPCs).
+ * - If not completed: executes the alert checks once, marks the day as completed,
+ *   and dispatches a 'notifications-checked' window event.
+ * - If any check genuinely fails, does NOT mark the day as completed to allow retry on next startup.
+ * - Strictly NO timer intervals, NO polling, NO repeated checks.
+ */
+export async function initializeNotificationChecks(): Promise<boolean> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    // Daily execution guard: run at most ONCE per user per calendar day
+    if (isDailyNotificationCheckCompleted(user.id)) {
+      return false;
+    }
+
+    if (isCheckingNotifications) {
+      return false;
+    }
+    isCheckingNotifications = true;
+
+    try {
+      await checkAndCreateLowStockNotifications();
+      await checkAndCreateExpiryNotifications();
+      await checkAndCreateFollowUpNotifications();
+      await checkAndCreateDeliveryDueNotifications();
+      await checkAndCreateTaxNotifications();
+      await checkAndCreateEnquiryTaskReminders();
+
+      // Mark completed ONLY after all checks succeed
+      markDailyNotificationCheckCompleted(user.id);
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('notifications-checked'));
+      }
+      return true;
+    } finally {
+      isCheckingNotifications = false;
+    }
+  } catch (error) {
+    if (isNavigationAbort(error)) return false;
+    console.error('Error during daily notification checks:', error);
+    // If check failed, do NOT mark completed so it can retry on next initialization
+    return false;
   }
-
-  await checkAndCreateLowStockNotifications();
-  await checkAndCreateExpiryNotifications();
-  await checkAndCreateFollowUpNotifications();
-  await checkAndCreateDeliveryDueNotifications();
-  await checkAndCreateTaxNotifications();
-  await checkAndCreateEnquiryTaskReminders();
-
-  notificationInterval = setInterval(async () => {
-    await checkAndCreateLowStockNotifications();
-    await checkAndCreateExpiryNotifications();
-    await checkAndCreateFollowUpNotifications();
-    await checkAndCreateDeliveryDueNotifications();
-    await checkAndCreateTaxNotifications();
-    await checkAndCreateEnquiryTaskReminders();
-  }, 600000);
 }

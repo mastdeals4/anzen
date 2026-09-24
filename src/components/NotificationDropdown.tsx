@@ -63,12 +63,14 @@ export function NotificationDropdown() {
     if (!user) return;
     loadNotifications();
 
-    // Realtime replaces the 60s polling; refresh on window focus for a lightweight top-up.
-    const onFocus = () => loadNotifications();
-    window.addEventListener('focus', onFocus);
+    // Refresh when the daily notification check completes
+    const onChecked = () => {
+      loadNotifications();
+    };
+    window.addEventListener('notifications-checked', onChecked);
 
     return () => {
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('notifications-checked', onChecked);
     };
   }, [user]);
 
