@@ -21,22 +21,34 @@ interface Reminder {
 
 interface TodaysActionsDashboardProps {
   onActionClick?: (reminderId: string) => void;
+  initialDeliveryAlerts?: SalesOrderDeliveryAlert[];
+  initialPendingSalesOrders?: number;
+  initialPendingDeliveryChallans?: number;
 }
 
-export function TodaysActionsDashboard({ onActionClick: _onActionClick }: TodaysActionsDashboardProps) {
+export function TodaysActionsDashboard({
+  onActionClick: _onActionClick,
+  initialDeliveryAlerts,
+  initialPendingSalesOrders,
+  initialPendingDeliveryChallans,
+}: TodaysActionsDashboardProps) {
   const { profile } = useAuth();
   const { setCurrentPage } = useNavigation();
   const [todayReminders, setTodayReminders] = useState<Reminder[]>([]);
   const [overdueReminders, setOverdueReminders] = useState<Reminder[]>([]);
-  const [pendingSalesOrders, setPendingSalesOrders] = useState(0);
-  const [pendingDeliveryChallans, setPendingDeliveryChallans] = useState(0);
-  const [deliveryAlerts, setDeliveryAlerts] = useState<SalesOrderDeliveryAlert[]>([]);
+  const [pendingSalesOrders, setPendingSalesOrders] = useState(initialPendingSalesOrders || 0);
+  const [pendingDeliveryChallans, setPendingDeliveryChallans] = useState(initialPendingDeliveryChallans || 0);
+  const [deliveryAlerts, setDeliveryAlerts] = useState<SalesOrderDeliveryAlert[]>(initialDeliveryAlerts || []);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadReminders();
-    loadApprovals();
-    loadDeliveryAlerts();
+    if (initialPendingSalesOrders === undefined && initialPendingDeliveryChallans === undefined) {
+      loadApprovals();
+    }
+    if (initialDeliveryAlerts === undefined) {
+      loadDeliveryAlerts();
+    }
 
     const subscription = supabase
       .channel('reminders_changes')
@@ -59,6 +71,21 @@ export function TodaysActionsDashboard({ onActionClick: _onActionClick }: Todays
       supabase.removeChannel(subscription);
     };
   }, [profile?.role]);
+
+  useEffect(() => {
+    if (initialDeliveryAlerts !== undefined) {
+      setDeliveryAlerts(initialDeliveryAlerts);
+    }
+  }, [initialDeliveryAlerts]);
+
+  useEffect(() => {
+    if (initialPendingSalesOrders !== undefined) {
+      setPendingSalesOrders(initialPendingSalesOrders);
+    }
+    if (initialPendingDeliveryChallans !== undefined) {
+      setPendingDeliveryChallans(initialPendingDeliveryChallans);
+    }
+  }, [initialPendingSalesOrders, initialPendingDeliveryChallans]);
 
   const loadReminders = async () => {
     try {

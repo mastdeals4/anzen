@@ -39,18 +39,33 @@ interface AttentionData {
   pendingMaterialReturnsCount: number;
 }
 
-export const OwnerAttentionDashboard: React.FC = () => {
+export interface OwnerAttentionSharedData {
+  arOverdueAmount?: number;
+  arOverdueCount?: number;
+  pendingSalesOrdersCount?: number;
+  pendingDeliveryChallansCount?: number;
+  pendingExpensesCount?: number;
+  pendingPettyCashCount?: number;
+}
+
+interface OwnerAttentionDashboardProps {
+  sharedData?: OwnerAttentionSharedData;
+}
+
+export const OwnerAttentionDashboard: React.FC<OwnerAttentionDashboardProps> = ({ sharedData }) => {
   const { setCurrentPage } = useNavigation();
   const [data, setData] = useState<AttentionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     try {
       const todayStr = new Date().toISOString().split('T')[0];
       const ninetyDaysFromNow = new Date();
       ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
       const ninetyDaysStr = ninetyDaysFromNow.toISOString().split('T')[0];
+
+      const useShared = !forceRefresh && sharedData !== undefined;
 
       const [
         bankBalancesRes,
@@ -71,12 +86,16 @@ export const OwnerAttentionDashboard: React.FC = () => {
       ] = await Promise.all([
         supabase.rpc('get_bank_account_balances', { p_as_of_date: todayStr }),
         supabase.rpc('get_petty_cash_balance'),
-        supabase.rpc('get_overdue_balances'),
-        supabase
-          .from('sales_invoices')
-          .select('id', { count: 'exact', head: true })
-          .in('payment_status', ['pending', 'partial'])
-          .lt('due_date', todayStr),
+        useShared && sharedData.arOverdueAmount !== undefined
+          ? Promise.resolve({ data: null })
+          : supabase.rpc('get_overdue_balances'),
+        useShared && sharedData.arOverdueCount !== undefined
+          ? Promise.resolve({ count: sharedData.arOverdueCount })
+          : supabase
+              .from('sales_invoices')
+              .select('id', { count: 'exact', head: true })
+              .in('payment_status', ['pending', 'partial'])
+              .lt('due_date', todayStr),
         supabase
           .from('purchase_invoices')
           .select('id, balance_amount, total_amount, paid_amount')
@@ -104,23 +123,31 @@ export const OwnerAttentionDashboard: React.FC = () => {
           .from('bank_statement_lines')
           .select('id', { count: 'exact', head: true })
           .eq('reconciliation_status', 'unmatched'),
-        supabase
-          .from('sales_orders')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending_approval'),
-        supabase
-          .from('delivery_challans')
-          .select('id', { count: 'exact', head: true })
-          .eq('approval_status', 'pending_approval'),
-        supabase
-          .from('effective_expense_posting_state')
-          .select('expense_id', { count: 'exact', head: true })
-          .eq('effective_posting_state', 'PENDING'),
-        supabase
-          .from('petty_cash_transactions')
-          .select('id', { count: 'exact', head: true })
-          .is('fund_transfer_id', null)
-          .eq('approval_status', 'pending_approval'),
+        useShared && sharedData.pendingSalesOrdersCount !== undefined
+          ? Promise.resolve({ count: sharedData.pendingSalesOrdersCount })
+          : supabase
+              .from('sales_orders')
+              .select('id', { count: 'exact', head: true })
+              .eq('status', 'pending_approval'),
+        useShared && sharedData.pendingDeliveryChallansCount !== undefined
+          ? Promise.resolve({ count: sharedData.pendingDeliveryChallansCount })
+          : supabase
+              .from('delivery_challans')
+              .select('id', { count: 'exact', head: true })
+              .eq('approval_status', 'pending_approval'),
+        useShared && sharedData.pendingExpensesCount !== undefined
+          ? Promise.resolve({ count: sharedData.pendingExpensesCount })
+          : supabase
+              .from('effective_expense_posting_state')
+              .select('expense_id', { count: 'exact', head: true })
+              .eq('effective_posting_state', 'PENDING'),
+        useShared && sharedData.pendingPettyCashCount !== undefined
+          ? Promise.resolve({ count: sharedData.pendingPettyCashCount })
+          : supabase
+              .from('petty_cash_transactions')
+              .select('id', { count: 'exact', head: true })
+              .is('fund_transfer_id', null)
+              .eq('approval_status', 'pending_approval'),
         supabase
           .from('material_returns')
           .select('id', { count: 'exact', head: true })
@@ -144,10 +171,12 @@ export const OwnerAttentionDashboard: React.FC = () => {
       const pettyCash = Number(pettyCashRes.data) || 0;
 
       // Calculate AR Overdue
-      const arOverdueAmount = (arOverdueBalancesRes.data || []).reduce(
-        (sum: number, row: { balance_due: number }) => sum + (Number(row.balance_due) || 0),
-        0
-      );
+      const arOverdueAmount = (useShared && sharedData.arOverdueAmount !== undefined)
+        ? sharedData.arOverdueAmount
+        : (arOverdueBalancesRes.data || []).reduce(
+            (sum: number, row: { balance_due: number }) => sum + (Number(row.balance_due) || 0),
+            0
+          );
 
       // Calculate AP Due
       const apDueAmount = (apInvoicesRes.data || []).reduce(
@@ -166,7 +195,7 @@ export const OwnerAttentionDashboard: React.FC = () => {
         bcaIdrBalance: bcaIdr,
         bcaUsdBalance: bcaUsd,
         pettyCashBalance: pettyCash,
-        arOverdueCount: arOverdueInvoicesRes.count || 0,
+        arOverdueCount: (useShared && sharedData.arOverdueCount !== undefined) ? sharedData.arOverdueCount : (arOverdueInvoicesRes.count || 0),
         arOverdueAmount,
         apDueCount: apInvoicesRes.data?.length || 0,
         apDueAmount,
@@ -175,10 +204,10 @@ export const OwnerAttentionDashboard: React.FC = () => {
         openImportReqsCount: importReqsRes.count || 0,
         dcWaitingForInvoiceCount: dcInvoicingRes.count || 0,
         unreconciledBankLinesCount: unmatchedBankLinesRes.count || 0,
-        pendingSalesOrdersCount: pendingSoRes.count || 0,
-        pendingDeliveryChallansCount: pendingDcRes.count || 0,
-        pendingExpensesCount: pendingExpensesRes.count || 0,
-        pendingPettyCashCount: pendingPettyCashRes.count || 0,
+        pendingSalesOrdersCount: (useShared && sharedData.pendingSalesOrdersCount !== undefined) ? sharedData.pendingSalesOrdersCount : (pendingSoRes.count || 0),
+        pendingDeliveryChallansCount: (useShared && sharedData.pendingDeliveryChallansCount !== undefined) ? sharedData.pendingDeliveryChallansCount : (pendingDcRes.count || 0),
+        pendingExpensesCount: (useShared && sharedData.pendingExpensesCount !== undefined) ? sharedData.pendingExpensesCount : (pendingExpensesRes.count || 0),
+        pendingPettyCashCount: (useShared && sharedData.pendingPettyCashCount !== undefined) ? sharedData.pendingPettyCashCount : (pendingPettyCashRes.count || 0),
         pendingMaterialReturnsCount: pendingReturnsRes.count || 0,
       });
     } catch (err) {
@@ -191,11 +220,11 @@ export const OwnerAttentionDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [sharedData]);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    loadData();
+    loadData(true);
   };
 
   if (loading) {

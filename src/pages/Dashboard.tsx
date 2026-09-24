@@ -59,6 +59,16 @@ export function Dashboard() {
     deliveryDueSoon: 0,
     deliveryOverdue: 0,
   });
+  const [sharedAttentionData, setSharedAttentionData] = useState<{
+    arOverdueAmount?: number;
+    arOverdueCount?: number;
+    pendingSalesOrdersCount?: number;
+    pendingDeliveryChallansCount?: number;
+    pendingExpensesCount?: number;
+    pendingPettyCashCount?: number;
+  } | undefined>(undefined);
+  const [rawDeliveryAlerts, setRawDeliveryAlerts] = useState<any[] | undefined>(undefined);
+  const [showSecondary, setShowSecondary] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,8 +82,14 @@ export function Dashboard() {
     try {
       setError(null);
       const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+      const startOfMonthStr = startOfMonth.toISOString().split('T')[0];
+      const endOfMonthStr = endOfMonth.toISOString().split('T')[0];
+      const in30Days = new Date();
+      in30Days.setDate(in30Days.getDate() + 30);
+      const in30DaysStr = in30Days.toISOString().split('T')[0];
 
       const [
         productsResult,
@@ -87,19 +103,24 @@ export function Dashboard() {
         pendingPettyCashResult,
         pendingInvoicesResult,
         overdueInvoicesResult,
+        batchesResult,
+        overdueBalancesResult,
         deliveryAlerts,
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('inventory_v1_stock_summary').select('product_id, min_stock_level, total_current_stock, available_quantity'),
+        supabase
+          .from('inventory_v1_stock_summary')
+          .select('product_id, min_stock_level, total_current_stock, available_quantity')
+          .gt('min_stock_level', 0),
         supabase.from('customers').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase
           .from('sales_invoices')
-          .select('total_amount, subtotal, created_at, invoice_date')
-          .gte('invoice_date', startOfMonth.toISOString())
-          .lte('invoice_date', endOfMonth.toISOString()),
+          .select('id', { count: 'exact', head: true })
+          .gte('invoice_date', startOfMonthStr)
+          .lte('invoice_date', endOfMonthStr),
         supabase
           .from('crm_activities')
-          .select('id', { count: 'exact' })
+          .select('id', { count: 'exact', head: true })
           .eq('is_completed', false)
           .not('follow_up_date', 'is', null),
         supabase
@@ -125,9 +146,17 @@ export function Dashboard() {
           .in('payment_status', ['pending', 'partial']),
         supabase
           .from('sales_invoices')
-          .select('id, total_amount, due_date')
+          .select('id', { count: 'exact', head: true })
           .in('payment_status', ['pending', 'partial'])
-          .lt('due_date', new Date().toISOString().split('T')[0]),
+          .lt('due_date', todayStr),
+        supabase
+          .from('batches')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_active', true)
+          .gt('current_stock', 0)
+          .gte('expiry_date', todayStr)
+          .lte('expiry_date', in30DaysStr),
+        supabase.rpc('get_overdue_balances'),
         fetchSalesOrderDeliveryAlerts(),
       ]);
 
@@ -136,57 +165,45 @@ export function Dashboard() {
         Number(p.available_quantity ?? p.total_current_stock ?? 0) < Number(p.min_stock_level)
       ).length || 0;
 
-      const batchesResult = await supabase
-        .from('batches')
-        .select('current_stock, expiry_date')
-        .eq('is_active', true)
-        .gt('current_stock', 0);
-
-      const thirtyDaysFromNow = new Date();
-      thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-      const nearExpiryCount = batchesResult.data?.filter(
-        b => b.expiry_date && new Date(b.expiry_date) <= thirtyDaysFromNow && new Date(b.expiry_date) >= new Date()
-      ).length || 0;
-
-      const totalRevenue = invoicesResult.data?.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0) || 0;
-
-      // Fetch all overdue balances in one query instead of N+1 individual calls
-      const { data: overdueBalances } = await supabase.rpc('get_overdue_balances');
-      const overdueAmount = (overdueBalances || []).reduce(
+      const overdueAmount = (overdueBalancesResult.data || []).reduce(
         (sum: number, row: { balance_due: number }) => sum + (Number(row.balance_due) || 0), 0
       );
       const deliveryAlertSummary = summarizeDeliveryAlerts(deliveryAlerts);
 
-      // Fetch real COGS from batch landed costs for accurate gross profit
-      const { data: cogsData } = await supabase.rpc('get_cogs_for_period', {
-        p_start: startOfMonth.toISOString().split('T')[0],
-        p_end: endOfMonth.toISOString().split('T')[0],
-      });
-      const totalCOGS = Number(cogsData) || 0;
-
       setStats({
         totalProducts: productsResult.count || 0,
         lowStockItems: lowStockCount,
-        nearExpiryBatches: nearExpiryCount,
+        nearExpiryBatches: batchesResult.count || 0,
         totalCustomers: customersResult.count || 0,
-        salesThisMonth: invoicesResult.data?.length || 0,
-        revenueThisMonth: totalRevenue,
-        profitThisMonth: Math.max(0, totalRevenue - totalCOGS),
+        salesThisMonth: invoicesResult.count || 0,
+        revenueThisMonth: 0,
+        profitThisMonth: 0,
         pendingFollowUps: activitiesResult.count || 0,
         pendingSalesOrders: pendingSalesOrdersResult.count || 0,
         pendingDeliveryChallans: pendingDCResult.count || 0,
         pendingExpenses: pendingExpensesResult.count || 0,
         pendingPettyCash: pendingPettyCashResult.count || 0,
         pendingInvoices: pendingInvoicesResult.count || 0,
-        overdueInvoicesCount: overdueInvoicesResult.data?.length || 0,
+        overdueInvoicesCount: overdueInvoicesResult.count || 0,
         overdueInvoicesAmount: overdueAmount,
         deliveryDueSoon: deliveryAlertSummary.dueSoon.length,
         deliveryOverdue: deliveryAlertSummary.overdue.length,
       });
+
+      setSharedAttentionData({
+        arOverdueAmount: overdueAmount,
+        arOverdueCount: overdueInvoicesResult.count || 0,
+        pendingSalesOrdersCount: pendingSalesOrdersResult.count || 0,
+        pendingDeliveryChallansCount: pendingDCResult.count || 0,
+        pendingExpensesCount: pendingExpensesResult.count || 0,
+        pendingPettyCashCount: pendingPettyCashResult.count || 0,
+      });
+      setRawDeliveryAlerts(deliveryAlerts);
     } catch (err) {
       setError('Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
+      setTimeout(() => setShowSecondary(true), 50);
     }
   };
 
@@ -359,7 +376,7 @@ export function Dashboard() {
         </div>
 
         {(isAdmin || isAccounts || isManager || isAuditor) && (
-          <OwnerAttentionDashboard />
+          <OwnerAttentionDashboard sharedData={sharedAttentionData} />
         )}
 
         {error ? (
@@ -416,28 +433,32 @@ export function Dashboard() {
               })}
             </div>
 
-            {(isAdmin || isAccounts) && (
+            {showSecondary && (isAdmin || isAccounts) && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <RevenueChart />
                 <SalesPipelineChart />
               </div>
             )}
 
-            {(isAdmin || isAccounts) && (
+            {showSecondary && (isAdmin || isAccounts) && (
               <TaxComplianceDashboardCards />
             )}
           </>
         )}
 
         <div className={`grid grid-cols-1 ${(isAdmin || isAccounts) ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
-          {(isAdmin || isAccounts) && (
+          {showSecondary && (isAdmin || isAccounts) && (
             <div className="md:col-span-1 lg:col-span-1">
               <PaymentOverview />
             </div>
           )}
           {(isAdmin || isWarehouse || isManager) && (
             <div className="md:col-span-1 lg:col-span-1">
-              <TodaysActionsDashboard />
+              <TodaysActionsDashboard
+                initialDeliveryAlerts={rawDeliveryAlerts}
+                initialPendingSalesOrders={stats.pendingSalesOrders}
+                initialPendingDeliveryChallans={stats.pendingDeliveryChallans}
+              />
             </div>
           )}
           {quickLinks.length > 0 && (
