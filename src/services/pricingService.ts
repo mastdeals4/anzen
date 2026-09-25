@@ -52,6 +52,95 @@ export interface PricingConfig {
   };
 }
 
+export const DEFAULT_FCL_CAPACITY: FCLCapacity = {
+  mixed: 12000,
+  bags_25kg: 20000,
+  bags_50kg: 20000,
+  drums_25kg: 10000,
+  drums_50kg: 16000,
+};
+
+export const DEFAULT_CONFIG: PricingConfig = {
+  fcl: {
+    '20ft': { clearance: 500, capacity: { ...DEFAULT_FCL_CAPACITY } },
+    '40ft': { clearance: 800, capacity: { mixed: 25000, bags_25kg: 26000, bags_50kg: 26000, drums_25kg: 15000, drums_50kg: 20000 } },
+  },
+  lcl: {
+    min_chargeable: 1,
+    clearance_base: 250,
+    clearance_base_limit_cbm: 5,
+    clearance_additional_per_cbm: 30,
+    trucking_2t: 150,
+    trucking_4t: 250,
+    trucking_above_4t: 350,
+    generic_charge: 500,
+    packaging: {
+      mixed: { weight: 25, cbm: 0.032 },
+      '25kg_drum': { weight: 25, cbm: 0.035 },
+      '50kg_drum': { weight: 50, cbm: 0.060 },
+      '25kg_bag': { weight: 25, cbm: 0.028 },
+      '50kg_bag': { weight: 50, cbm: 0.055 },
+    },
+  },
+  air: {
+    clearance_base: 350,
+    clearance_min_weight: 100,
+    clearance_per_kg_after: 3.5,
+    trucking_500: 150,
+    trucking_above_500: 250,
+    generic_charge: 500,
+  },
+  general: {
+    fx_mode: 'auto',
+    fx_buffer_percent: 1,
+    manual_fx_rate: 16000,
+    inr_usd_mode: 'manual',
+    inr_usd_manual_rate: 91,
+    inr_usd_buffer: 1,
+    inr_usd_cached_rate: 0,
+    inr_usd_cached_at: 0,
+  },
+};
+
+export async function loadPricingConfig(client?: any): Promise<PricingConfig> {
+  const merged: PricingConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  try {
+    const sb = client || (await import('../lib/supabase')).supabase;
+    const { data } = await sb.from('pricing_settings').select('*').maybeSingle();
+    if (data?.config) {
+      const raw = data.config as any;
+      if (raw.general) Object.assign(merged.general, raw.general);
+      if (raw.fcl) {
+        for (const ct of ['20ft', '40ft'] as const) {
+          if (raw.fcl[ct]) {
+            merged.fcl[ct].clearance = raw.fcl[ct].clearance ?? merged.fcl[ct].clearance;
+            if (raw.fcl[ct].capacity) Object.assign(merged.fcl[ct].capacity, raw.fcl[ct].capacity);
+          }
+        }
+      }
+      if (raw.lcl) {
+        const savedPkg = raw.lcl.packaging;
+        Object.assign(merged.lcl, raw.lcl);
+        merged.lcl.packaging = { ...DEFAULT_CONFIG.lcl.packaging };
+        if (savedPkg) {
+          for (const pk of Object.keys(savedPkg)) {
+            if (merged.lcl.packaging[pk as keyof typeof merged.lcl.packaging]) {
+              Object.assign(merged.lcl.packaging[pk as keyof typeof merged.lcl.packaging], savedPkg[pk]);
+            } else {
+              (merged.lcl.packaging as any)[pk] = savedPkg[pk];
+            }
+          }
+        }
+      }
+      if (raw.air) Object.assign(merged.air, raw.air);
+    }
+  } catch (err) {
+    console.error('Failed to load pricing_settings, falling back to default:', err);
+  }
+  return merged;
+}
+
+
 export interface FCLInput {
   purchase_currency: PurchaseCurrency;
   purchase_price: number;

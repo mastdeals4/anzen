@@ -108,6 +108,7 @@ export async function runSapjGmailAgent(options?: {
   maxMessages?: number;
   forceReprocess?: boolean;
   forceMessageId?: string;
+  scanLast7Days?: boolean;
 }): Promise<AgentScanSummary> {
   const { data: session } = await supabase.auth.getSession();
   if (!session.session) {

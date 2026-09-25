@@ -1,36 +1,132 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigation } from '../contexts/NavigationContext';
-import { formatDate } from '../utils/dateFormat';
-import { buildUniqueDocumentNames } from '../utils/documentNaming';
-import { getSignedUrlCached, invalidateSignedUrl } from '../utils/signedUrlCache';
-import { loadMakeSuggestions, resetMakeSuggestions } from '../services/makeSuggestions';
+import { loadMakeSuggestions } from '../services/makeSuggestions';
+import { runSapjGmailAgent, type AgentScanSummary } from '../services/kunalIndiaPrice';
+import { showToast } from '../components/ToastNotification';
 import {
-  Calculator,
+  calculateFCL,
+  loadPricingConfig,
+  getEffectiveINRRate,
+  type PricingConfig,
+  type FCLInput,
+  type FCLPackingType,
+  DEFAULT_CONFIG,
+} from '../services/pricingService';
+import {
+  KunalInternalReplyModal,
+  type KunalReplyInquiry,
+  type KunalReplyDraft,
+  type KunalReplySourceOption,
+} from '../components/crm/KunalInternalReplyModal';
+import { KunalEmailEvidenceDrawer } from '../components/pricing/KunalEmailEvidenceDrawer';
+import {
   CheckCircle2,
-  FileText,
-  Mail,
-  Paperclip,
-  Plus,
+  ChevronDown,
+  ChevronRight,
   RefreshCw,
   Save,
   Send,
-  Trash2,
-  Upload,
-  X,
+  Sparkles,
+  Search,
+  AlertCircle,
+  Eye,
+  Calendar,
 } from 'lucide-react';
-import { showToast } from '../components/ToastNotification';
-import { KunalInternalReplyModal, type KunalReplyInquiry, type KunalReplyDraft, type KunalReplySourceOption } from '../components/crm/KunalInternalReplyModal';
-import { KunalCustomerQuoteModal, type CustomerQuoteInquiry, type CustomerQuoteOption } from '../components/crm/KunalCustomerQuoteModal';
-import { KunalIndiaPriceReview } from '../components/crm/KunalIndiaPriceReview';
-import { KunalPendingPriceTracker, type TrackerBucket } from '../components/crm/KunalPendingPriceTracker';
-import type { KunalIndiaReviewRow } from '../services/kunalIndiaPrice';
-import { TableColumn, useColumnPreferences } from '../hooks/useColumnPreferences';
-import { MoneyInput } from '../components/MoneyInput';
 
-interface Inquiry {
+export type PricingRowStatus =
+  | 'Needs Review'
+  | 'Price Received'
+  | 'Ready to Quote'
+  | 'Waiting Supplier'
+  | 'Completed';
+
+export interface UnifiedPricingRow {
+  id: string; // unique row id (inquiry id or ai review id)
+  aiReviewId?: string | null;
+  inquiryId?: string | null;
+  inquiryNumber: string;
+  aceerpNo: string;
+  customerName: string;
+  productName: string;
+  specification: string;
+  quantity: string;
+  requestedMake: string;
+  offeredMake: string;
+  supplierName: string;
+
+  // Source Rate (Source of Truth for calculation)
+  sourcePrice: number | null;
+  sourceCurrency: 'INR' | 'USD';
+  unit: string;
+  moq: string;
+  availability: 'available' | 'partial' | 'na';
+  leadTime: string;
+  remarks: string;
+
+  // Real Canonical FCL Assumptions (from pricingService)
+  containerType: '20ft' | '40ft';
+  packingType: FCLPackingType;
+  capacityKg: number;
+  effectiveInrRate: number;
+  indiaMarginPct: number;
+  freightUsdPerKg: number;
+  dutyPct: number;
+  insurancePct: number;
+  clearanceUsd: number;
+  indonesiaMarginPct: number;
+
+  // Real Calculated Engine Outputs
+  purchasePriceUsdPerKg: number | null;
+  landedCostUsd: number | null;
+  suggestedQuoteUsd: number | null;
+  quotePrice: number | null; // Kunal override
+  quoteCurrency: 'USD' | 'IDR';
+  quoteFxIdr: number;
+  totalQuoteAmount: number | null;
+  calcBreakdown?: Record<string, number> | null;
+
+  // State, Workflow & Action Badges
+  status: PricingRowStatus;
+  actionReason?: string | null;
+  isAiPrepared: boolean;
+  alternativeMakeDetected: boolean;
+  needsManualLink: boolean;
+
+  // Documents Checklist
+  documents: Array<{
+    documentType: string;
+    filename: string;
+    batchNumber?: string | null;
+    status: 'MATCHED' | 'REVIEW' | 'AMBIGUOUS' | 'MISSING';
+  }>;
+  docActionNotice?: string | null;
+
+  evidence?: {
+    from?: string;
+    to?: string;
+    subject?: string;
+    date?: string;
+    quote?: string;
+    why?: string;
+    bodyText?: string;
+    bodyHtml?: string | null;
+    threadId?: string | null;
+    messageId?: string | null;
+    attachments?: Array<{
+      attachmentId?: string;
+      filename: string;
+      mimeType?: string;
+      size?: number;
+      documentType?: string;
+      matchStatus?: string;
+    }>;
+  } | null;
+  sourceType: 'india' | 'china' | 'local';
+}
+
+interface CrmInquiryItem {
   id: string;
   inquiry_number: string;
   aceerp_no: string | null;
@@ -43,1127 +139,1958 @@ interface Inquiry {
   document_status: string;
   kunal_price_status: string;
   quote_status: string;
-  quote_sent_at: string | null;
-  pipeline_status: string | null;
-  price_ready: boolean | null;
   purchase_price: number | null;
   offered_price: number | null;
   purchase_price_currency: string | null;
   offered_price_currency: string | null;
-  kunal_pricing_requested_at: string | null;
-  kunal_pricing_note: string | null;
   remarks: string | null;
-  import_data_reference: string | null;
-  email_subject: string | null;
-  mail_subject: string | null;
+  kunal_pricing_requested_at: string | null;
   created_at: string;
 }
 
-interface PricingOption {
-  id: string;
-  inquiry_id: string;
-  source_type: string;
-  offered_make: string | null;
-  source_price: number | null;
-  source_currency: string;
-  availability: string;
-  document_status: string;
-  remark: string | null;
-  is_selected: boolean;
-  confidence: number | null;
-  // Part 5 — inline pricing-grid fields. All nullable; persisted by the
-  // 20260720120000_pricing_option_grid_fields migration. Until that migration
-  // is applied these live in local state only (see updateOption fallback).
-  moq: string | null;
-  packing: string | null;
-  lead_time: string | null;
-  origin: string | null;
-  supplier: string | null;
-  specification: string | null;
-  margin_pct: number | null;
-  selling_price: number | null;
-  selling_currency: string | null;
-}
+// Canonical Calculation Helper calling pricingService.calculateFCL
+function calculateCanonicalPricing(
+  sourcePrice: number | null,
+  sourceCurrency: 'INR' | 'USD',
+  quantityStr: string,
+  config: PricingConfig,
+  overrides?: {
+    containerType?: '20ft' | '40ft';
+    packingType?: FCLPackingType;
+    effectiveInrRate?: number;
+    indiaMarginPct?: number;
+    freightUsdPerKg?: number;
+    dutyPct?: number;
+    insurancePct?: number;
+    clearanceUsd?: number;
+    indonesiaMarginPct?: number;
+    quotePriceOverride?: number | null;
+  },
+): {
+  purchasePriceUsdPerKg: number | null;
+  landedCostUsd: number | null;
+  suggestedQuoteUsd: number | null;
+  quotePrice: number | null;
+  totalQuoteAmount: number | null;
+  calcBreakdown: Record<string, number> | null;
+} {
+  if (sourcePrice === null || sourcePrice <= 0) {
+    return {
+      purchasePriceUsdPerKg: null,
+      landedCostUsd: null,
+      suggestedQuoteUsd: null,
+      quotePrice: overrides?.quotePriceOverride ?? null,
+      totalQuoteAmount: null,
+      calcBreakdown: null,
+    };
+  }
 
-// Columns added by the Part-5 migration. Kept in one place so updateOption can
-// degrade gracefully when the migration has not yet been applied.
-const EXTENDED_OPTION_KEYS: (keyof PricingOption)[] = [
-  'moq', 'packing', 'lead_time', 'origin', 'supplier', 'specification', 'margin_pct', 'selling_price', 'selling_currency',
-];
+  const containerType = overrides?.containerType || '20ft';
+  const packingType = overrides?.packingType || 'mixed';
+  const indiaMarginPct = overrides?.indiaMarginPct ?? 4.0;
+  const freightUsdPerKg = overrides?.freightUsdPerKg ?? 0.08;
+  const dutyPct = overrides?.dutyPct ?? 4.0;
+  const insurancePct = overrides?.insurancePct ?? 0.1;
+  const indonesiaMarginPct = overrides?.indonesiaMarginPct ?? 4.0;
+  const clearanceUsd = overrides?.clearanceUsd ?? (config.fcl[containerType]?.clearance || 1100);
 
-interface RowDraft {
-  purchase_price: string;
-  offered_price: string;
-  purchase_currency: string;
-  offered_currency: string;
-  india_price: string;
-  india_price_currency: string;
-  kunal_remark: string;
-  import_data_reference: string;
-  selected_option_id: string | null;
-}
+  const parsedQty = parseFloat(String(quantityStr || '0').replace(/[^0-9.]/g, ''));
+  const sellingQty = parsedQty > 0 ? parsedQty : 12000;
 
-interface CrmDoc {
-  id: string;
-  inquiry_id: string;
-  product_name: string | null;
-  make: string | null;
-  document_type: string;
-  original_file_name: string | null;
-  display_file_name: string | null;
-  storage_path: string;
-  uploaded_by: string | null;
-  created_at: string;
-}
+  // Custom copy of config with overridden clearance and effective INR rate
+  const rowConfig: PricingConfig = JSON.parse(JSON.stringify(config));
+  rowConfig.fcl[containerType].clearance = clearanceUsd;
+  if (overrides?.effectiveInrRate && overrides.effectiveInrRate > 0) {
+    rowConfig.general.inr_usd_mode = 'manual';
+    rowConfig.general.inr_usd_manual_rate = overrides.effectiveInrRate;
+  }
 
-const CRM_DOC_TYPES = ['COA', 'MSDS', 'TDS', 'SPEC', 'MHD', 'COC', 'GMP', 'ISO', 'DMF', 'OTHER'] as const;
-const DOC_TYPE_COLOR: Record<string, string> = {
-  COA: 'bg-green-100 text-green-700',
-  MSDS: 'bg-red-100 text-red-700',
-  TDS: 'bg-blue-100 text-blue-700',
-  SPEC: 'bg-amber-100 text-amber-700',
-  OTHER: 'bg-gray-100 text-gray-600',
-};
+  const fclInput: FCLInput = {
+    purchase_currency: sourceCurrency,
+    purchase_price: sourceCurrency === 'USD' ? sourcePrice : 0,
+    inr_price: sourceCurrency === 'INR' ? sourcePrice : 0,
+    india_margin_percent: indiaMarginPct,
+    indonesia_margin_percent: indonesiaMarginPct,
+    freight_type: 'usd_per_kg',
+    freight_value: freightUsdPerKg,
+    insurance_percent: insurancePct,
+    duty_percent: dutyPct,
+    container_type: containerType,
+    packing_type: packingType,
+    selling_quantity: sellingQty,
+  };
 
-type TabKey = 'ai_india' | 'need' | 'source' | 'manual' | 'completed';
+  const res = calculateFCL(fclInput, rowConfig, 16000);
+  if (res.is_zero) {
+    return {
+      purchasePriceUsdPerKg: null,
+      landedCostUsd: null,
+      suggestedQuoteUsd: null,
+      quotePrice: overrides?.quotePriceOverride ?? null,
+      totalQuoteAmount: null,
+      calcBreakdown: null,
+    };
+  }
 
-const tabs: Array<{ key: TabKey; label: string }> = [
-  { key: 'ai_india', label: 'AI India Price Review' },
-  { key: 'need', label: 'Need My Price' },
-  { key: 'source', label: 'Source Price Received' },
-  { key: 'manual', label: 'Manual / Waiting Source' },
-  { key: 'completed', label: 'Completed' },
-];
+  const landedCost = Math.round(res.landed_cost_per_kg_usd * 100) / 100;
+  const suggestedQuote = Math.round(res.final_price_per_kg_usd * 100) / 100;
+  const finalQuote = overrides?.quotePriceOverride !== undefined
+    ? overrides.quotePriceOverride
+    : suggestedQuote;
 
-const KUNAL_COLUMNS: TableColumn[] = [
-  { key: 'inquiry', label: 'INQ #', width: 130, minWidth: 110, required: true },
-  { key: 'aceerp', label: 'AC ERP#', width: 110, minWidth: 90 },
-  { key: 'customer', label: 'Customer', width: 150, minWidth: 120 },
-  { key: 'product', label: 'Product', width: 180, minWidth: 130, required: true },
-  { key: 'spec', label: 'Spec', width: 140, minWidth: 100 },
-  { key: 'mail_subject', label: 'Inquiry Subject', width: 180, minWidth: 120 },
-  { key: 'qty', label: 'Qty', width: 70, minWidth: 60 },
-  { key: 'preferred', label: 'Preferred', width: 120, minWidth: 100 },
-  { key: 'source', label: 'Source', width: 110, minWidth: 90 },
-  { key: 'options', label: 'Options', width: 100, minWidth: 85 },
-  { key: 'inr', label: 'INR Price', width: 165, minWidth: 145, required: true },
-  { key: 'landed', label: 'USD Landed Cost', width: 190, minWidth: 170, required: true },
-  { key: 'quote', label: 'Quote Price', width: 180, minWidth: 155, required: true },
-  { key: 'reference', label: 'Reference / Remark', width: 170, minWidth: 140 },
-  { key: 'actions', label: '', width: 105, minWidth: 95, required: true },
-];
+  const totalQuote = finalQuote ? Math.round(finalQuote * sellingQty * 100) / 100 : null;
 
-const SOURCE_COLOR: Record<string, string> = {
-  india: 'bg-orange-100 text-orange-700',
-  china: 'bg-red-100 text-red-700',
-  local: 'bg-green-100 text-green-700',
-};
-
-const AVAIL_COLOR: Record<string, string> = {
-  available: 'bg-green-100 text-green-700',
-  partial: 'bg-amber-100 text-amber-700',
-  na: 'bg-gray-200 text-gray-600',
-};
-
-function hasSourceReply(row: Inquiry): boolean {
-  return row.source_status === 'received' || row.source_status === 'partial_received';
-}
-
-function hasSourcePriceSignal(row: Inquiry, sourcePricedInquiryIds: Set<string>): boolean {
-  return hasSourceReply(row) || sourcePricedInquiryIds.has(row.id);
-}
-
-function isAlreadyQuoted(row: Inquiry): boolean {
-  return row.quote_status === 'sent'
-    || !!row.quote_sent_at
-    || row.offered_price !== null;
-}
-
-function isCompleted(row: Inquiry): boolean {
-  return isAlreadyQuoted(row)
-    || row.price_ready === true
-    || row.kunal_price_status === 'entered'
-    || row.offered_price !== null;
-}
-
-function isActivePipeline(row: Inquiry): boolean {
-  return row.pipeline_status !== 'won'
-    && row.pipeline_status !== 'lost'
-    && row.pipeline_status !== 'closed';
-}
-
-function needsPrice(row: Inquiry): boolean {
-  return !isCompleted(row)
-    && isActivePipeline(row)
-    && row.offered_price === null
-    && !!row.product_name?.trim();
+  return {
+    purchasePriceUsdPerKg: Math.round(res.purchase_price_usd * 100) / 100,
+    landedCostUsd: landedCost,
+    suggestedQuoteUsd: suggestedQuote,
+    quotePrice: finalQuote,
+    totalQuoteAmount: totalQuote,
+    calcBreakdown: res.breakdown,
+  };
 }
 
 export function PricingWorksheet() {
   const { profile } = useAuth();
-  const { setCurrentPage, setNavigationData } = useNavigation();
-  const isManager = profile?.role === 'admin' || profile?.role === 'manager';
 
-  const [tab, setTab] = useState<TabKey>('need');
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  const [allInquiries, setAllInquiries] = useState<Inquiry[]>([]);
-  const [options, setOptions] = useState<Record<string, PricingOption[]>>({});
-  const [sourcePricedInquiryIds, setSourcePricedInquiryIds] = useState<Set<string>>(new Set());
-  const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
+  // Canonical Pricing Settings
+  const [config, setConfig] = useState<PricingConfig>(DEFAULT_CONFIG);
+
+  // Primary dataset
+  const [rows, setRows] = useState<UnifiedPricingRow[]>([]);
+  const [allInquiriesList, setAllInquiriesList] = useState<CrmInquiryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [makeOptions, setMakeOptions] = useState<string[]>([]);
 
-  // Document state per inquiry
-  const [docs, setDocs] = useState<Record<string, CrmDoc[]>>({});
-  const [docsLoading, setDocsLoading] = useState<Record<string, boolean>>({});
-  const [uploadQueue, setUploadQueue] = useState<Record<string, Array<{ file: File; doc_type: string; make: string }>>>({});
-  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  // STABLE LOCAL STRING DRAFTS FOR NUMERIC INPUT
+  // Prevents re-renders, bucket shifts, and focus loss during typing
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, { sourcePrice?: string; quotePrice?: string }>>({});
+
+  // Background Gmail AI Agent widget state
+  const [isScanning, setIsScanning] = useState(false);
+  const [isScanning7Days, setIsScanning7Days] = useState(false);
+  const [lastCheckedTime, setLastCheckedTime] = useState<string | null>(null);
+  const [nextCheckWibTime, setNextCheckWibTime] = useState<string>('6:00 PM');
+
+  // Filters & Top Bar Controls
+  const [search, setSearch] = useState('');
+  const [customerFilter, setCustomerFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<string>('Needs Action');
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
+
+  // Send to Team Modal target
   const [replyTarget, setReplyTarget] = useState<{
     inquiry: KunalReplyInquiry;
     draft: KunalReplyDraft;
     sourceOption: KunalReplySourceOption | null;
   } | null>(null);
-  const [quoteTarget, setQuoteTarget] = useState<{
-    inquiry: CustomerQuoteInquiry;
-    option: CustomerQuoteOption | null;
-  } | null>(null);
-  const [aiIndiaBucket, setAiIndiaBucket] = useState<TrackerBucket | null>(null);
-  const [aiRefreshKey, setAiRefreshKey] = useState(0);
-  const [aiRows, setAiRows] = useState<KunalIndiaReviewRow[]>([]);
-  const docDropRef = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // Toolbar filters
-  const [search, setSearch] = useState('');
-  const [customerFilter, setCustomerFilter] = useState('all');
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'received' | 'no_source' | 'manual'>('all');
-  const [priceFilter, setPriceFilter] = useState<'all' | 'landed_missing' | 'quote_missing' | 'completed'>('all');
-  const [columnsOpen, setColumnsOpen] = useState(false);
-  const table = useColumnPreferences('kunal_pricing_table', KUNAL_COLUMNS);
+  // Internal Email Evidence Drawer target
+  const [evidenceDrawerRow, setEvidenceDrawerRow] = useState<UnifiedPricingRow | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data: inqs, error } = await supabase
-      .from('crm_inquiries')
-      .select('id,inquiry_number,aceerp_no,company_name,product_name,specification,quantity,supplier_name,source_status,document_status,kunal_price_status,quote_status,quote_sent_at,pipeline_status,price_ready,purchase_price,offered_price,purchase_price_currency,offered_price_currency,kunal_pricing_requested_at,kunal_pricing_note,remarks,import_data_reference,email_subject,mail_subject,created_at')
-      .order('created_at', { ascending: false })
-      .limit(500);
+  // Accept and validate AI extraction
+  const handleAcceptExtraction = async (rowId: string) => {
+    const targetRow = rows.find(r => r.id === rowId);
+    if (!targetRow) return;
 
-    if (error) {
-      showToast({ type: 'error', title: 'Could not load pricing worksheet', message: error.message });
-      setInquiries([]);
-      setOptions({});
-      setLoading(false);
-      return;
+    if (targetRow.aiReviewId) {
+      await supabase
+        .from('kunal_ai_email_reviews')
+        .update({
+          action_status: 'reviewed',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetRow.aiReviewId);
     }
 
-    const baseRows = (inqs as Inquiry[]) || [];
-    setAllInquiries(baseRows);
-
-    let grouped: Record<string, PricingOption[]> = {};
-    const pricedIds = new Set<string>();
-    if (baseRows.length > 0) {
-      const { data: opts } = await supabase
-        .from('crm_inquiry_pricing_options')
-        .select('*')
-        .in('inquiry_id', baseRows.map(row => row.id));
-      grouped = {};
-      for (const opt of (opts as PricingOption[]) || []) {
-        if (!grouped[opt.inquiry_id]) grouped[opt.inquiry_id] = [];
-        grouped[opt.inquiry_id].push(opt);
-        if (opt.source_price != null) pricedIds.add(opt.inquiry_id);
-      }
-    }
-    setSourcePricedInquiryIds(pricedIds);
-
-    const rows = baseRows.filter(row => {
-      if (tab === 'completed') return isCompleted(row);
-      if (!needsPrice(row)) return false;
-      if (tab === 'source') return hasSourcePriceSignal(row, pricedIds);
-      if (tab === 'manual') return !hasSourcePriceSignal(row, pricedIds);
-      return true;
+    const nextStatus: PricingRowStatus = targetRow.quotePrice ? 'Ready to Quote' : 'Price Received';
+    updateRow(rowId, {
+      status: nextStatus,
+      actionReason: null,
+      needsManualLink: false,
     });
-    setInquiries(rows);
-    setOptions(grouped);
-    setLoading(false);
-  }, [tab]);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { loadMakeSuggestions().then(setMakeOptions); }, []);
-
-  const customerOptions = useMemo(() => {
-    return Array.from(new Set(inquiries.map(i => i.company_name).filter(Boolean))).sort();
-  }, [inquiries]);
-
-  const filteredInquiries = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return inquiries.filter(row => {
-      if (customerFilter !== 'all' && row.company_name !== customerFilter) return false;
-      if (sourceFilter === 'received' && !hasSourcePriceSignal(row, sourcePricedInquiryIds)) return false;
-      if (sourceFilter === 'no_source' && hasSourcePriceSignal(row, sourcePricedInquiryIds)) return false;
-      if (sourceFilter === 'manual' && hasSourcePriceSignal(row, sourcePricedInquiryIds)) return false;
-      if (priceFilter === 'landed_missing' && row.purchase_price) return false;
-      if (priceFilter === 'quote_missing' && row.offered_price) return false;
-      if (priceFilter === 'completed' && !isCompleted(row)) return false;
-      if (!term) return true;
-      const hay = [
-        row.inquiry_number, row.aceerp_no, row.company_name, row.product_name,
-        row.specification, row.supplier_name, row.kunal_pricing_note,
-      ].filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(term);
-    });
-  }, [inquiries, search, customerFilter, sourceFilter, priceFilter, sourcePricedInquiryIds]);
-
-  const clearFilters = () => {
-    setSearch(''); setCustomerFilter('all'); setSourceFilter('all'); setPriceFilter('all');
-  };
-
-  const tabCounts = useMemo(() => {
-    const counts: Record<TabKey, number> = { ai_india: 0, need: 0, source: 0, manual: 0, completed: 0 };
-    for (const row of allInquiries) {
-      if (isCompleted(row)) counts.completed += 1;
-      if (needsPrice(row)) counts.need += 1;
-      if (needsPrice(row) && hasSourcePriceSignal(row, sourcePricedInquiryIds)) counts.source += 1;
-      if (needsPrice(row) && !hasSourcePriceSignal(row, sourcePricedInquiryIds)) counts.manual += 1;
-    }
-    return counts;
-  }, [allInquiries, sourcePricedInquiryIds]);
-
-  const ensureDraft = (inq: Inquiry): RowDraft => {
-    if (drafts[inq.id]) return drafts[inq.id];
-    const selectedOption = (options[inq.id] || []).find(opt => opt.is_selected) || null;
-    const indiaOption = (options[inq.id] || []).find(opt => opt.source_type === 'india' && opt.source_price != null) || null;
-    const init: RowDraft = {
-      purchase_price: inq.purchase_price ? String(inq.purchase_price) : '',
-      offered_price: inq.offered_price ? String(inq.offered_price) : '',
-      purchase_currency: inq.purchase_price_currency || 'USD',
-      offered_currency: inq.offered_price_currency || 'USD',
-      india_price: selectedOption?.source_price != null ? String(selectedOption.source_price) : (indiaOption?.source_price != null ? String(indiaOption.source_price) : ''),
-      india_price_currency: selectedOption?.source_currency || indiaOption?.source_currency || 'INR',
-      kunal_remark: inq.remarks || inq.kunal_pricing_note || '',
-      import_data_reference: inq.import_data_reference || '',
-      selected_option_id: selectedOption?.id || null,
-    };
-    setDrafts(current => ({ ...current, [inq.id]: init }));
-    return init;
-  };
-
-  const setDraft = (id: string, patch: Partial<RowDraft>) => {
-    setDrafts(current => ({ ...current, [id]: { ...(current[id] || {} as RowDraft), ...patch } }));
-  };
-
-  const openInquiry = (id: string) => {
-    setNavigationData({ crmInquiryId: id, returnTo: 'pricing-worksheet' });
-    setCurrentPage('crm');
-  };
-
-  const addOption = async (inq: Inquiry) => {
-    if (!isManager) return;
-    const { data, error } = await supabase
-      .from('crm_inquiry_pricing_options')
-      .insert({
-        inquiry_id: inq.id,
-        source_type: 'india',
-        availability: 'available',
-        document_status: 'pending',
-        source_currency: 'INR',
-        is_selected: false,
-        created_by: profile?.id || null,
-      })
-      .select('*')
-      .maybeSingle();
-    if (error) {
-      showToast({ type: 'error', title: 'Error', message: error.message });
-      return;
-    }
-    setOptions(current => ({ ...current, [inq.id]: [...(current[inq.id] || []), data as PricingOption] }));
-    setExpanded(inq.id);
-  };
-
-  const gridMigrationWarned = useRef(false);
-
-  const updateOption = async (opt: PricingOption, patch: Partial<PricingOption>) => {
-    setOptions(current => ({
-      ...current,
-      [opt.inquiry_id]: (current[opt.inquiry_id] || []).map(item => item.id === opt.id ? { ...item, ...patch } as PricingOption : item),
-    }));
-    const { error } = await supabase.from('crm_inquiry_pricing_options').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', opt.id);
-    if (error && EXTENDED_OPTION_KEYS.some(key => key in patch)) {
-      // Migration not applied yet — persist only the base columns so the write
-      // still lands, keep the grid values in local state, and warn once. The UI
-      // never throws; the values reappear on reload once the migration is run.
-      const basePatch: Partial<PricingOption> = {};
-      for (const key of Object.keys(patch) as (keyof PricingOption)[]) {
-        if (!EXTENDED_OPTION_KEYS.includes(key)) (basePatch as any)[key] = (patch as any)[key];
-      }
-      if (Object.keys(basePatch).length > 0) {
-        await supabase.from('crm_inquiry_pricing_options').update({ ...basePatch, updated_at: new Date().toISOString() }).eq('id', opt.id);
-      }
-      if (!gridMigrationWarned.current) {
-        gridMigrationWarned.current = true;
-        showToast({ type: 'info', title: 'Grid fields not yet saved to DB', message: 'Apply the pricing_option_grid_fields migration to persist MOQ/packing/lead time/margin etc. Values are kept for this session.' });
-      }
-    }
-  };
-
-  const removeOption = async (opt: PricingOption) => {
-    if (!isManager) return;
-    setOptions(current => ({
-      ...current,
-      [opt.inquiry_id]: (current[opt.inquiry_id] || []).filter(item => item.id !== opt.id),
-    }));
-    await supabase.from('crm_inquiry_pricing_options').delete().eq('id', opt.id);
-  };
-
-  const selectOption = async (inquiryId: string, optionId: string) => {
-    const currentOptions = options[inquiryId] || [];
-    const selectedOption = currentOptions.find(opt => opt.id === optionId);
-    setOptions(current => ({
-      ...current,
-      [inquiryId]: currentOptions.map(opt => ({ ...opt, is_selected: opt.id === optionId })),
-    }));
-    setDraft(inquiryId, {
-      selected_option_id: optionId,
-      purchase_currency: selectedOption?.source_currency || 'USD',
-      india_price: selectedOption?.source_price != null ? String(selectedOption.source_price) : '',
-      india_price_currency: selectedOption?.source_currency || 'INR',
-    });
-    await supabase.from('crm_inquiry_pricing_options').update({ is_selected: false }).eq('inquiry_id', inquiryId);
-    await supabase.from('crm_inquiry_pricing_options').update({ is_selected: true, updated_at: new Date().toISOString() }).eq('id', optionId);
-  };
-
-  const openCalculator = (inq: Inquiry) => {
     showToast({
-      type: 'info',
-      title: 'Price Calculator',
-      message: `Opening calculator. Copy result back into Purchase/Selling for ${inq.inquiry_number}.`,
-    });
-    setCurrentPage('price-calculator');
-  };
-
-  const loadDocs = async (inquiryId: string) => {
-    setDocsLoading(cur => ({ ...cur, [inquiryId]: true }));
-    const { data } = await supabase
-      .from('crm_product_documents')
-      .select('id,inquiry_id,product_name,make,document_type,original_file_name,display_file_name,storage_path,uploaded_by,created_at')
-      .eq('inquiry_id', inquiryId)
-      .order('created_at', { ascending: false });
-    setDocs(cur => ({ ...cur, [inquiryId]: (data as CrmDoc[]) || [] }));
-    setDocsLoading(cur => ({ ...cur, [inquiryId]: false }));
-  };
-
-  const toggleExpanded = (inqId: string) => {
-    const next = expanded === inqId ? null : inqId;
-    setExpanded(next);
-    if (next && !docs[next]) loadDocs(next);
-  };
-
-  const queueDocFiles = (inq: Inquiry, files: FileList | File[]) => {
-    const newItems = Array.from(files).map(f => ({ file: f, doc_type: 'COA', make: inq.supplier_name || '' }));
-    setUploadQueue(cur => ({ ...cur, [inq.id]: [...(cur[inq.id] || []), ...newItems] }));
-  };
-
-  const setQueueItemType = (inquiryId: string, idx: number, doc_type: string) => {
-    setUploadQueue(cur => {
-      const q = [...(cur[inquiryId] || [])];
-      q[idx] = { ...q[idx], doc_type };
-      return { ...cur, [inquiryId]: q };
+      type: 'success',
+      title: 'Extraction Confirmed',
+      message: `Verified and confirmed pricing for ${targetRow.inquiryNumber}`,
     });
   };
 
-  const setQueueItemMake = (inquiryId: string, idx: number, make: string) => {
-    setUploadQueue(cur => {
-      const q = [...(cur[inquiryId] || [])];
-      q[idx] = { ...q[idx], make };
-      return { ...cur, [inquiryId]: q };
-    });
-  };
+  // Direct manual correction from evidence drawer
+  const handleSaveCorrection = async (
+    rowId: string,
+    correction: {
+      inquiryId?: string;
+      productName?: string;
+      offeredMake?: string;
+      supplierName?: string;
+      sourcePrice?: number | null;
+      sourceCurrency?: 'INR' | 'USD';
+      unit?: string;
+    },
+  ) => {
+    const targetRow = rows.find(r => r.id === rowId);
+    if (!targetRow) return;
 
-  const removeQueueItem = (inquiryId: string, idx: number) => {
-    setUploadQueue(cur => ({ ...cur, [inquiryId]: (cur[inquiryId] || []).filter((_, i) => i !== idx) }));
-  };
+    const matchedInquiry = allInquiriesList.find(i => i.id === correction.inquiryId);
+    const updatedInqId = correction.inquiryId || targetRow.inquiryId;
 
-  const uploadDocs = async (inq: Inquiry) => {
-    const queue = uploadQueue[inq.id] || [];
-    if (!queue.length) return;
-    setUploading(cur => ({ ...cur, [inq.id]: true }));
-    const { data: { user } } = await supabase.auth.getUser();
-    // Collect existing paths for versioning
-    const existingPaths = (docs[inq.id] || []).map(d => d.storage_path);
-    let uploaded = 0;
-    for (const item of queue) {
-      const effectiveMake = item.make.trim() || 'unknown';
-      const naming = buildUniqueDocumentNames({
-        product: inq.product_name,
-        supplier: effectiveMake,
-        docType: item.doc_type,
-        originalFilename: item.file.name,
-        existingStoragePaths: existingPaths,
-      });
-      const path = `${inq.id}/${naming.fileName}`;
-      const { error: upErr } = await supabase.storage.from('crm-documents').upload(path, item.file);
-      if (upErr) { showToast({ type: 'error', title: 'Upload failed', message: upErr.message }); continue; }
-      await supabase.from('crm_product_documents').insert({
-        inquiry_id: inq.id,
-        product_name: inq.product_name,
-        make: effectiveMake !== 'unknown' ? effectiveMake : null,
-        document_type: item.doc_type,
-        original_file_name: item.file.name,
-        display_file_name: naming.displayName,
-        storage_bucket: 'crm-documents',
-        storage_path: path,
-        uploaded_by: user?.id || null,
-      });
-      existingPaths.push(path);
-      uploaded++;
-    }
-    setUploadQueue(cur => ({ ...cur, [inq.id]: [] }));
-    setUploading(cur => ({ ...cur, [inq.id]: false }));
-    if (uploaded > 0) {
-      showToast({ type: 'success', title: 'Uploaded', message: `${uploaded} document(s) saved to CRM.` });
-      loadDocs(inq.id);
+    const patch: Partial<UnifiedPricingRow> = {
+      ...correction,
+      inquiryId: updatedInqId,
+      inquiryNumber: matchedInquiry?.inquiry_number || targetRow.inquiryNumber,
+      aceerpNo: matchedInquiry?.aceerp_no || targetRow.aceerpNo,
+      customerName: matchedInquiry?.company_name || targetRow.customerName,
+      productName: correction.productName || targetRow.productName,
+      needsManualLink: false,
+      actionReason: null,
+      status: (correction.sourcePrice && correction.sourcePrice > 0) ? 'Ready to Quote' : 'Price Received',
+    };
+
+    updateRow(rowId, patch);
+
+    if (targetRow.aiReviewId) {
+      await supabase
+        .from('kunal_ai_email_reviews')
+        .update({
+          matched_inquiry_id: updatedInqId,
+          product_name: patch.productName,
+          offered_make: patch.offeredMake,
+          source_price: patch.sourcePrice,
+          source_currency: patch.sourceCurrency,
+          action_status: 'reviewed',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetRow.aiReviewId);
     }
   };
 
-  const deleteDoc = async (doc: CrmDoc) => {
-    invalidateSignedUrl('crm-documents', doc.storage_path);
-    await supabase.storage.from('crm-documents').remove([doc.storage_path]);
-    await supabase.from('crm_product_documents').delete().eq('id', doc.id);
-    setDocs(cur => ({ ...cur, [doc.inquiry_id]: (cur[doc.inquiry_id] || []).filter(d => d.id !== doc.id) }));
-    showToast({ type: 'success', title: 'Deleted', message: 'Document removed.' });
-  };
+  // Calculate Next Check time in WIB (08:00, 13:00, 18:00 WIB)
+  const computeNextWib = useCallback(() => {
+    const now = new Date();
+    const wibMs = 7 * 60 * 60 * 1000;
+    const wibDate = new Date(now.getTime() + wibMs);
+    const mins = wibDate.getUTCHours() * 60 + wibDate.getUTCMinutes();
+    if (mins < 480) return '8:00 AM WIB';
+    if (mins < 780) return '1:00 PM WIB';
+    if (mins < 1080) return '6:00 PM WIB';
+    return '8:00 AM WIB (Tomorrow)';
+  }, []);
 
-  const openDoc = async (doc: CrmDoc) => {
-    const url = await getSignedUrlCached('crm-documents', doc.storage_path, 600);
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  // Main data loader
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      setNextCheckWibTime(computeNextWib());
 
+      // 1. Load canonical pricing config from settings table
+      const loadedConfig = await loadPricingConfig(supabase);
+      setConfig(loadedConfig);
+      const effectiveInr = getEffectiveINRRate(loadedConfig);
+      const clearance20ft = loadedConfig.fcl['20ft']?.clearance || 1100;
+      const capacity20ftMixed = loadedConfig.fcl['20ft']?.capacity?.mixed || 12000;
 
-  const submit = async (inq: Inquiry) => {
-    if (!isManager) {
-      showToast({ type: 'error', title: 'Not allowed', message: 'Only admin/manager can submit a Kunal price.' });
-      return;
-    }
-    const draft = drafts[inq.id];
-    if (!draft || !draft.purchase_price || !draft.offered_price) {
-      showToast({ type: 'error', title: 'Missing prices', message: 'Enter both Purchase and Selling price.' });
-      return;
-    }
-    const purchasePrice = parseFloat(draft.purchase_price);
-    const sellingPrice = parseFloat(draft.offered_price);
-    if (!Number.isFinite(purchasePrice) || !Number.isFinite(sellingPrice)) {
-      showToast({ type: 'error', title: 'Invalid price', message: 'Enter valid numeric prices.' });
-      return;
-    }
+      // 2. Fetch CRM Inquiries
+      const { data: inqsData, error: inqsErr } = await supabase
+        .from('crm_inquiries')
+        .select(`
+          id, inquiry_number, aceerp_no, company_name, product_name, specification,
+          quantity, supplier_name, source_status, document_status, kunal_price_status,
+          quote_status, purchase_price, offered_price, purchase_price_currency,
+          offered_price_currency, remarks, kunal_pricing_requested_at, created_at
+        `)
+        .order('created_at', { ascending: false })
+        .limit(300);
 
-    setSavingId(inq.id);
-    const now = new Date().toISOString();
+      if (inqsErr) throw inqsErr;
+      const inqs: CrmInquiryItem[] = inqsData || [];
+      setAllInquiriesList(inqs);
 
-    // If user typed an India price manually, upsert/update the India pricing option
-    let selectedOption = (options[inq.id] || []).find(opt => opt.id === draft.selected_option_id)
-      || (options[inq.id] || []).find(opt => opt.source_price !== null)
-      || null;
-
-    const indiaPrice = draft.india_price ? parseFloat(draft.india_price) : null;
-    if (Number.isFinite(indiaPrice) && indiaPrice! > 0) {
-      const existingIndiaOpt = (options[inq.id] || []).find(opt => opt.source_type === 'india');
-      if (existingIndiaOpt) {
-        // Update existing india option
-        await supabase.from('crm_inquiry_pricing_options').update({
-          source_price: indiaPrice,
-          source_currency: draft.india_price_currency || 'INR',
-          is_selected: true,
-          updated_at: now,
-        }).eq('id', existingIndiaOpt.id);
-        // Deselect others
-        await supabase.from('crm_inquiry_pricing_options')
-          .update({ is_selected: false })
-          .eq('inquiry_id', inq.id)
-          .neq('id', existingIndiaOpt.id);
-        selectedOption = { ...existingIndiaOpt, source_price: indiaPrice!, source_currency: draft.india_price_currency || 'INR', is_selected: true };
-      } else {
-        // Create new india option
-        const { data: newOpt } = await supabase.from('crm_inquiry_pricing_options').insert({
-          inquiry_id: inq.id,
-          source_type: 'india',
-          source_price: indiaPrice,
-          source_currency: draft.india_price_currency || 'INR',
-          availability: 'available',
-          document_status: 'not_required',
-          is_selected: true,
-          created_by: profile?.id || null,
-        }).select('*').maybeSingle();
-        // Deselect others
-        if (newOpt) {
-          await supabase.from('crm_inquiry_pricing_options')
-            .update({ is_selected: false })
-            .eq('inquiry_id', inq.id)
-            .neq('id', newOpt.id);
-          selectedOption = newOpt as PricingOption;
+      // 3. Fetch Pricing Options for these inquiries
+      const inqIds = inqs.map(i => i.id);
+      const optionsMap: Record<string, any[]> = {};
+      if (inqIds.length > 0) {
+        const { data: optsData } = await supabase
+          .from('crm_inquiry_pricing_options')
+          .select('*')
+          .in('inquiry_id', inqIds);
+        for (const opt of optsData || []) {
+          if (!optionsMap[opt.inquiry_id]) optionsMap[opt.inquiry_id] = [];
+          optionsMap[opt.inquiry_id].push(opt);
         }
       }
+
+      // 4. Fetch AI Email Reviews (recent 100)
+      const { data: aiReviews } = await supabase
+        .from('kunal_ai_email_reviews')
+        .select('*')
+        .order('scanned_at', { ascending: false })
+        .limit(100);
+
+      // 5. Fetch Documents for inquiries
+      const docsMap: Record<string, any[]> = {};
+      if (inqIds.length > 0) {
+        const { data: docsData } = await supabase
+          .from('crm_product_documents')
+          .select('id, inquiry_id, document_type, display_file_name, original_file_name, make')
+          .in('inquiry_id', inqIds);
+        for (const doc of docsData || []) {
+          if (!docsMap[doc.inquiry_id]) docsMap[doc.inquiry_id] = [];
+          docsMap[doc.inquiry_id].push({
+            documentType: doc.document_type || 'DOC',
+            filename: doc.display_file_name || doc.original_file_name || 'document.pdf',
+            status: 'MATCHED' as const,
+          });
+        }
+      }
+
+      // Map inquiries into unified rows
+      const unifiedMap = new Map<string, UnifiedPricingRow>();
+
+      // First pass: Active Inquiries
+      for (const inq of inqs) {
+        const inqOpts = optionsMap[inq.id] || [];
+        const selectedOpt = inqOpts.find(o => o.is_selected) || inqOpts[0] || null;
+
+        // CRITICAL FIX: Only use actual source_price from pricing_options.
+        // DO NOT use old CRM purchase_price as calculated landed cost or source price!
+        const sourcePrice: number | null = selectedOpt?.source_price ?? null;
+        const sourceCurrency: 'INR' | 'USD' = (selectedOpt?.source_currency as any) === 'USD' ? 'USD' : 'INR';
+        const requestedMake = inq.supplier_name || '';
+        const offeredMake = selectedOpt?.offered_make || inq.supplier_name || '';
+        const supplierName = selectedOpt?.supplier || '';
+
+        // Default Canonical FCL Assumptions
+        const containerType: '20ft' | '40ft' = '20ft';
+        const packingType: FCLPackingType = 'mixed';
+        const capacityKg = capacity20ftMixed;
+        const indiaMarginPct = 4.0;
+        const freightUsdPerKg = 0.08;
+        const dutyPct = 4.0;
+        const insurancePct = 0.1;
+        const clearanceUsd = clearance20ft;
+        const indonesiaMarginPct = 4.0;
+
+        // Perform canonical FCL calculation ONLY if a genuine source price exists
+        let calcResult = {
+          purchasePriceUsdPerKg: null as number | null,
+          landedCostUsd: null as number | null,
+          suggestedQuoteUsd: null as number | null,
+          quotePrice: null as number | null,
+          totalQuoteAmount: null as number | null,
+          calcBreakdown: null as Record<string, number> | null,
+        };
+
+        if (sourcePrice !== null && sourcePrice > 0) {
+          calcResult = calculateCanonicalPricing(
+            sourcePrice,
+            sourceCurrency,
+            inq.quantity,
+            loadedConfig,
+            {
+              containerType,
+              packingType,
+              effectiveInrRate: effectiveInr,
+              indiaMarginPct,
+              freightUsdPerKg,
+              dutyPct,
+              insurancePct,
+              clearanceUsd,
+              indonesiaMarginPct,
+              quotePriceOverride: selectedOpt?.selling_price ?? null,
+            },
+          );
+        }
+
+        // Status Determination
+        let status: PricingRowStatus = 'Waiting Supplier';
+        let actionReason: string | null = null;
+
+        if (inq.quote_status === 'sent' || inq.kunal_price_status === 'entered') {
+          status = 'Completed';
+        } else if (calcResult.landedCostUsd !== null && calcResult.quotePrice !== null) {
+          status = 'Ready to Quote';
+          actionReason = 'Ready to quote';
+        } else if (sourcePrice !== null && sourcePrice > 0) {
+          status = 'Price Received';
+          actionReason = 'Price received';
+        }
+
+        const docs = docsMap[inq.id] || [];
+
+        unifiedMap.set(inq.id, {
+          id: inq.id,
+          inquiryId: inq.id,
+          inquiryNumber: inq.inquiry_number,
+          aceerpNo: inq.aceerp_no || '-',
+          customerName: inq.company_name,
+          productName: inq.product_name,
+          specification: inq.specification || '',
+          quantity: inq.quantity || '1,000 kg',
+          requestedMake,
+          offeredMake,
+          supplierName,
+          sourcePrice,
+          sourceCurrency,
+          unit: 'KG',
+          moq: selectedOpt?.moq || '500 kg',
+          availability: (selectedOpt?.availability as any) || 'available',
+          leadTime: selectedOpt?.lead_time || '2-3 weeks',
+          remarks: inq.remarks || selectedOpt?.remark || '',
+          containerType,
+          packingType,
+          capacityKg,
+          effectiveInrRate: effectiveInr,
+          indiaMarginPct,
+          freightUsdPerKg,
+          dutyPct,
+          insurancePct,
+          clearanceUsd,
+          indonesiaMarginPct,
+          purchasePriceUsdPerKg: calcResult.purchasePriceUsdPerKg,
+          landedCostUsd: calcResult.landedCostUsd,
+          suggestedQuoteUsd: calcResult.suggestedQuoteUsd,
+          quotePrice: calcResult.quotePrice,
+          quoteCurrency: 'USD',
+          quoteFxIdr: 16200,
+          totalQuoteAmount: calcResult.totalQuoteAmount,
+          calcBreakdown: calcResult.calcBreakdown,
+          status,
+          actionReason,
+          isAiPrepared: false,
+          alternativeMakeDetected: Boolean(
+            requestedMake && offeredMake && requestedMake.toLowerCase() !== offeredMake.toLowerCase(),
+          ),
+          needsManualLink: false,
+          documents: docs,
+          docActionNotice: null,
+          evidence: {
+            from: inq.company_name,
+            to: 'kunal@sapharmajaya.co.id',
+            subject: `Inquiry ${inq.inquiry_number} — ${inq.product_name}`,
+            date: inq.created_at,
+            quote: inq.remarks || 'Inquiry created in CRM.',
+            why: 'CRM Inquiry record waiting for supplier response.',
+            bodyText: inq.remarks || 'No supplier quote email received yet for this inquiry.',
+            bodyHtml: null,
+            threadId: null,
+            messageId: null,
+            attachments: docs.map((d: any) => ({
+              filename: d.filename,
+              documentType: d.documentType,
+              matchStatus: d.status,
+            })),
+          },
+          sourceType: (selectedOpt?.source_type as any) || 'india',
+        });
+      }
+
+      // Second pass: Merge AI Reviews
+      for (const rev of aiReviews || []) {
+        const raw = rev.raw_result || {};
+        if (raw.fastFiltered || rev.action_status === 'no_action') continue;
+
+        const matchedInqId = rev.matched_inquiry_id || raw.suggestedInquiryId;
+        const targetRow = matchedInqId ? unifiedMap.get(matchedInqId) : null;
+
+        const extractionRow = raw.extractionRows?.[0] || {};
+        const extractedPrice = extractionRow.source_price ?? rev.source_price ?? null;
+        const extractedCurrency: 'INR' | 'USD' =
+          (extractionRow.source_currency || rev.source_currency) === 'USD' ? 'USD' : 'INR';
+        const extractedMake = extractionRow.offered_make || rev.offered_make || '';
+        const detectedDocs = raw.detectedDocuments || [];
+
+        const sourceEmail = raw.sourceEmail || {};
+        const evidenceObj = {
+          from: sourceEmail.from || rev.from_email || '',
+          to: sourceEmail.to || '',
+          subject: sourceEmail.subject || rev.subject || '',
+          date: sourceEmail.date || rev.email_date || '',
+          quote: raw.evidence?.sourceQuote || raw.summary || '',
+          why: raw.evidence?.why || rev.summary || '',
+          bodyText: sourceEmail.bodyText || raw.evidence?.sourceQuote || raw.summary || '',
+          bodyHtml: sourceEmail.bodyHtml || null,
+          threadId: rev.gmail_thread_id || sourceEmail.threadId || null,
+          messageId: rev.gmail_message_id || sourceEmail.messageId || null,
+          attachments: sourceEmail.attachments || (detectedDocs.map((d: any) => ({
+            filename: d.filename,
+            documentType: d.documentType,
+            matchStatus: d.matchStatus,
+          }))),
+        };
+
+        // Determine Document Action Notice
+        let docActionNotice: string | null = null;
+        const hasAmbiguousDoc = detectedDocs.some((d: any) => d.matchStatus === 'AMBIGUOUS');
+        const hasReviewDoc = detectedDocs.some((d: any) => d.matchStatus === 'REVIEW');
+        if (hasAmbiguousDoc) {
+          docActionNotice = 'Document match ambiguous';
+        } else if (hasReviewDoc) {
+          docActionNotice = 'COA needs review';
+        }
+
+        if (targetRow) {
+          // Enrich inquiry row with live AI extraction
+          targetRow.aiReviewId = rev.id;
+          targetRow.isAiPrepared = true;
+          targetRow.evidence = evidenceObj;
+
+          if (extractedPrice && !targetRow.sourcePrice) {
+            targetRow.sourcePrice = extractedPrice;
+            targetRow.sourceCurrency = extractedCurrency;
+            const calc = calculateCanonicalPricing(
+              extractedPrice,
+              extractedCurrency,
+              targetRow.quantity,
+              loadedConfig,
+              {
+                containerType: targetRow.containerType,
+                packingType: targetRow.packingType,
+                effectiveInrRate: targetRow.effectiveInrRate,
+                indiaMarginPct: targetRow.indiaMarginPct,
+                freightUsdPerKg: targetRow.freightUsdPerKg,
+                dutyPct: targetRow.dutyPct,
+                insurancePct: targetRow.insurancePct,
+                clearanceUsd: targetRow.clearanceUsd,
+                indonesiaMarginPct: targetRow.indonesiaMarginPct,
+              },
+            );
+            targetRow.purchasePriceUsdPerKg = calc.purchasePriceUsdPerKg;
+            targetRow.landedCostUsd = calc.landedCostUsd;
+            targetRow.suggestedQuoteUsd = calc.suggestedQuoteUsd;
+            targetRow.quotePrice = calc.quotePrice;
+            targetRow.totalQuoteAmount = calc.totalQuoteAmount;
+            targetRow.calcBreakdown = calc.calcBreakdown;
+
+            if (targetRow.status === 'Waiting Supplier') {
+              targetRow.status = 'Price Received';
+              targetRow.actionReason = 'Price received';
+            }
+          }
+
+          if (extractedMake && !targetRow.offeredMake) {
+            targetRow.offeredMake = extractedMake;
+          }
+          if (raw.alternativeMake?.detected) {
+            targetRow.alternativeMakeDetected = true;
+            if (targetRow.status !== 'Completed') {
+              targetRow.actionReason = 'Confirm make';
+            }
+          }
+          if (detectedDocs.length > 0) {
+            targetRow.documents = [
+              ...targetRow.documents,
+              ...detectedDocs.map((d: any) => ({
+                documentType: d.documentType || 'DOC',
+                filename: d.filename || 'attachment.pdf',
+                batchNumber: d.batchNumber,
+                status: (d.matchStatus as any) || 'MATCHED',
+              })),
+            ];
+            if (docActionNotice) {
+              targetRow.docActionNotice = docActionNotice;
+              targetRow.actionReason = docActionNotice;
+            }
+          }
+          if (raw.needsManualLink) {
+            targetRow.status = 'Needs Review';
+            targetRow.needsManualLink = true;
+            targetRow.actionReason = 'Inquiry match ambiguous';
+          }
+        } else if (extractedPrice || detectedDocs.length > 0) {
+          // AI review without exact matched inquiry row -> standalone item requiring action
+          const fallbackId = `ai-${rev.id}`;
+          const calc = calculateCanonicalPricing(
+            extractedPrice,
+            extractedCurrency,
+            '1000',
+            loadedConfig,
+            {
+              containerType: '20ft',
+              packingType: 'mixed',
+              effectiveInrRate: effectiveInr,
+              indiaMarginPct: 4.0,
+              freightUsdPerKg: 0.08,
+              dutyPct: 4.0,
+              insurancePct: 0.1,
+              clearanceUsd: clearance20ft,
+              indonesiaMarginPct: 4.0,
+            },
+          );
+
+          unifiedMap.set(fallbackId, {
+            id: fallbackId,
+            aiReviewId: rev.id,
+            inquiryId: null,
+            inquiryNumber: raw.matchedInquiryNumber || 'UNLINKED',
+            aceerpNo: raw.aceerpNo || '-',
+            customerName: 'Pending Link',
+            productName: rev.product_name || extractionRow.product_name || 'Chemical Item',
+            specification: extractionRow.specification || '',
+            quantity: extractionRow.quantity || '1,000 kg',
+            requestedMake: extractionRow.preferred_manufacturer || '',
+            offeredMake: extractedMake,
+            supplierName: rev.from_email || '',
+            sourcePrice: extractedPrice,
+            sourceCurrency: extractedCurrency,
+            unit: extractionRow.unit || 'KG',
+            moq: extractionRow.quantity || '500 kg',
+            availability: extractionRow.availability || 'available',
+            leadTime: extractionRow.lead_time || '2 weeks',
+            remarks: rev.summary || '',
+            containerType: '20ft',
+            packingType: 'mixed',
+            capacityKg: capacity20ftMixed,
+            effectiveInrRate: effectiveInr,
+            indiaMarginPct: 4.0,
+            freightUsdPerKg: 0.08,
+            dutyPct: 4.0,
+            insurancePct: 0.1,
+            clearanceUsd: clearance20ft,
+            indonesiaMarginPct: 4.0,
+            purchasePriceUsdPerKg: calc.purchasePriceUsdPerKg,
+            landedCostUsd: calc.landedCostUsd,
+            suggestedQuoteUsd: calc.suggestedQuoteUsd,
+            quotePrice: calc.quotePrice,
+            quoteCurrency: 'USD',
+            quoteFxIdr: 16200,
+            totalQuoteAmount: calc.totalQuoteAmount,
+            calcBreakdown: calc.calcBreakdown,
+            status: 'Needs Review',
+            actionReason: raw.needsManualLink ? 'Inquiry match ambiguous' : 'Link inquiry',
+            isAiPrepared: true,
+            alternativeMakeDetected: Boolean(raw.alternativeMake?.detected),
+            needsManualLink: true,
+            documents: detectedDocs.map((d: any) => ({
+              documentType: d.documentType || 'DOC',
+              filename: d.filename || 'attachment.pdf',
+              batchNumber: d.batchNumber,
+              status: (d.matchStatus as any) || 'REVIEW',
+            })),
+            docActionNotice: docActionNotice || (detectedDocs.length > 0 ? 'Document match ambiguous' : null),
+            evidence: evidenceObj,
+            sourceType: 'india',
+          });
+        }
+      }
+
+      setRows(Array.from(unifiedMap.values()));
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Load Error', message: err.message || 'Failed to load pricing rows' });
+    } finally {
+      setLoading(false);
     }
+  }, [computeNextWib]);
 
+  useEffect(() => {
+    loadData();
+    loadMakeSuggestions().then(setMakeOptions);
+  }, [loadData]);
 
-    const indiaPrice2 = draft.india_price ? parseFloat(draft.india_price) : null;
-    const extraUpdates: Record<string, unknown> = {};
-    if (Number.isFinite(indiaPrice2) && indiaPrice2! > 0) {
-      // Mark source as received since India price is now known
-      extraUpdates.source_status = 'received';
+  // Handle CHECK NOW button (normal scan)
+  const handleCheckNow = async () => {
+    if (isScanning || isScanning7Days) return;
+    setIsScanning(true);
+    try {
+      const summary: AgentScanSummary = await runSapjGmailAgent({ maxMessages: 25 });
+      setLastCheckedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      setNextCheckWibTime(computeNextWib());
+      showToast({
+        type: 'success',
+        title: 'Background Agent Scan Complete',
+        message: `${summary.scanned} scanned • ${summary.pricing} pricing • ${summary.documents} docs • ${summary.needs_review} needs review`,
+      });
+      await loadData();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Scan Failed', message: err.message || 'Check Now failed' });
+    } finally {
+      setIsScanning(false);
     }
+  };
 
-    const { error: inquiryError } = await supabase.from('crm_inquiries').update({
-      purchase_price: purchasePrice,
-      offered_price: sellingPrice,
-      purchase_price_currency: draft.purchase_currency || 'USD',
-      offered_price_currency: draft.offered_currency || 'USD',
-      kunal_price_status: 'entered',
-      price_ready: true,
-      quote_status: 'not_sent',
-      remarks: draft.kunal_remark || null,
-      import_data_reference: draft.import_data_reference || null,
-      updated_at: now,
-      ...extraUpdates,
-    }).eq('id', inq.id);
+  // Handle CHECK LAST 7 DAYS button
+  const handleCheckLast7Days = async () => {
+    if (isScanning || isScanning7Days) return;
+    setIsScanning7Days(true);
+    try {
+      const summary: AgentScanSummary = await runSapjGmailAgent({ scanLast7Days: true, maxMessages: 50 });
+      setLastCheckedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      setNextCheckWibTime(computeNextWib());
+      showToast({
+        type: 'success',
+        title: '7-Day Historical Scan Complete',
+        message: `${summary.scanned} emails inspected • ${summary.pricing} pricing detected • ${summary.documents} docs synced`,
+      });
+      await loadData();
+    } catch (err: any) {
+      showToast({ type: 'error', title: '7-Day Scan Failed', message: err.message || 'Check Last 7 Days failed' });
+    } finally {
+      setIsScanning7Days(false);
+    }
+  };
 
-    if (inquiryError) {
-      showToast({ type: 'error', title: 'Save failed', message: inquiryError.message });
+  // Status Counts
+  const counts = useMemo(() => {
+    const c = {
+      needsAction: 0,
+      priceReceived: 0,
+      readyToQuote: 0,
+      waitingSupplier: 0,
+      completed: 0,
+      total: rows.length,
+    };
+    for (const r of rows) {
+      if (r.status === 'Completed') {
+        c.completed++;
+      } else if (r.status === 'Waiting Supplier') {
+        c.waitingSupplier++;
+      } else if (r.status === 'Price Received') {
+        c.priceReceived++;
+        c.needsAction++;
+      } else if (r.status === 'Ready to Quote') {
+        c.readyToQuote++;
+        c.needsAction++;
+      } else if (r.status === 'Needs Review') {
+        c.needsAction++;
+      }
+    }
+    return c;
+  }, [rows]);
+
+  // Unique Customers for filter dropdown
+  const customerList = useMemo(() => {
+    return Array.from(new Set(rows.map(r => r.customerName).filter(Boolean))).sort();
+  }, [rows]);
+
+  // Filtered rows for the Excel-like table
+  const displayedRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter(r => {
+      // Status filter
+      if (statusFilter === 'Needs Action') {
+        // EXCLUDE ordinary 'Waiting Supplier' rows from 'Needs Action'
+        if (r.status !== 'Needs Review' && r.status !== 'Price Received' && r.status !== 'Ready to Quote') {
+          return false;
+        }
+      } else if (statusFilter !== 'all' && r.status !== statusFilter) {
+        return false;
+      }
+      // Customer filter
+      if (customerFilter !== 'all' && r.customerName !== customerFilter) return false;
+      // Source filter
+      if (sourceFilter !== 'all' && r.sourceType !== sourceFilter) return false;
+      // Search term
+      if (q) {
+        const hay = [
+          r.inquiryNumber,
+          r.aceerpNo,
+          r.customerName,
+          r.productName,
+          r.requestedMake,
+          r.offeredMake,
+          r.supplierName,
+          r.remarks,
+        ].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [rows, statusFilter, customerFilter, sourceFilter, search]);
+
+  // STABLE LOCAL DRAFT INPUT HANDLERS
+  // Allows user to type "1", "1250", "4600.50" without losing focus or moving buckets
+  const handleSourcePriceDraftChange = (id: string, textVal: string) => {
+    // 1. Maintain local string draft exactly as typed
+    setPriceDrafts(prev => ({
+      ...prev,
+      [id]: { ...prev[id], sourcePrice: textVal },
+    }));
+
+    // 2. Parse numeric value if valid
+    const parsed = parseFloat(textVal);
+    const validNum = !isNaN(parsed) && parsed > 0 ? parsed : null;
+
+    // 3. Recalculate landed cost and quote price WITHOUT MODIFYING row.status
+    setRows(current =>
+      current.map(row => {
+        if (row.id !== id) return row;
+        const calc = calculateCanonicalPricing(
+          validNum,
+          row.sourceCurrency,
+          row.quantity,
+          config,
+          {
+            containerType: row.containerType,
+            packingType: row.packingType,
+            effectiveInrRate: row.effectiveInrRate,
+            indiaMarginPct: row.indiaMarginPct,
+            freightUsdPerKg: row.freightUsdPerKg,
+            dutyPct: row.dutyPct,
+            insurancePct: row.insurancePct,
+            clearanceUsd: row.clearanceUsd,
+            indonesiaMarginPct: row.indonesiaMarginPct,
+          },
+        );
+
+        return {
+          ...row,
+          sourcePrice: validNum,
+          purchasePriceUsdPerKg: calc.purchasePriceUsdPerKg,
+          landedCostUsd: calc.landedCostUsd,
+          suggestedQuoteUsd: calc.suggestedQuoteUsd,
+          quotePrice: calc.quotePrice,
+          totalQuoteAmount: calc.totalQuoteAmount,
+          calcBreakdown: calc.calcBreakdown,
+          // CRITICAL: DO NOT MODIFY row.status during typing!
+        };
+      }),
+    );
+  };
+
+  const handleQuotePriceDraftChange = (id: string, textVal: string) => {
+    setPriceDrafts(prev => ({
+      ...prev,
+      [id]: { ...prev[id], quotePrice: textVal },
+    }));
+
+    const parsed = parseFloat(textVal);
+    const validNum = !isNaN(parsed) && parsed > 0 ? parsed : null;
+
+    setRows(current =>
+      current.map(row => {
+        if (row.id !== id) return row;
+        const qtyNum = parseFloat(String(row.quantity || '0').replace(/[^0-9.]/g, '')) || 12000;
+        return {
+          ...row,
+          quotePrice: validNum,
+          totalQuoteAmount: validNum ? Math.round(validNum * qtyNum * 100) / 100 : null,
+          // CRITICAL: DO NOT MODIFY row.status during typing!
+        };
+      }),
+    );
+  };
+
+  // Inline row updates (for assumptions, currency, unit, supplier, etc.)
+  const updateRow = (id: string, patch: Partial<UnifiedPricingRow>) => {
+    setRows(current =>
+      current.map(row => {
+        if (row.id !== id) return row;
+        const merged = { ...row, ...patch };
+
+        // Recalculate using canonical engine if assumptions or source parameters changed
+        const calc = calculateCanonicalPricing(
+          merged.sourcePrice,
+          merged.sourceCurrency,
+          merged.quantity,
+          config,
+          {
+            containerType: merged.containerType,
+            packingType: merged.packingType,
+            effectiveInrRate: merged.effectiveInrRate,
+            indiaMarginPct: merged.indiaMarginPct,
+            freightUsdPerKg: merged.freightUsdPerKg,
+            dutyPct: merged.dutyPct,
+            insurancePct: merged.insurancePct,
+            clearanceUsd: merged.clearanceUsd,
+            indonesiaMarginPct: merged.indonesiaMarginPct,
+            quotePriceOverride: 'quotePrice' in patch ? patch.quotePrice : merged.quotePrice,
+          },
+        );
+
+        return {
+          ...merged,
+          purchasePriceUsdPerKg: calc.purchasePriceUsdPerKg,
+          landedCostUsd: calc.landedCostUsd,
+          suggestedQuoteUsd: calc.suggestedQuoteUsd,
+          quotePrice: calc.quotePrice,
+          totalQuoteAmount: calc.totalQuoteAmount,
+          calcBreakdown: calc.calcBreakdown,
+        };
+      }),
+    );
+  };
+
+  // Selection toggle
+  const toggleSelect = (id: string) => {
+    setSelectedIds(cur => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === displayedRows.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(displayedRows.map(r => r.id)));
+  };
+
+  // SAVE action (Explicit confirmation that transitions status)
+  const handleSaveRow = async (row: UnifiedPricingRow) => {
+    setSavingId(row.id);
+    try {
+      const targetInquiryId = row.inquiryId;
+      if (!targetInquiryId) {
+        showToast({ type: 'error', title: 'Inquiry Required', message: 'Please link an inquiry before saving.' });
+        setSavingId(null);
+        return;
+      }
+
+      const now = new Date().toISOString();
+
+      // 1. Upsert pricing option
+      const { data: optionData, error: optErr } = await supabase
+        .from('crm_inquiry_pricing_options')
+        .upsert(
+          {
+            inquiry_id: targetInquiryId,
+            source_type: row.sourceType || 'india',
+            offered_make: row.offeredMake || row.requestedMake,
+            source_price: row.sourcePrice,
+            source_currency: row.sourceCurrency,
+            availability: row.availability,
+            document_status: row.documents.length > 0 ? 'received' : 'pending',
+            supplier: row.supplierName,
+            moq: row.moq,
+            lead_time: row.leadTime,
+            margin_pct: row.indonesiaMarginPct,
+            selling_price: row.quotePrice,
+            selling_currency: row.quoteCurrency,
+            is_selected: true,
+            updated_at: now,
+          },
+          { onConflict: 'inquiry_id' },
+        )
+        .select('id')
+        .maybeSingle();
+
+      if (optErr) console.warn('Pricing option upsert warning:', optErr);
+
+      // 2. Update CRM Inquiry with validated landed cost and quote price
+      const { error: inqErr } = await supabase
+        .from('crm_inquiries')
+        .update({
+          purchase_price: row.landedCostUsd,
+          offered_price: row.quotePrice,
+          purchase_price_currency: 'USD',
+          offered_price_currency: row.quoteCurrency,
+          kunal_price_status: 'entered',
+          price_ready: true,
+          quote_status: 'not_sent',
+          supplier_name: row.offeredMake || row.requestedMake,
+          remarks: row.remarks || null,
+          source_status: row.sourcePrice ? 'received' : 'not_sent',
+          updated_at: now,
+        })
+        .eq('id', targetInquiryId);
+
+      if (inqErr) throw inqErr;
+
+      // 3. Insert into pricing_ledger
+      await Promise.resolve(
+        supabase.from('pricing_ledger').insert({
+          inquiry_id: targetInquiryId,
+          aceerp_no: row.aceerpNo !== '-' ? row.aceerpNo : null,
+          customer_name: row.customerName,
+          product_name: row.productName,
+          preferred_make: row.requestedMake,
+          offered_make: row.offeredMake,
+          source_price: row.sourcePrice,
+          source_currency: row.sourceCurrency,
+          purchase_price: row.landedCostUsd,
+          selling_price: row.quotePrice,
+          final_quoted_price: row.quotePrice,
+          final_quote_currency: row.quoteCurrency,
+          kunal_remark: row.remarks || null,
+          final_selected_option_id: optionData?.id || null,
+          quoted_by: profile?.id || null,
+          created_by: profile?.id || null,
+          quote_date: now,
+          updated_at: now,
+        }),
+      ).catch(() => {});
+
+      // 4. Insert into CRM timeline
+      await Promise.resolve(
+        supabase.from('crm_inquiry_timeline').insert({
+          inquiry_id: targetInquiryId,
+          event_type: 'kunal_price_submitted',
+          actor_id: profile?.id || null,
+          actor_name: profile?.full_name || 'Kunal',
+          description: `Kunal price saved: Landed USD ${row.landedCostUsd || '-'}, Quote ${row.quoteCurrency} ${row.quotePrice || '-'}`,
+          metadata: {
+            landedCostUsd: row.landedCostUsd,
+            quotePrice: row.quotePrice,
+            marginPct: row.indonesiaMarginPct,
+          },
+        }),
+      ).catch(() => {});
+
+      // 5. Update AI review if linked
+      if (row.aiReviewId) {
+        await supabase
+          .from('kunal_ai_email_reviews')
+          .update({
+            action_status: 'reviewed',
+            matched_inquiry_id: targetInquiryId,
+            updated_at: now,
+          })
+          .eq('id', row.aiReviewId);
+      }
+
+      // Transition row status after save
+      const nextStatus: PricingRowStatus = row.quotePrice ? 'Ready to Quote' : 'Price Received';
+      updateRow(row.id, { status: nextStatus, needsManualLink: false, actionReason: null });
+      showToast({ type: 'success', title: 'Saved', message: `Pricing saved for ${row.inquiryNumber}.` });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Save Failed', message: err.message || 'Could not save pricing' });
+    } finally {
       setSavingId(null);
-      return;
     }
+  };
 
-    await Promise.resolve(supabase.from('pricing_ledger').insert({
-      inquiry_id: inq.id,
-      aceerp_no: inq.aceerp_no,
-      customer_name: inq.company_name,
-      product_name: inq.product_name,
-      preferred_make: inq.supplier_name,
-      offered_make: selectedOption?.offered_make || null,
-      source_price: selectedOption?.source_price ?? null,
-      source_currency: selectedOption?.source_currency || draft.purchase_currency || 'USD',
-      purchase_price: purchasePrice,
-      selling_price: sellingPrice,
-      final_quoted_price: sellingPrice,
-      final_quote_currency: draft.offered_currency || 'USD',
-      kunal_remark: draft.kunal_remark || null,
-      import_data_reference: draft.import_data_reference || null,
-      final_selected_option_id: selectedOption?.id || null,
-      quoted_by: profile?.id || null,
-      created_by: profile?.id || null,
-      quote_date: now,
-      updated_at: now,
-    })).catch(() => {});
-
-    await Promise.resolve(supabase.from('crm_inquiry_timeline').insert({
-      inquiry_id: inq.id,
-      event_type: 'kunal_price_submitted',
-      actor_id: profile?.id || null,
-      actor_name: profile?.full_name || profile?.username || null,
-      description: 'Kunal price submitted; CRM purchase and selling prices updated.',
-      metadata: {
-        purchase_price: purchasePrice,
-        selling_price: sellingPrice,
-        selected_option_id: selectedOption?.id || null,
+  // SEND TO TEAM action
+  const handleSendToTeam = (row: UnifiedPricingRow) => {
+    setReplyTarget({
+      inquiry: {
+        id: row.inquiryId || '',
+        inquiry_number: row.inquiryNumber,
+        aceerp_no: row.aceerpNo !== '-' ? row.aceerpNo : null,
+        product_name: row.productName,
+        supplier_name: row.requestedMake,
+        quantity: row.quantity,
+        remarks: row.remarks,
       },
-    })).catch(() => {});
-
-    showToast({ type: 'success', title: 'Saved', message: `Kunal price submitted for ${inq.inquiry_number}.` });
-    setSavingId(null);
-    await load();
+      draft: {
+        india_price: row.sourcePrice ? String(row.sourcePrice) : '',
+        india_price_currency: row.sourceCurrency,
+        purchase_price: row.landedCostUsd ? String(row.landedCostUsd) : '',
+        purchase_currency: 'USD',
+        offered_price: row.quotePrice ? String(row.quotePrice) : '',
+        offered_currency: row.quoteCurrency,
+        kunal_remark: row.remarks,
+      },
+      sourceOption: {
+        offered_make: row.offeredMake,
+      },
+    });
   };
 
   return (
     <Layout>
-      <datalist id="make-suggestions">
-        {makeOptions.map(m => <option key={m} value={m} />)}
+      <datalist id="make-options-list">
+        {makeOptions.map(m => (
+          <option key={m} value={m} />
+        ))}
       </datalist>
-      <div className="p-4 md:p-6">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+
+      <div className="p-4 md:p-6 space-y-3">
+        {/* ============================================================ */}
+        {/* 1. TOP BAR & BACKGROUND AGENT CONTROLS */}
+        {/* ============================================================ */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-gray-200 shadow-2xs">
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">Pricing Worksheet</h1>
-            <p className="text-xs text-gray-500 mt-0.5">Enter final purchase and selling prices on CRM inquiry rows. Quote status stays not sent until customer quote email is sent.</p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-gray-900 tracking-tight">KUNAL PRICING AI</h1>
+              <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 tracking-wider">
+                Canonical Engine
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              AI prepares pricing from supplier emails. Review assumptions, verify documents, and save.
+            </p>
           </div>
-          <button onClick={load} disabled={loading}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-50">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </button>
-        </div>
 
-        <div className="flex flex-wrap gap-2 items-center mb-2 bg-white border border-gray-200 rounded px-2.5 py-1.5">
-          <input name="search" aria-label="Search inquiry, product, customer, spec, preferred make…" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search inquiry, product, customer, spec, preferred make…"
-            className="flex-1 min-w-[200px] border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-          <select name="customer_filter" aria-label="Customer Filter" value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
-            className="border border-gray-200 rounded px-1.5 py-1 text-xs">
-            <option value="all">All customers</option>
-            {customerOptions.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select name="source_filter" aria-label="Source Filter" value={sourceFilter} onChange={e => setSourceFilter(e.target.value as typeof sourceFilter)}
-            className="border border-gray-200 rounded px-1.5 py-1 text-xs">
-            <option value="all">All source status</option>
-            <option value="received">Source price received</option>
-            <option value="no_source">No source price</option>
-            <option value="manual">Manual / waiting source</option>
-          </select>
-          <select name="price_filter" aria-label="Price Filter" value={priceFilter} onChange={e => setPriceFilter(e.target.value as typeof priceFilter)}
-            className="border border-gray-200 rounded px-1.5 py-1 text-xs">
-            <option value="all">All price</option>
-            <option value="landed_missing">USD landed cost missing</option>
-            <option value="quote_missing">Quote price missing</option>
-            <option value="completed">Completed</option>
-          </select>
-          <button onClick={clearFilters} className="text-[11px] text-gray-600 hover:text-gray-800">Clear</button>
-          <span className="text-[11px] text-gray-500 ml-auto">{filteredInquiries.length} shown</span>
-        </div>
+          {/* Supplier AI Scan Controls */}
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-md text-xs">
+            <div className="text-right hidden sm:block pr-2 border-r border-gray-200">
+              <div className="text-[11px] text-gray-500">
+                Last checked: <span className="font-medium text-gray-700">{lastCheckedTime || 'Recent'}</span>
+              </div>
+              <div className="text-[10px] text-gray-400">
+                Next check: <span className="font-semibold text-blue-600">{nextCheckWibTime}</span>
+              </div>
+            </div>
 
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 flex flex-wrap gap-1.5">
-            {tabs.map(item => (
+            <div className="flex items-center gap-1.5">
               <button
-                key={item.key}
-                onClick={() => setTab(item.key)}
-                className={`px-2.5 py-1 text-xs rounded font-medium ${tab === item.key ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-white border border-transparent hover:border-gray-200'}`}
+                id="btn-check-now"
+                onClick={handleCheckNow}
+                disabled={isScanning || isScanning7Days}
+                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
+                title="Run immediate Gmail Agent scan"
               >
-                {item.label}
-                <span className="ml-1 opacity-75">{tabCounts[item.key] || ''}</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                <span>{isScanning ? 'Scanning...' : 'CHECK NOW'}</span>
               </button>
-            ))}
-            <div className="relative ml-auto">
-              <button onClick={() => setColumnsOpen(open => !open)}
-                className="px-3 py-1 text-xs border border-gray-200 rounded bg-white hover:bg-gray-50">
-                Columns
+
+              <button
+                id="btn-check-7-days"
+                onClick={handleCheckLast7Days}
+                disabled={isScanning || isScanning7Days}
+                className="px-2.5 py-1 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded font-medium text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
+                title="Scan last 7 days of supplier emails"
+              >
+                <Calendar className={`w-3.5 h-3.5 text-blue-600 ${isScanning7Days ? 'animate-spin' : ''}`} />
+                <span>{isScanning7Days ? 'Scanning 7D...' : 'Check Last 7 Days'}</span>
               </button>
-              {columnsOpen && (
-                <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded shadow-lg z-30 p-2">
-                  <button onClick={table.reset} className="text-[11px] text-blue-600 hover:underline mb-1">Reset widths</button>
-                  {table.columns.map(column => (
-                    <label key={column.key} className="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-700">
-                      <input name="column_visibility" aria-label="Toggle column visibility" type="checkbox" checked={table.isVisible(column.key)} disabled={column.required} onChange={() => table.toggleColumn(column.key)} />
-                      <span>{column.label || 'Actions'}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
+        </div>
 
-          {tab === 'ai_india' ? (
-            <div className="p-3">
-              <KunalPendingPriceTracker
-                activeBucket={aiIndiaBucket}
-                onSelectBucket={setAiIndiaBucket}
-                refreshKey={aiRefreshKey}
-                aiRows={aiRows}
-                onJumpToWorksheetTab={(target) => {
-                  // Workflow card clicked — clear any AI bucket filter and
-                  // switch this page's tab over to the matching worksheet view.
-                  setAiIndiaBucket(null);
-                  setTab(target);
+        {/* ============================================================ */}
+        {/* 2. STATUS TABS & SEARCH FILTERS */}
+        {/* ============================================================ */}
+        <div className="space-y-2">
+          {/* Main Workflow Tabs */}
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <button
+              onClick={() => setStatusFilter('Needs Action')}
+              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-2 ${
+                statusFilter === 'Needs Action'
+                  ? 'bg-amber-600 text-white shadow-2xs'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>NEED ACTION NOW</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                statusFilter === 'Needs Action' ? 'bg-amber-800 text-white' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {counts.needsAction}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('Waiting Supplier')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+                statusFilter === 'Waiting Supplier'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <span>Waiting Supplier</span>
+              <span className="text-[10px] opacity-75 font-semibold">({counts.waitingSupplier})</span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('Price Received')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+                statusFilter === 'Price Received'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <span>Price Received</span>
+              <span className="text-[10px] opacity-75 font-semibold">({counts.priceReceived})</span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('Ready to Quote')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+                statusFilter === 'Ready to Quote'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <span>Ready to Quote</span>
+              <span className="text-[10px] opacity-75 font-semibold">({counts.readyToQuote})</span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('Completed')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+                statusFilter === 'Completed'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <span>Completed</span>
+              <span className="text-[10px] opacity-75 font-semibold">({counts.completed})</span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+                statusFilter === 'all'
+                  ? 'bg-gray-800 text-white shadow-2xs'
+                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              <span>All ({counts.total})</span>
+            </button>
+          </div>
+
+          {/* Search & Select Bar */}
+          <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded border border-gray-200 text-xs">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-gray-400" />
+              <input
+                id="pricing-search"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search inquiry / ACE ERP / product / customer / make..."
+                className="w-full pl-8 pr-2 py-1 border border-gray-200 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+
+            <select
+              aria-label="Customer Filter"
+              value={customerFilter}
+              onChange={e => setCustomerFilter(e.target.value)}
+              className="border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none"
+            >
+              <option value="all">All Customers</option>
+              {customerList.map(c => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+
+            <select
+              aria-label="Source Filter"
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              className="border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none"
+            >
+              <option value="all">All Sources</option>
+              <option value="india">India</option>
+              <option value="china">China</option>
+              <option value="local">Local</option>
+            </select>
+
+            {(search || customerFilter !== 'all' || sourceFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setSearch('');
+                  setCustomerFilter('all');
+                  setSourceFilter('all');
                 }}
-              />
-              <KunalIndiaPriceReview
-                onChange={() => setAiRefreshKey(k => k + 1)}
-                activeBucket={aiIndiaBucket}
-                onClearBucket={() => setAiIndiaBucket(null)}
-                onRowsChange={setAiRows}
-              />
-            </div>
-          ) : loading ? (
-            <div className="py-12 text-center text-sm text-gray-400">Loading...</div>
-          ) : filteredInquiries.length === 0 ? (
-            <div className="py-12 text-center">
-              <CheckCircle2 className="w-7 h-7 text-green-400 mx-auto mb-2" />
-              <p className="text-sm text-gray-700">No inquiry rows in this tab.</p>
-              <p className="text-[11px] text-gray-500 mt-1">Rows enter here from source replies, Kunal review flags, or missing CRM price fields.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto max-h-[calc(100vh-260px)] overflow-y-auto">
-              <table className="w-full table-fixed text-xs">
-                <thead className="bg-gray-100 border-b border-gray-300 sticky top-0 z-10">
+                className="text-[11px] text-blue-600 hover:underline px-1 cursor-pointer"
+              >
+                Clear Filters
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ============================================================ */}
+        {/* 3. OPERATIONAL PRICING SPREADSHEET TABLE */}
+        {/* ============================================================ */}
+        <div className="bg-white border border-gray-200 rounded-lg shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold text-[10px] uppercase tracking-wider select-none">
+                <tr>
+                  <th className="py-2 px-2 text-center w-8 border-r border-gray-200">
+                    <input
+                      type="checkbox"
+                      checked={displayedRows.length > 0 && selectedIds.size === displayedRows.length}
+                      onChange={toggleSelectAll}
+                      className="cursor-pointer rounded border-gray-300"
+                    />
+                  </th>
+                  <th className="py-2 px-2 w-32 border-r border-gray-200">INQUIRY / ACE</th>
+                  <th className="py-2 px-2 w-36 border-r border-gray-200">CUSTOMER</th>
+                  <th className="py-2 px-2 w-48 border-r border-gray-200">PRODUCT</th>
+                  <th className="py-2 px-2 w-28 border-r border-gray-200">REQ. MAKE</th>
+                  <th className="py-2 px-2 w-32 border-r border-gray-200">OFFERED MAKE</th>
+                  <th className="py-2 px-2 w-32 border-r border-gray-200">SUPPLIER</th>
+                  <th className="py-2 px-2 w-24 text-right border-r border-gray-200 bg-amber-50/40 text-amber-950 font-bold">
+                    SUPPLIER PRICE
+                  </th>
+                  <th className="py-2 px-1 text-center w-14 border-r border-gray-200">CURR</th>
+                  <th className="py-2 px-1 text-center w-12 border-r border-gray-200">UNIT</th>
+                  <th className="py-2 px-2.5 w-28 text-right bg-blue-50/60 text-blue-900 border-r border-gray-200 font-bold">
+                    SUGGESTED LANDED
+                  </th>
+                  <th className="py-2 px-2.5 w-28 text-right bg-green-50/60 text-green-900 border-r border-gray-200 font-bold">
+                    SUGGESTED QUOTE
+                  </th>
+                  <th className="py-2 px-2 text-center w-32 border-r border-gray-200">STATUS / REASON</th>
+                  <th className="py-2 px-2 text-center w-24">ACTIONS</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-gray-100 font-normal text-gray-800">
+                {loading ? (
                   <tr>
-                    {table.visibleColumns.map(column => (
-                      <th key={column.key} style={table.getCellStyle(column.key)} className="relative px-2 py-1.5 text-left text-[10px] font-bold text-gray-700 uppercase tracking-wider whitespace-nowrap border-r border-gray-300">
-                        {column.label}
-                        <div className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400" onMouseDown={event => table.startResize(column.key, event)} />
-                      </th>
-                    ))}
+                    <td colSpan={14} className="py-12 text-center text-gray-400">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
+                      Loading pricing worksheet...
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {filteredInquiries.map(inq => {
-                    const draft = ensureDraft(inq);
-                    const rowOptions = options[inq.id] || [];
-                    const sourceOption = rowOptions.find(opt => opt.id === draft.selected_option_id)
-                      || rowOptions.find(opt => opt.source_price !== null)
-                      || null;
-                    const isOpen = expanded === inq.id;
+                ) : displayedRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={14} className="py-12 text-center">
+                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2 opacity-80" />
+                      <p className="text-sm font-semibold text-gray-700">No rows in this view.</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        All actionable items are up to date. Click [ CHECK NOW ] to scan supplier emails.
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  displayedRows.map(row => {
+                    const isExpanded = expandedId === row.id;
+                    const isSelected = selectedIds.has(row.id);
+                    const sourcePriceDraft =
+                      priceDrafts[row.id]?.sourcePrice ?? (row.sourcePrice != null ? String(row.sourcePrice) : '');
+                    const quotePriceDraft =
+                      priceDrafts[row.id]?.quotePrice ?? (row.quotePrice != null ? String(row.quotePrice) : '');
+
                     return (
-                      <Fragment key={inq.id}>
-                        <tr className="hover:bg-gray-50 align-top">
-                          {table.isVisible('inquiry') && <td style={table.getCellStyle('inquiry')} className="px-2 py-1 text-xs font-medium whitespace-nowrap border-r border-gray-200">
-                            <button onClick={() => openInquiry(inq.id)} className="text-blue-700 hover:underline">{inq.inquiry_number}</button>
-                            {inq.kunal_pricing_requested_at && (
-                              <div className="text-[10px] text-gray-400">Sent {formatDate(inq.kunal_pricing_requested_at)}</div>
-                            )}
-                          </td>}
-                          {table.isVisible('aceerp') && <td style={table.getCellStyle('aceerp')} className="px-2 py-1 text-xs text-gray-700 whitespace-nowrap border-r border-gray-200 truncate">{inq.aceerp_no || '-'}</td>}
-                          {table.isVisible('customer') && <td style={table.getCellStyle('customer')} className="px-2 py-1 text-xs text-gray-700 truncate border-r border-gray-200" title={inq.company_name}>{inq.company_name}</td>}
-                          {table.isVisible('product') && <td style={table.getCellStyle('product')} className="px-2 py-1 text-xs font-medium text-gray-800 truncate border-r border-gray-200" title={inq.product_name}>{inq.product_name}</td>}
-                          {table.isVisible('spec') && <td style={table.getCellStyle('spec')} className="px-2 py-1 text-xs text-gray-500 truncate border-r border-gray-200" title={inq.specification || ''}>{inq.specification || '-'}</td>}
-                          {table.isVisible('mail_subject') && <td style={table.getCellStyle('mail_subject')} className="px-2 py-1 text-xs text-gray-500 truncate border-r border-gray-200" title={(inq.email_subject || inq.mail_subject || '')}>{inq.email_subject || inq.mail_subject || '-'}</td>}
-                          {table.isVisible('qty') && <td style={table.getCellStyle('qty')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">{inq.quantity || '-'}</td>}
-                          {table.isVisible('preferred') && <td style={table.getCellStyle('preferred')} className="px-2 py-1 text-xs text-gray-700 truncate border-r border-gray-200" title={inq.supplier_name || ''}>{inq.supplier_name || '-'}</td>}
-                          {table.isVisible('source') && <td style={table.getCellStyle('source')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">
-                            <span className="block">{inq.source_status}</span>
-                            <span className="text-[10px] text-gray-400">{inq.document_status}</span>
-                          </td>}
-                          {table.isVisible('options') && <td style={table.getCellStyle('options')} className="px-2 py-1 border-r border-gray-200">
-                            <button onClick={() => toggleExpanded(inq.id)}
-                              className="text-[11px] text-blue-600 hover:underline">
-                              {rowOptions.length === 0 ? 'Add option' : `${rowOptions.length} option${rowOptions.length !== 1 ? 's' : ''}`}
-                            </button>
-                          </td>}
-                          {table.isVisible('inr') && <td style={table.getCellStyle('inr')} className="px-2 py-1 text-xs text-gray-700 whitespace-nowrap border-r border-gray-200">
-                            {sourceOption?.source_price != null ? (
-                              <div>
-                                <span className="font-medium text-orange-700">{sourceOption.source_currency || 'INR'} {sourceOption.source_price}</span>
-                                {sourceOption.offered_make && <div className="text-[10px] text-gray-500">{sourceOption.offered_make}</div>}
-                              </div>
-                            ) : (
-                              <div className="flex gap-1">
-                                <select name="india_price_currency" aria-label="India Price Currency"
-                                  value={draft.india_price_currency}
-                                  onChange={e => setDraft(inq.id, { india_price_currency: e.target.value })}
-                                  className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14"
-                                >
-                                  {['INR', 'USD', 'CNY', 'IDR'].map(c => <option key={c}>{c}</option>)}
-                                </select>
-                                <MoneyInput
-                                  value={Number(draft.india_price) || 0}
-                                  onChange={amount => setDraft(inq.id, { india_price: String(amount) })}
-                                  placeholder="India price"
-                                  className="w-20 border border-orange-300 rounded px-2 py-0.5 text-xs focus:bg-orange-50 focus:outline-none focus:ring-1 focus:ring-orange-400"
-                                  maximumFractionDigits={4}
-                                />
-                              </div>
-                            )}
-                          </td>}
-                          {table.isVisible('landed') && <td style={table.getCellStyle('landed')} className="px-2 py-1 border-r border-gray-200">
-                            <div className="flex gap-1">
-                              <select name="purchase_currency" aria-label="Purchase Currency" value={draft.purchase_currency} onChange={e => setDraft(inq.id, { purchase_currency: e.target.value })}
-                                className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14">
-                                {['USD', 'INR', 'CNY', 'IDR'].map(currency => <option key={currency}>{currency}</option>)}
-                              </select>
-                              <MoneyInput value={Number(draft.purchase_price) || 0}
-                                onChange={amount => setDraft(inq.id, { purchase_price: String(amount) })}
-                                placeholder="0.00" className="w-24 border border-gray-300 rounded px-2 py-0.5 text-xs focus:bg-yellow-50" />
-                            </div>
-                          </td>}
-                          {table.isVisible('quote') && <td style={table.getCellStyle('quote')} className="px-2 py-1 border-r border-gray-200">
-                            <div className="flex gap-1">
-                              <select name="offered_currency" aria-label="Offered Currency" value={draft.offered_currency} onChange={e => setDraft(inq.id, { offered_currency: e.target.value })}
-                                className="border border-gray-300 rounded px-1 py-0.5 text-xs w-14">
-                                {['USD', 'IDR', 'INR', 'CNY'].map(currency => <option key={currency}>{currency}</option>)}
-                              </select>
-                              <MoneyInput value={Number(draft.offered_price) || 0}
-                                onChange={amount => setDraft(inq.id, { offered_price: String(amount) })}
-                                placeholder="0.00" className="w-24 border border-blue-300 rounded px-2 py-0.5 text-xs focus:bg-yellow-50" />
-                            </div>
-                          </td>}
-                          {table.isVisible('reference') && <td style={table.getCellStyle('reference')} className="px-2 py-1 border-r border-gray-200">
-                            <input name="import_data_reference" aria-label="Import ref" value={draft.import_data_reference} onChange={e => setDraft(inq.id, { import_data_reference: e.target.value })}
-                              placeholder="Import ref" className="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs mb-1 focus:bg-yellow-50" />
-                            <input name="kunal_remark" aria-label="Remark" value={draft.kunal_remark} onChange={e => setDraft(inq.id, { kunal_remark: e.target.value })}
-                              placeholder="Remark" className="w-32 border border-gray-300 rounded px-2 py-0.5 text-xs focus:bg-yellow-50" />
-                          </td>}
-                          {table.isVisible('actions') && <td style={table.getCellStyle('actions')} className="px-2 py-1 whitespace-nowrap">
-                            <div className="flex gap-1.5">
-                              <button onClick={() => openCalculator(inq)}
-                                title="Open Price Calculator"
-                                className="p-1 border border-gray-200 rounded hover:bg-gray-50 text-gray-500">
-                                <Calculator className="w-3.5 h-3.5" />
-                              </button>
-                              {(tab === 'completed' || (inq.purchase_price != null && inq.offered_price != null) || inq.kunal_price_status === 'entered') && isManager && (
+                      <Fragment key={row.id}>
+                        {/* Main Grid Row */}
+                        <tr
+                          className={`transition-colors text-[11px] group ${
+                            isSelected
+                              ? 'bg-blue-50/40'
+                              : isExpanded
+                              ? 'bg-gray-50/90 font-medium'
+                              : row.isAiPrepared
+                              ? 'bg-amber-50/20 hover:bg-amber-50/40'
+                              : 'hover:bg-gray-50'
+                          }`}
+                        >
+                          {/* Checkbox */}
+                          <td className="py-1.5 px-2 text-center border-r border-gray-200">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(row.id)}
+                              className="cursor-pointer rounded border-gray-300"
+                            />
+                          </td>
+
+                          {/* ACE / Inquiry Cell */}
+                          <td className="py-1 px-2 border-r border-gray-200">
+                            <div className="flex items-center gap-1 font-mono font-medium">
+                              {row.inquiryId ? (
                                 <button
-                                  onClick={() => setReplyTarget({
-                                    inquiry: {
-                                      id: inq.id,
-                                      inquiry_number: inq.inquiry_number,
-                                      aceerp_no: inq.aceerp_no,
-                                      product_name: inq.product_name,
-                                      supplier_name: inq.supplier_name,
-                                      quantity: inq.quantity,
-                                      email_subject: inq.email_subject,
-                                      remarks: inq.remarks,
-                                    },
-                                    draft: {
-                                      india_price: draft.india_price,
-                                      india_price_currency: draft.india_price_currency,
-                                      purchase_price: draft.purchase_price,
-                                      purchase_currency: draft.purchase_currency,
-                                      offered_price: draft.offered_price,
-                                      offered_currency: draft.offered_currency,
-                                      kunal_remark: draft.kunal_remark,
-                                    },
-                                    sourceOption: sourceOption ? { offered_make: sourceOption.offered_make } : null,
-                                  })}
-                                  title="Send Internal Price Reply"
-                                  className="p-1 border border-gray-200 rounded hover:bg-blue-50 text-blue-600"
+                                  type="button"
+                                  className="text-blue-700 hover:underline cursor-pointer text-left font-mono font-medium"
+                                  onClick={() => setEvidenceDrawerRow(row)}
+                                  title="Click to preview email & source evidence"
                                 >
-                                  <Mail className="w-3.5 h-3.5" />
+                                  {row.inquiryNumber}
                                 </button>
-                              )}
-                              {(tab === 'completed' || (inq.purchase_price != null && inq.offered_price != null) || inq.kunal_price_status === 'entered') && isManager && (
-                                <button
-                                  onClick={() => setQuoteTarget({
-                                    inquiry: {
-                                      id: inq.id,
-                                      inquiry_number: inq.inquiry_number,
-                                      aceerp_no: inq.aceerp_no,
-                                      product_name: inq.product_name,
-                                      quantity: inq.quantity,
-                                      email_subject: inq.email_subject,
-                                      company_name: inq.company_name,
-                                    },
-                                    option: sourceOption ? {
-                                      offered_make: sourceOption.offered_make,
-                                      origin: sourceOption.origin ?? null,
-                                      specification: sourceOption.specification ?? inq.specification ?? null,
-                                      moq: sourceOption.moq ?? null,
-                                      packing: sourceOption.packing ?? null,
-                                      lead_time: sourceOption.lead_time ?? null,
-                                      selling_price: sourceOption.selling_price ?? (draft.offered_price ? parseFloat(draft.offered_price) : null),
-                                      selling_currency: sourceOption.selling_currency ?? draft.offered_currency ?? null,
-                                      source_currency: sourceOption.source_currency,
-                                      remark: sourceOption.remark ?? null,
-                                    } : {
-                                      offered_make: null, origin: null, specification: inq.specification ?? null,
-                                      moq: null, packing: null, lead_time: null,
-                                      selling_price: draft.offered_price ? parseFloat(draft.offered_price) : null,
-                                      selling_currency: draft.offered_currency ?? null, source_currency: 'USD', remark: null,
-                                    },
-                                  })}
-                                  title="Send Customer Quotation"
-                                  className="p-1 border border-gray-200 rounded hover:bg-emerald-50 text-emerald-600"
-                                >
-                                  <Send className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                              <button onClick={() => submit(inq)} disabled={savingId === inq.id || !isManager}
-                                className={`flex items-center gap-1 px-2 py-1 text-xs rounded disabled:opacity-50 ${tab === 'completed' ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                                <Save className="w-3 h-3" /> {savingId === inq.id ? '...' : tab === 'completed' ? 'Re-submit' : 'Submit'}
-                              </button>
-                            </div>
-                          </td>}
-                        </tr>
-                        {isOpen && (
-                          <tr className="bg-blue-50/40">
-                            <td colSpan={table.visibleColumns.length} className="px-4 py-3">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2 text-xs text-gray-600">
-                                  <FileText className="w-3.5 h-3.5 text-gray-400" />
-                                  Source options for <span className="font-medium text-gray-800">{inq.inquiry_number}</span>
-                                  <span className="text-gray-400">·</span>
-                                  <span className="text-gray-500">{formatDate(inq.created_at)}</span>
-                                </div>
-                                {isManager && (
-                                  <button onClick={() => addOption(inq)}
-                                    className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                                    <Plus className="w-3 h-3" /> Add option
-                                  </button>
-                                )}
-                              </div>
-                              {rowOptions.length === 0 ? (
-                                <p className="text-[11px] text-gray-500">No source options recorded yet. Add manual India/China/local source reply data here.</p>
                               ) : (
-                                <div className="space-y-1.5">
-                                  {rowOptions.map(opt => (
-                                    <div key={opt.id} className={`rounded border ${opt.is_selected ? 'border-blue-300 bg-white' : 'border-gray-200 bg-white/70'}`}>
-                                    <div className="grid grid-cols-12 gap-2 items-center text-xs px-2 py-1.5">
-                                      <label className="col-span-1 flex items-center gap-1.5 cursor-pointer">
-                                        <input type="radio" name={`opt-${inq.id}`} checked={opt.is_selected}
-                                          onChange={() => selectOption(inq.id, opt.id)} disabled={!isManager}
-                                          className="text-blue-600 focus:ring-blue-500" />
-                                        <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${SOURCE_COLOR[opt.source_type] || 'bg-gray-100 text-gray-600'}`}>{opt.source_type}</span>
-                                      </label>
-                                      <select name="opt" aria-label="Opt" value={opt.source_type} onChange={e => updateOption(opt, { source_type: e.target.value })} disabled={!isManager}
-                                        className="col-span-1 border border-gray-200 rounded px-1 py-0.5 text-xs">
-                                        {['india', 'china', 'local'].map(source => <option key={source}>{source}</option>)}
-                                      </select>
-                                      <input name="opt" aria-label="Make" value={opt.offered_make || ''} list="make-suggestions"
-                                        onChange={e => updateOption(opt, { offered_make: e.target.value })}
-                                        onBlur={() => { resetMakeSuggestions(); loadMakeSuggestions().then(setMakeOptions); }} disabled={!isManager}
-                                        placeholder="Make" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" />
-                                      <div className="col-span-2 flex gap-1">
-                                        <select name="opt" aria-label="Opt" value={opt.source_currency} onChange={e => updateOption(opt, { source_currency: e.target.value })} disabled={!isManager}
-                                          className="border border-gray-200 rounded px-1 py-0.5 text-xs w-14">
-                                          {['USD','INR','CNY','IDR'].map(currency => <option key={currency}>{currency}</option>)}
-                                        </select>
-                                        <MoneyInput value={opt.source_price} onChange={amount => updateOption(opt, { source_price: amount || null })} disabled={!isManager}
-                                          placeholder="Price" className="flex-1 border border-gray-200 rounded px-2 py-0.5 text-xs" maximumFractionDigits={4} />
-                                      </div>
-                                      <select name="opt" aria-label="Opt" value={opt.availability} onChange={e => updateOption(opt, { availability: e.target.value })} disabled={!isManager}
-                                        className={`col-span-1 border rounded px-1 py-0.5 text-xs ${AVAIL_COLOR[opt.availability] || ''}`}>
-                                        {['available','partial','na'].map(value => <option key={value}>{value}</option>)}
-                                      </select>
-                                      <select name="opt" aria-label="Opt" value={opt.document_status} onChange={e => updateOption(opt, { document_status: e.target.value })} disabled={!isManager}
-                                        className="col-span-2 border border-gray-200 rounded px-1 py-0.5 text-xs">
-                                        {['not_required','pending','partial','received'].map(value => <option key={value}>{value}</option>)}
-                                      </select>
-                                      <input name="opt" aria-label="Remark" value={opt.remark || ''} onChange={e => updateOption(opt, { remark: e.target.value })} disabled={!isManager}
-                                        placeholder="Remark" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" />
-                                      <button onClick={() => removeOption(opt)} disabled={!isManager}
-                                        className="col-span-1 p-1 text-gray-400 hover:text-red-600 disabled:opacity-30 justify-self-end">
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                    {/* ── Part 5: extended pricing-grid fields (inline, no popup) ── */}
-                                    <div className="grid grid-cols-12 gap-2 items-center text-xs px-2 pb-1.5 border-t border-gray-100 pt-1.5">
-                                      <input name="opt" aria-label="Supplier" value={opt.supplier || ''} onChange={e => updateOption(opt, { supplier: e.target.value })} disabled={!isManager}
-                                        placeholder="Supplier" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Supplier" />
-                                      <input name="opt" aria-label="Origin" value={opt.origin || ''} onChange={e => updateOption(opt, { origin: e.target.value })} disabled={!isManager}
-                                        placeholder="Origin" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Country of origin" />
-                                      <input name="opt" aria-label="MOQ" value={opt.moq || ''} onChange={e => updateOption(opt, { moq: e.target.value })} disabled={!isManager}
-                                        placeholder="MOQ" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Minimum order quantity" />
-                                      <input name="opt" aria-label="Packing" value={opt.packing || ''} onChange={e => updateOption(opt, { packing: e.target.value })} disabled={!isManager}
-                                        placeholder="Packing" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Packing" />
-                                      <input name="opt" aria-label="Lead time" value={opt.lead_time || ''} onChange={e => updateOption(opt, { lead_time: e.target.value })} disabled={!isManager}
-                                        placeholder="Lead time" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Lead time" />
-                                      <input name="opt" aria-label="Specification" value={opt.specification || ''} onChange={e => updateOption(opt, { specification: e.target.value })} disabled={!isManager}
-                                        placeholder="Specification" className="col-span-2 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Specification" />
-                                      <input name="opt" aria-label="Margin %" type="number" value={opt.margin_pct ?? ''} onChange={e => updateOption(opt, { margin_pct: e.target.value ? parseFloat(e.target.value) : null })} disabled={!isManager}
-                                        placeholder="Margin %" className="col-span-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Margin %" />
-                                      <div className="col-span-3 flex gap-1">
-                                        <select name="opt" aria-label="Opt" value={opt.selling_currency || opt.source_currency} onChange={e => updateOption(opt, { selling_currency: e.target.value })} disabled={!isManager}
-                                          className="border border-gray-200 rounded px-1 py-0.5 text-xs w-14" title="Selling currency">
-                                          {['USD','INR','CNY','IDR'].map(currency => <option key={currency}>{currency}</option>)}
-                                        </select>
-                                        <MoneyInput value={opt.selling_price} onChange={amount => updateOption(opt, { selling_price: amount || null })} disabled={!isManager}
-                                          placeholder="Selling price" className="flex-1 border border-gray-200 rounded px-2 py-0.5 text-xs" title="Selling price" maximumFractionDigits={4} />
-                                      </div>
-                                    </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              {/* ── Documents Section ── */}
-                              <div className="mt-3 border-t border-blue-100 pt-3">
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-1.5 text-xs font-medium text-gray-700">
-                                    <Paperclip className="w-3.5 h-3.5 text-gray-400" />
-                                    Documents / Certificates
-                                    {(docs[inq.id] || []).length > 0 && (
-                                      <span className="ml-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-semibold">{(docs[inq.id] || []).length}</span>
-                                    )}
-                                  </div>
-                                  <label className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline cursor-pointer">
-                                    <Upload className="w-3 h-3" /> Browse
-                                    <input name="file_upload" aria-label="Upload file" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                                      className="hidden"
-                                      onChange={e => { if (e.target.files) { queueDocFiles(inq, e.target.files); e.target.value = ''; } }} />
-                                  </label>
-                                </div>
-
-                                {/* Paste / drop zone */}
-                                <div
-                                  className="mb-2 border-2 border-dashed border-gray-200 rounded px-3 py-2 text-[11px] text-gray-400 text-center cursor-default hover:border-blue-300 hover:text-blue-400 transition-colors"
-                                  onDragOver={e => e.preventDefault()}
-                                  onDrop={e => { e.preventDefault(); const files = Array.from(e.dataTransfer.files); if (files.length) queueDocFiles(inq, files); }}
-                                  onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); queueDocFiles(inq, files); } }}
-                                  tabIndex={0}
+                                <select
+                                  aria-label="Link Inquiry"
+                                  value=""
+                                  onChange={e => {
+                                    const inq = allInquiriesList.find(i => i.id === e.target.value);
+                                    if (inq) {
+                                      updateRow(row.id, {
+                                        inquiryId: inq.id,
+                                        inquiryNumber: inq.inquiry_number,
+                                        aceerpNo: inq.aceerp_no || '-',
+                                        customerName: inq.company_name,
+                                        needsManualLink: false,
+                                        actionReason: null,
+                                      });
+                                    }
+                                  }}
+                                  className="w-full text-[10px] bg-amber-50 text-amber-800 border border-amber-300 rounded px-1 py-0.5"
                                 >
-                                  Drag &amp; drop files here, or <kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px] font-mono">Ctrl+V</kbd> to paste — COA, MSDS, TDS, SPEC etc.
-                                </div>
+                                  <option value="">Link Inquiry ▼</option>
+                                  {allInquiriesList.map(i => (
+                                    <option key={i.id} value={i.id}>
+                                      {i.inquiry_number} ({i.aceerp_no || 'No ACE'}) - {i.product_name.slice(0, 16)}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-gray-500 font-mono">{row.aceerpNo}</div>
+                          </td>
 
-                                {/* Upload queue */}
-                                {(uploadQueue[inq.id] || []).length > 0 && (
-                                  <div className="mb-2 space-y-1.5">
-                                    {(uploadQueue[inq.id] || []).map((item, idx) => (
-                                      <div key={idx} className="flex flex-wrap items-center gap-2 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded text-xs">
-                                        <FileText className="w-3 h-3 text-amber-600 flex-shrink-0" />
-                                        <span className="flex-1 min-w-0 truncate text-gray-700" title={item.file.name}>{item.file.name}</span>
-                                        <select name="doc_type" aria-label="Doc Type" value={item.doc_type} onChange={e => setQueueItemType(inq.id, idx, e.target.value)}
-                                          className="border border-gray-200 rounded px-1 py-0.5 text-[11px]">
-                                          {CRM_DOC_TYPES.map(t => <option key={t}>{t}</option>)}
-                                        </select>
-                                        <input name="make" aria-label="Make / Supplier"
-                                          value={item.make}
-                                          onChange={e => setQueueItemMake(inq.id, idx, e.target.value)}
-                                          placeholder="Make / Supplier"
-                                          className="w-28 border border-gray-200 rounded px-1.5 py-0.5 text-[11px] focus:border-blue-400 focus:outline-none"
-                                        />
-                                        <span className="text-[10px] text-gray-400 italic">
-                                          → {[item.file.name.replace(/[^a-zA-Z0-9]/g, '_').slice(0,4), inq.product_name, item.make || '?', item.doc_type].filter(Boolean).join('_').replace(/_{2,}/g,'_').slice(0,32)}.{item.file.name.split('.').pop()}
-                                        </span>
-                                        <button onClick={() => removeQueueItem(inq.id, idx)} className="text-red-500 hover:text-red-700 ml-auto"><X className="w-3 h-3" /></button>
-                                      </div>
-                                    ))}
-                                    <button onClick={() => uploadDocs(inq)} disabled={uploading[inq.id]}
-                                      className="flex items-center gap-1 px-2 py-1 text-[11px] bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">
-                                      <Upload className="w-3 h-3" /> {uploading[inq.id] ? 'Uploading…' : `Save ${(uploadQueue[inq.id] || []).length} file(s) to CRM`}
-                                    </button>
-                                  </div>
-                                )}
+                          {/* Customer */}
+                          <td
+                            className="py-1 px-2 border-r border-gray-200 truncate max-w-[150px]"
+                            title={row.customerName}
+                          >
+                            <input
+                              value={row.customerName}
+                              onChange={e => updateRow(row.id, { customerName: e.target.value })}
+                              className="w-full bg-transparent border-none text-[11px] p-0 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded truncate"
+                            />
+                          </td>
 
-                                {/* Saved documents */}
-                                {docsLoading[inq.id] ? (
-                                  <p className="text-[11px] text-gray-400">Loading…</p>
-                                ) : (docs[inq.id] || []).length === 0 ? (
-                                  <p className="text-[11px] text-gray-400">No documents yet — upload COA, MSDS, TDS etc. above.</p>
+                          {/* Product */}
+                          <td
+                            className="py-1 px-2 border-r border-gray-200 truncate max-w-[180px] cursor-pointer hover:bg-amber-50/40"
+                            title="Click to preview email & source evidence"
+                            onClick={() => setEvidenceDrawerRow(row)}
+                          >
+                            <div className="font-medium text-gray-900 truncate hover:text-blue-700">{row.productName}</div>
+                            {row.isAiPrepared && (
+                              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-700 bg-amber-100 px-1 rounded">
+                                <Sparkles className="w-2.5 h-2.5" /> AI Prepared
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Requested Make */}
+                          <td
+                            className="py-1 px-2 border-r border-gray-200 truncate max-w-[110px]"
+                            title={row.requestedMake}
+                          >
+                            <span className="text-gray-600">{row.requestedMake || '-'}</span>
+                          </td>
+
+                          {/* Offered Make */}
+                          <td className="py-1 px-2 border-r border-gray-200">
+                            <div className="flex items-center gap-1">
+                              <input
+                                list="make-options-list"
+                                value={row.offeredMake}
+                                onChange={e => updateRow(row.id, { offeredMake: e.target.value })}
+                                className="w-full bg-transparent border border-gray-200 rounded px-1 py-0.5 text-[11px] focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-400"
+                                placeholder="Make..."
+                              />
+                              {row.alternativeMakeDetected && (
+                                <span
+                                  className="text-[9px] bg-purple-100 text-purple-700 font-bold px-1 rounded flex-shrink-0"
+                                  title="Alternative make detected"
+                                >
+                                  ALT
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Supplier */}
+                          <td className="py-1 px-2 border-r border-gray-200">
+                            <input
+                              value={row.supplierName}
+                              onChange={e => updateRow(row.id, { supplierName: e.target.value })}
+                              className="w-full bg-transparent border border-gray-200 rounded px-1 py-0.5 text-[11px] focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-400"
+                              placeholder="Supplier..."
+                            />
+                          </td>
+
+                          {/* SUPPLIER PRICE (Rock-solid local string draft input) */}
+                          <td className="py-1 px-1.5 border-r border-gray-200 text-right bg-amber-50/20">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={sourcePriceDraft}
+                              onChange={e => handleSourcePriceDraftChange(row.id, e.target.value)}
+                              className="w-20 text-right font-mono font-bold text-gray-900 border border-gray-200 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
+                              placeholder="0.00"
+                            />
+                          </td>
+
+                          {/* Currency */}
+                          <td className="py-1 px-1 border-r border-gray-200 text-center">
+                            <select
+                              aria-label="Currency"
+                              value={row.sourceCurrency}
+                              onChange={e => updateRow(row.id, { sourceCurrency: e.target.value as any })}
+                              className="text-[10px] bg-transparent font-medium border-none p-0 focus:outline-none"
+                            >
+                              <option value="INR">INR</option>
+                              <option value="USD">USD</option>
+                            </select>
+                          </td>
+
+                          {/* Unit */}
+                          <td className="py-1 px-1 border-r border-gray-200 text-center">
+                            <select
+                              aria-label="Unit"
+                              value={row.unit}
+                              onChange={e => updateRow(row.id, { unit: e.target.value })}
+                              className="text-[10px] bg-transparent font-medium border-none p-0 focus:outline-none"
+                            >
+                              <option value="KG">KG</option>
+                              <option value="MT">MT</option>
+                            </select>
+                          </td>
+
+                          {/* SUGGESTED LANDED COST (Real Canonical calculateFCL Output) */}
+                          <td className="py-1 px-2 border-r border-gray-200 text-right font-mono font-bold bg-blue-50/40 text-blue-950">
+                            {row.landedCostUsd !== null ? `$${row.landedCostUsd.toFixed(2)}` : '—'}
+                          </td>
+
+                          {/* SUGGESTED QUOTE (Editable Excel-like Cell with local string draft) */}
+                          <td className="py-1 px-1.5 border-r border-gray-200 text-right bg-green-50/40">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={quotePriceDraft}
+                              onChange={e => handleQuotePriceDraftChange(row.id, e.target.value)}
+                              className="w-20 text-right font-mono font-bold text-green-900 border border-green-200 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-green-500"
+                              placeholder="—"
+                            />
+                          </td>
+
+                          {/* Status & Reason Badge */}
+                          <td
+                            className="py-1 px-2 border-r border-gray-200 text-center cursor-pointer hover:bg-gray-100/70"
+                            onClick={() => setEvidenceDrawerRow(row)}
+                            title="Click to preview email & source evidence"
+                          >
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span
+                                className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${
+                                  row.status === 'Needs Review'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : row.status === 'Price Received'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : row.status === 'Ready to Quote'
+                                    ? 'bg-indigo-100 text-indigo-800'
+                                    : row.status === 'Completed'
+                                    ? 'bg-green-100 text-green-800'
+                                    : 'bg-gray-100 text-gray-600'
+                                }`}
+                              >
+                                {row.status}
+                              </span>
+                              {row.actionReason && (
+                                <span className="text-[9px] text-amber-700 font-medium">
+                                  {row.actionReason}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-1 px-2 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => setEvidenceDrawerRow(row)}
+                                className="p-1 hover:bg-blue-50 text-blue-600 rounded cursor-pointer"
+                                title="Preview Email & AI Evidence"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setExpandedId(isExpanded ? null : row.id)}
+                                className="p-1 hover:bg-gray-200 text-gray-600 rounded cursor-pointer"
+                                title="Expand Details"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="w-4 h-4 text-blue-600" />
                                 ) : (
-                                  <div className="space-y-1">
-                                    {(docs[inq.id] || []).map(doc => (
-                                      <div key={doc.id} className="flex items-center gap-2 px-2 py-1 bg-white border border-gray-200 rounded text-xs">
-                                        <FileText className="w-3 h-3 text-blue-500 flex-shrink-0" />
-                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${DOC_TYPE_COLOR[doc.document_type] || 'bg-gray-100 text-gray-600'}`}>{doc.document_type}</span>
-                                        <span className="flex-1 truncate text-gray-700 font-medium" title={doc.display_file_name || ''}>{doc.display_file_name || doc.original_file_name || doc.storage_path.split('/').pop()}</span>
-                                        <span className="text-gray-400 text-[10px] flex-shrink-0">{new Date(doc.created_at).toLocaleDateString()}</span>
-                                        <button onClick={() => openDoc(doc)} className="text-blue-500 hover:text-blue-700 underline text-[11px] flex-shrink-0">Open</button>
-                                        {isManager && (
-                                          <button onClick={() => deleteDoc(doc)} className="text-red-400 hover:text-red-600 flex-shrink-0"><Trash2 className="w-3 h-3" /></button>
+                                  <ChevronRight className="w-4 h-4" />
+                                )}
+                              </button>
+                              <button
+                                onClick={() => handleSaveRow(row)}
+                                disabled={savingId === row.id}
+                                className="p-1 text-blue-600 hover:bg-blue-100 rounded cursor-pointer disabled:opacity-50"
+                                title="Save Pricing"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* ============================================================ */}
+                        {/* 4. EXPANDED PRICING WORKSHEET & CANONICAL CALCULATOR */}
+                        {/* ============================================================ */}
+                        {isExpanded && (
+                          <tr className="bg-gray-50 border-b-2 border-blue-200">
+                            <td colSpan={14} className="p-3">
+                              <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-2xs space-y-3">
+                                {/* Grid Layout: Supplier Source Rate | Real Import Calculation | Quote & Actions */}
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                                  {/* Column A: SOURCE PRICE / RATE WORKSHEET */}
+                                  <div className="border border-gray-200 rounded-md p-2.5 bg-gray-50/50 space-y-2">
+                                    <div className="text-[11px] font-bold text-gray-800 uppercase tracking-wide flex items-center justify-between">
+                                      <span>Supplier Rate Worksheet</span>
+                                      {row.evidence && (
+                                        <button
+                                          onClick={() => setEvidenceDrawerRow(row)}
+                                          className="text-[10px] text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <Eye className="w-3 h-3" />
+                                          View Email & Evidence
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Alternative Make Alert Banner */}
+                                    {row.alternativeMakeDetected && (
+                                      <div className="bg-purple-50 border border-purple-200 p-2 rounded text-xs space-y-1">
+                                        <div className="font-semibold text-purple-900 flex items-center gap-1">
+                                          <AlertCircle className="w-3.5 h-3.5 text-purple-600" />
+                                          Alternative Make Detected
+                                        </div>
+                                        <div className="text-[11px] text-purple-800">
+                                          Requested:{' '}
+                                          <span className="font-medium">{row.requestedMake || 'None'}</span> • Offered:{' '}
+                                          <span className="font-medium">{row.offeredMake}</span>
+                                        </div>
+                                        <div className="flex gap-1.5 pt-0.5">
+                                          <button
+                                            onClick={() => updateRow(row.id, { alternativeMakeDetected: false })}
+                                            className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-[10px] font-medium cursor-pointer"
+                                          >
+                                            USE ALTERNATIVE MAKE
+                                          </button>
+                                          <button
+                                            onClick={() =>
+                                              updateRow(row.id, {
+                                                offeredMake: row.requestedMake,
+                                                alternativeMakeDetected: false,
+                                              })
+                                            }
+                                            className="px-2 py-0.5 bg-white border border-purple-300 text-purple-800 hover:bg-purple-50 rounded text-[10px] font-medium cursor-pointer"
+                                          >
+                                            KEEP REQUESTED MAKE
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Supplier Rate</label>
+                                        <input
+                                          type="text"
+                                          inputMode="decimal"
+                                          value={sourcePriceDraft}
+                                          onChange={e => handleSourcePriceDraftChange(row.id, e.target.value)}
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs font-mono font-semibold bg-white"
+                                          placeholder="3650"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Currency & Unit</label>
+                                        <div className="flex gap-1">
+                                          <select
+                                            value={row.sourceCurrency}
+                                            onChange={e => updateRow(row.id, { sourceCurrency: e.target.value as any })}
+                                            className="w-1/2 border border-gray-200 rounded px-1 py-1 text-xs bg-white font-bold"
+                                          >
+                                            <option value="INR">INR</option>
+                                            <option value="USD">USD</option>
+                                          </select>
+                                          <select
+                                            value={row.unit}
+                                            onChange={e => updateRow(row.id, { unit: e.target.value })}
+                                            className="w-1/2 border border-gray-200 rounded px-1 py-1 text-xs bg-white font-bold"
+                                          >
+                                            <option value="KG">KG</option>
+                                            <option value="MT">MT</option>
+                                          </select>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Supplier Name</label>
+                                        <input
+                                          value={row.supplierName}
+                                          onChange={e => updateRow(row.id, { supplierName: e.target.value })}
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Availability</label>
+                                        <select
+                                          value={row.availability}
+                                          onChange={e => updateRow(row.id, { availability: e.target.value as any })}
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white"
+                                        >
+                                          <option value="available">Available</option>
+                                          <option value="partial">Partial</option>
+                                          <option value="na">Not Available</option>
+                                        </select>
+                                      </div>
+                                    </div>
+
+                                    {/* Document Checklist in the Same Row */}
+                                    <div className="pt-2 border-t border-gray-200">
+                                      <div className="text-[10px] text-gray-500 font-semibold mb-1 flex items-center justify-between">
+                                        <span>Product Documents</span>
+                                        {row.docActionNotice && (
+                                          <span className="text-amber-700 font-medium">
+                                            {row.docActionNotice}
+                                          </span>
                                         )}
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
+                                      <div className="flex flex-wrap gap-1">
+                                        {['COA', 'MSDS', 'GMP', 'TDS', 'SPEC'].map(docType => {
+                                          const found = row.documents.find(
+                                            d => d.documentType.toUpperCase() === docType,
+                                          );
+                                          const isMatched = found?.status === 'MATCHED';
+                                          const isReview = found?.status === 'REVIEW';
+                                          const isAmbiguous = found?.status === 'AMBIGUOUS';
 
+                                          return (
+                                            <span
+                                              key={docType}
+                                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center gap-0.5 border ${
+                                                isMatched
+                                                  ? 'bg-green-50 text-green-700 border-green-200'
+                                                  : isReview
+                                                  ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                                  : isAmbiguous
+                                                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                  : 'bg-gray-100 text-gray-400 border-gray-200'
+                                              }`}
+                                            >
+                                              {isMatched ? '✓' : isReview ? '⚠️' : isAmbiguous ? '❓' : '✗'} {docType}
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Column B: IMPORT CALCULATION (Real PriceCalculator Logic) */}
+                                  <div className="border border-blue-200 rounded-md p-2.5 bg-blue-50/20 space-y-2">
+                                    <div className="text-[11px] font-bold text-blue-950 uppercase tracking-wide flex items-center justify-between">
+                                      <span>Import Calculation (FCL)</span>
+                                      <span className="text-[10px] text-blue-700 font-semibold">
+                                        20ft Mixed • 12,000 kg
+                                      </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          Purchase USD / kg
+                                        </label>
+                                        <div className="border border-gray-200 rounded px-1.5 py-1 text-xs bg-gray-50 font-mono font-medium text-gray-700">
+                                          {row.purchasePriceUsdPerKg !== null
+                                            ? `$${row.purchasePriceUsdPerKg.toFixed(2)}`
+                                            : '— (auto)'}
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          Effective INR Rate
+                                        </label>
+                                        <input
+                                          type="number"
+                                          step="0.1"
+                                          value={row.effectiveInrRate}
+                                          onChange={e =>
+                                            updateRow(row.id, {
+                                              effectiveInrRate: parseFloat(e.target.value) || 91,
+                                            })
+                                          }
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          India Margin %
+                                        </label>
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          value={row.indiaMarginPct}
+                                          onChange={e =>
+                                            updateRow(row.id, {
+                                              indiaMarginPct: parseFloat(e.target.value) || 0,
+                                            })
+                                          }
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          Freight ($/kg)
+                                        </label>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          value={row.freightUsdPerKg}
+                                          onChange={e =>
+                                            updateRow(row.id, {
+                                              freightUsdPerKg: parseFloat(e.target.value) || 0,
+                                            })
+                                          }
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Duty %</label>
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          value={row.dutyPct}
+                                          onChange={e =>
+                                            updateRow(row.id, { dutyPct: parseFloat(e.target.value) || 0 })
+                                          }
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Clearance ($)</label>
+                                        <input
+                                          type="number"
+                                          step="50"
+                                          value={row.clearanceUsd}
+                                          onChange={e =>
+                                            updateRow(row.id, {
+                                              clearanceUsd: parseFloat(e.target.value) || 0,
+                                            })
+                                          }
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* Suggested Landed Cost Callout */}
+                                    <div className="bg-blue-100/90 border border-blue-300 rounded p-2 flex items-center justify-between mt-2">
+                                      <span className="text-xs font-bold text-blue-950">SUGGESTED LANDED:</span>
+                                      <span className="text-base font-black text-blue-950 font-mono">
+                                        {row.landedCostUsd !== null ? `$${row.landedCostUsd.toFixed(2)} / kg` : '—'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Column C: QUOTE & ACTIONS */}
+                                  <div className="border border-green-200 rounded-md p-2.5 bg-green-50/20 space-y-2">
+                                    <div className="text-[11px] font-bold text-green-950 uppercase tracking-wide flex items-center justify-between">
+                                      <span>Quote Worksheet</span>
+                                      <span className="text-[10px] text-green-700 font-semibold">USD</span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          Indonesia Margin %
+                                        </label>
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          value={row.indonesiaMarginPct}
+                                          onChange={e =>
+                                            updateRow(row.id, {
+                                              indonesiaMarginPct: parseFloat(e.target.value) || 0,
+                                            })
+                                          }
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono font-semibold"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          Suggested Quote
+                                        </label>
+                                        <div className="border border-gray-200 rounded px-1.5 py-1 text-xs bg-gray-50 font-mono font-bold text-green-800">
+                                          {row.suggestedQuoteUsd !== null
+                                            ? `$${row.suggestedQuoteUsd.toFixed(2)} / kg`
+                                            : '— (auto)'}
+                                        </div>
+                                      </div>
+
+                                      <div className="col-span-2">
+                                        <label className="text-[10px] text-gray-600 font-bold">
+                                          Quote Price Override ($/kg)
+                                        </label>
+                                        <input
+                                          type="text"
+                                          inputMode="decimal"
+                                          value={quotePriceDraft}
+                                          onChange={e => handleQuotePriceDraftChange(row.id, e.target.value)}
+                                          className="w-full border border-green-400 rounded px-2 py-1 text-xs bg-white font-mono font-bold text-green-950"
+                                          placeholder="Enter or override quote price..."
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">Selling Qty</label>
+                                        <input
+                                          value={row.quantity}
+                                          onChange={e => updateRow(row.id, { quantity: e.target.value })}
+                                          className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs bg-white font-mono"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-[10px] text-gray-500 font-medium">
+                                          Total Quote Value
+                                        </label>
+                                        <div className="border border-gray-200 rounded px-1.5 py-1 text-xs bg-gray-50 font-mono font-semibold text-gray-800">
+                                          {row.totalQuoteAmount !== null
+                                            ? `$${row.totalQuoteAmount.toLocaleString()}`
+                                            : '—'}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Action Buttons: SAVE and SEND TO TEAM */}
+                                    <div className="pt-2 flex items-center gap-2">
+                                      <button
+                                        onClick={() => handleSaveRow(row)}
+                                        disabled={savingId === row.id}
+                                        className="flex-1 py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold flex items-center justify-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                                      >
+                                        <Save className="w-3.5 h-3.5" />
+                                        <span>{savingId === row.id ? 'Saving...' : 'SAVE'}</span>
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleSendToTeam(row)}
+                                        className="flex-1 py-1.5 px-3 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                                      >
+                                        <Send className="w-3.5 h-3.5" />
+                                        <span>SEND TO TEAM</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         )}
                       </Fragment>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-
-        <p className="mt-3 text-[11px] text-gray-500">
-          Submit updates CRM Purchase + Selling, turns Kunal/price ready green, writes Pricing Ledger history, and keeps Quote status as not sent.
-        </p>
       </div>
 
+      {/* ============================================================ */}
+      {/* 5. SEND TO TEAM INTERNAL REPLY MODAL */}
+      {/* ============================================================ */}
       {replyTarget && (
         <KunalInternalReplyModal
-          isOpen={true}
-          onClose={() => setReplyTarget(null)}
+          isOpen={Boolean(replyTarget)}
+          onClose={() => {
+            setReplyTarget(null);
+            loadData();
+          }}
           inquiry={replyTarget.inquiry}
           draft={replyTarget.draft}
           sourceOption={replyTarget.sourceOption}
         />
       )}
-      {quoteTarget && (
-        <KunalCustomerQuoteModal
-          isOpen={true}
-          onClose={() => setQuoteTarget(null)}
-          inquiry={quoteTarget.inquiry}
-          option={quoteTarget.option}
-        />
-      )}
+
+      {/* ============================================================ */}
+      {/* 6. INTERNAL EMAIL EVIDENCE PREVIEW DRAWER */}
+      {/* ============================================================ */}
+      <KunalEmailEvidenceDrawer
+        isOpen={Boolean(evidenceDrawerRow)}
+        onClose={() => setEvidenceDrawerRow(null)}
+        row={evidenceDrawerRow}
+        allInquiries={allInquiriesList}
+        makeOptions={makeOptions}
+        onAccept={handleAcceptExtraction}
+        onSaveCorrection={handleSaveCorrection}
+      />
     </Layout>
   );
 }
+export default PricingWorksheet;

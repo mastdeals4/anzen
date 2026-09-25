@@ -856,6 +856,7 @@ Deno.serve(async (req: Request) => {
       forceReprocess?: boolean;
       forceMessageId?: string;
       scheduled?: boolean;
+      scanLast7Days?: boolean;
     };
 
     const maxMessages = Math.min(Math.max(Number(body.maxMessages) || 25, 1), 50);
@@ -920,10 +921,12 @@ Deno.serve(async (req: Request) => {
         const accessToken = await getValidAccessToken(adminClient, connection);
 
         // Scan strategy: NOT reliant on 'unread'!
-        // Uses last_sync timestamp with a 24-hour overlap window, or newer_than:7d on first run.
-        let gmailQuery = "newer_than:7d";
+        // Uses last_sync timestamp with a 24-hour overlap window, or newer_than:14d on first run, or newer_than:7d on scanLast7Days.
+        let gmailQuery = "newer_than:14d";
         if (forceMessageId) {
           gmailQuery = `rfc822msgid:${forceMessageId} OR id:${forceMessageId}`;
+        } else if (body.scanLast7Days) {
+          gmailQuery = "newer_than:7d";
         } else if (connection.last_sync) {
           const lastSyncMs = new Date(connection.last_sync).getTime();
           if (!Number.isNaN(lastSyncMs)) {
@@ -932,18 +935,35 @@ Deno.serve(async (req: Request) => {
           }
         }
 
-        const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-        listUrl.searchParams.set("maxResults", String(maxMessages));
-        listUrl.searchParams.set("q", gmailQuery);
+        // 2. Reliable Catch-Up via Gmail Pagination Loop
+        // Fetches all matching pages until all messages are retrieved or safe execution limit is reached.
+        const messageRefs: Array<{ id: string; threadId: string }> = [];
+        let pageToken: string | undefined = undefined;
+        let pageCount = 0;
+        const maxPages = 10;
+        const batchCap = body.maxMessages ? Math.max(Number(body.maxMessages), 25) : 150;
 
-        const listResp = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-        if (!listResp.ok) {
-          console.error(`Gmail list failed for connection ${connection.id}: ${await listResp.text()}`);
-          continue;
-        }
+        do {
+          pageCount += 1;
+          const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+          listUrl.searchParams.set("maxResults", "50");
+          listUrl.searchParams.set("q", gmailQuery);
+          if (pageToken) {
+            listUrl.searchParams.set("pageToken", pageToken);
+          }
 
-        const listData = await listResp.json();
-        const messageRefs = (listData.messages || []) as Array<{ id: string; threadId: string }>;
+          const listResp = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!listResp.ok) {
+            console.error(`Gmail list failed for connection ${connection.id} (page ${pageCount}): ${await listResp.text()}`);
+            break;
+          }
+
+          const listData = await listResp.json();
+          const msgs = (listData.messages || []) as Array<{ id: string; threadId: string }>;
+          messageRefs.push(...msgs);
+
+          pageToken = listData.nextPageToken;
+        } while (pageToken && messageRefs.length < batchCap && pageCount < maxPages);
 
         for (const ref of messageRefs) {
           totalScanned += 1;
@@ -1003,11 +1023,12 @@ Deno.serve(async (req: Request) => {
           const headers = msgData.payload?.headers || [];
           const subject = getHeader(headers, "subject") || "(No Subject)";
           const from = getHeader(headers, "from") || "";
+          const toHeader = getHeader(headers, "to") || "";
           const dateStr = getHeader(headers, "date") || (msgData.internalDate ? new Date(Number(msgData.internalDate)).toISOString() : new Date().toISOString());
           const inReplyTo = getHeader(headers, "in-reply-to") || null;
-          const { body: bodyText, bodyHtml: _bodyHtml, attachments } = extractPayload(msgData.payload);
+          const { body: bodyText, bodyHtml, attachments } = extractPayload(msgData.payload);
 
-          // 5. Ensure raw email is mirrored in crm_email_inbox (idempotent)
+          // 5. Ensure raw email is mirrored in crm_email_inbox with full headers & HTML (idempotent)
           const fromEmail = from.match(/<(.+?)>/)?.[1] || from;
           const fromName = from.replace(/<.+?>/, "").trim();
           await adminClient
@@ -1019,9 +1040,12 @@ Deno.serve(async (req: Request) => {
               subject,
               from_email: fromEmail,
               from_name: fromName,
+              to_email: toHeader,
               body: bodyText,
+              body_html: bodyHtml || null,
+              has_attachments: attachments.length > 0,
               received_date: new Date(dateStr).toISOString(),
-              is_processed: false,
+              is_processed: true,
             }, { onConflict: "message_id" })
             .catch(() => {});
 
@@ -1233,6 +1257,24 @@ Deno.serve(async (req: Request) => {
               detectedDocuments: aiExtracted.detectedDocuments,
               alternativeMake,
               evidence,
+              sourceEmail: {
+                messageId: ref.id,
+                threadId: ref.threadId,
+                from,
+                fromEmail,
+                fromName,
+                to: toHeader,
+                date: dateStr,
+                subject,
+                bodyText: bodyText.slice(0, 15000),
+                bodyHtml: bodyHtml ? bodyHtml.slice(0, 30000) : null,
+                attachments: attachments.map(a => ({
+                  attachmentId: a.attachmentId,
+                  filename: a.filename,
+                  mimeType: a.mimeType,
+                  size: a.size,
+                })),
+              },
               traceability: {
                 inReplyTo,
                 threadId: ref.threadId,
@@ -1246,7 +1288,27 @@ Deno.serve(async (req: Request) => {
             .from("kunal_ai_email_reviews")
             .upsert(reviewRowPayload, { onConflict: "gmail_message_id" });
 
-          // 10. Preserve Traceability into email_inquiry_links
+          // 10. Document Auto-Link (Associate high confidence documents with inquiry)
+          if (matchResult.suggestedInquiryId && aiExtracted.detectedDocuments.length > 0) {
+            for (const doc of aiExtracted.detectedDocuments) {
+              if (doc.matchConfidence === "HIGH") {
+                await adminClient
+                  .from("crm_product_documents")
+                  .upsert({
+                    inquiry_id: matchResult.suggestedInquiryId,
+                    product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
+                    supplier_name: aiExtracted.make || fromName,
+                    document_type: doc.documentType,
+                    display_file_name: doc.filename,
+                    original_file_name: doc.filename,
+                    batch_number: doc.batchNumber,
+                  }, { onConflict: "inquiry_id,document_type,display_file_name" })
+                  .catch(() => {});
+              }
+            }
+          }
+
+          // 11. Preserve Traceability into email_inquiry_links
           if (matchResult.suggestedInquiryId && !matchResult.needsManualLink) {
             await adminClient
               .from("email_inquiry_links")
