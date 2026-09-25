@@ -21,6 +21,7 @@ import {
   type KunalReplySourceOption,
 } from '../components/crm/KunalInternalReplyModal';
 import { KunalEmailEvidenceDrawer } from '../components/pricing/KunalEmailEvidenceDrawer';
+import { getSignedUrlCached } from '../utils/signedUrlCache';
 import {
   CheckCircle2,
   ChevronDown,
@@ -33,7 +34,26 @@ import {
   AlertCircle,
   Eye,
   Calendar,
+  Plus,
+  Upload,
+  Download,
+  FileText,
+  X,
 } from 'lucide-react';
+
+export const MANUAL_DOC_TYPES = [
+  'COA',
+  'MSDS',
+  'GMP',
+  'TDS',
+  'SPEC',
+  'COC',
+  'ISO',
+  'DMF',
+  'Catalogue',
+  'Price List',
+  'Other',
+] as const;
 
 export type PricingRowStatus =
   | 'Needs Review'
@@ -96,31 +116,40 @@ export interface UnifiedPricingRow {
 
   // Documents Checklist
   documents: Array<{
+    id?: string;
     documentType: string;
     filename: string;
+    storagePath?: string;
+    storageBucket?: string;
     batchNumber?: string | null;
     status: 'MATCHED' | 'REVIEW' | 'AMBIGUOUS' | 'MISSING';
   }>;
   docActionNotice?: string | null;
 
   evidence?: {
-    from?: string;
-    to?: string;
-    subject?: string;
-    date?: string;
-    quote?: string;
-    why?: string;
-    bodyText?: string;
+    hasRealGmail: boolean;
+    sourceType: 'gmail' | 'crm';
+    from?: string | null;
+    to?: string | null;
+    cc?: string | null;
+    subject?: string | null;
+    date?: string | null;
+    quote?: string | null;
+    why?: string | null;
+    bodyText?: string | null;
     bodyHtml?: string | null;
     threadId?: string | null;
     messageId?: string | null;
     attachments?: Array<{
+      id?: string;
       attachmentId?: string;
       filename: string;
       mimeType?: string;
       size?: number;
       documentType?: string;
       matchStatus?: string;
+      storagePath?: string;
+      storageBucket?: string;
     }>;
   } | null;
   sourceType: 'india' | 'china' | 'local';
@@ -291,6 +320,121 @@ export function PricingWorksheet() {
   // Internal Email Evidence Drawer target
   const [evidenceDrawerRow, setEvidenceDrawerRow] = useState<UnifiedPricingRow | null>(null);
 
+  // Document Upload State in Expanded Row
+  const [uploadingDocRowId, setUploadingDocRowId] = useState<string | null>(null);
+  const [uploadDocType, setUploadDocType] = useState<string>('COA');
+  const [uploadDocFile, setUploadDocFile] = useState<File | null>(null);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+
+  // Helper to open / download documents via signed URL
+  const handleOpenDocument = async (storagePath?: string, filename?: string, isDownload = false) => {
+    if (!storagePath) {
+      showToast({ type: 'warning', title: 'File Missing', message: 'No file storage path recorded for this document.' });
+      return;
+    }
+    try {
+      const url = await getSignedUrlCached('crm-documents', storagePath, 600, {
+        download: isDownload ? filename : undefined,
+      });
+      if (url) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        showToast({ type: 'error', title: 'Open Failed', message: 'Could not generate signed document URL.' });
+      }
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Document Error', message: err.message || 'Could not open document' });
+    }
+  };
+
+  // Helper to upload document to Supabase storage and attach to crm_product_documents
+  const handleUploadDocument = async (row: UnifiedPricingRow) => {
+    if (!uploadDocFile) {
+      showToast({ type: 'warning', title: 'File Required', message: 'Please select a document file to upload.' });
+      return;
+    }
+    if (!row.inquiryId) {
+      showToast({ type: 'error', title: 'Inquiry Required', message: 'Row must be linked to an inquiry to attach documents.' });
+      return;
+    }
+
+    setIsUploadingDoc(true);
+    try {
+      const ext = uploadDocFile.name.split('.').pop() || 'pdf';
+      const cleanFileName = uploadDocFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${row.inquiryId}/${uploadDocType}_${Date.now()}_${cleanFileName}`;
+
+      // 1. Upload to Supabase Storage 'crm-documents' bucket
+      const { error: uploadErr } = await supabase.storage
+        .from('crm-documents')
+        .upload(storagePath, uploadDocFile, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (uploadErr) {
+        throw new Error(`Storage upload failed: ${uploadErr.message}`);
+      }
+
+      // 2. Insert record into crm_product_documents
+      const displayFileName = `${row.productName || 'Product'}_${uploadDocType}.${ext}`;
+      const { data: newDoc, error: insertErr } = await supabase
+        .from('crm_product_documents')
+        .insert({
+          inquiry_id: row.inquiryId,
+          product_name: row.productName,
+          make: row.offeredMake || row.requestedMake || null,
+          document_type: uploadDocType,
+          original_file_name: uploadDocFile.name,
+          display_file_name: displayFileName,
+          storage_bucket: 'crm-documents',
+          storage_path: storagePath,
+          uploaded_by: profile?.id || null,
+        })
+        .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make')
+        .single();
+
+      if (insertErr) {
+        throw new Error(`Database record creation failed: ${insertErr.message}`);
+      }
+
+      // 3. Immediately update row documents in state
+      const addedDoc = {
+        id: newDoc.id,
+        documentType: uploadDocType,
+        filename: newDoc.display_file_name || uploadDocFile.name,
+        storagePath: storagePath,
+        storageBucket: 'crm-documents',
+        status: 'MATCHED' as const,
+      };
+
+      const nextDocs = [...row.documents.filter(d => d.filename !== addedDoc.filename), addedDoc];
+      updateRow(row.id, { documents: nextDocs });
+
+      // Also update evidenceDrawerRow if open for this row
+      if (evidenceDrawerRow?.id === row.id) {
+        setEvidenceDrawerRow(prev => prev ? { ...prev, documents: nextDocs } : null);
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Document Uploaded',
+        message: `${uploadDocType} document (${uploadDocFile.name}) attached successfully.`,
+      });
+
+      // Reset upload form
+      setUploadDocFile(null);
+      setUploadingDocRowId(null);
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Upload Failed',
+        message: err.message || 'Could not upload document',
+      });
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
+
   // Accept and validate AI extraction
   const handleAcceptExtraction = async (rowId: string) => {
     const targetRow = rows.find(r => r.id === rowId);
@@ -435,13 +579,16 @@ export function PricingWorksheet() {
       if (inqIds.length > 0) {
         const { data: docsData } = await supabase
           .from('crm_product_documents')
-          .select('id, inquiry_id, document_type, display_file_name, original_file_name, make')
+          .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make')
           .in('inquiry_id', inqIds);
         for (const doc of docsData || []) {
           if (!docsMap[doc.inquiry_id]) docsMap[doc.inquiry_id] = [];
           docsMap[doc.inquiry_id].push({
+            id: doc.id,
             documentType: doc.document_type || 'DOC',
             filename: doc.display_file_name || doc.original_file_name || 'document.pdf',
+            storagePath: doc.storage_path,
+            storageBucket: doc.storage_bucket,
             status: 'MATCHED' as const,
           });
         }
@@ -505,18 +652,15 @@ export function PricingWorksheet() {
           );
         }
 
-        // Status Determination
+        // Status Determination:
+        // Inquiries without active incoming AI email reviews remain in 'Waiting Supplier'
+        // or 'Completed' if a customer quote was entered/sent.
+        // They must NOT jump to 'Needs Action' ('Price Received' / 'Ready to Quote').
         let status: PricingRowStatus = 'Waiting Supplier';
-        let actionReason: string | null = null;
+        const actionReason: string | null = null;
 
         if (inq.quote_status === 'sent' || inq.kunal_price_status === 'entered') {
           status = 'Completed';
-        } else if (calcResult.landedCostUsd !== null && calcResult.quotePrice !== null) {
-          status = 'Ready to Quote';
-          actionReason = 'Ready to quote';
-        } else if (sourcePrice !== null && sourcePrice > 0) {
-          status = 'Price Received';
-          actionReason = 'Price received';
         }
 
         const docs = docsMap[inq.id] || [];
@@ -568,20 +712,26 @@ export function PricingWorksheet() {
           documents: docs,
           docActionNotice: null,
           evidence: {
-            from: inq.company_name,
-            to: 'kunal@sapharmajaya.co.id',
-            subject: `Inquiry ${inq.inquiry_number} — ${inq.product_name}`,
+            hasRealGmail: false,
+            sourceType: 'crm',
+            from: null,
+            to: null,
+            cc: null,
+            subject: null,
             date: inq.created_at,
-            quote: inq.remarks || 'Inquiry created in CRM.',
-            why: 'CRM Inquiry record waiting for supplier response.',
-            bodyText: inq.remarks || 'No supplier quote email received yet for this inquiry.',
+            quote: null,
+            why: null,
+            bodyText: null,
             bodyHtml: null,
             threadId: null,
             messageId: null,
             attachments: docs.map((d: any) => ({
+              id: d.id,
               filename: d.filename,
               documentType: d.documentType,
               matchStatus: d.status,
+              storagePath: d.storagePath,
+              storageBucket: d.storageBucket,
             })),
           },
           sourceType: (selectedOpt?.source_type as any) || 'india',
@@ -604,22 +754,42 @@ export function PricingWorksheet() {
         const detectedDocs = raw.detectedDocuments || [];
 
         const sourceEmail = raw.sourceEmail || {};
+        const realMessageId = rev.gmail_message_id || sourceEmail.messageId || null;
+        const realThreadId = rev.gmail_thread_id || sourceEmail.threadId || null;
+        const hasRealGmail = Boolean(realMessageId);
+
         const evidenceObj = {
-          from: sourceEmail.from || rev.from_email || '',
-          to: sourceEmail.to || '',
-          subject: sourceEmail.subject || rev.subject || '',
-          date: sourceEmail.date || rev.email_date || '',
-          quote: raw.evidence?.sourceQuote || raw.summary || '',
-          why: raw.evidence?.why || rev.summary || '',
-          bodyText: sourceEmail.bodyText || raw.evidence?.sourceQuote || raw.summary || '',
-          bodyHtml: sourceEmail.bodyHtml || null,
-          threadId: rev.gmail_thread_id || sourceEmail.threadId || null,
-          messageId: rev.gmail_message_id || sourceEmail.messageId || null,
-          attachments: sourceEmail.attachments || (detectedDocs.map((d: any) => ({
-            filename: d.filename,
-            documentType: d.documentType,
-            matchStatus: d.matchStatus,
-          }))),
+          hasRealGmail,
+          sourceType: hasRealGmail ? ('gmail' as const) : ('crm' as const),
+          from: hasRealGmail ? (sourceEmail.from || rev.from_email || null) : null,
+          to: hasRealGmail ? (sourceEmail.to || null) : null,
+          cc: hasRealGmail ? (sourceEmail.cc || null) : null,
+          subject: hasRealGmail ? (sourceEmail.subject || rev.subject || null) : null,
+          date: hasRealGmail ? (sourceEmail.date || rev.email_date || null) : null,
+          quote: raw.evidence?.sourceQuote || raw.summary || null,
+          why: raw.evidence?.why || rev.summary || null,
+          bodyText: hasRealGmail ? (sourceEmail.bodyText || raw.evidence?.sourceQuote || raw.summary || null) : null,
+          bodyHtml: hasRealGmail ? (sourceEmail.bodyHtml || null) : null,
+          threadId: realThreadId,
+          messageId: realMessageId,
+          attachments: (hasRealGmail && sourceEmail.attachments?.length > 0)
+            ? sourceEmail.attachments.map((a: any) => ({
+                attachmentId: a.attachmentId,
+                filename: a.filename,
+                mimeType: a.mimeType,
+                size: a.size,
+                documentType: a.documentType,
+                matchStatus: a.matchStatus,
+                storagePath: a.storagePath,
+              }))
+            : (detectedDocs.length > 0
+              ? detectedDocs.map((d: any) => ({
+                  filename: d.filename,
+                  documentType: d.documentType,
+                  matchStatus: d.matchStatus,
+                  storagePath: d.storagePath,
+                }))
+              : targetRow?.evidence?.attachments || []),
         };
 
         // Determine Document Action Notice
@@ -636,9 +806,16 @@ export function PricingWorksheet() {
           // Enrich inquiry row with live AI extraction
           targetRow.aiReviewId = rev.id;
           targetRow.isAiPrepared = true;
-          targetRow.evidence = evidenceObj;
+          // When Gmail AI finds a supplier reply for an existing inquiry,
+          // replace CRM fallback evidence with the REAL Gmail evidence
+          if (hasRealGmail || !targetRow.evidence) {
+            targetRow.evidence = evidenceObj;
+          }
 
-          if (extractedPrice && !targetRow.sourcePrice) {
+          // Rule 5: Do not use AI Gmail extraction to overwrite a manually entered supplier value.
+          // Manual verified data has priority until a new AI result is explicitly reviewed.
+          const hasManualSourcePrice = targetRow.sourcePrice !== null && targetRow.sourcePrice > 0;
+          if (extractedPrice && !hasManualSourcePrice) {
             targetRow.sourcePrice = extractedPrice;
             targetRow.sourceCurrency = extractedCurrency;
             const calc = calculateCanonicalPricing(
@@ -664,11 +841,6 @@ export function PricingWorksheet() {
             targetRow.quotePrice = calc.quotePrice;
             targetRow.totalQuoteAmount = calc.totalQuoteAmount;
             targetRow.calcBreakdown = calc.calcBreakdown;
-
-            if (targetRow.status === 'Waiting Supplier') {
-              targetRow.status = 'Price Received';
-              targetRow.actionReason = 'Price received';
-            }
           }
 
           if (extractedMake && !targetRow.offeredMake) {
@@ -676,9 +848,6 @@ export function PricingWorksheet() {
           }
           if (raw.alternativeMake?.detected) {
             targetRow.alternativeMakeDetected = true;
-            if (targetRow.status !== 'Completed') {
-              targetRow.actionReason = 'Confirm make';
-            }
           }
           if (detectedDocs.length > 0) {
             targetRow.documents = [
@@ -686,19 +855,34 @@ export function PricingWorksheet() {
               ...detectedDocs.map((d: any) => ({
                 documentType: d.documentType || 'DOC',
                 filename: d.filename || 'attachment.pdf',
+                storagePath: d.storagePath,
                 batchNumber: d.batchNumber,
                 status: (d.matchStatus as any) || 'MATCHED',
               })),
             ];
             if (docActionNotice) {
               targetRow.docActionNotice = docActionNotice;
-              targetRow.actionReason = docActionNotice;
             }
           }
-          if (raw.needsManualLink) {
-            targetRow.status = 'Needs Review';
-            targetRow.needsManualLink = true;
-            targetRow.actionReason = 'Inquiry match ambiguous';
+
+          // Transition to action statuses ONLY if the review is pending review and row is not Completed
+          const isPendingReview = rev.action_status === 'pending_review' || rev.action_status === 'needs_manual_link';
+          if (isPendingReview && targetRow.status !== 'Completed') {
+            if (raw.needsManualLink) {
+              targetRow.status = 'Needs Review';
+              targetRow.needsManualLink = true;
+              targetRow.actionReason = 'Inquiry match ambiguous';
+            } else if (raw.alternativeMake?.detected) {
+              targetRow.actionReason = 'Confirm make';
+            } else if (docActionNotice) {
+              targetRow.actionReason = docActionNotice;
+            } else if (targetRow.quotePrice && targetRow.landedCostUsd) {
+              targetRow.status = 'Ready to Quote';
+              targetRow.actionReason = 'Ready to quote';
+            } else if (targetRow.sourcePrice) {
+              targetRow.status = 'Price Received';
+              targetRow.actionReason = 'Price received';
+            }
           }
         } else if (extractedPrice || detectedDocs.length > 0) {
           // AI review without exact matched inquiry row -> standalone item requiring action
@@ -1070,6 +1254,7 @@ export function PricingWorksheet() {
       if (optErr) console.warn('Pricing option upsert warning:', optErr);
 
       // 2. Update CRM Inquiry with validated landed cost and quote price
+      const isQuoteEntered = Boolean(row.quotePrice && row.quotePrice > 0);
       const { error: inqErr } = await supabase
         .from('crm_inquiries')
         .update({
@@ -1077,12 +1262,12 @@ export function PricingWorksheet() {
           offered_price: row.quotePrice,
           purchase_price_currency: 'USD',
           offered_price_currency: row.quoteCurrency,
-          kunal_price_status: 'entered',
-          price_ready: true,
+          kunal_price_status: isQuoteEntered ? 'entered' : 'requested',
+          price_ready: isQuoteEntered,
           quote_status: 'not_sent',
           supplier_name: row.offeredMake || row.requestedMake,
           remarks: row.remarks || null,
-          source_status: row.sourcePrice ? 'received' : 'not_sent',
+          source_status: row.sourcePrice ? 'received' : 'waiting',
           updated_at: now,
         })
         .eq('id', targetInquiryId);
@@ -1134,15 +1319,27 @@ export function PricingWorksheet() {
         await supabase
           .from('kunal_ai_email_reviews')
           .update({
-            action_status: 'reviewed',
+            action_status: 'price_saved',
             matched_inquiry_id: targetInquiryId,
             updated_at: now,
           })
           .eq('id', row.aiReviewId);
       }
 
-      // Transition row status after save
-      const nextStatus: PricingRowStatus = row.quotePrice ? 'Ready to Quote' : 'Price Received';
+      // Transition row status after save:
+      // A Waiting Supplier record that has been manually entered and saved must NOT jump to Needs Action!
+      // If quote price was entered and saved, it transitions to 'Completed'.
+      // If no quote price was entered, it remains in 'Waiting Supplier'.
+      let nextStatus: PricingRowStatus = 'Waiting Supplier';
+      if (isQuoteEntered) {
+        nextStatus = 'Completed';
+      } else if (row.status === 'Waiting Supplier') {
+        nextStatus = 'Waiting Supplier';
+      } else if (row.status === 'Needs Review' || row.status === 'Price Received') {
+        nextStatus = 'Waiting Supplier';
+      } else {
+        nextStatus = row.status;
+      }
       updateRow(row.id, { status: nextStatus, needsManualLink: false, actionReason: null });
       showToast({ type: 'success', title: 'Saved', message: `Pricing saved for ${row.inquiryNumber}.` });
     } catch (err: any) {
@@ -1806,20 +2003,44 @@ export function PricingWorksheet() {
                                       </div>
                                     </div>
 
-                                    {/* Document Checklist in the Same Row */}
-                                    <div className="pt-2 border-t border-gray-200">
-                                      <div className="text-[10px] text-gray-500 font-semibold mb-1 flex items-center justify-between">
-                                        <span>Product Documents</span>
-                                        {row.docActionNotice && (
-                                          <span className="text-amber-700 font-medium">
-                                            {row.docActionNotice}
-                                          </span>
-                                        )}
+                                    {/* Document Checklist & Upload Section */}
+                                    <div className="pt-2 border-t border-gray-200 space-y-2">
+                                      <div className="text-[10px] text-gray-500 font-semibold flex items-center justify-between">
+                                        <div className="flex items-center gap-1.5">
+                                          <FileText className="w-3.5 h-3.5 text-blue-600" />
+                                          <span>Product Documents & Checklist</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {row.docActionNotice && (
+                                            <span className="text-amber-700 font-medium">
+                                              {row.docActionNotice}
+                                            </span>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (uploadingDocRowId === row.id) {
+                                                setUploadingDocRowId(null);
+                                                setUploadDocFile(null);
+                                              } else {
+                                                setUploadingDocRowId(row.id);
+                                                setUploadDocType('COA');
+                                                setUploadDocFile(null);
+                                              }
+                                            }}
+                                            className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                          >
+                                            <Plus className="w-3 h-3" />
+                                            <span>ADD DOCUMENT</span>
+                                          </button>
+                                        </div>
                                       </div>
+
+                                      {/* Checklist Badges */}
                                       <div className="flex flex-wrap gap-1">
-                                        {['COA', 'MSDS', 'GMP', 'TDS', 'SPEC'].map(docType => {
+                                        {MANUAL_DOC_TYPES.map(docType => {
                                           const found = row.documents.find(
-                                            d => d.documentType.toUpperCase() === docType,
+                                            d => d.documentType.toUpperCase() === docType.toUpperCase(),
                                           );
                                           const isMatched = found?.status === 'MATCHED';
                                           const isReview = found?.status === 'REVIEW';
@@ -1843,6 +2064,124 @@ export function PricingWorksheet() {
                                           );
                                         })}
                                       </div>
+
+                                      {/* Inline Upload Form */}
+                                      {uploadingDocRowId === row.id && (
+                                        <div className="bg-blue-50/70 border border-blue-200 rounded p-2 text-xs space-y-2">
+                                          <div className="flex items-center justify-between text-[11px] font-bold text-blue-900">
+                                            <div className="flex items-center gap-1">
+                                              <Upload className="w-3.5 h-3.5 text-blue-700" />
+                                              <span>Upload Document for {row.inquiryNumber}</span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setUploadingDocRowId(null);
+                                                setUploadDocFile(null);
+                                              }}
+                                              className="text-gray-400 hover:text-gray-600 cursor-pointer"
+                                            >
+                                              <X className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <div>
+                                              <label className="text-[10px] text-gray-600 font-semibold block mb-0.5">Document Type</label>
+                                              <select
+                                                value={uploadDocType}
+                                                onChange={e => setUploadDocType(e.target.value)}
+                                                className="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white font-medium"
+                                              >
+                                                {MANUAL_DOC_TYPES.map(t => (
+                                                  <option key={t} value={t}>{t}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+
+                                            <div>
+                                              <label className="text-[10px] text-gray-600 font-semibold block mb-0.5">Select File (PDF / Image)</label>
+                                              <input
+                                                type="file"
+                                                onChange={e => {
+                                                  if (e.target.files?.[0]) setUploadDocFile(e.target.files[0]);
+                                                }}
+                                                className="w-full border border-gray-300 rounded px-1.5 py-0.5 text-xs bg-white file:mr-2 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-blue-100 file:text-blue-700 cursor-pointer"
+                                              />
+                                            </div>
+                                          </div>
+
+                                          <div className="flex justify-end gap-1.5 pt-1">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setUploadingDocRowId(null);
+                                                setUploadDocFile(null);
+                                              }}
+                                              className="px-2 py-1 bg-white border border-gray-300 text-gray-700 rounded text-[11px] hover:bg-gray-50 cursor-pointer"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={!uploadDocFile || isUploadingDoc}
+                                              onClick={() => handleUploadDocument(row)}
+                                              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold flex items-center gap-1 shadow-2xs disabled:opacity-50 cursor-pointer"
+                                            >
+                                              <Upload className="w-3 h-3" />
+                                              <span>{isUploadingDoc ? 'Uploading...' : 'Save & Attach'}</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Uploaded Documents List */}
+                                      {row.documents.length > 0 && (
+                                        <div className="space-y-1 pt-1">
+                                          <div className="text-[10px] font-bold text-gray-600 uppercase">Attached Documents ({row.documents.length}):</div>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                            {row.documents.map((doc, idx) => (
+                                              <div
+                                                key={doc.id || idx}
+                                                className="bg-white border border-gray-200 rounded p-1.5 flex items-center justify-between gap-1 text-[11px]"
+                                              >
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                  <span className="font-bold text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded flex-shrink-0">
+                                                    {doc.documentType}
+                                                  </span>
+                                                  <span className="truncate text-gray-800 font-medium" title={doc.filename}>
+                                                    {doc.filename}
+                                                  </span>
+                                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
+                                                    ✓ Uploaded
+                                                  </span>
+                                                </div>
+
+                                                <div className="flex items-center gap-1 flex-shrink-0">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleOpenDocument(doc.storagePath, doc.filename, false)}
+                                                    className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                                    title="View document"
+                                                  >
+                                                    <Eye className="w-3 h-3" />
+                                                    <span>View</span>
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleOpenDocument(doc.storagePath, doc.filename, true)}
+                                                    className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                                    title="Download document"
+                                                  >
+                                                    <Download className="w-3 h-3" />
+                                                    <span>Get</span>
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../ToastNotification';
 import type { UnifiedPricingRow } from '../../pages/PricingWorksheet';
+import { getSignedUrlCached } from '../../utils/signedUrlCache';
 import {
   X,
   Mail,
@@ -17,6 +18,7 @@ import {
   Sparkles,
   Paperclip,
   Check,
+  Database,
 } from 'lucide-react';
 
 interface Props {
@@ -69,7 +71,6 @@ export function KunalEmailEvidenceDrawer({
   const [showFullThread, setShowFullThread] = useState(false);
   const [threadEmails, setThreadEmails] = useState<ThreadEmailItem[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
-  const [selectedAttachmentPreview, setSelectedAttachmentPreview] = useState<string | null>(null);
 
   // Edit fields
   const [editInquiryId, setEditInquiryId] = useState('');
@@ -92,13 +93,12 @@ export function KunalEmailEvidenceDrawer({
       setEditUnit(row.unit || 'KG');
       setIsEditing(false);
       setShowFullThread(false);
-      setSelectedAttachmentPreview(null);
     }
   }, [row]);
 
-  // Load Gmail thread messages if thread ID is present
+  // Load Gmail thread messages if real thread ID is present
   useEffect(() => {
-    const threadId = row?.evidence?.threadId;
+    const threadId = row?.evidence?.hasRealGmail ? row.evidence.threadId : null;
     if (isOpen && threadId) {
       setLoadingThread(true);
       supabase
@@ -120,11 +120,32 @@ export function KunalEmailEvidenceDrawer({
     } else {
       setThreadEmails([]);
     }
-  }, [isOpen, row?.evidence?.threadId]);
+  }, [isOpen, row?.evidence?.hasRealGmail, row?.evidence?.threadId]);
+
+  // Helper to open / download documents via signed URL
+  const handleOpenDocument = async (storagePath?: string, filename?: string, isDownload = false) => {
+    if (!storagePath) {
+      showToast({ type: 'warning', title: 'File Missing', message: 'No file storage path recorded for this document.' });
+      return;
+    }
+    try {
+      const url = await getSignedUrlCached('crm-documents', storagePath, 600, {
+        download: isDownload ? filename : undefined,
+      });
+      if (url) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        showToast({ type: 'error', title: 'Open Failed', message: 'Could not generate signed document URL.' });
+      }
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Document Error', message: err.message || 'Could not open document' });
+    }
+  };
 
   if (!isOpen || !row) return null;
 
   const evidence = row.evidence;
+  const hasRealGmail = Boolean(evidence?.hasRealGmail && evidence?.messageId);
   const attachments = evidence?.attachments || [];
 
   const handleSaveEdit = async () => {
@@ -165,17 +186,29 @@ export function KunalEmailEvidenceDrawer({
         {/* Panel Header */}
         <div className="p-3.5 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="p-1.5 rounded-md bg-blue-100 text-blue-700">
-              <Mail className="w-4 h-4" />
+            <div className={`p-1.5 rounded-md ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-800'}`}>
+              {hasRealGmail ? <Mail className="w-4 h-4" /> : <Database className="w-4 h-4" />}
             </div>
             <div className="min-w-0">
               <div className="text-xs font-bold text-gray-900 truncate">
-                {evidence?.subject || row.remarks || 'Supplier Email Evidence'}
+                {hasRealGmail
+                  ? (evidence?.subject || 'Supplier Email Evidence')
+                  : `CRM Inquiry ${row.inquiryNumber} — ${row.productName}`}
               </div>
               <div className="text-[10px] text-gray-500 flex items-center gap-2">
-                <span>From: <strong className="text-gray-700">{evidence?.from || row.supplierName || 'Supplier'}</strong></span>
-                {evidence?.date && <span>• {new Date(evidence.date).toLocaleDateString()}</span>}
-                {row.inquiryNumber && <span className="text-blue-700 font-mono">[{row.inquiryNumber}]</span>}
+                {hasRealGmail ? (
+                  <>
+                    <span>From: <strong className="text-gray-700">{evidence?.from || 'Unknown'}</strong></span>
+                    {evidence?.date && <span>• {new Date(evidence.date).toLocaleDateString()}</span>}
+                    {row.inquiryNumber && <span className="text-blue-700 font-mono">[{row.inquiryNumber}]</span>}
+                  </>
+                ) : (
+                  <>
+                    <span className="text-amber-800 font-semibold">CRM Source Record</span>
+                    <span>• Inquiry: <strong className="text-gray-700">{row.inquiryNumber}</strong></span>
+                    {row.aceerpNo && row.aceerpNo !== '-' && <span>• ACE: {row.aceerpNo}</span>}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -193,7 +226,7 @@ export function KunalEmailEvidenceDrawer({
                 onClick={() => setActiveTab('source')}
                 className={`px-2 py-0.5 rounded cursor-pointer ${activeTab === 'source' ? 'bg-white text-gray-900 shadow-2xs' : 'text-gray-600'}`}
               >
-                Source Email
+                {hasRealGmail ? 'Source Email' : 'CRM Source'}
               </button>
               <button
                 onClick={() => setActiveTab('ai')}
@@ -224,7 +257,7 @@ export function KunalEmailEvidenceDrawer({
                 <div>
                   <div className="font-bold text-amber-900">User Action Required</div>
                   <div className="text-[11px] text-amber-800">
-                    {row.actionReason || 'Ambiguous signals detected. Review source email against AI interpretation below.'}
+                    {row.actionReason || 'Ambiguous signals detected. Review source against interpretation below.'}
                   </div>
                 </div>
               </div>
@@ -251,7 +284,7 @@ export function KunalEmailEvidenceDrawer({
           {/* Grid Layout: Source Evidence vs AI Extraction */}
           <div className={`grid gap-4 ${activeTab === 'both' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
             {/* ============================================================ */}
-            {/* COLUMN 1: SOURCE EVIDENCE (ACTUAL GMAIL CONTENT) */}
+            {/* COLUMN 1: SOURCE EVIDENCE (ACTUAL GMAIL OR CRM FALLBACK) */}
             {/* ============================================================ */}
             {(activeTab === 'both' || activeTab === 'source') && (
               <div className="border border-gray-200 rounded-lg bg-gray-50/60 p-3 space-y-3 flex flex-col">
@@ -260,12 +293,18 @@ export function KunalEmailEvidenceDrawer({
                     <span className="font-bold text-gray-900 uppercase tracking-wide text-[11px]">
                       Source Evidence
                     </span>
-                    <span className="text-[10px] bg-gray-200 text-gray-700 px-1.5 py-0.2 rounded font-medium">
-                      Actual Gmail
-                    </span>
+                    {hasRealGmail ? (
+                      <span className="text-[10px] bg-green-100 text-green-800 border border-green-200 px-1.5 py-0.5 rounded font-bold">
+                        Actual Gmail
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded font-bold">
+                        CRM SOURCE — No Gmail message linked
+                      </span>
+                    )}
                   </div>
 
-                  {threadEmails.length > 1 && (
+                  {hasRealGmail && threadEmails.length > 1 && (
                     <button
                       onClick={() => setShowFullThread(!showFullThread)}
                       className="text-[10px] text-blue-600 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
@@ -276,116 +315,185 @@ export function KunalEmailEvidenceDrawer({
                   )}
                 </div>
 
-                {/* Email Headers Card */}
-                <div className="bg-white border border-gray-200 rounded p-2 text-[11px] space-y-1 font-mono text-gray-700">
-                  <div><strong className="text-gray-900">From:</strong> {evidence?.from || 'Unknown'}</div>
-                  {evidence?.to && <div><strong className="text-gray-900">To:</strong> {evidence.to}</div>}
-                  <div><strong className="text-gray-900">Date:</strong> {evidence?.date ? new Date(evidence.date).toLocaleString() : 'N/A'}</div>
-                  <div><strong className="text-gray-900">Subject:</strong> {evidence?.subject || '(No Subject)'}</div>
-                </div>
+                {hasRealGmail ? (
+                  /* REAL GMAIL HEADERS & BODY */
+                  <>
+                    <div className="bg-white border border-gray-200 rounded p-2 text-[11px] space-y-1 font-mono text-gray-700">
+                      <div><strong className="text-gray-900">From:</strong> {evidence?.from || 'Unknown'}</div>
+                      <div><strong className="text-gray-900">To:</strong> {evidence?.to || 'kunal@sapharmajaya.co.id'}</div>
+                      {evidence?.cc && <div><strong className="text-gray-900">CC:</strong> {evidence.cc}</div>}
+                      <div><strong className="text-gray-900">Date:</strong> {evidence?.date ? new Date(evidence.date).toLocaleString() : 'N/A'}</div>
+                      <div><strong className="text-gray-900">Subject:</strong> {evidence?.subject || '(No Subject)'}</div>
+                      <div><strong className="text-gray-900">Message ID:</strong> <span className="text-gray-500">{evidence?.messageId}</span></div>
+                      {evidence?.threadId && (
+                        <div><strong className="text-gray-900">Thread ID:</strong> <span className="text-gray-500">{evidence.threadId}</span></div>
+                      )}
+                    </div>
 
-                {/* Thread Accordion (if full thread view toggled) */}
-                {showFullThread && threadEmails.length > 0 && (
-                  <div className="space-y-2 border-l-2 border-blue-400 pl-2">
-                    <div className="text-[10px] font-bold text-blue-900 uppercase">Gmail Thread History:</div>
-                    {threadEmails.map((te, idx) => (
-                      <div key={te.id || idx} className="bg-white border border-gray-200 rounded p-2 text-[10px] space-y-1">
-                        <div className="flex items-center justify-between font-bold text-gray-700">
-                          <span>{te.from_name || te.from_email}</span>
-                          <span className="font-normal text-gray-400">{new Date(te.received_date).toLocaleDateString()}</span>
-                        </div>
-                        <div className="text-gray-600 whitespace-pre-wrap max-h-32 overflow-y-auto font-sans">
-                          {te.body || '(No body text)'}
-                        </div>
+                    {/* Thread Accordion */}
+                    {showFullThread && threadEmails.length > 0 && (
+                      <div className="space-y-2 border-l-2 border-blue-400 pl-2">
+                        <div className="text-[10px] font-bold text-blue-900 uppercase">Gmail Thread History:</div>
+                        {threadEmails.map((te, idx) => (
+                          <div key={te.id || idx} className="bg-white border border-gray-200 rounded p-2 text-[10px] space-y-1">
+                            <div className="flex items-center justify-between font-bold text-gray-700">
+                              <span>{te.from_name || te.from_email}</span>
+                              <span className="font-normal text-gray-400">{new Date(te.received_date).toLocaleDateString()}</span>
+                            </div>
+                            <div className="text-gray-600 whitespace-pre-wrap max-h-32 overflow-y-auto font-sans">
+                              {te.body || '(No body text)'}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+
+                    {/* Main Email Body Content */}
+                    <div className="flex-1 bg-white border border-gray-200 rounded p-3 overflow-y-auto max-h-[320px] font-sans text-gray-800 leading-relaxed whitespace-pre-wrap selection:bg-blue-100">
+                      {evidence?.bodyText || evidence?.quote || 'No email body available in review.'}
+                    </div>
+
+                    {/* Real Email Attachments */}
+                    <div className="space-y-1.5 pt-1">
+                      <div className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
+                        <Paperclip className="w-3 h-3" />
+                        <span>Email Attachments ({attachments.length}):</span>
+                      </div>
+
+                      {attachments.length === 0 ? (
+                        <div className="text-[11px] text-gray-400 italic">No attachments detected in this email.</div>
+                      ) : (
+                        <div className="space-y-1">
+                          {attachments.map((att, idx) => (
+                            <div
+                              key={att.id || att.attachmentId || idx}
+                              className="bg-white border border-gray-200 rounded p-1.5 flex items-center justify-between gap-2"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                                <span className="text-[11px] font-medium text-gray-800 truncate" title={att.filename}>
+                                  {att.filename}
+                                </span>
+                                {att.documentType && (
+                                  <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded font-bold">
+                                    {att.documentType}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDocument(att.storagePath, att.filename, false)}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                  title="Open document via signed URL"
+                                >
+                                  <Eye className="w-3 h-3" />
+                                  <span>View</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDocument(att.storagePath, att.filename, true)}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                  title="Download attachment"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  <span>Get</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  /* CRM FALLBACK CARD — NO FAKE GMAIL HEADERS */
+                  <div className="space-y-3">
+                    <div className="bg-amber-50/70 border border-amber-200 rounded p-3 text-xs space-y-2">
+                      <div className="font-bold text-amber-950 flex items-center gap-1.5 text-[11px]">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                        <span>CRM SOURCE — No Gmail Message Linked</span>
+                      </div>
+                      <div className="text-[11px] text-amber-900 leading-relaxed">
+                        This inquiry record is populated directly from existing CRM database tables. No incoming Gmail supplier reply has been received or linked to this inquiry yet.
+                      </div>
+                      <div className="bg-white border border-amber-200 rounded p-2.5 text-[11px] space-y-1.5 font-mono text-gray-800">
+                        <div><strong>Inquiry:</strong> {row.inquiryNumber}</div>
+                        <div><strong>ACE ERP No:</strong> {row.aceerpNo || '-'}</div>
+                        <div><strong>Customer:</strong> {row.customerName}</div>
+                        <div><strong>Product:</strong> {row.productName}</div>
+                        <div><strong>Specification:</strong> {row.specification || 'Standard'}</div>
+                        <div><strong>Requested Make:</strong> {row.requestedMake || '-'}</div>
+                        <div><strong>Offered Make:</strong> {row.offeredMake || '-'}</div>
+                        <div>
+                          <strong>CRM Source Price:</strong>{' '}
+                          {row.sourcePrice != null ? `${row.sourceCurrency} ${row.sourcePrice} / ${row.unit}` : 'None recorded'}
+                        </div>
+                        <div><strong>CRM Remarks:</strong> {row.remarks || 'None'}</div>
+                      </div>
+                    </div>
+
+                    {/* CRM Attached Documents */}
+                    <div className="space-y-1.5 pt-1">
+                      <div className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
+                        <FileText className="w-3 h-3 text-blue-600" />
+                        <span>CRM Product Documents ({row.documents.length}):</span>
+                      </div>
+
+                      {row.documents.length === 0 ? (
+                        <div className="text-[11px] text-gray-400 italic">No documents attached in CRM.</div>
+                      ) : (
+                        <div className="space-y-1">
+                          {row.documents.map((doc, idx) => (
+                            <div
+                              key={doc.id || idx}
+                              className="bg-white border border-gray-200 rounded p-1.5 flex items-center justify-between gap-2"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-bold text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded flex-shrink-0">
+                                  {doc.documentType}
+                                </span>
+                                <span className="text-[11px] font-medium text-gray-800 truncate" title={doc.filename}>
+                                  {doc.filename}
+                                </span>
+                                <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
+                                  ✓ Uploaded
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDocument(doc.storagePath, doc.filename, false)}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                  title="View document via signed URL"
+                                >
+                                  <Eye className="w-3 h-3" />
+                                  <span>View</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDocument(doc.storagePath, doc.filename, true)}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                  title="Download document"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  <span>Get</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
-
-                {/* Main Email Body Content */}
-                <div className="flex-1 bg-white border border-gray-200 rounded p-3 overflow-y-auto max-h-[320px] font-sans text-gray-800 leading-relaxed whitespace-pre-wrap selection:bg-blue-100">
-                  {evidence?.bodyText || evidence?.quote || row.remarks || 'No email body available in cached review.'}
-                </div>
-
-                {/* Attachments Section */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
-                    <Paperclip className="w-3 h-3" />
-                    <span>Attachments ({attachments.length}):</span>
-                  </div>
-
-                  {attachments.length === 0 ? (
-                    <div className="text-[11px] text-gray-400 italic">No attachments detected in this email.</div>
-                  ) : (
-                    <div className="space-y-1">
-                      {attachments.map((att, idx) => (
-                        <div
-                          key={idx}
-                          className="bg-white border border-gray-200 rounded p-1.5 flex items-center justify-between gap-2"
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
-                            <span className="text-[11px] font-medium text-gray-800 truncate" title={att.filename}>
-                              {att.filename}
-                            </span>
-                            {att.documentType && (
-                              <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded font-bold">
-                                {att.documentType}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <button
-                              onClick={() => setSelectedAttachmentPreview(att.filename)}
-                              className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
-                              title="Preview inside panel"
-                            >
-                              <Eye className="w-3 h-3" />
-                              <span>View</span>
-                            </button>
-                            <a
-                              href={`#`}
-                              onClick={e => {
-                                e.preventDefault();
-                                showToast({ type: 'info', title: 'Attachment', message: `Opening ${att.filename}` });
-                              }}
-                              className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
-                              title="Download attachment"
-                            >
-                              <Download className="w-3 h-3" />
-                              <span>Get</span>
-                            </a>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Attachment Preview Modal inside drawer */}
-                  {selectedAttachmentPreview && (
-                    <div className="bg-gray-900 text-white rounded p-3 space-y-2 mt-2">
-                      <div className="flex items-center justify-between border-b border-gray-700 pb-1">
-                        <span className="text-[11px] font-bold truncate">{selectedAttachmentPreview}</span>
-                        <button
-                          onClick={() => setSelectedAttachmentPreview(null)}
-                          className="text-gray-400 hover:text-white"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                      <div className="text-[11px] text-gray-300 font-mono py-4 text-center border border-dashed border-gray-700 rounded">
-                        [ Preview of {selectedAttachmentPreview} ]
-                        <div className="text-[10px] text-gray-500 mt-1">Verified and processed by SAPJ Document Matcher</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 
             {/* ============================================================ */}
-            {/* COLUMN 2: AI EXTRACTION (WHAT SAPJ UNDERSTOOD) */}
+            {/* COLUMN 2: AI EXTRACTION / UNDERSTOOD DATA */}
             {/* ============================================================ */}
             {(activeTab === 'both' || activeTab === 'ai') && (
               <div className="border border-blue-200 rounded-lg bg-blue-50/20 p-3 space-y-3 flex flex-col">
@@ -394,7 +502,7 @@ export function KunalEmailEvidenceDrawer({
                     <span className="font-bold text-blue-950 uppercase tracking-wide text-[11px]">
                       AI Extraction
                     </span>
-                    <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded font-semibold flex items-center gap-0.5">
+                    <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-semibold flex items-center gap-0.5">
                       <Sparkles className="w-2.5 h-2.5" /> What SAPJ Understood
                     </span>
                   </div>
@@ -426,38 +534,75 @@ export function KunalEmailEvidenceDrawer({
                   <div className="space-y-2.5 bg-white border border-gray-200 rounded-md p-3 text-[11px]">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Product</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Product</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
                         <span className="font-bold text-gray-900">{row.productName}</span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Offered Make</span>
-                        <span className="font-bold text-gray-900">{row.offeredMake || '-'}</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Make</span>
+                          <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
+                          </span>
+                        </div>
+                        <span className="font-bold text-gray-900">{row.offeredMake || row.requestedMake || '-'}</span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Supplier Name</span>
-                        <span className="font-medium text-gray-800">{row.supplierName || '-'}</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Quantity</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="font-medium text-gray-800">{row.quantity}</span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Supplier Price</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Price & Currency</span>
+                          <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
+                          </span>
+                        </div>
                         <span className="font-mono font-bold text-base text-gray-950">
                           {row.sourcePrice != null ? `${row.sourceCurrency} ${row.sourcePrice} / ${row.unit}` : '—'}
                         </span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Availability / MOQ</span>
-                        <span className="text-gray-700 capitalize">{row.availability} • {row.moq}</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">MOQ & Availability</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="text-gray-700 capitalize">{row.moq} • {row.availability}</span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Lead Time</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Lead Time</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
                         <span className="text-gray-700">{row.leadTime}</span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">Matched Inquiry</span>
-                        <span className="font-mono font-bold text-blue-700">{row.inquiryNumber || 'UNLINKED'}</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Specification</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="text-gray-700 truncate block">{row.specification || 'Standard'}</span>
                       </div>
+
                       <div>
-                        <span className="text-gray-400 block text-[10px] uppercase font-semibold">ACE ERP No</span>
-                        <span className="font-mono text-gray-700">{row.aceerpNo || '-'}</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Inquiry & ACE ERP</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="font-mono font-bold text-blue-700">
+                          {row.inquiryNumber} {row.aceerpNo !== '-' && `(${row.aceerpNo})`}
+                        </span>
                       </div>
                     </div>
 
@@ -465,7 +610,7 @@ export function KunalEmailEvidenceDrawer({
                     {evidence?.why && (
                       <div className="mt-2 pt-2 border-t border-gray-100">
                         <span className="text-gray-400 block text-[10px] uppercase font-semibold mb-0.5">
-                          Evidence / Why:
+                          Evidence / Reasoning:
                         </span>
                         <p className="text-gray-700 italic bg-gray-50 p-2 rounded border border-gray-200 text-[10.5px]">
                           "{evidence.why}"
@@ -477,7 +622,7 @@ export function KunalEmailEvidenceDrawer({
                   /* Editable Form for One-Click Correction */
                   <div className="space-y-2 bg-white border border-blue-300 rounded-md p-3 text-xs">
                     <div className="text-[11px] font-bold text-blue-900 mb-1">
-                      Correct AI Interpretation:
+                      Correct Extraction:
                     </div>
 
                     <div>

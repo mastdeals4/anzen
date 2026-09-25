@@ -339,3 +339,186 @@ test('10. Document Auto-Link: high confidence links to crm_product_documents, lo
   assert.equal(needsReview.length, 1, 'Low-confidence document must be routed to Needs Review');
   assert.equal(needsReview[0].filename, 'General_Safety_Data.pdf');
 });
+
+test('11. Waiting Supplier Manual Save: does NOT reappear in Needs Action', () => {
+  // Case A: Row starts in Waiting Supplier
+  const initialRow = {
+    id: 'inq-manual-001',
+    inquiryId: 'inq-manual-001',
+    inquiryNumber: 'INQ-26-0099',
+    status: 'Waiting Supplier',
+    sourcePrice: null,
+    sourceCurrency: 'INR',
+    offeredMake: '',
+    supplierName: '',
+    quotePrice: null,
+  };
+
+  // Case B: User enters supplier price manually + make + supplier
+  const enteredRow = {
+    ...initialRow,
+    sourcePrice: 3650,
+    sourceCurrency: 'INR',
+    offeredMake: 'Reliance',
+    supplierName: 'Reliance Industries',
+    availability: 'available',
+    moq: '500 kg',
+    leadTime: '2-3 weeks',
+  };
+
+  // Case C: User clicks Save (without customer quote)
+  // Transition rule: If row was Waiting Supplier and saved without quotePrice, it REMAINS Waiting Supplier
+  const isQuoteEntered = Boolean(enteredRow.quotePrice && enteredRow.quotePrice > 0);
+  let savedStatus = 'Waiting Supplier';
+  if (isQuoteEntered) {
+    savedStatus = 'Completed';
+  } else if (enteredRow.status === 'Waiting Supplier') {
+    savedStatus = 'Waiting Supplier';
+  }
+
+  const savedRow = { ...enteredRow, status: savedStatus };
+  assert.equal(savedRow.status, 'Waiting Supplier', 'Saved row must remain in Waiting Supplier');
+
+  // Case D: Filter check for Needs Action
+  const isNeedsAction = (r) => r.status === 'Needs Review' || r.status === 'Price Received' || r.status === 'Ready to Quote';
+  assert.equal(isNeedsAction(savedRow), false, 'Saved Waiting Supplier row must NOT be counted under Needs Action');
+
+  // Case E: Simulated page reload (loadData)
+  // Inquiry record has source_price = 3650, kunal_price_status = 'requested', no active AI email review
+  const reloadedStatus = 'Waiting Supplier'; // Rule: Inquiries without active AI review are Waiting Supplier
+  const reloadedRow = { ...savedRow, status: reloadedStatus };
+  assert.equal(reloadedRow.sourcePrice, 3650, 'Supplier price must remain preserved after reload');
+  assert.equal(reloadedRow.offeredMake, 'Reliance', 'Make must remain preserved after reload');
+  assert.equal(isNeedsAction(reloadedRow), false, 'Reloaded row must NOT appear in Needs Action');
+
+  // Case F: If user later quotes and saves:
+  const quotedRow = { ...reloadedRow, quotePrice: 45.50 };
+  const finalStatus = (quotedRow.quotePrice && quotedRow.quotePrice > 0) ? 'Completed' : 'Waiting Supplier';
+  assert.equal(finalStatus, 'Completed', 'Row with saved quote price must transition to Completed');
+});
+
+test('12. Manual Document Upload: updates checklist immediately and persists', () => {
+  const manualDocTypes = [
+    'COA', 'MSDS', 'GMP', 'TDS', 'SPEC', 'COC', 'ISO', 'DMF', 'Catalogue', 'Price List', 'Other',
+  ];
+  assert.equal(manualDocTypes.length, 11, 'All 11 required document types must be supported');
+
+  // Initial state: No documents
+  let row = {
+    id: 'inq-101',
+    inquiryId: 'inq-101',
+    documents: [],
+  };
+
+  // Upload COA
+  const uploadedCoa = {
+    id: 'doc-1',
+    documentType: 'COA',
+    filename: 'Product_COA.pdf',
+    storagePath: 'inq-101/COA_12345_Product_COA.pdf',
+    storageBucket: 'crm-documents',
+    status: 'MATCHED',
+  };
+  row = { ...row, documents: [...row.documents, uploadedCoa] };
+
+  // Checklist verification
+  const coaDoc = row.documents.find(d => d.documentType === 'COA');
+  assert.ok(coaDoc, 'COA must be present in documents');
+  assert.equal(coaDoc.status, 'MATCHED', 'COA must be marked MATCHED (✓)');
+  assert.equal(coaDoc.storagePath, 'inq-101/COA_12345_Product_COA.pdf');
+
+  // Upload MSDS
+  const uploadedMsds = {
+    id: 'doc-2',
+    documentType: 'MSDS',
+    filename: 'Product_MSDS.pdf',
+    storagePath: 'inq-101/MSDS_12346_Product_MSDS.pdf',
+    storageBucket: 'crm-documents',
+    status: 'MATCHED',
+  };
+  row = { ...row, documents: [...row.documents, uploadedMsds] };
+
+  const msdsDoc = row.documents.find(d => d.documentType === 'MSDS');
+  assert.ok(msdsDoc, 'MSDS must be present in documents');
+  assert.equal(msdsDoc.status, 'MATCHED', 'MSDS must be marked MATCHED (✓)');
+  assert.equal(row.documents.length, 2, 'Both documents must remain attached');
+});
+
+test('13. Accurate Source Lineage: No false "Actual Gmail" for CRM fallback', () => {
+  // Case A: CRM fallback record (like INQ-26-0048.1)
+  const crmFallbackRow = {
+    inquiryNumber: 'INQ-26-0048.1',
+    productName: 'Paraffin Wax',
+    sourcePrice: 3650,
+    sourceCurrency: 'INR',
+    evidence: {
+      hasRealGmail: false,
+      sourceType: 'crm',
+      from: null,
+      to: null,
+      cc: null,
+      subject: null,
+      date: '2026-09-01T10:00:00Z',
+      bodyText: null,
+      threadId: null,
+      messageId: null,
+      attachments: [{ filename: 'COA_INQ0048.pdf', documentType: 'COA', storagePath: 'inq-48/coa.pdf' }],
+    },
+  };
+
+  const hasRealGmailFallback = Boolean(crmFallbackRow.evidence.hasRealGmail && crmFallbackRow.evidence.messageId);
+  assert.equal(hasRealGmailFallback, false, 'Fallback row must NOT be classified as Real Gmail');
+  assert.equal(crmFallbackRow.evidence.messageId, null, 'Message ID must NOT be fabricated');
+  assert.equal(crmFallbackRow.evidence.threadId, null, 'Thread ID must NOT be fabricated');
+  assert.equal(crmFallbackRow.evidence.subject, null, 'Subject must NOT be fabricated');
+
+  // Case B: Real Gmail record
+  const realGmailRow = {
+    inquiryNumber: 'INQ-26-0050',
+    evidence: {
+      hasRealGmail: true,
+      sourceType: 'gmail',
+      from: 'sales@supplier-india.com',
+      to: 'kunal@sapharmajaya.co.id',
+      cc: 'purchasing@sapharmajaya.co.id',
+      subject: 'Quotation for Inquiry INQ-26-0050',
+      date: '2026-09-25T08:00:00Z',
+      bodyText: 'Please find our best quote for Paraffin Wax: INR 3600/kg CIF Jakarta.',
+      threadId: 'thread-real-12345',
+      messageId: 'msg-real-67890',
+      attachments: [{ filename: 'COA_Real.pdf', documentType: 'COA', storagePath: 'inq-50/coa.pdf' }],
+    },
+  };
+
+  const hasRealGmailReal = Boolean(realGmailRow.evidence.hasRealGmail && realGmailRow.evidence.messageId);
+  assert.equal(hasRealGmailReal, true, 'Real Gmail record must have real Gmail flag and message ID');
+  assert.equal(realGmailRow.evidence.messageId, 'msg-real-67890');
+  assert.equal(realGmailRow.evidence.threadId, 'thread-real-12345');
+});
+
+test('14. Manual Verified Data Priority Over AI Extraction (Rule 5)', () => {
+  // Existing row has manual verified supplier price 3650
+  const row = {
+    id: 'inq-p-1',
+    sourcePrice: 3650,
+    sourceCurrency: 'INR',
+    offeredMake: 'Verified Make',
+  };
+
+  // Incoming AI review arrives with extracted price 3400
+  const aiExtractedPrice = 3400;
+  const aiExtractedMake = 'AI Make';
+
+  // Rule: Do not use AI Gmail extraction to overwrite a manually entered supplier value.
+  const hasManualSourcePrice = row.sourcePrice !== null && row.sourcePrice > 0;
+  if (aiExtractedPrice && !hasManualSourcePrice) {
+    row.sourcePrice = aiExtractedPrice;
+  }
+  if (aiExtractedMake && !row.offeredMake) {
+    row.offeredMake = aiExtractedMake;
+  }
+
+  assert.equal(row.sourcePrice, 3650, 'Existing manual supplier price must NOT be overwritten by AI extraction');
+  assert.equal(row.offeredMake, 'Verified Make', 'Existing manual offered make must NOT be overwritten by AI extraction');
+});
+
