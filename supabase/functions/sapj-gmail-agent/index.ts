@@ -883,33 +883,57 @@ Deno.serve(async (req: Request) => {
         success: false,
         code: "NO_GMAIL_CONNECTED",
         error: "No active Gmail connections found to scan.",
+        mailbox: "none",
+        messages_found: 0,
+        messages_processed: 0,
+        pricing_detected: 0,
+        documents_detected: 0,
+        needs_review: 0,
+        no_action: 0,
+        errors: ["No active Gmail connections found to scan."],
+        persistence_errors: [],
+        ai_errors: [],
         scanned: 0,
         pricing: 0,
         documents: 0,
-        needs_review: 0,
-        no_action: 0,
+        last_checked: new Date().toISOString(),
+        next_check: calculateNextCheckWIB(),
       }, 200);
     }
 
+    let totalFound = 0;
     let totalScanned = 0;
     let pricingCount = 0;
     let documentsCount = 0;
     let needsReviewCount = 0;
     let noActionCount = 0;
+    const connectionErrors: Array<{ mailbox: string; error: string }> = [];
+    const persistenceErrors: string[] = [];
+    const aiErrors: string[] = [];
     const results: ProcessedEmailResult[] = [];
 
     for (const connection of connections) {
+      const mailboxName = connection.email_address || (connection as any).email || connection.id;
+
       // Concurrency protection: do not run multiple scans on the same connection concurrently
       if (runningConnections.has(connection.id)) {
         return json({
           success: true,
           status: "already_running",
           message: "A scan is already in progress for this connection. Please wait.",
+          mailbox: mailboxName,
+          messages_found: 0,
+          messages_processed: 0,
+          pricing_detected: 0,
+          documents_detected: 0,
+          needs_review: 0,
+          no_action: 0,
+          errors: [],
+          persistence_errors: [],
+          ai_errors: [],
           scanned: 0,
           pricing: 0,
           documents: 0,
-          needs_review: 0,
-          no_action: 0,
           last_checked: connection.last_sync || new Date().toISOString(),
           next_check: calculateNextCheckWIB(),
         });
@@ -941,7 +965,7 @@ Deno.serve(async (req: Request) => {
         let pageToken: string | undefined = undefined;
         let pageCount = 0;
         const maxPages = 10;
-        const batchCap = body.maxMessages ? Math.max(Number(body.maxMessages), 25) : 150;
+        const batchCap = body.maxMessages ? Math.min(Math.max(Number(body.maxMessages), 1), 150) : 50;
 
         do {
           pageCount += 1;
@@ -965,8 +989,19 @@ Deno.serve(async (req: Request) => {
           pageToken = listData.nextPageToken;
         } while (pageToken && messageRefs.length < batchCap && pageCount < maxPages);
 
+        totalFound += messageRefs.length;
+
         for (const ref of messageRefs) {
-          totalScanned += 1;
+          if (totalScanned >= maxMessages) {
+            console.log(`[sapj-gmail-agent] Reached maxMessages limit (${maxMessages}), completing scan`);
+            break;
+          }
+          if (Date.now() - startTime > 45000) {
+            console.log(`[sapj-gmail-agent] Reached safe execution time threshold (${Date.now() - startTime}ms), completing scan`);
+            break;
+          }
+          try {
+            totalScanned += 1;
 
           // 3. IDEMPOTENCY & CACHE CHECK
           // Check if this message was already processed in kunal_ai_email_reviews
@@ -1031,7 +1066,7 @@ Deno.serve(async (req: Request) => {
           // 5. Ensure raw email is mirrored in crm_email_inbox with full headers & HTML (idempotent)
           const fromEmail = from.match(/<(.+?)>/)?.[1] || from;
           const fromName = from.replace(/<.+?>/, "").trim();
-          await adminClient
+          const { error: inboxErr } = await adminClient
             .from("crm_email_inbox")
             .upsert({
               gmail_connection_id: connection.id,
@@ -1046,8 +1081,12 @@ Deno.serve(async (req: Request) => {
               has_attachments: attachments.length > 0,
               received_date: new Date(dateStr).toISOString(),
               is_processed: true,
-            }, { onConflict: "message_id" })
-            .catch(() => {});
+            }, { onConflict: "message_id" });
+
+          if (inboxErr) {
+            console.warn(`[sapj-gmail-agent] persistence warning (crm_email_inbox ${ref.id}):`, inboxErr);
+            persistenceErrors.push(`crm_email_inbox (${ref.id}): ${inboxErr.message || JSON.stringify(inboxErr)}`);
+          }
 
           // 6. Fast First-Pass Filter (Cheap Deterministic Check)
           const fastFilter = fastFirstPassFilter(subject, from, bodyText);
@@ -1084,7 +1123,7 @@ Deno.serve(async (req: Request) => {
               },
             };
 
-            await adminClient
+            const { error: fastReviewErr } = await adminClient
               .from("kunal_ai_email_reviews")
               .upsert({
                 gmail_message_id: ref.id,
@@ -1108,6 +1147,11 @@ Deno.serve(async (req: Request) => {
                 updated_at: new Date().toISOString(),
               }, { onConflict: "gmail_message_id" });
 
+            if (fastReviewErr) {
+              console.warn(`[sapj-gmail-agent] persistence warning (kunal_ai_email_reviews fast-filter ${ref.id}):`, fastReviewErr);
+              persistenceErrors.push(`kunal_ai_email_reviews fast-filter (${ref.id}): ${fastReviewErr.message || JSON.stringify(fastReviewErr)}`);
+            }
+
             results.push(noActionResult);
             continue;
           }
@@ -1125,8 +1169,10 @@ Deno.serve(async (req: Request) => {
                 body: bodyText,
                 attachments,
               }, openaiApiKey);
-            } catch (aiErr) {
+            } catch (aiErr: any) {
+              const aiMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
               console.warn(`[sapj-gmail-agent] AI extraction failed for ${ref.id}:`, aiErr);
+              aiErrors.push(`AI extraction (${ref.id}): ${aiMsg}`);
             }
           }
 
@@ -1284,15 +1330,20 @@ Deno.serve(async (req: Request) => {
             },
           };
 
-          await adminClient
+          const { error: reviewErr } = await adminClient
             .from("kunal_ai_email_reviews")
             .upsert(reviewRowPayload, { onConflict: "gmail_message_id" });
+
+          if (reviewErr) {
+            console.warn(`[sapj-gmail-agent] persistence warning (kunal_ai_email_reviews ${ref.id}):`, reviewErr);
+            persistenceErrors.push(`kunal_ai_email_reviews (${ref.id}): ${reviewErr.message || JSON.stringify(reviewErr)}`);
+          }
 
           // 10. Document Auto-Link (Associate high confidence documents with inquiry)
           if (matchResult.suggestedInquiryId && aiExtracted.detectedDocuments.length > 0) {
             for (const doc of aiExtracted.detectedDocuments) {
               if (doc.matchConfidence === "HIGH") {
-                await adminClient
+                const { error: docErr } = await adminClient
                   .from("crm_product_documents")
                   .upsert({
                     inquiry_id: matchResult.suggestedInquiryId,
@@ -1302,15 +1353,19 @@ Deno.serve(async (req: Request) => {
                     display_file_name: doc.filename,
                     original_file_name: doc.filename,
                     batch_number: doc.batchNumber,
-                  }, { onConflict: "inquiry_id,document_type,display_file_name" })
-                  .catch(() => {});
+                  }, { onConflict: "inquiry_id,document_type,display_file_name" });
+
+                if (docErr) {
+                  console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents ${doc.filename}):`, docErr);
+                  persistenceErrors.push(`crm_product_documents (${doc.filename}): ${docErr.message || JSON.stringify(docErr)}`);
+                }
               }
             }
           }
 
           // 11. Preserve Traceability into email_inquiry_links
           if (matchResult.suggestedInquiryId && !matchResult.needsManualLink) {
-            await adminClient
+            const { error: linkErr } = await adminClient
               .from("email_inquiry_links")
               .insert({
                 gmail_message_id: ref.id,
@@ -1320,8 +1375,12 @@ Deno.serve(async (req: Request) => {
                 source_reply_parser_run_at: new Date().toISOString(),
                 parser_confidence: matchResult.confidence,
                 created_by: callingUserId || connection.user_id,
-              })
-              .catch(() => {});
+              });
+
+            if (linkErr) {
+              console.warn(`[sapj-gmail-agent] persistence warning (email_inquiry_links ${ref.id}):`, linkErr);
+              persistenceErrors.push(`email_inquiry_links (${ref.id}): ${linkErr.message || JSON.stringify(linkErr)}`);
+            }
           }
 
           results.push({
@@ -1350,46 +1409,83 @@ Deno.serve(async (req: Request) => {
             documents: aiExtracted.detectedDocuments,
             evidence,
           });
+        } catch (msgErr: any) {
+          const errMsg = msgErr instanceof Error ? msgErr.message : String(msgErr);
+          console.error(`[sapj-gmail-agent] Error processing message ${ref.id}:`, msgErr);
+          persistenceErrors.push(`Message ${ref.id}: ${errMsg}`);
         }
-
-        // Update connection last_sync timestamp
-        await adminClient
-          .from("gmail_connections")
-          .update({ last_sync: new Date().toISOString() })
-          .eq("id", connection.id);
-
-      } catch (connErr) {
-        console.error(`Error scanning connection ${connection.id}:`, connErr);
-      } finally {
-        runningConnections.delete(connection.id);
       }
+
+      // Update connection last_sync timestamp
+      const { error: syncErr } = await adminClient
+        .from("gmail_connections")
+        .update({ last_sync: new Date().toISOString() })
+        .eq("id", connection.id);
+
+      if (syncErr) {
+        console.warn(`[sapj-gmail-agent] persistence warning (gmail_connections last_sync ${connection.id}):`, syncErr);
+        persistenceErrors.push(`gmail_connections last_sync (${connection.id}): ${syncErr.message || JSON.stringify(syncErr)}`);
+      }
+
+    } catch (connErr: any) {
+      const errMsg = connErr instanceof Error ? connErr.message : String(connErr);
+      const mbox = connection.email_address || (connection as any).email || connection.id;
+      console.error(`Error scanning connection ${connection.id} (${mbox}):`, connErr);
+      connectionErrors.push({ mailbox: mbox, error: errMsg });
+    } finally {
+      runningConnections.delete(connection.id);
     }
-
-    const duration = Date.now() - startTime;
-    const nowIso = new Date().toISOString();
-    const nextCheckIso = calculateNextCheckWIB();
-
-    return json({
-      success: true,
-      scanned: totalScanned,
-      pricing: pricingCount,
-      documents: documentsCount,
-      needs_review: needsReviewCount,
-      no_action: noActionCount,
-      last_checked: nowIso,
-      next_check: nextCheckIso,
-      duration_ms: duration,
-      results,
-    });
-  } catch (error) {
-    console.error("[sapj-gmail-agent] Execution failed:", error);
-    return json({
-      success: false,
-      code: "AGENT_EXECUTION_FAILED",
-      error: error instanceof Error ? error.message : "Unknown error",
-      duration_ms: Date.now() - startTime,
-    }, 500);
   }
+
+  const duration = Date.now() - startTime;
+  const nowIso = new Date().toISOString();
+  const nextCheckIso = calculateNextCheckWIB();
+  const mailboxStr = connections
+    .map(c => c.email_address || (c as any).email)
+    .filter(Boolean)
+    .join(", ");
+  const isSuccess = connectionErrors.length === 0;
+
+  return json({
+    success: isSuccess,
+    mailbox: mailboxStr || "unknown",
+    messages_found: totalFound,
+    messages_processed: totalScanned,
+    pricing_detected: pricingCount,
+    documents_detected: documentsCount,
+    needs_review: needsReviewCount,
+    no_action: noActionCount,
+    errors: connectionErrors.map(e => `${e.mailbox}: ${e.error}`),
+    persistence_errors: persistenceErrors,
+    ai_errors: aiErrors,
+    scanned: totalScanned,
+    pricing: pricingCount,
+    documents: documentsCount,
+    last_checked: nowIso,
+    next_check: nextCheckIso,
+    duration_ms: duration,
+    results,
+  });
+} catch (error: any) {
+  const errMsg = error instanceof Error ? error.message : "Unknown error";
+  console.error("[sapj-gmail-agent] Execution failed:", error);
+  return json({
+    success: false,
+    code: "AGENT_EXECUTION_FAILED",
+    error: errMsg,
+    mailbox: "unknown",
+    messages_found: 0,
+    messages_processed: 0,
+    pricing_detected: 0,
+    documents_detected: 0,
+    needs_review: 0,
+    no_action: 0,
+    errors: [errMsg],
+    persistence_errors: [],
+    ai_errors: [],
+    duration_ms: Date.now() - startTime,
+  }, 500);
+}
 });
 
 function topCandidateRequestedMake(candidate: CandidateInquiry | null | undefined, offeredMake: string | null): boolean {

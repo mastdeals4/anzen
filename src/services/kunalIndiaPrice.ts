@@ -86,11 +86,19 @@ export interface KunalGmailMessage {
 
 export interface AgentScanSummary {
   success: boolean;
+  mailbox?: string;
+  messages_found?: number;
+  messages_processed?: number;
+  pricing_detected?: number;
+  documents_detected?: number;
+  needs_review?: number;
+  no_action?: number;
+  errors?: string[];
+  persistence_errors?: string[];
+  ai_errors?: string[];
   scanned: number;
   pricing: number;
   documents: number;
-  needs_review: number;
-  no_action: number;
   last_checked: string;
   next_check: string;
   duration_ms?: number;

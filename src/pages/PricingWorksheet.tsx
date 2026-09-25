@@ -982,11 +982,23 @@ export function PricingWorksheet() {
       const summary: AgentScanSummary = await runSapjGmailAgent({ maxMessages: 25 });
       setLastCheckedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       setNextCheckWibTime(computeNextWib());
-      showToast({
-        type: 'success',
-        title: 'Background Agent Scan Complete',
-        message: `${summary.scanned} scanned • ${summary.pricing} pricing • ${summary.documents} docs • ${summary.needs_review} needs review`,
-      });
+      if (!summary.success || (summary.errors && summary.errors.length > 0)) {
+        showToast({
+          type: 'error',
+          title: 'Background Agent Scan Failed',
+          message: summary.errors?.join('; ') || summary.message || 'Processing failed for connected mailbox',
+        });
+      } else {
+        const processed = summary.messages_processed ?? summary.scanned;
+        const pricing = summary.pricing_detected ?? summary.pricing;
+        const docs = summary.documents_detected ?? summary.documents;
+        const needsRev = summary.needs_review ?? 0;
+        showToast({
+          type: 'success',
+          title: 'Background Agent Scan Complete',
+          message: `${processed} scanned • ${pricing} pricing • ${docs} docs • ${needsRev} needs review`,
+        });
+      }
       await loadData();
     } catch (err: any) {
       showToast({ type: 'error', title: 'Scan Failed', message: err.message || 'Check Now failed' });
@@ -1003,11 +1015,22 @@ export function PricingWorksheet() {
       const summary: AgentScanSummary = await runSapjGmailAgent({ scanLast7Days: true, maxMessages: 50 });
       setLastCheckedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       setNextCheckWibTime(computeNextWib());
-      showToast({
-        type: 'success',
-        title: '7-Day Historical Scan Complete',
-        message: `${summary.scanned} emails inspected • ${summary.pricing} pricing detected • ${summary.documents} docs synced`,
-      });
+      if (!summary.success || (summary.errors && summary.errors.length > 0)) {
+        showToast({
+          type: 'error',
+          title: '7-Day Historical Scan Failed',
+          message: summary.errors?.join('; ') || summary.message || 'Processing failed for connected mailbox',
+        });
+      } else {
+        const processed = summary.messages_processed ?? summary.scanned;
+        const pricing = summary.pricing_detected ?? summary.pricing;
+        const docs = summary.documents_detected ?? summary.documents;
+        showToast({
+          type: 'success',
+          title: '7-Day Historical Scan Complete',
+          message: `${processed} emails inspected • ${pricing} pricing detected • ${docs} docs synced`,
+        });
+      }
       await loadData();
     } catch (err: any) {
       showToast({ type: 'error', title: '7-Day Scan Failed', message: err.message || 'Check Last 7 Days failed' });
