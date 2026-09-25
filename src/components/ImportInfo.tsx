@@ -68,8 +68,18 @@ interface FilterRow {
 }
 
 let filterIdCounter = 0;
-function newFilter(field: SortField = 'product_name'): FilterRow {
-  return { id: ++filterIdCounter, field, value: '' };
+function newFilter(field: SortField = 'product_name', value = ''): FilterRow {
+  return { id: ++filterIdCounter, field, value };
+}
+
+export const COMPACT_ANALYSIS_KEYS: SortField[] = [
+  'date', 'product_name', 'unit_rate', 'currency', 'origin', 'destination', 'exporter', 'type'
+];
+
+export interface ImportInfoProps {
+  initialProduct?: string;
+  compactAnalysis?: boolean;
+  onClose?: () => void;
 }
 
 const PAGE_SIZE = 200;
@@ -135,14 +145,36 @@ function fmtNum(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function ImportInfo() {
+export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }: ImportInfoProps = {}) {
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const [filters, setFilters] = useState<FilterRow[]>([newFilter('product_name')]);
-  const [activeFilters, setActiveFilters] = useState<FilterRow[]>([]);
+  const [showAllColumns, setShowAllColumns] = useState(false);
+  const isCompact = compactAnalysis && !showAllColumns;
+
+  const activeCols = useMemo(() => {
+    if (!isCompact) return COLS;
+    return COLS.filter(c => COMPACT_ANALYSIS_KEYS.includes(c.key));
+  }, [isCompact]);
+
+  const [filters, setFilters] = useState<FilterRow[]>(() => [
+    newFilter('product_name', initialProduct || '')
+  ]);
+  const [activeFilters, setActiveFilters] = useState<FilterRow[]>(() =>
+    initialProduct && initialProduct.trim() ? [newFilter('product_name', initialProduct.trim())] : []
+  );
+
+  useEffect(() => {
+    if (initialProduct !== undefined) {
+      const trimmed = initialProduct.trim();
+      const f = [newFilter('product_name', trimmed)];
+      setFilters(f);
+      setActiveFilters(trimmed ? f : []);
+      setPage(0);
+    }
+  }, [initialProduct]);
 
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -301,10 +333,34 @@ export function ImportInfo() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const hasActiveFilters = activeFilters.some(f => f.value.trim() !== '');
-  const tableW = useMemo(() => COLS.reduce((s, c) => s + (colWidths[c.key] || c.defaultWidth), 0), [colWidths]);
+  const tableW = useMemo(() => activeCols.reduce((s, c) => s + (colWidths[c.key] || c.defaultWidth), 0), [activeCols, colWidths]);
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 210px)', minHeight: 480 }}>
+
+      {/* ── Optional Modal Header ── */}
+      {onClose && (
+        <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-blue-600" />
+            <span className="font-bold text-sm text-gray-800">
+              Import Data Analysis {initialProduct ? `— ${initialProduct}` : ''}
+            </span>
+            {isCompact && (
+              <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded font-medium">
+                Compact Pricing Analysis
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 cursor-pointer"
+            title="Close Import Data"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* ── Filter Builder ── */}
       <div className="flex flex-col gap-1.5 mb-2 flex-shrink-0 bg-gray-50 border border-gray-200 rounded-lg p-2">
@@ -420,6 +476,15 @@ export function ImportInfo() {
           {hasActiveFilters ? ' matching' : ' total'} records
           {total > PAGE_SIZE && <span className="text-gray-400"> · page {page + 1} of {totalPages}</span>}
         </span>
+        {compactAnalysis && (
+          <button
+            type="button"
+            onClick={() => setShowAllColumns(!showAllColumns)}
+            className="text-[11px] text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer"
+          >
+            {showAllColumns ? 'Compact Analysis View' : 'Show All Columns'}
+          </button>
+        )}
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
             <button onClick={() => setPage(0)} disabled={page === 0} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50">«</button>
@@ -446,7 +511,7 @@ export function ImportInfo() {
           <table className="border-collapse" style={{ tableLayout: 'fixed', width: tableW, fontSize: '11px' }}>
             <thead className="sticky top-0 z-20">
               <tr className="bg-gray-700 text-white">
-                {COLS.map(col => (
+                {activeCols.map(col => (
                   <th key={col.key} style={{ width: colWidths[col.key], minWidth: 36, position: 'relative' }}
                     className="px-0 py-0 text-left font-semibold border-r border-gray-600 last:border-r-0 overflow-hidden">
                     <button onClick={() => handleSort(col.key)}
@@ -471,21 +536,47 @@ export function ImportInfo() {
             <tbody>
               {rows.map((row, i) => (
                 <tr key={row.id} className={`border-b border-gray-100 hover:bg-blue-50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}`}>
-                  <td style={{ width: colWidths.date }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap text-gray-500 text-[10.5px]">{fmtDate(row.date)}</td>
-                  <td style={{ width: colWidths.hs_code }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap font-mono text-gray-500 text-[10px]">{row.hs_code}</td>
-                  <td style={{ width: colWidths.product_name }} className="px-2 py-1 border-r border-gray-100 overflow-hidden font-medium text-gray-900 text-[11px]" title={row.product_name}><div className="truncate">{row.product_name}</div></td>
-                  <td style={{ width: colWidths.quantity }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-right whitespace-nowrap text-gray-700 text-[10.5px]">{row.quantity.toLocaleString()}</td>
-                  <td style={{ width: colWidths.unit }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap text-gray-500 text-[10px] uppercase">{abbreviateUnit(row.unit)}</td>
-                  <td style={{ width: colWidths.unit_rate }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-right whitespace-nowrap font-medium text-emerald-700 text-[10.5px]">{fmtNum(row.unit_rate)}</td>
-                  <td style={{ width: colWidths.currency }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap text-gray-500 text-[10px] font-mono">{row.currency}</td>
-                  <td style={{ width: colWidths.total_usd }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-right whitespace-nowrap font-medium text-blue-700 text-[10.5px]">{fmtNum(row.total_usd)}</td>
-                  <td style={{ width: colWidths.origin }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-600 text-[10.5px]" title={row.origin}><div className="truncate">{row.origin}</div></td>
-                  <td style={{ width: colWidths.destination }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-600 text-[10.5px]" title={row.destination}><div className="truncate">{row.destination}</div></td>
-                  <td style={{ width: colWidths.exporter }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-700 text-[10.5px]" title={row.exporter}><div className="truncate">{row.exporter}</div></td>
-                  <td style={{ width: colWidths.importer }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-700 text-[10.5px]" title={row.importer}><div className="truncate">{row.importer}</div></td>
-                  <td style={{ width: colWidths.type }} className="px-2 py-1 overflow-hidden">
-                    {row.type ? <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-medium whitespace-nowrap ${getTypeColor(row.type)}`}>{row.type}</span> : '-'}
-                  </td>
+                  {activeCols.some(c => c.key === 'date') && (
+                    <td style={{ width: colWidths.date }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap text-gray-500 text-[10.5px]">{fmtDate(row.date)}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'hs_code') && (
+                    <td style={{ width: colWidths.hs_code }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap font-mono text-gray-500 text-[10px]">{row.hs_code}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'product_name') && (
+                    <td style={{ width: colWidths.product_name }} className="px-2 py-1 border-r border-gray-100 overflow-hidden font-medium text-gray-900 text-[11px]" title={row.product_name}><div className="truncate">{row.product_name}</div></td>
+                  )}
+                  {activeCols.some(c => c.key === 'quantity') && (
+                    <td style={{ width: colWidths.quantity }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-right whitespace-nowrap text-gray-700 text-[10.5px]">{row.quantity.toLocaleString()}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'unit') && (
+                    <td style={{ width: colWidths.unit }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap text-gray-500 text-[10px] uppercase">{abbreviateUnit(row.unit)}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'unit_rate') && (
+                    <td style={{ width: colWidths.unit_rate }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-right whitespace-nowrap font-medium text-emerald-700 text-[10.5px]">{fmtNum(row.unit_rate)}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'currency') && (
+                    <td style={{ width: colWidths.currency }} className="px-2 py-1 border-r border-gray-100 overflow-hidden whitespace-nowrap text-gray-500 text-[10px] font-mono">{row.currency}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'total_usd') && (
+                    <td style={{ width: colWidths.total_usd }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-right whitespace-nowrap font-medium text-blue-700 text-[10.5px]">{fmtNum(row.total_usd)}</td>
+                  )}
+                  {activeCols.some(c => c.key === 'origin') && (
+                    <td style={{ width: colWidths.origin }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-600 text-[10.5px]" title={row.origin}><div className="truncate">{row.origin}</div></td>
+                  )}
+                  {activeCols.some(c => c.key === 'destination') && (
+                    <td style={{ width: colWidths.destination }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-600 text-[10.5px]" title={row.destination}><div className="truncate">{row.destination}</div></td>
+                  )}
+                  {activeCols.some(c => c.key === 'exporter') && (
+                    <td style={{ width: colWidths.exporter }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-700 text-[10.5px]" title={row.exporter}><div className="truncate">{row.exporter}</div></td>
+                  )}
+                  {activeCols.some(c => c.key === 'importer') && (
+                    <td style={{ width: colWidths.importer }} className="px-2 py-1 border-r border-gray-100 overflow-hidden text-gray-700 text-[10.5px]" title={row.importer}><div className="truncate">{row.importer}</div></td>
+                  )}
+                  {activeCols.some(c => c.key === 'type') && (
+                    <td style={{ width: colWidths.type }} className="px-2 py-1 overflow-hidden">
+                      {row.type ? <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-medium whitespace-nowrap ${getTypeColor(row.type)}`}>{row.type}</span> : '-'}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

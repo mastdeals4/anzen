@@ -21,6 +21,7 @@ import {
   type KunalReplySourceOption,
 } from '../components/crm/KunalInternalReplyModal';
 import { KunalEmailEvidenceDrawer } from '../components/pricing/KunalEmailEvidenceDrawer';
+import { ImportInfo } from '../components/ImportInfo';
 import { getSignedUrlCached } from '../utils/signedUrlCache';
 import {
   CheckCircle2,
@@ -34,6 +35,9 @@ import {
   AlertCircle,
   Eye,
   Calendar,
+  Clock,
+  Trash2,
+  Database,
   Plus,
   Upload,
   Download,
@@ -289,9 +293,9 @@ export function PricingWorksheet() {
   const [rows, setRows] = useState<UnifiedPricingRow[]>([]);
   const [allInquiriesList, setAllInquiriesList] = useState<CrmInquiryItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [ignoringId, setIgnoringId] = useState<string | null>(null);
   const [makeOptions, setMakeOptions] = useState<string[]>([]);
 
   // STABLE LOCAL STRING DRAFTS FOR NUMERIC INPUT
@@ -301,6 +305,50 @@ export function PricingWorksheet() {
   // Background Gmail AI Agent widget state
   const [isScanning, setIsScanning] = useState(false);
   const [isScanning7Days, setIsScanning7Days] = useState(false);
+  const [batchProgress7Days, setBatchProgress7Days] = useState<{
+    batch: number;
+    found: number;
+    processed: number;
+    remaining: number;
+  } | null>(null);
+
+  // One-time historical scan state
+  const [isScanningHistorical, setIsScanningHistorical] = useState(false);
+  const [historicalProgress, setHistoricalProgress] = useState<{
+    batch: number;
+    found: number;
+    processed: number;
+    pricingFound: number;
+    pricingCreated: number;
+    pricingEnriched: number;
+    docsFound: number;
+    docsStored: number;
+    inquiriesMatched: number;
+    needsReview: number;
+    duplicatesSkipped: number;
+    errors: string[];
+    remaining: number;
+  } | null>(null);
+
+  const [historicalReport, setHistoricalReport] = useState<{
+    mailbox: string;
+    dateRange: string;
+    totalFound: number;
+    totalProcessed: number;
+    pricingEmails: number;
+    pricingCreated: number;
+    pricingEnriched: number;
+    documentsDetected: number;
+    documentsStored: number;
+    inquiriesMatched: number;
+    needsReview: number;
+    duplicatesSkipped: number;
+    errors: string[];
+  } | null>(null);
+
+  // Import Data Analysis modal target product
+  const [importDataModalProduct, setImportDataModalProduct] = useState<string | null>(null);
+
   const [lastCheckedTime, setLastCheckedTime] = useState<string | null>(null);
   const [nextCheckWibTime, setNextCheckWibTime] = useState<string>('6:00 PM');
 
@@ -884,8 +932,8 @@ export function PricingWorksheet() {
               targetRow.actionReason = 'Price received';
             }
           }
-        } else if (extractedPrice || detectedDocs.length > 0) {
-          // AI review without exact matched inquiry row -> standalone item requiring action
+        } else if ((extractedPrice || detectedDocs.length > 0) && (rev.action_status === 'pending_review' || rev.action_status === 'needs_manual_link')) {
+          // AI review without exact matched inquiry row -> standalone item requiring action ONLY if pending review
           const fallbackId = `ai-${rev.id}`;
           const calc = calculateCanonicalPricing(
             extractedPrice,
@@ -1007,35 +1055,226 @@ export function PricingWorksheet() {
     }
   };
 
-  // Handle CHECK LAST 7 DAYS button
+  // Handle CHECK LAST 7 DAYS button (Processes full 7-day mailbox automatically across safe batches)
   const handleCheckLast7Days = async () => {
-    if (isScanning || isScanning7Days) return;
+    if (isScanning || isScanning7Days || isScanningHistorical) return;
     setIsScanning7Days(true);
+    let batchCount = 0;
+    let totalFound = 0;
+    let totalProcessed = 0;
+    let totalPricing = 0;
+    let totalDocs = 0;
+    let pageToken: string | undefined = undefined;
+    let hasMore = true;
+
     try {
-      const summary: AgentScanSummary = await runSapjGmailAgent({ scanLast7Days: true, maxMessages: 50 });
+      while (hasMore) {
+        batchCount += 1;
+        setBatchProgress7Days({
+          batch: batchCount,
+          found: totalFound,
+          processed: totalProcessed,
+          remaining: 0,
+        });
+
+        const summary: AgentScanSummary = await runSapjGmailAgent({
+          scanLast7Days: true,
+          maxMessages: 50,
+          pageToken,
+        });
+
+        if (!summary.success && summary.errors && summary.errors.length > 0) {
+          showToast({
+            type: 'error',
+            title: `7-Day Scan Batch ${batchCount} Error`,
+            message: summary.errors.join('; '),
+          });
+          break;
+        }
+
+        totalFound += summary.messages_found || 0;
+        totalProcessed += summary.messages_processed ?? summary.scanned ?? 0;
+        totalPricing += summary.pricing_detected ?? summary.pricing ?? 0;
+        totalDocs += summary.documents_detected ?? summary.documents ?? 0;
+
+        const remaining = summary.remaining ?? 0;
+        setBatchProgress7Days({
+          batch: batchCount,
+          found: totalFound,
+          processed: totalProcessed,
+          remaining,
+        });
+
+        if (summary.has_more && summary.next_page_token) {
+          pageToken = summary.next_page_token;
+          hasMore = true;
+        } else {
+          hasMore = false;
+          pageToken = undefined;
+        }
+      }
+
       setLastCheckedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       setNextCheckWibTime(computeNextWib());
-      if (!summary.success || (summary.errors && summary.errors.length > 0)) {
-        showToast({
-          type: 'error',
-          title: '7-Day Historical Scan Failed',
-          message: summary.errors?.join('; ') || summary.message || 'Processing failed for connected mailbox',
-        });
-      } else {
-        const processed = summary.messages_processed ?? summary.scanned;
-        const pricing = summary.pricing_detected ?? summary.pricing;
-        const docs = summary.documents_detected ?? summary.documents;
-        showToast({
-          type: 'success',
-          title: '7-Day Historical Scan Complete',
-          message: `${processed} emails inspected • ${pricing} pricing detected • ${docs} docs synced`,
-        });
-      }
+      showToast({
+        type: 'success',
+        title: '7-Day Historical Scan Complete',
+        message: `Completed ${batchCount} safe batches • ${totalProcessed} emails processed • ${totalPricing} pricing • ${totalDocs} docs`,
+      });
       await loadData();
     } catch (err: any) {
-      showToast({ type: 'error', title: '7-Day Scan Failed', message: err.message || 'Check Last 7 Days failed' });
+      showToast({
+        type: 'error',
+        title: '7-Day Scan Failed',
+        message: err.message || 'Check Last 7 Days failed',
+      });
     } finally {
       setIsScanning7Days(false);
+      setBatchProgress7Days(null);
+    }
+  };
+
+  // ONE-TIME FULL HISTORICAL SCAN
+  // Scans Kunal mailbox from earliest available Gmail history up to today in safe automatic batches
+  const handleRunHistoricalScan = async () => {
+    if (isScanning || isScanning7Days || isScanningHistorical) return;
+    setIsScanningHistorical(true);
+
+    let batchCount = 0;
+    let totalFound = 0;
+    let totalProcessed = 0;
+    let totalPricing = 0;
+    let totalPricingCreated = 0;
+    let totalPricingEnriched = 0;
+    let totalDocs = 0;
+    let totalDocsStored = 0;
+    let totalInquiriesMatched = 0;
+    let totalNeedsReview = 0;
+    let totalDuplicatesSkipped = 0;
+    const allErrors: string[] = [];
+    let minDateScanned: string | null = null;
+    let maxDateScanned: string | null = null;
+    let mailboxName = 'Kunal Mailbox';
+
+    let pageToken: string | undefined = undefined;
+    let hasMore = true;
+
+    try {
+      while (hasMore) {
+        batchCount += 1;
+        setHistoricalProgress({
+          batch: batchCount,
+          found: totalFound,
+          processed: totalProcessed,
+          pricingFound: totalPricing,
+          pricingCreated: totalPricingCreated,
+          pricingEnriched: totalPricingEnriched,
+          docsFound: totalDocs,
+          docsStored: totalDocsStored,
+          inquiriesMatched: totalInquiriesMatched,
+          needsReview: totalNeedsReview,
+          duplicatesSkipped: totalDuplicatesSkipped,
+          errors: allErrors,
+          remaining: 0,
+        });
+
+        const summary: AgentScanSummary = await runSapjGmailAgent({
+          fullHistoricalScan: true,
+          maxMessages: 50,
+          pageToken,
+        });
+
+        if (summary.mailbox && summary.mailbox !== 'unknown') {
+          mailboxName = summary.mailbox;
+        }
+
+        if (summary.date_range_scanned?.min) {
+          if (!minDateScanned || summary.date_range_scanned.min < minDateScanned) {
+            minDateScanned = summary.date_range_scanned.min;
+          }
+        }
+        if (summary.date_range_scanned?.max) {
+          if (!maxDateScanned || summary.date_range_scanned.max > maxDateScanned) {
+            maxDateScanned = summary.date_range_scanned.max;
+          }
+        }
+
+        totalFound += summary.messages_found || 0;
+        totalProcessed += summary.messages_processed ?? summary.scanned ?? 0;
+        totalPricing += summary.pricing_detected ?? summary.pricing ?? 0;
+        totalPricingCreated += summary.pricing_records_created ?? 0;
+        totalPricingEnriched += summary.pricing_records_enriched ?? 0;
+        totalDocs += summary.documents_detected ?? summary.documents ?? 0;
+        totalDocsStored += summary.documents_stored ?? 0;
+        totalInquiriesMatched += summary.inquiries_matched ?? 0;
+        totalNeedsReview += summary.needs_review ?? 0;
+        totalDuplicatesSkipped += summary.skipped_duplicate ?? 0;
+
+        if (summary.errors && summary.errors.length > 0) {
+          allErrors.push(...summary.errors);
+        }
+
+        const remaining = summary.remaining ?? 0;
+        setHistoricalProgress({
+          batch: batchCount,
+          found: totalFound,
+          processed: totalProcessed,
+          pricingFound: totalPricing,
+          pricingCreated: totalPricingCreated,
+          pricingEnriched: totalPricingEnriched,
+          docsFound: totalDocs,
+          docsStored: totalDocsStored,
+          inquiriesMatched: totalInquiriesMatched,
+          needsReview: totalNeedsReview,
+          duplicatesSkipped: totalDuplicatesSkipped,
+          errors: allErrors,
+          remaining,
+        });
+
+        if (summary.has_more && summary.next_page_token) {
+          pageToken = summary.next_page_token;
+          hasMore = true;
+        } else {
+          hasMore = false;
+          pageToken = undefined;
+        }
+      }
+
+      const dateRangeStr = minDateScanned && maxDateScanned
+        ? `${new Date(minDateScanned).toLocaleDateString()} — ${new Date(maxDateScanned).toLocaleDateString()}`
+        : 'Full Mailbox History';
+
+      setHistoricalReport({
+        mailbox: mailboxName,
+        dateRange: dateRangeStr,
+        totalFound,
+        totalProcessed,
+        pricingEmails: totalPricing,
+        pricingCreated: totalPricingCreated,
+        pricingEnriched: totalPricingEnriched,
+        documentsDetected: totalDocs,
+        documentsStored: totalDocsStored,
+        inquiriesMatched: totalInquiriesMatched,
+        needsReview: totalNeedsReview,
+        duplicatesSkipped: totalDuplicatesSkipped,
+        errors: allErrors,
+      });
+
+      showToast({
+        type: 'success',
+        title: 'Historical Scan Complete',
+        message: `Successfully processed ${totalProcessed} historical emails across ${batchCount} safe batches.`,
+      });
+
+      await loadData();
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Historical Scan Error',
+        message: err.message || 'Historical scan failed',
+      });
+    } finally {
+      setIsScanningHistorical(false);
     }
   };
 
@@ -1220,19 +1459,44 @@ export function PricingWorksheet() {
     );
   };
 
-  // Selection toggle
-  const toggleSelect = (id: string) => {
-    setSelectedIds(cur => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  // DELETE / IGNORE FROM NEED ACTION (Requirement #4)
+  const handleIgnoreRow = async (row: UnifiedPricingRow) => {
+    setIgnoringId(row.id);
+    try {
+      const now = new Date().toISOString();
+      if (row.aiReviewId) {
+        const { error } = await supabase
+          .from('kunal_ai_email_reviews')
+          .update({
+            action_status: 'no_action',
+            updated_at: now,
+          })
+          .eq('id', row.aiReviewId);
+        if (error) console.warn('Ignore review update warning:', error);
+      }
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === displayedRows.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(displayedRows.map(r => r.id)));
+      // If unlinked review fallback row, remove it completely from rows
+      if (row.id.startsWith('review-')) {
+        setRows(prev => prev.filter(r => r.id !== row.id));
+      } else {
+        // Linked inquiry row: remove from Need Action by reverting to Waiting Supplier or Completed
+        let nextStatus: PricingRowStatus = 'Waiting Supplier';
+        if (row.quotePrice && row.quotePrice > 0) {
+          nextStatus = 'Completed';
+        }
+        updateRow(row.id, {
+          status: nextStatus,
+          needsManualLink: false,
+          actionReason: null,
+                  });
+      }
+
+      showToast({ type: 'info', title: 'Removed', message: `Item removed from Need Action.` });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Action Failed', message: err.message || 'Could not ignore item' });
+    } finally {
+      setIgnoringId(null);
+    }
   };
 
   // SAVE action (Explicit confirmation that transitions status)
@@ -1439,7 +1703,7 @@ export function PricingWorksheet() {
               <button
                 id="btn-check-now"
                 onClick={handleCheckNow}
-                disabled={isScanning || isScanning7Days}
+                disabled={isScanning || isScanning7Days || isScanningHistorical}
                 className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
                 title="Run immediate Gmail Agent scan"
               >
@@ -1450,16 +1714,94 @@ export function PricingWorksheet() {
               <button
                 id="btn-check-7-days"
                 onClick={handleCheckLast7Days}
-                disabled={isScanning || isScanning7Days}
+                disabled={isScanning || isScanning7Days || isScanningHistorical}
                 className="px-2.5 py-1 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded font-medium text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
-                title="Scan last 7 days of supplier emails"
+                title="Scan last 7 days of supplier emails with automatic batch continuation"
               >
                 <Calendar className={`w-3.5 h-3.5 text-blue-600 ${isScanning7Days ? 'animate-spin' : ''}`} />
                 <span>{isScanning7Days ? 'Scanning 7D...' : 'Check Last 7 Days'}</span>
               </button>
+
+              <button
+                id="btn-run-historical-scan"
+                onClick={handleRunHistoricalScan}
+                disabled={isScanning || isScanning7Days || isScanningHistorical}
+                className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded font-semibold text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
+                title="Run one-time historical scan across all mailbox history"
+              >
+                <Clock className={`w-3.5 h-3.5 text-amber-700 ${isScanningHistorical ? 'animate-spin' : ''}`} />
+                <span>{isScanningHistorical ? 'Scanning History...' : 'RUN FULL HISTORICAL SCAN — ONCE'}</span>
+              </button>
             </div>
           </div>
         </div>
+
+        {/* 7-Day Multi-Batch Progress Banner */}
+        {batchProgress7Days && (
+          <div className="bg-blue-50 border border-blue-200 rounded p-2.5 text-xs flex items-center justify-between text-blue-900 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+              <span className="font-bold">7-Day Mailbox Catch-Up:</span>
+              <span className="font-mono bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">Batch {batchProgress7Days.batch}</span>
+              <span>•</span>
+              <span>Found: <b>{batchProgress7Days.found}</b></span>
+              <span>•</span>
+              <span>Processed: <b>{batchProgress7Days.processed}</b></span>
+              <span>•</span>
+              <span>Remaining: <b>{batchProgress7Days.remaining}</b></span>
+            </div>
+            <span className="text-[10px] text-blue-700 italic">Processing safe batches automatically until finished...</span>
+          </div>
+        )}
+
+        {/* Full Historical Scan Live Progress Banner */}
+        {historicalProgress && (
+          <div className="bg-amber-50 border border-amber-300 rounded p-3 text-xs space-y-2 text-amber-950 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-bold text-amber-900">
+                <Clock className="w-4 h-4 text-amber-700 animate-spin" />
+                <span>Full Historical Email Scan in Progress — Batch {historicalProgress.batch}</span>
+              </div>
+              <span className="text-[11px] font-mono text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                Remaining in Mailbox: ~{historicalProgress.remaining}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 text-center text-[10px]">
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Found</div>
+                <div className="font-bold text-gray-900 text-xs">{historicalProgress.found}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Processed</div>
+                <div className="font-bold text-blue-700 text-xs">{historicalProgress.processed}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Pricing Found</div>
+                <div className="font-bold text-green-700 text-xs">{historicalProgress.pricingFound}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Enriched</div>
+                <div className="font-bold text-green-700 text-xs">{historicalProgress.pricingEnriched}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Docs Stored</div>
+                <div className="font-bold text-purple-700 text-xs">{historicalProgress.docsStored}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Inq. Matched</div>
+                <div className="font-bold text-blue-900 text-xs">{historicalProgress.inquiriesMatched}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Needs Review</div>
+                <div className="font-bold text-amber-800 text-xs">{historicalProgress.needsReview}</div>
+              </div>
+              <div className="bg-white p-1 rounded border border-amber-200">
+                <div className="text-gray-500 font-medium">Duplicates</div>
+                <div className="font-bold text-gray-600 text-xs">{historicalProgress.duplicatesSkipped}</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ============================================================ */}
         {/* 2. STATUS TABS & SEARCH FILTERS */}
@@ -1606,14 +1948,6 @@ export function PricingWorksheet() {
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold text-[10px] uppercase tracking-wider select-none">
                 <tr>
-                  <th className="py-2 px-2 text-center w-8 border-r border-gray-200">
-                    <input
-                      type="checkbox"
-                      checked={displayedRows.length > 0 && selectedIds.size === displayedRows.length}
-                      onChange={toggleSelectAll}
-                      className="cursor-pointer rounded border-gray-300"
-                    />
-                  </th>
                   <th className="py-2 px-2 w-32 border-r border-gray-200">INQUIRY / ACE</th>
                   <th className="py-2 px-2 w-36 border-r border-gray-200">CUSTOMER</th>
                   <th className="py-2 px-2 w-48 border-r border-gray-200">PRODUCT</th>
@@ -1639,14 +1973,14 @@ export function PricingWorksheet() {
               <tbody className="divide-y divide-gray-100 font-normal text-gray-800">
                 {loading ? (
                   <tr>
-                    <td colSpan={14} className="py-12 text-center text-gray-400">
+                    <td colSpan={13} className="py-12 text-center text-gray-400">
                       <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
                       Loading pricing worksheet...
                     </td>
                   </tr>
                 ) : displayedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="py-12 text-center">
+                    <td colSpan={13} className="py-12 text-center">
                       <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2 opacity-80" />
                       <p className="text-sm font-semibold text-gray-700">No rows in this view.</p>
                       <p className="text-xs text-gray-500 mt-1">
@@ -1657,7 +1991,6 @@ export function PricingWorksheet() {
                 ) : (
                   displayedRows.map(row => {
                     const isExpanded = expandedId === row.id;
-                    const isSelected = selectedIds.has(row.id);
                     const sourcePriceDraft =
                       priceDrafts[row.id]?.sourcePrice ?? (row.sourcePrice != null ? String(row.sourcePrice) : '');
                     const quotePriceDraft =
@@ -1668,25 +2001,13 @@ export function PricingWorksheet() {
                         {/* Main Grid Row */}
                         <tr
                           className={`transition-colors text-[11px] group ${
-                            isSelected
-                              ? 'bg-blue-50/40'
-                              : isExpanded
+                            isExpanded
                               ? 'bg-gray-50/90 font-medium'
                               : row.isAiPrepared
                               ? 'bg-amber-50/20 hover:bg-amber-50/40'
                               : 'hover:bg-gray-50'
                           }`}
                         >
-                          {/* Checkbox */}
-                          <td className="py-1.5 px-2 text-center border-r border-gray-200">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelect(row.id)}
-                              className="cursor-pointer rounded border-gray-300"
-                            />
-                          </td>
-
                           {/* ACE / Inquiry Cell */}
                           <td className="py-1 px-2 border-r border-gray-200">
                             <div className="flex items-center gap-1 font-mono font-medium">
@@ -1909,6 +2230,18 @@ export function PricingWorksheet() {
                               >
                                 <Save className="w-3.5 h-3.5" />
                               </button>
+                              <button
+                                onClick={() => handleIgnoreRow(row)}
+                                disabled={ignoringId === row.id}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded cursor-pointer disabled:opacity-50"
+                                title="Remove from Need Action"
+                              >
+                                {ignoringId === row.id ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1918,7 +2251,7 @@ export function PricingWorksheet() {
                         {/* ============================================================ */}
                         {isExpanded && (
                           <tr className="bg-gray-50 border-b-2 border-blue-200">
-                            <td colSpan={14} className="p-3">
+                            <td colSpan={13} className="p-3">
                               <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-2xs space-y-3">
                                 {/* Grid Layout: Supplier Source Rate | Real Import Calculation | Quote & Actions */}
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -2175,9 +2508,15 @@ export function PricingWorksheet() {
                                                   <span className="truncate text-gray-800 font-medium" title={doc.filename}>
                                                     {doc.filename}
                                                   </span>
-                                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
-                                                    ✓ Uploaded
-                                                  </span>
+                                                  {doc.storagePath ? (
+                                                    <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
+                                                      ✓ Uploaded
+                                                    </span>
+                                                  ) : (
+                                                    <span className="text-[9px] text-amber-700 font-semibold flex-shrink-0 bg-amber-50 px-1 rounded border border-amber-200">
+                                                      FILE NOT STORED / NEEDS RE-SYNC
+                                                    </span>
+                                                  )}
                                                 </div>
 
                                                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -2211,7 +2550,18 @@ export function PricingWorksheet() {
                                   {/* Column B: IMPORT CALCULATION (Real PriceCalculator Logic) */}
                                   <div className="border border-blue-200 rounded-md p-2.5 bg-blue-50/20 space-y-2">
                                     <div className="text-[11px] font-bold text-blue-950 uppercase tracking-wide flex items-center justify-between">
-                                      <span>Import Calculation (FCL)</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span>Import Calculation (FCL)</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setImportDataModalProduct(row.productName)}
+                                          className="text-[10px] bg-blue-100 hover:bg-blue-200 text-blue-800 font-semibold px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer transition-colors"
+                                          title="View historical customs import data for this product"
+                                        >
+                                          <Database className="w-3 h-3" />
+                                          <span>VIEW IMPORT DATA</span>
+                                        </button>
+                                      </div>
                                       <span className="text-[10px] text-blue-700 font-semibold">
                                         20ft Mixed • 12,000 kg
                                       </span>
@@ -2452,6 +2802,115 @@ export function PricingWorksheet() {
         onAccept={handleAcceptExtraction}
         onSaveCorrection={handleSaveCorrection}
       />
+
+      {/* 7. ONE-TIME HISTORICAL SCAN COMPLETION REPORT MODAL */}
+      {historicalReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl overflow-hidden border border-gray-200">
+            <div className="bg-blue-900 text-white px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-400" />
+                <h3 className="font-bold text-sm">FINAL HISTORICAL COMPLETION REPORT</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoricalReport(null)}
+                className="text-blue-200 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+              <div className="bg-gray-50 border border-gray-200 rounded p-3 grid grid-cols-2 gap-2 text-gray-700">
+                <div><strong>Mailbox Scanned:</strong> {historicalReport.mailbox}</div>
+                <div><strong>Date Range Scanned:</strong> {historicalReport.dateRange}</div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="border border-gray-200 rounded p-2.5 bg-white">
+                  <div className="text-[11px] text-gray-500 font-medium">Total Messages Found</div>
+                  <div className="text-base font-bold text-gray-900 font-mono mt-0.5">{historicalReport.totalFound}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-blue-50/50">
+                  <div className="text-[11px] text-blue-700 font-medium">Total Messages Processed</div>
+                  <div className="text-base font-bold text-blue-900 font-mono mt-0.5">{historicalReport.totalProcessed}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-green-50/50">
+                  <div className="text-[11px] text-green-700 font-medium">Pricing Emails Detected</div>
+                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.pricingEmails}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-green-50/50">
+                  <div className="text-[11px] text-green-700 font-medium">Pricing Records Created</div>
+                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.pricingCreated}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-green-50/50">
+                  <div className="text-[11px] text-green-700 font-medium">Pricing Records Enriched</div>
+                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.pricingEnriched}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-purple-50/50">
+                  <div className="text-[11px] text-purple-700 font-medium">Documents Detected</div>
+                  <div className="text-base font-bold text-purple-900 font-mono mt-0.5">{historicalReport.documentsDetected}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-purple-50/50">
+                  <div className="text-[11px] text-purple-700 font-medium">Documents Stored</div>
+                  <div className="text-base font-bold text-purple-900 font-mono mt-0.5">{historicalReport.documentsStored}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-blue-50/50">
+                  <div className="text-[11px] text-blue-700 font-medium">Inquiries Matched</div>
+                  <div className="text-base font-bold text-blue-900 font-mono mt-0.5">{historicalReport.inquiriesMatched}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-amber-50/50">
+                  <div className="text-[11px] text-amber-700 font-medium">Needs Review</div>
+                  <div className="text-base font-bold text-amber-900 font-mono mt-0.5">{historicalReport.needsReview}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-gray-50">
+                  <div className="text-[11px] text-gray-500 font-medium">Duplicates Skipped</div>
+                  <div className="text-base font-bold text-gray-700 font-mono mt-0.5">{historicalReport.duplicatesSkipped}</div>
+                </div>
+                <div className="border border-gray-200 rounded p-2.5 bg-red-50/50">
+                  <div className="text-[11px] text-red-700 font-medium">Errors</div>
+                  <div className="text-base font-bold text-red-900 font-mono mt-0.5">{historicalReport.errors.length}</div>
+                </div>
+              </div>
+
+              {historicalReport.errors.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded p-2.5 text-[11px] text-red-900 space-y-1">
+                  <div className="font-bold">Errors encountered during scan:</div>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {historicalReport.errors.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-gray-50 px-5 py-3 border-t border-gray-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setHistoricalReport(null)}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold cursor-pointer"
+              >
+                Close Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. IMPORT DATA ANALYSIS MODAL */}
+      {importDataModalProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+            <ImportInfo
+              initialProduct={importDataModalProduct}
+              compactAnalysis={true}
+              onClose={() => setImportDataModalProduct(null)}
+            />
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

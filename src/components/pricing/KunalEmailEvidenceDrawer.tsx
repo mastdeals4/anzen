@@ -125,7 +125,7 @@ export function KunalEmailEvidenceDrawer({
   // Helper to open / download documents via signed URL
   const handleOpenDocument = async (storagePath?: string, filename?: string, isDownload = false) => {
     if (!storagePath) {
-      showToast({ type: 'warning', title: 'File Missing', message: 'No file storage path recorded for this document.' });
+      showToast({ type: 'warning', title: 'File Missing', message: 'No file storage path recorded for this document. Please upload manually or run catch-up sync.' });
       return;
     }
     try {
@@ -379,6 +379,15 @@ export function KunalEmailEvidenceDrawer({
                                     {att.documentType}
                                   </span>
                                 )}
+                                {att.storagePath ? (
+                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
+                                    ✓ Uploaded
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] text-amber-700 font-semibold flex-shrink-0 bg-amber-50 px-1 rounded border border-amber-200">
+                                    FILE NOT STORED / NEEDS RE-SYNC
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-1 flex-shrink-0">
@@ -457,9 +466,15 @@ export function KunalEmailEvidenceDrawer({
                                 <span className="text-[11px] font-medium text-gray-800 truncate" title={doc.filename}>
                                   {doc.filename}
                                 </span>
-                                <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
-                                  ✓ Uploaded
-                                </span>
+                                {doc.storagePath ? (
+                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
+                                    ✓ Uploaded
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] text-amber-700 font-semibold flex-shrink-0 bg-amber-50 px-1 rounded border border-amber-200">
+                                    FILE NOT STORED / NEEDS RE-SYNC
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-1 flex-shrink-0">

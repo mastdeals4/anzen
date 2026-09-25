@@ -287,6 +287,7 @@ function PurchasePriceField({ section, inputs, setInput, inrRate }: {
 export function PriceCalculator() {
   const [activeTab, setActiveTab] = useState<'calculator' | 'settings' | 'import_info'>('calculator');
   const [mode, setMode] = useState<'fcl' | 'lcl' | 'air'>('fcl');
+  const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [inputs, setInputs] = useState<any>(loadSavedInputs);
   const [config, setConfig] = useState<PricingConfig>(DEFAULT_CONFIG);
   const [configId, setConfigId] = useState<string>('');
@@ -541,6 +542,27 @@ export function PriceCalculator() {
 
         {activeTab === 'calculator' && (
           <div className="space-y-3">
+            {/* Product Selector & View Import Data action */}
+            <div className="flex flex-wrap items-center gap-2 bg-white border border-gray-200 rounded-lg p-3 shadow-2xs">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide flex-shrink-0">Product:</span>
+              <input
+                type="text"
+                value={selectedProduct}
+                onChange={e => setSelectedProduct(e.target.value)}
+                placeholder="Product name (e.g. Paracetamol, Ibuprofen)"
+                className="flex-1 min-w-[200px] px-2.5 py-1 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium text-gray-800"
+              />
+              <button
+                type="button"
+                onClick={() => setActiveTab('import_info')}
+                className="flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white rounded text-xs font-semibold hover:bg-indigo-700 cursor-pointer transition-colors shadow-2xs whitespace-nowrap"
+                title="View compact historical import data for this product"
+              >
+                <Database className="w-3.5 h-3.5" />
+                VIEW IMPORT DATA
+              </button>
+            </div>
+
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <div className="flex flex-col gap-3 mb-4">
                 <div className="flex items-center justify-between">
@@ -1103,7 +1125,7 @@ export function PriceCalculator() {
 
         {activeTab === 'import_info' && (
           <div className="bg-white rounded-xl border border-gray-200 p-4" style={{ minHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
-            <ImportInfo />
+            <ImportInfo initialProduct={selectedProduct} compactAnalysis={true} />
           </div>
         )}
       </div>

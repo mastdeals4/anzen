@@ -93,6 +93,18 @@ export interface AgentScanSummary {
   documents_detected?: number;
   needs_review?: number;
   no_action?: number;
+  has_more?: boolean;
+  next_page_token?: string | null;
+  remaining?: number;
+  pricing_records_created?: number;
+  pricing_records_enriched?: number;
+  documents_stored?: number;
+  inquiries_matched?: number;
+  skipped_duplicate?: number;
+  date_range_scanned?: {
+    min?: string | null;
+    max?: string | null;
+  };
   errors?: string[];
   persistence_errors?: string[];
   ai_errors?: string[];
@@ -117,6 +129,9 @@ export async function runSapjGmailAgent(options?: {
   forceReprocess?: boolean;
   forceMessageId?: string;
   scanLast7Days?: boolean;
+  fullHistoricalScan?: boolean;
+  pageToken?: string;
+  query?: string;
 }): Promise<AgentScanSummary> {
   const { data: session } = await supabase.auth.getSession();
   if (!session.session) {

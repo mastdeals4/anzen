@@ -201,6 +201,27 @@ function decodeBase64Url(data = ""): string {
   }
 }
 
+function decodeBase64UrlToBytes(data = ""): Uint8Array {
+  try {
+    const normalized = data.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return new Uint8Array(0);
+  }
+}
+
+function safeStorageFilename(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120) || "document.pdf";
+}
+
 function stripHtml(input: string): string {
   return input
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -857,9 +878,12 @@ Deno.serve(async (req: Request) => {
       forceMessageId?: string;
       scheduled?: boolean;
       scanLast7Days?: boolean;
+      fullHistoricalScan?: boolean;
+      pageToken?: string;
+      query?: string;
     };
 
-    const maxMessages = Math.min(Math.max(Number(body.maxMessages) || 25, 1), 50);
+    const maxMessages = Math.min(Math.max(Number(body.maxMessages) || 25, 1), 100);
     const forceReprocess = body.forceReprocess === true;
     const forceMessageId = body.forceMessageId ? String(body.forceMessageId).trim() : null;
 
@@ -904,9 +928,18 @@ Deno.serve(async (req: Request) => {
     let totalFound = 0;
     let totalScanned = 0;
     let pricingCount = 0;
+    let pricingRecordsCreatedCount = 0;
+    let pricingRecordsEnrichedCount = 0;
     let documentsCount = 0;
+    let documentsStoredCount = 0;
+    let inquiriesMatchedCount = 0;
     let needsReviewCount = 0;
     let noActionCount = 0;
+    let skippedDuplicatesCount = 0;
+    let minDateScanned: string | null = null;
+    let maxDateScanned: string | null = null;
+    let hasMoreBatches = false;
+    let returnedNextPageToken: string | null = null;
     const connectionErrors: Array<{ mailbox: string; error: string }> = [];
     const persistenceErrors: string[] = [];
     const aiErrors: string[] = [];
@@ -949,6 +982,8 @@ Deno.serve(async (req: Request) => {
         let gmailQuery = "newer_than:14d";
         if (forceMessageId) {
           gmailQuery = `rfc822msgid:${forceMessageId} OR id:${forceMessageId}`;
+        } else if (body.fullHistoricalScan) {
+          gmailQuery = typeof body.query === "string" ? body.query : "";
         } else if (body.scanLast7Days) {
           gmailQuery = "newer_than:7d";
         } else if (connection.last_sync) {
@@ -960,18 +995,20 @@ Deno.serve(async (req: Request) => {
         }
 
         // 2. Reliable Catch-Up via Gmail Pagination Loop
-        // Fetches all matching pages until all messages are retrieved or safe execution limit is reached.
+        // Fetches matching page(s) until safe execution limit is reached.
         const messageRefs: Array<{ id: string; threadId: string }> = [];
-        let pageToken: string | undefined = undefined;
+        let pageToken: string | undefined = body.pageToken ? String(body.pageToken).trim() : undefined;
         let pageCount = 0;
-        const maxPages = 10;
-        const batchCap = body.maxMessages ? Math.min(Math.max(Number(body.maxMessages), 1), 150) : 50;
+        const maxPages = body.fullHistoricalScan ? 1 : 5;
+        const batchCap = body.maxMessages ? Math.min(Math.max(Number(body.maxMessages), 1), 100) : 50;
 
         do {
           pageCount += 1;
           const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-          listUrl.searchParams.set("maxResults", "50");
-          listUrl.searchParams.set("q", gmailQuery);
+          listUrl.searchParams.set("maxResults", String(Math.min(batchCap, 50)));
+          if (gmailQuery) {
+            listUrl.searchParams.set("q", gmailQuery);
+          }
           if (pageToken) {
             listUrl.searchParams.set("pageToken", pageToken);
           }
@@ -987,6 +1024,13 @@ Deno.serve(async (req: Request) => {
           messageRefs.push(...msgs);
 
           pageToken = listData.nextPageToken;
+          if (pageToken) {
+            returnedNextPageToken = pageToken;
+            hasMoreBatches = true;
+          } else {
+            hasMoreBatches = false;
+            returnedNextPageToken = null;
+          }
         } while (pageToken && messageRefs.length < batchCap && pageCount < maxPages);
 
         totalFound += messageRefs.length;
@@ -994,10 +1038,14 @@ Deno.serve(async (req: Request) => {
         for (const ref of messageRefs) {
           if (totalScanned >= maxMessages) {
             console.log(`[sapj-gmail-agent] Reached maxMessages limit (${maxMessages}), completing scan`);
+            if (pageToken || messageRefs.indexOf(ref) < messageRefs.length - 1) {
+              hasMoreBatches = true;
+            }
             break;
           }
-          if (Date.now() - startTime > 45000) {
+          if (Date.now() - startTime > 38000) {
             console.log(`[sapj-gmail-agent] Reached safe execution time threshold (${Date.now() - startTime}ms), completing scan`);
+            hasMoreBatches = true;
             break;
           }
           try {
@@ -1254,7 +1302,95 @@ Deno.serve(async (req: Request) => {
           else if (finalCategory === "NO ACTION") noActionCount += 1;
           else needsReviewCount += 1;
 
+          // Track date range
+          if (dateStr) {
+            const iso = new Date(dateStr).toISOString();
+            if (!minDateScanned || iso < minDateScanned) minDateScanned = iso;
+            if (!maxDateScanned || iso > maxDateScanned) maxDateScanned = iso;
+          }
+
+          // 9. Document Real Storage Upload: Fetch attachment bytes from Gmail & store in Supabase crm-documents bucket
+          if (aiExtracted.detectedDocuments.length > 0 && attachments.length > 0) {
+            for (const doc of aiExtracted.detectedDocuments) {
+              const matchingAtt = attachments.find(a =>
+                (doc as any).attachmentId ? a.attachmentId === (doc as any).attachmentId : a.filename.toLowerCase() === doc.filename.toLowerCase()
+              ) || attachments[0];
+
+              if (matchingAtt && matchingAtt.attachmentId) {
+                try {
+                  const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(ref.id)}/attachments/${encodeURIComponent(matchingAtt.attachmentId)}`;
+                  const attachResp = await fetch(attachUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+                  if (attachResp.ok) {
+                    const attachData = await attachResp.json();
+                    const bytes = decodeBase64UrlToBytes(attachData.data || "");
+                    if (bytes.length > 0) {
+                      const safeName = safeStorageFilename(matchingAtt.filename || doc.filename || "document.pdf");
+                      const folder = `gmail-attachments/${connection.user_id}/${ref.id}`;
+                      const storagePath = `${folder}/${Date.now()}_${safeName}`;
+                      const contentType = matchingAtt.mimeType || "application/pdf";
+
+                      const { error: uploadErr } = await adminClient.storage
+                        .from("crm-documents")
+                        .upload(storagePath, bytes, {
+                          contentType,
+                          upsert: true,
+                        });
+
+                      if (!uploadErr) {
+                        (doc as any).storageBucket = "crm-documents";
+                        (doc as any).storagePath = storagePath;
+                        (doc as any).isUploaded = true;
+                        documentsStoredCount += 1;
+
+                        if (matchResult.suggestedInquiryId) {
+                          const DB_DOC_TYPES = ["COA","MSDS","MHD","TDS","SPEC","COC","GMP","ISO","DMF","OTHER"];
+                          const docType = DB_DOC_TYPES.includes(doc.documentType) ? doc.documentType : "OTHER";
+
+                          const { error: pDocErr } = await adminClient
+                            .from("crm_product_documents")
+                            .upsert({
+                              inquiry_id: matchResult.suggestedInquiryId,
+                              product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
+                              supplier_name: aiExtracted.make || fromName,
+                              document_type: docType,
+                              display_file_name: doc.filename,
+                              original_file_name: doc.filename,
+                              storage_bucket: "crm-documents",
+                              storage_path: storagePath,
+                              source_gmail_message_id: ref.id,
+                              source_gmail_thread_id: ref.threadId || null,
+                              source_email_subject: subject || null,
+                              uploaded_by: callingUserId || connection.user_id,
+                              batch_number: doc.batchNumber || null,
+                            }, { onConflict: "inquiry_id,document_type,display_file_name" });
+
+                          if (pDocErr) {
+                            console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents ${doc.filename}):`, pDocErr);
+                            persistenceErrors.push(`crm_product_documents (${doc.filename}): ${pDocErr.message || JSON.stringify(pDocErr)}`);
+                          }
+                        }
+                      } else {
+                        console.warn(`[sapj-gmail-agent] storage upload failed (${doc.filename}):`, uploadErr);
+                        (doc as any).storagePath = null;
+                        (doc as any).isUploaded = false;
+                      }
+                    }
+                  }
+                } catch (attErr) {
+                  console.warn(`[sapj-gmail-agent] attachment fetch error (${doc.filename}):`, attErr);
+                  (doc as any).storagePath = null;
+                  (doc as any).isUploaded = false;
+                }
+              } else {
+                (doc as any).storagePath = null;
+                (doc as any).isUploaded = false;
+              }
+            }
+          }
+
+          // Document-only email with no price: do NOT create fake Price Received or unnecessary Need Action
           const actionStatus = finalCategory === "NO ACTION" ? "no_action"
+            : (finalCategory === "DOCUMENT RECEIVED" && matchResult.suggestedInquiryId && !matchResult.needsManualLink) ? "no_action"
             : matchResult.needsManualLink ? "needs_manual_link"
             : "pending_review";
 
@@ -1270,7 +1406,7 @@ Deno.serve(async (req: Request) => {
             why: `Classified as ${finalCategory} with confidence ${(matchResult.confidence * 100).toFixed(0)}%. ${matchResult.matchReasons[0] || ""}`,
           };
 
-          // 9. Persist into kunal_ai_email_reviews
+          // 10. Persist into kunal_ai_email_reviews
           const reviewRowPayload = {
             gmail_message_id: ref.id,
             gmail_thread_id: ref.threadId,
@@ -1339,31 +1475,58 @@ Deno.serve(async (req: Request) => {
             persistenceErrors.push(`kunal_ai_email_reviews (${ref.id}): ${reviewErr.message || JSON.stringify(reviewErr)}`);
           }
 
-          // 10. Document Auto-Link (Associate high confidence documents with inquiry)
-          if (matchResult.suggestedInquiryId && aiExtracted.detectedDocuments.length > 0) {
-            for (const doc of aiExtracted.detectedDocuments) {
-              if (doc.matchConfidence === "HIGH") {
-                const { error: docErr } = await adminClient
-                  .from("crm_product_documents")
-                  .upsert({
-                    inquiry_id: matchResult.suggestedInquiryId,
-                    product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
-                    supplier_name: aiExtracted.make || fromName,
-                    document_type: doc.documentType,
-                    display_file_name: doc.filename,
-                    original_file_name: doc.filename,
-                    batch_number: doc.batchNumber,
-                  }, { onConflict: "inquiry_id,document_type,display_file_name" });
+          // 11. Historical Backfill & Pricing Option Enrichment
+          if (matchResult.suggestedInquiryId) {
+            inquiriesMatchedCount += 1;
+            if (aiExtracted.price !== null && (finalCategory === "PRICE RECEIVED" || finalCategory === "ALTERNATIVE MAKE")) {
+              const { data: existingOpts } = await adminClient
+                .from("crm_inquiry_pricing_options")
+                .select("id, source_price, source_currency, offered_make, supplier, is_selected, remark")
+                .eq("inquiry_id", matchResult.suggestedInquiryId);
 
-                if (docErr) {
-                  console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents ${doc.filename}):`, docErr);
-                  persistenceErrors.push(`crm_product_documents (${doc.filename}): ${docErr.message || JSON.stringify(docErr)}`);
+              const hasManualPrice = (existingOpts || []).some(
+                (o: any) => o.is_selected && o.source_price !== null && !String(o.remark || '').includes('[Historical Backfill]') && !String(o.remark || '').includes('[AI Agent]')
+              );
+
+              const isDuplicate = (existingOpts || []).some(
+                (o: any) => String(o.remark || '').includes(ref.id) ||
+                  (Number(o.source_price) === Number(aiExtracted.price) && o.source_currency === aiExtracted.currency && o.offered_make === aiExtracted.make)
+              );
+
+              if (!isDuplicate) {
+                const isSelected = (!existingOpts || existingOpts.length === 0) && !hasManualPrice;
+                const remarkText = `[Historical Backfill] MsgID: ${ref.id} | Date: ${dateStr.slice(0, 10)} | ${aiExtracted.summary || ''}`.slice(0, 300);
+
+                const { error: optErr } = await adminClient
+                  .from("crm_inquiry_pricing_options")
+                  .insert({
+                    inquiry_id: matchResult.suggestedInquiryId,
+                    source_type: "india",
+                    offered_make: aiExtracted.make || null,
+                    source_price: aiExtracted.price,
+                    source_currency: aiExtracted.currency || "USD",
+                    availability: "available",
+                    document_status: aiExtracted.detectedDocuments.length > 0 ? "received" : "pending",
+                    supplier: fromName || fromEmail,
+                    moq: aiExtracted.pricingRows[0]?.quantity || null,
+                    lead_time: aiExtracted.pricingRows[0]?.lead_time || null,
+                    remark: remarkText,
+                    is_selected: isSelected,
+                    confidence: matchResult.confidence,
+                    created_by: callingUserId || connection.user_id,
+                  });
+
+                if (!optErr) {
+                  if (isSelected) pricingRecordsEnrichedCount += 1;
+                  else pricingRecordsCreatedCount += 1;
                 }
+              } else {
+                skippedDuplicatesCount += 1;
               }
             }
           }
 
-          // 11. Preserve Traceability into email_inquiry_links
+          // 12. Preserve Traceability into email_inquiry_links
           if (matchResult.suggestedInquiryId && !matchResult.needsManualLink) {
             const { error: linkErr } = await adminClient
               .from("email_inquiry_links")
@@ -1416,15 +1579,17 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Update connection last_sync timestamp
-      const { error: syncErr } = await adminClient
-        .from("gmail_connections")
-        .update({ last_sync: new Date().toISOString() })
-        .eq("id", connection.id);
+      // Update connection last_sync timestamp ONLY for normal syncs (never overwrite for historical backfill)
+      if (!body.fullHistoricalScan) {
+        const { error: syncErr } = await adminClient
+          .from("gmail_connections")
+          .update({ last_sync: new Date().toISOString() })
+          .eq("id", connection.id);
 
-      if (syncErr) {
-        console.warn(`[sapj-gmail-agent] persistence warning (gmail_connections last_sync ${connection.id}):`, syncErr);
-        persistenceErrors.push(`gmail_connections last_sync (${connection.id}): ${syncErr.message || JSON.stringify(syncErr)}`);
+        if (syncErr) {
+          console.warn(`[sapj-gmail-agent] persistence warning (gmail_connections last_sync ${connection.id}):`, syncErr);
+          persistenceErrors.push(`gmail_connections last_sync (${connection.id}): ${syncErr.message || JSON.stringify(syncErr)}`);
+        }
       }
 
     } catch (connErr: any) {
@@ -1449,12 +1614,24 @@ Deno.serve(async (req: Request) => {
   return json({
     success: isSuccess,
     mailbox: mailboxStr || "unknown",
+    has_more: hasMoreBatches,
+    next_page_token: returnedNextPageToken,
     messages_found: totalFound,
     messages_processed: totalScanned,
+    remaining: hasMoreBatches ? Math.max(0, totalFound - totalScanned) : 0,
     pricing_detected: pricingCount,
+    pricing_records_created: pricingRecordsCreatedCount,
+    pricing_records_enriched: pricingRecordsEnrichedCount,
     documents_detected: documentsCount,
+    documents_stored: documentsStoredCount,
+    inquiries_matched: inquiriesMatchedCount,
     needs_review: needsReviewCount,
     no_action: noActionCount,
+    skipped_duplicate: skippedDuplicatesCount,
+    date_range_scanned: {
+      min: minDateScanned,
+      max: maxDateScanned,
+    },
     errors: connectionErrors.map(e => `${e.mailbox}: ${e.error}`),
     persistence_errors: persistenceErrors,
     ai_errors: aiErrors,
