@@ -22,4 +22,8 @@ blob-report/
 **.data.json
 **.node-persist**
 **_IGNORE_**
+_sessions/
+services/whatsapp-adapter/_sessions/
+services/whatsapp-adapter/bin/
+wa_qr_extracted.png
 # end managed by open-wa

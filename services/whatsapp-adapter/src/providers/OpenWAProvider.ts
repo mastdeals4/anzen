@@ -204,7 +204,33 @@ export class OpenWAProvider implements WhatsAppProvider {
           return;
         }
 
-        // 2. Check for real QR Code Canvas
+        // 2. Check for Click-To-Reload QR Button (when QR expires after 20-30s)
+        const reloaded = await this.page
+          .evaluate(() => {
+            const reloadSpan = document.querySelector('span[data-icon="refresh"]');
+            if (reloadSpan) {
+              const btn = reloadSpan.closest('button, div[role="button"]') || reloadSpan;
+              (btn as HTMLElement).click();
+              return true;
+            }
+            const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            for (const b of buttons) {
+              const text = (b.textContent || '').toLowerCase();
+              if (text.includes('reload') || text.includes('muat ulang') || text.includes('click to reload')) {
+                (b as HTMLElement).click();
+                return true;
+              }
+            }
+            return false;
+          })
+          .catch(() => false);
+
+        if (reloaded) {
+          console.log('[OpenWAProvider] Clicked WhatsApp Web QR reload button. Refreshing canvas...');
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+
+        // 3. Check for real QR Code Canvas
         const qrCanvas = await this.page.$('canvas[aria-label]');
         if (qrCanvas) {
           const qrDataUrl = await this.page.evaluate((c: any) => c.toDataURL('image/png'), qrCanvas);
@@ -217,13 +243,6 @@ export class OpenWAProvider implements WhatsAppProvider {
             }
           }
           return;
-        }
-
-        // 3. Check for Click-To-Reload QR Button (when QR expires after 30s)
-        const reloadBtn = await this.page.$('span[data-icon="refresh"], div[role="button"][tabindex="0"]');
-        if (reloadBtn) {
-          console.log('[OpenWAProvider] QR expired on page. Triggering automatic refresh...');
-          await reloadBtn.click().catch(() => {});
         }
       } catch (err: any) {
         // Suppress benign context destroyed errors during navigation
