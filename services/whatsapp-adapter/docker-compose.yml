@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  whatsapp-adapter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sapj-whatsapp-adapter
+    restart: always
+    environment:
+      - PORT=3100
+      - SESSION_ID=sapj-business-whatsapp
+      - MOCK_MODE=false
+      - HEADLESS=true
+      - SESSION_DATA_PATH=/app/_sessions
+      - BUSINESS_PHONE=${BUSINESS_PHONE:-+628119999999}
+      - ADAPTER_API_KEY=${ADAPTER_API_KEY}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - ERP_INGRESS_URL=${ERP_INGRESS_URL:-https://dkrtsqienlhpouohmfki.supabase.co/functions/v1/enquiry-whatsapp-ingress}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    volumes:
+      # Persistent session storage across container rebuilds and host reboots
+      - ./_sessions:/app/_sessions
+    # Bind exclusively to localhost on the host machine - NEVER expose directly to public internet
+    ports:
+      - "127.0.0.1:3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3100/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # Persistent Cloudflare Named Tunnel
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: sapj-whatsapp-tunnel
+    restart: always
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    network_mode: host
+    depends_on:
+      whatsapp-adapter:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
