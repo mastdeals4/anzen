@@ -5,16 +5,21 @@ node_modules
 dist
 .DS_Store
 **/.DS_Store
-
 # WhatsApp / OpenWA session credentials & tokens
 **/whatsapp-sessions/
 **/.openwa/
 **/openwa-session/
+**/_sessions/
+**/_IGNORE_*
 *.session.data.json
-
 # Test & Build Caches
 .cache/
 test-results/
 playwright-report/
 blob-report/
 
+# managed by open-wa
+**.data.json
+**.node-persist**
+**_IGNORE_**
+# end managed by open-wa

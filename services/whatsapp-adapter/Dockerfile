@@ -53,6 +53,12 @@ RUN npm install
 COPY . .
 RUN npm run build
 
+ENV SESSION_DATA_PATH=/app/_sessions
+ENV SESSION_ID=sapj-business-whatsapp
+ENV MOCK_MODE=false
+
+VOLUME ["/app/_sessions"]
+
 EXPOSE 3100
 
 CMD ["node", "dist/index.js"]

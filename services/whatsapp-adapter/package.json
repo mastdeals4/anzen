@@ -17,6 +17,7 @@
   "author": "Anzen Development Team",
   "license": "UNLICENSED",
   "dependencies": {
+    "@open-wa/wa-automate": "^4.76.0",
     "@types/qrcode": "^1.5.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

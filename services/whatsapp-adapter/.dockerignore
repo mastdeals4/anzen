@@ -3,6 +3,8 @@ dist
 whatsapp-sessions
 .openwa
 openwa-session
+_sessions
+_IGNORE_*
 *.session.data.json
 .git
 .DS_Store
