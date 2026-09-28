@@ -459,16 +459,22 @@ test('20. Existing Gmail regression: email channel remains 100% untouched and su
   assert.match(sharedIngestionCode, /export async function mirrorOutboundEmail/);
   assert.match(sharedIngestionCode, /export async function runInboundReconciliationSweep/);
   assert.match(sharedIngestionCode, /export async function runOutboundReconciliationSweep/);
+});
 
-  // Clean up test data
-  const cleanupSql = `
-    DELETE FROM public.crm_product_documents WHERE storage_path LIKE 'whatsapp/%' AND storage_path LIKE '%${RUN_ID}%';
-    DELETE FROM public.enquiry_conversation_messages WHERE external_message_id LIKE '%${RUN_ID}%';
-    DELETE FROM public.enquiry_conversation_links WHERE conversation_id IN (
-      SELECT id FROM public.enquiry_conversations WHERE external_thread_id = '${TEST_THREAD_ID}'
-    );
-    DELETE FROM public.enquiry_conversations WHERE external_thread_id = '${TEST_THREAD_ID}';
-    DELETE FROM public.crm_inquiries WHERE inquiry_number LIKE '%${RUN_ID}%';
-  `;
-  runDbScript(cleanupSql);
+test.after(() => {
+  // Guaranteed cleanup of test fixtures even if test assertions fail
+  try {
+    const cleanupSql = `
+      DELETE FROM public.crm_product_documents WHERE storage_path LIKE 'whatsapp/%' AND storage_path LIKE '%${RUN_ID}%';
+      DELETE FROM public.enquiry_conversation_messages WHERE external_message_id LIKE '%${RUN_ID}%';
+      DELETE FROM public.enquiry_conversation_links WHERE conversation_id IN (
+        SELECT id FROM public.enquiry_conversations WHERE external_thread_id = '${TEST_THREAD_ID}'
+      );
+      DELETE FROM public.enquiry_conversations WHERE external_thread_id = '${TEST_THREAD_ID}';
+      DELETE FROM public.crm_inquiries WHERE inquiry_number LIKE '%${RUN_ID}%';
+    `;
+    runDbScript(cleanupSql);
+  } catch (err) {
+    console.warn('[Cleanup Warning] Failed to clean test fixtures:', err.message);
+  }
 });
