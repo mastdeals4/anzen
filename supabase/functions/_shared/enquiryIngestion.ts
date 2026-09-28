@@ -13,6 +13,7 @@
 //   - Zero enquiry_requests created in this phase
 
 import { SupabaseClient } from "npm:@supabase/supabase-js@2.57.4";
+import { analyzeWhatsAppTextDeterministic } from "./whatsappAiIntelligence.ts";
 
 export interface InboundAttachmentDescriptor {
   filename: string;
@@ -680,6 +681,20 @@ export async function mirrorInboundWhatsApp(
     canonicalMessageId = existingMsg.id;
     isDuplicate = true;
   } else {
+    // Run Universal Communication Intelligence for every inbound message
+    let intelligence = null;
+    if (text) {
+      try {
+        intelligence = analyzeWhatsAppTextDeterministic(text, {
+          senderName,
+          senderPhone,
+          hasAttachments: !!(attachments && attachments.length > 0),
+        });
+      } catch (aiErr) {
+        console.warn("[mirrorInboundWhatsApp] AI analysis error:", aiErr);
+      }
+    }
+
     const msgPayload = {
       conversation_id: conversationId,
       channel: "whatsapp",
@@ -696,12 +711,14 @@ export async function mirrorInboundWhatsApp(
         ...(rawPayload || {}),
         isGroup,
         quotedMessage,
+        intelligence,
       },
       received_or_sent_at: receivedAt,
       actor_type: "system",
       actor_id: null,
-      ai_processed: false,
-      ai_summary: null,
+      ai_processed: !!intelligence,
+      ai_summary: intelligence?.running_summary || null,
+      ai_proposal: intelligence,
     };
 
     const { data: insertedMsg, error: insertError } = await supabase
@@ -726,6 +743,43 @@ export async function mirrorInboundWhatsApp(
       }
     } else {
       canonicalMessageId = insertedMsg.id;
+    }
+
+    // Update conversation metadata & persist running conversation note
+    if (intelligence) {
+      await supabase
+        .from("enquiry_conversations")
+        .update({
+          metadata: {
+            language: intelligence.language,
+            language_label: intelligence.language_label,
+            topic: intelligence.topic,
+            intent: intelligence.intent,
+            needs_action: intelligence.needs_action,
+            action_required: intelligence.action_required,
+            latest_summary: intelligence.running_summary,
+            english_translation: intelligence.english_translation,
+            entities: intelligence.entities,
+            linked_context_type: intelligence.linked_context_type,
+            suggested_reply: intelligence.suggested_reply,
+            last_analysis_at: intelligence.analyzed_at,
+          },
+        })
+        .eq("id", conversationId)
+        .catch(() => {});
+
+      if (customerId) {
+        await supabase
+          .from("crm_activities")
+          .insert({
+            customer_id: customerId,
+            activity_type: "Note",
+            subject: `[WhatsApp AI] ${intelligence.running_summary}`,
+            description: `Language: ${intelligence.language.toUpperCase()} | Intent: ${intelligence.intent} | Action: ${intelligence.action_required || "None"} | Original: "${text.substring(0, 150)}..."`,
+            is_completed: true,
+          })
+          .catch(() => {});
+      }
     }
   }
 

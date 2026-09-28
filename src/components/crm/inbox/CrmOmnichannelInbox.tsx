@@ -27,7 +27,12 @@ import {
   Clock,
   Check,
   X,
+  Languages,
+  Globe,
+  Bot,
+  Zap,
 } from 'lucide-react';
+import { analyzeWhatsAppMessage } from '../../../services/crm/whatsappIntelligenceService';
 
 export type ChannelFilter = 'all' | 'email' | 'whatsapp' | 'unlinked';
 
@@ -53,6 +58,16 @@ export interface InboxConversation {
   gmailMessageId?: string;
   gmailThreadId?: string;
   whatsAppConversationId?: string;
+  // Universal WhatsApp Intelligence
+  language?: 'id' | 'en' | 'mixed';
+  languageLabel?: string;
+  intent?: string;
+  topic?: string;
+  latestSummary?: string;
+  englishTranslation?: string;
+  linkedContextType?: string;
+  entities?: Record<string, any>;
+  suggestedReply?: string;
 }
 
 export interface ThreadMessage {
@@ -73,6 +88,12 @@ export interface ThreadMessage {
     documentType?: string;
   }>;
   direction?: 'inbound' | 'outbound';
+  language?: 'id' | 'en' | 'mixed';
+  englishTranslation?: string;
+  entities?: Record<string, any>;
+  intent?: string;
+  aiSummary?: string;
+  aiProposal?: Record<string, any>;
 }
 
 interface Props {
@@ -176,7 +197,10 @@ export function CrmOmnichannelInbox({
             id,
             channel,
             title,
+            metadata,
             last_message_at,
+            customer_id,
+            customers(id, company_name),
             enquiry_conversation_links(
               inquiry_id,
               crm_inquiries(inquiry_number, company_name, product_name)
@@ -187,11 +211,15 @@ export function CrmOmnichannelInbox({
               sender_address,
               body_text,
               received_or_sent_at,
-              direction
+              direction,
+              ai_processed,
+              ai_summary,
+              ai_proposal,
+              attachments
             )
           `)
           .order('last_message_at', { ascending: false })
-          .limit(30);
+          .limit(50);
 
         if (Array.isArray(convRows)) {
           for (const c of convRows) {
@@ -199,22 +227,57 @@ export function CrmOmnichannelInbox({
             const lastMsg = msgs[msgs.length - 1];
             const link = c.enquiry_conversation_links?.[0];
             const inq: any = Array.isArray(link?.crm_inquiries) ? link.crm_inquiries[0] : link?.crm_inquiries;
+            const cust: any = Array.isArray(c.customers) ? c.customers[0] : c.customers;
+
+            const meta = (c.metadata || {}) as Record<string, any>;
+            let intel = lastMsg?.ai_proposal || null;
+            if (!intel && lastMsg?.body_text) {
+              intel = analyzeWhatsAppMessage(lastMsg.body_text, {
+                senderName: lastMsg.sender_name || c.title,
+                senderPhone: lastMsg.sender_address,
+                customerCompanyName: inq?.company_name || cust?.company_name,
+                linkedInquiryNumber: inq?.inquiry_number,
+                hasAttachments: lastMsg.attachments?.length > 0,
+              });
+            }
+
+            const language = meta.language || intel?.language || 'id';
+            const intent = meta.intent || intel?.intent || 'General Information';
+            const topic = meta.topic || intel?.topic || c.title || 'WhatsApp Conversation';
+            const needsAction = meta.needs_action ?? intel?.needs_action ?? false;
+            const actionRequired = meta.action_required || intel?.action_required || null;
+            const latestSummary = meta.latest_summary || intel?.running_summary || lastMsg?.ai_summary || null;
+            const englishTranslation = meta.english_translation || intel?.english_translation || null;
+            const linkedContextType = inq ? 'Inquiry' : (cust ? 'Customer' : (meta.linked_context_type || intel?.linked_context_type || 'Unlinked'));
+            const customerName = inq?.company_name || cust?.company_name || null;
+            const suggestedReply = meta.suggested_reply || intel?.suggested_reply || null;
 
             items.push({
               id: `wa-${c.id}`,
               channel: c.channel === 'whatsapp' ? 'whatsapp' : 'email',
-              senderName: lastMsg?.sender_name || c.title || 'WhatsApp User',
+              senderName: customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer',
               senderAddress: lastMsg?.sender_address || '',
-              subject: c.title || 'WhatsApp Conversation',
-              snippet: lastMsg?.body_text || '(No messages)',
+              subject: topic,
+              snippet: latestSummary || lastMsg?.body_text || '(No messages)',
               timestamp: c.last_message_at || lastMsg?.received_or_sent_at || new Date().toISOString(),
               unread: false,
-              needsAction: false,
+              needsAction,
+              actionReason: actionRequired || undefined,
               inquiryId: link?.inquiry_id || null,
               inquiryNumber: inq?.inquiry_number || null,
-              productName: inq?.product_name || null,
-              customerName: inq?.company_name || null,
+              productName: inq?.product_name || intel?.entities?.product || null,
+              customerName,
+              customerId: c.customer_id || null,
               whatsAppConversationId: c.id,
+              language,
+              languageLabel: language === 'id' ? 'Indonesian' : (language === 'en' ? 'English' : 'Mixed ID/EN'),
+              intent,
+              topic,
+              latestSummary,
+              englishTranslation,
+              linkedContextType,
+              entities: intel?.entities || meta.entities || undefined,
+              suggestedReply,
             });
           }
         }
@@ -341,17 +404,41 @@ export function CrmOmnichannelInbox({
 
           if (waError) throw waError;
 
-          const msgs: ThreadMessage[] = (waMsgs || []).map((m: any) => ({
-            id: m.id,
-            from: m.sender_name || m.sender_address,
-            to: m.recipient_addresses?.[0],
-            date: m.received_or_sent_at,
-            body: m.body_text || '(No text)',
-            direction: m.direction || 'inbound',
-            attachments: m.attachments || [],
-          }));
+          const msgs: ThreadMessage[] = (waMsgs || []).map((m: any) => {
+            let intel = m.ai_proposal || null;
+            if (!intel && m.body_text) {
+              intel = analyzeWhatsAppMessage(m.body_text, {
+                senderName: m.sender_name,
+                senderPhone: m.sender_address,
+                hasAttachments: m.attachments?.length > 0,
+              });
+            }
+
+            return {
+              id: m.id,
+              from: m.sender_name || m.sender_address,
+              to: m.recipient_addresses?.[0],
+              date: m.received_or_sent_at,
+              body: m.body_text || '(No text)',
+              direction: m.direction || 'inbound',
+              attachments: m.attachments || [],
+              language: intel?.language,
+              englishTranslation: intel?.english_translation,
+              entities: intel?.entities,
+              intent: intel?.intent,
+              aiSummary: intel?.running_summary || m.ai_summary,
+              aiProposal: intel,
+            };
+          });
 
           setThreadMessages(msgs);
+
+          // Expand latest message by default
+          const exp: Record<string, boolean> = {};
+          if (msgs.length > 0) {
+            exp[msgs[msgs.length - 1].id] = true;
+          }
+          setExpandedMsgIds(exp);
         }
       } catch (err: any) {
         console.error('[CrmOmnichannelInbox] Thread load error:', err);
@@ -568,20 +655,41 @@ export function CrmOmnichannelInbox({
                         <span className="w-2 h-2 rounded-full bg-blue-600 flex-shrink-0" title="Unread" />
                       )}
                     </div>
-                    <span className="text-[10px] text-gray-400 whitespace-nowrap">
-                      {new Date(conv.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                    </span>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {conv.channel === 'whatsapp' && conv.language && (
+                        <span
+                          className={`text-[9px] font-bold px-1 py-0.2 rounded border ${
+                            conv.language === 'id'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : conv.language === 'mixed'
+                              ? 'bg-purple-50 text-purple-700 border-purple-200'
+                              : 'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}
+                          title={`Language: ${conv.languageLabel || conv.language.toUpperCase()}`}
+                        >
+                          {conv.language === 'id' ? 'ID' : conv.language === 'mixed' ? 'MIXED' : 'EN'}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-gray-400 whitespace-nowrap">
+                        {new Date(conv.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className={`truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
-                    {conv.subject}
+                  <div className={`flex items-center gap-1.5 truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                    {conv.intent && conv.channel === 'whatsapp' && (
+                      <span className="text-[9px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded flex-shrink-0">
+                        {conv.intent}
+                      </span>
+                    )}
+                    <span className="truncate">{conv.subject}</span>
                   </div>
 
                   <div className="text-[10.5px] text-gray-500 truncate font-sans">
                     {conv.snippet}
                   </div>
 
-                  {/* Association badges */}
+                  {/* Association & Action badges */}
                   <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                     {conv.inquiryNumber ? (
                       <span
@@ -606,9 +714,13 @@ export function CrmOmnichannelInbox({
                       </span>
                     )}
 
-                    {conv.needsAction && (
-                      <span className="text-[9px] font-bold bg-purple-100 text-purple-800 px-1 rounded">
-                        Action Required
+                    {conv.needsAction ? (
+                      <span className="text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.2 rounded flex items-center gap-0.5">
+                        ⚡ {conv.actionReason || 'Action Required'}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-medium bg-slate-100 text-slate-500 px-1 py-0.2 rounded">
+                        ✓ No Action
                       </span>
                     )}
                   </div>
@@ -688,18 +800,109 @@ export function CrmOmnichannelInbox({
                 </div>
               </div>
 
+              {/* Universal AI Communication Intelligence Banner (WhatsApp) */}
+              {selectedConversation.channel === 'whatsapp' && (
+                <div className="bg-gradient-to-r from-emerald-50/90 via-teal-50/80 to-blue-50/70 border-b border-emerald-200/80 p-3.5 px-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                        <Bot className="w-4 h-4 text-emerald-600" />
+                        Universal Communication Intelligence
+                      </span>
+                      {selectedConversation.language && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white border border-emerald-300 text-emerald-800 flex items-center gap-1">
+                          <Globe className="w-3 h-3 text-emerald-600" />
+                          {selectedConversation.languageLabel || selectedConversation.language.toUpperCase()}
+                        </span>
+                      )}
+                      {selectedConversation.intent && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100/80 text-emerald-900 border border-emerald-300">
+                          {selectedConversation.intent}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {selectedConversation.needsAction ? (
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
+                          <Zap className="w-3 h-3 text-rose-600" />
+                          Needs Action: {selectedConversation.actionReason || 'Action Required'}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          No Pending Action (Noted)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* English Running Summary */}
+                  {selectedConversation.latestSummary && (
+                    <div className="bg-white/90 border border-emerald-200/60 rounded p-2 text-xs text-slate-800 leading-relaxed font-sans shadow-2xs">
+                      <div className="text-[10px] font-bold text-emerald-800 uppercase flex items-center gap-1 mb-0.5">
+                        <Sparkles className="w-3 h-3 text-amber-500" />
+                        <span>English Running Summary:</span>
+                      </div>
+                      <p className="text-slate-900 font-medium">{selectedConversation.latestSummary}</p>
+                    </div>
+                  )}
+
+                  {/* Extracted Entity Tags */}
+                  {selectedConversation.entities && (
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      {selectedConversation.entities.product && (
+                        <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold">
+                          📦 Product: {selectedConversation.entities.product}
+                        </span>
+                      )}
+                      {selectedConversation.entities.make && (
+                        <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 font-semibold">
+                          🏭 Make: {selectedConversation.entities.make}
+                        </span>
+                      )}
+                      {selectedConversation.entities.quantity && (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200 font-semibold">
+                          ⚖️ Qty: {selectedConversation.entities.quantity} {selectedConversation.entities.unit || 'kg'}
+                        </span>
+                      )}
+                      {selectedConversation.entities.batch && (
+                        <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-200 font-semibold">
+                          🔖 Batch: {selectedConversation.entities.batch}
+                        </span>
+                      )}
+                      {selectedConversation.entities.document_requested && (
+                        <span className="text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded border border-teal-200 font-semibold">
+                          📄 Document: {selectedConversation.entities.document_requested}
+                        </span>
+                      )}
+                      {selectedConversation.entities.payment_info && (
+                        <span className="text-[10px] bg-cyan-50 text-cyan-700 px-2 py-0.5 rounded border border-cyan-200 font-semibold">
+                          💳 Payment: {selectedConversation.entities.payment_info}
+                        </span>
+                      )}
+                      {selectedConversation.entities.delivery_details && (
+                        <span className="text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded border border-orange-200 font-semibold">
+                          🚚 Delivery: {selectedConversation.entities.delivery_details}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Unlinked Alert Notice */}
               {!selectedConversation.inquiryId && (
                 <div className="bg-amber-50 border-b border-amber-200 p-2.5 px-4 flex items-center justify-between text-xs text-amber-900">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                    <span>This communication is not yet linked to an inquiry or customer.</span>
+                    <span>This communication is not yet linked to an inquiry. It is tracked under <strong>{selectedConversation.customerName || 'General Communication'}</strong>.</span>
                   </div>
                   <button
                     onClick={() => setShowLinkDialog(true)}
                     className="text-xs font-bold text-amber-800 hover:underline cursor-pointer"
                   >
-                    Link Now →
+                    Link to Inquiry →
                   </button>
                 </div>
               )}
@@ -728,7 +931,6 @@ export function CrmOmnichannelInbox({
 
                 {threadMessages.map((msg, idx) => {
                   const isExpanded = Boolean(expandedMsgIds[msg.id]);
-                  const isLast = idx === threadMessages.length - 1;
 
                   return (
                     <div
@@ -773,9 +975,52 @@ export function CrmOmnichannelInbox({
                             </div>
                           )}
 
+                          {/* Original Message Body */}
                           <div className="text-xs leading-relaxed text-gray-800 whitespace-pre-wrap font-sans selection:bg-blue-100">
                             {msg.body}
                           </div>
+
+                          {/* English Translation Box for Inbound WhatsApp */}
+                          {selectedConversation.channel === 'whatsapp' && msg.direction === 'inbound' && msg.englishTranslation && (
+                            <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-700 space-y-1">
+                              <div className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                                <Globe className="w-3 h-3 text-blue-500" />
+                                <span>English Translation / Normalization (Internal ERP):</span>
+                              </div>
+                              <p className="font-medium text-slate-900 whitespace-pre-wrap">{msg.englishTranslation}</p>
+                            </div>
+                          )}
+
+                          {/* Message Level Entity Chips */}
+                          {msg.entities && (
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                              {msg.entities.product && (
+                                <span className="text-[9px] bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded border border-blue-200 font-semibold">
+                                  📦 {msg.entities.product}
+                                </span>
+                              )}
+                              {msg.entities.quantity && (
+                                <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200 font-semibold">
+                                  ⚖️ {msg.entities.quantity} {msg.entities.unit || 'kg'}
+                                </span>
+                              )}
+                              {msg.entities.batch && (
+                                <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded border border-amber-200 font-semibold">
+                                  🔖 Batch {msg.entities.batch}
+                                </span>
+                              )}
+                              {msg.entities.document_requested && (
+                                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.2 rounded border border-teal-200 font-semibold">
+                                  📄 Doc: {msg.entities.document_requested}
+                                </span>
+                              )}
+                              {msg.entities.payment_info && (
+                                <span className="text-[9px] bg-cyan-50 text-cyan-700 px-1.5 py-0.2 rounded border border-cyan-200 font-semibold">
+                                  💳 {msg.entities.payment_info}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {/* Attachments */}
                           {msg.attachments && msg.attachments.length > 0 && (
@@ -832,6 +1077,17 @@ export function CrmOmnichannelInbox({
                       </>
                     )}
                   </span>
+
+                  {selectedConversation.channel === 'whatsapp' && selectedConversation.suggestedReply && (
+                    <button
+                      type="button"
+                      onClick={() => setReplyText(selectedConversation.suggestedReply || '')}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3 text-emerald-600" />
+                      <span>Draft Reply in Customer Language ({selectedConversation.language === 'en' ? 'English' : 'Indonesian'})</span>
+                    </button>
+                  )}
                 </div>
 
                 <textarea
