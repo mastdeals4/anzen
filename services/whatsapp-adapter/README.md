@@ -43,10 +43,34 @@
 - `WEBHOOK_SECRET`: Secret sent in `X-Webhook-Secret` header to ERP ingress
 - `BUSINESS_PHONE`: Dedicated test/business phone number (e.g., `+628119999999`)
 - `MOCK_MODE`: `true` for headless simulation during tests; `false` to launch OpenWA browser
-- `SESSION_ID`: OpenWA session identifier (default: `anzen-staging-session`)
+- `SESSION_ID`: OpenWA session identifier (`sapj-business-whatsapp`)
+- `SESSION_DATA_PATH`: Storage path for persistent session tokens (default: `/app/_sessions`)
+- `CLOUDFLARE_TUNNEL_TOKEN`: Cloudflare Zero Trust Named Tunnel token
 
 ## Endpoints
 - `GET /health`: Health check
 - `GET /api/status`: Operational connection status (`connected`, `disconnected`, `unpaired`, `error`)
+- `GET /api/session/qr`: Fullscreen auto-refreshing QR viewer for mobile phone scanning
+- `POST /api/session/connect`: Start session and generate pairing QR
+- `POST /api/session/disconnect`: Disconnect session
+- `POST /api/session/refresh-qr`: Force browser reload for fresh QR
 - `POST /api/messages/send`: Send outbound message (Requires Bearer token)
 - `POST /api/test/inject-inbound`: Inbound test message injection for automated test suites
+
+---
+
+## Persistent VPS Deployment Guide
+
+### Recommended Server Specifications
+- **OS**: Ubuntu 22.04 LTS or Debian 12
+- **CPU**: 2 vCPU minimum (Chromium headless rendering)
+- **RAM**: 2 GB RAM minimum (4 GB recommended with swap)
+- **Storage**: 20 GB SSD (Chromium caches and profile data)
+- **Networking**: Inbound ports closed (port 3100 binds only to 127.0.0.1); outbound HTTPS allowed.
+
+### 1-Click Deployment on Any VPS
+1. Transfer `services/whatsapp-adapter` to `/opt/sapj-whatsapp-adapter` on the server.
+2. Transfer `whatsapp-session-sapj-business-whatsapp.tar.gz` into the folder.
+3. Extract session: `mkdir -p _sessions && tar -xzf whatsapp-session-sapj-business-whatsapp.tar.gz -C ./_sessions`
+4. Configure `.env` with `CLOUDFLARE_TUNNEL_TOKEN` and production secrets.
+5. Run `./deploy.sh` to launch Docker containers and verify health.
