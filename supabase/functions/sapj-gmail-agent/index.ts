@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { Buffer } from "node:buffer";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getGmailConnectionSecret, listGmailConnectionSecrets, type GmailConnectionSecret } from "../_shared/gmailSecrets.ts";
 
@@ -203,11 +204,7 @@ function decodeBase64Url(data = ""): string {
 
 function decodeBase64UrlToBytes(data = ""): Uint8Array {
   try {
-    const normalized = data.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(normalized);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return bytes;
+    return Buffer.from(data, "base64url");
   } catch {
     return new Uint8Array(0);
   }
@@ -220,6 +217,26 @@ function safeStorageFilename(value: string): string {
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 120) || "document.pdf";
+}
+
+function getValidMimeType(filename: string, candidateMime?: string): string {
+  const ext = (filename.split(".").pop() || "").toLowerCase();
+  const extMap: Record<string, string> = {
+    pdf: "application/pdf",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    txt: "text/plain",
+  };
+  if (ext && extMap[ext]) return extMap[ext];
+  if (candidateMime && candidateMime !== "application/octet-stream") return candidateMime;
+  return "application/pdf";
 }
 
 function stripHtml(input: string): string {
@@ -879,6 +896,9 @@ Deno.serve(async (req: Request) => {
       scheduled?: boolean;
       scanLast7Days?: boolean;
       fullHistoricalScan?: boolean;
+      resyncDocuments?: boolean;
+      reviewOffset?: number;
+      reviewLimit?: number;
       pageToken?: string;
       query?: string;
     };
@@ -932,6 +952,7 @@ Deno.serve(async (req: Request) => {
     let pricingRecordsEnrichedCount = 0;
     let documentsCount = 0;
     let documentsStoredCount = 0;
+    let documentErrorsCount = 0;
     let inquiriesMatchedCount = 0;
     let needsReviewCount = 0;
     let noActionCount = 0;
@@ -949,7 +970,7 @@ Deno.serve(async (req: Request) => {
       const mailboxName = connection.email_address || (connection as any).email || connection.id;
 
       // Concurrency protection: do not run multiple scans on the same connection concurrently
-      if (runningConnections.has(connection.id)) {
+      if (!body.resyncDocuments && runningConnections.has(connection.id)) {
         return json({
           success: true,
           status: "already_running",
@@ -976,6 +997,341 @@ Deno.serve(async (req: Request) => {
 
       try {
         const accessToken = await getValidAccessToken(adminClient, connection);
+
+        // =========================================================================
+        // DEDICATED DOCUMENT RE-SYNC & RECOVERY ROUTINE
+        // Recovers all detected attachments from Gmail, uploads to crm-documents
+        // bucket, verifies storage objects, inserts crm_product_documents records,
+        // links to inquiries/products, and marks missing ones as FILE UNAVAILABLE.
+        // =========================================================================
+        if (body.resyncDocuments) {
+          const reviewOffset = Math.max(Number(body.reviewOffset) || 0, 0);
+          const reviewLimit = Math.min(Math.max(Number(body.reviewLimit) || 5, 1), 10);
+
+          const { data: revs, error: revErr, count: totalRevsCount } = await adminClient
+            .from("kunal_ai_email_reviews")
+            .select("id, gmail_message_id, gmail_thread_id, matched_inquiry_id, from_email, subject, product_name, offered_make, raw_result", { count: "exact" })
+            .not("raw_result->detectedDocuments", "is", null)
+            .order("id", { ascending: true })
+            .range(reviewOffset, reviewOffset + reviewLimit - 1);
+
+          if (revErr) {
+            console.error("[sapj-gmail-agent] failed to fetch reviews for doc resync:", revErr);
+            runningConnections.delete(connection.id);
+            return json({ success: false, error: revErr.message }, 500);
+          }
+
+          // Fetch existing crm_product_documents records
+          const { data: existingDocs } = await adminClient
+            .from("crm_product_documents")
+            .select("id, storage_path, storage_bucket, source_gmail_message_id, display_file_name, inquiry_id");
+
+          const existingByMsgAndName = new Map<string, any>();
+          const existingByPath = new Map<string, any>();
+          for (const d of existingDocs || []) {
+            if (d.source_gmail_message_id && d.display_file_name) {
+              existingByMsgAndName.set(`${d.source_gmail_message_id}::${d.display_file_name.toLowerCase()}`, d);
+            }
+            if (d.storage_path) {
+              existingByPath.set(d.storage_path, d);
+            }
+          }
+
+          let totalDetected = 0;
+          let totalStored = 0;
+          let totalLinked = 0;
+          let totalUnavailable = 0;
+          let storageFailures = 0;
+          const resyncErrors: string[] = [];
+          const DB_DOC_TYPES = ["COA","MSDS","MHD","TDS","SPEC","COC","GMP","ISO","DMF","OTHER"];
+
+          // Step 0: Helper to verify storage object exists without downloading entire file into RAM
+          const verifyStorageObject = async (path: string): Promise<boolean> => {
+            if (!path) return false;
+            try {
+              const lastSlash = path.lastIndexOf("/");
+              const folder = lastSlash >= 0 ? path.substring(0, lastSlash) : "";
+              const fname = lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+              const { data, error } = await adminClient.storage.from("crm-documents").list(folder, {
+                limit: 20,
+                search: fname,
+              });
+              if (error || !Array.isArray(data)) return false;
+              return data.some((f: any) => f.name === fname);
+            } catch {
+              return false;
+            }
+          };
+
+          const maxNewDownloads = Math.min(Math.max(Number(body.maxDownloads || body.maxMessages) || 3, 1), 10);
+          let newDownloadsCount = 0;
+          let hitBatchLimit = false;
+          let reviewsProcessedCount = 0;
+
+          for (const rev of revs || []) {
+            if (hitBatchLimit) break;
+            const raw = (rev.raw_result || {}) as any;
+            const detectedDocs = Array.isArray(raw.detectedDocuments) ? raw.detectedDocuments : [];
+            if (detectedDocs.length === 0) {
+              reviewsProcessedCount += 1;
+              continue;
+            }
+
+            let reviewModified = false;
+            let allDocsProcessedInReview = true;
+            const sourceAttachments = Array.isArray(raw.sourceEmail?.attachments) ? raw.sourceEmail.attachments : [];
+
+            for (const doc of detectedDocs) {
+              totalDetected += 1;
+              const fnameLower = (doc.filename || "").toLowerCase();
+              const lookupKey = `${rev.gmail_message_id}::${fnameLower}`;
+              let matchedDoc = existingByMsgAndName.get(lookupKey) || (doc.storagePath ? existingByPath.get(doc.storagePath) : null);
+
+              // Step 1: Check if already stored in crm_product_documents and file exists in Storage
+              if (matchedDoc && matchedDoc.storage_path) {
+                const fileExists = await verifyStorageObject(matchedDoc.storage_path);
+                if (fileExists) {
+                  doc.storagePath = matchedDoc.storage_path;
+                  doc.storageBucket = matchedDoc.storage_bucket || "crm-documents";
+                  doc.isUploaded = true;
+                  doc.matchStatus = "MATCHED";
+                  totalStored += 1;
+                  if (matchedDoc.inquiry_id || rev.matched_inquiry_id) totalLinked += 1;
+                  continue;
+                }
+              }
+
+              // Step 2: Check if doc already had storagePath uploaded previously
+              if (doc.storagePath) {
+                const fileExists = await verifyStorageObject(doc.storagePath);
+                if (fileExists) {
+                  const docType = DB_DOC_TYPES.includes(doc.documentType) ? doc.documentType : "OTHER";
+
+                  if (matchedDoc) {
+                    await adminClient.from("crm_product_documents").update({
+                      inquiry_id: rev.matched_inquiry_id || matchedDoc.inquiry_id || null,
+                      product_name: doc.matchedProduct || rev.product_name || "Chemical Item",
+                      make: doc.matchedMake || rev.offered_make || "Supplier",
+                      document_type: docType,
+                      storage_bucket: "crm-documents",
+                      storage_path: doc.storagePath,
+                      source_gmail_message_id: rev.gmail_message_id,
+                      uploaded_by: callingUserId || connection.user_id,
+                    }).eq("id", matchedDoc.id);
+                  } else {
+                    const { data: insertedDoc } = await adminClient.from("crm_product_documents").insert({
+                      inquiry_id: rev.matched_inquiry_id || null,
+                      product_name: doc.matchedProduct || rev.product_name || "Chemical Item",
+                      make: doc.matchedMake || rev.offered_make || "Supplier",
+                      document_type: docType,
+                      display_file_name: doc.filename,
+                      original_file_name: doc.filename,
+                      storage_bucket: "crm-documents",
+                      storage_path: doc.storagePath,
+                      source_gmail_message_id: rev.gmail_message_id,
+                      source_gmail_thread_id: rev.gmail_thread_id || null,
+                      source_email_subject: rev.subject || null,
+                      uploaded_by: callingUserId || connection.user_id,
+                    }).select("id, inquiry_id").maybeSingle();
+
+                    if (insertedDoc) {
+                      existingByMsgAndName.set(lookupKey, insertedDoc);
+                      existingByPath.set(doc.storagePath, insertedDoc);
+                      matchedDoc = insertedDoc;
+                    }
+                  }
+
+                  doc.storageBucket = "crm-documents";
+                  doc.isUploaded = true;
+                  doc.matchStatus = "MATCHED";
+                  totalStored += 1;
+                  if (rev.matched_inquiry_id || matchedDoc?.inquiry_id) totalLinked += 1;
+                  reviewModified = true;
+                  continue;
+                }
+              }
+
+              // Step 3: Handle oversized attachments (> 20MB)
+              if (doc.size && doc.size > 20 * 1024 * 1024) {
+                doc.matchStatus = "FILE UNAVAILABLE / NEEDS REVIEW";
+                doc.isUnavailable = true;
+                doc.errorReason = "Attachment exceeds 20MB isolate buffer limit";
+                totalUnavailable += 1;
+                reviewModified = true;
+                continue;
+              }
+
+              // Check if we hit the batch limit for new downloads in this single edge invocation
+              if (newDownloadsCount >= maxNewDownloads) {
+                hitBatchLimit = true;
+                allDocsProcessedInReview = false;
+                break;
+              }
+
+              // Step 4: Fetch attachment bytes from Gmail API
+              const attId = doc.attachmentId || sourceAttachments.find((a: any) => (a.filename || "").toLowerCase() === fnameLower)?.attachmentId;
+
+              if (!attId || !rev.gmail_message_id) {
+                doc.matchStatus = "FILE UNAVAILABLE / NEEDS REVIEW";
+                doc.isUnavailable = true;
+                totalUnavailable += 1;
+                reviewModified = true;
+                continue;
+              }
+
+              try {
+                const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(rev.gmail_message_id)}/attachments/${encodeURIComponent(attId)}`;
+                const attachResp = await fetch(attachUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+
+                if (!attachResp.ok) {
+                  console.warn(`[sapj-gmail-agent] Gmail attachment fetch failed (${doc.filename}): HTTP ${attachResp.status}`);
+                  doc.matchStatus = "FILE UNAVAILABLE / NEEDS REVIEW";
+                  doc.isUnavailable = true;
+                  totalUnavailable += 1;
+                  reviewModified = true;
+                  continue;
+                }
+
+                const attachData = await attachResp.json();
+                const bytes = decodeBase64UrlToBytes(attachData.data || "");
+                if (bytes.length === 0) {
+                  doc.matchStatus = "FILE UNAVAILABLE / NEEDS REVIEW";
+                  doc.isUnavailable = true;
+                  totalUnavailable += 1;
+                  reviewModified = true;
+                  continue;
+                }
+
+                const safeName = safeStorageFilename(doc.filename || "document.pdf");
+                const folder = `gmail-attachments/${connection.user_id}/${rev.gmail_message_id}`;
+                const storagePath = `${folder}/${Date.now()}_${safeName}`;
+                const contentType = getValidMimeType(doc.filename || "", doc.mimeType);
+
+                const { error: uploadErr } = await adminClient.storage
+                  .from("crm-documents")
+                  .upload(storagePath, bytes, { contentType, upsert: true });
+
+                if (uploadErr) {
+                  console.error(`[sapj-gmail-agent] Storage upload failed for ${doc.filename}:`, uploadErr);
+                  storageFailures += 1;
+                  resyncErrors.push(`Storage upload error (${doc.filename}): ${uploadErr.message}`);
+                  continue;
+                }
+
+                // Insert into crm_product_documents
+                const docType = DB_DOC_TYPES.includes(doc.documentType) ? doc.documentType : "OTHER";
+
+                const { error: insErr, data: insData } = await adminClient
+                  .from("crm_product_documents")
+                  .insert({
+                    inquiry_id: rev.matched_inquiry_id || null,
+                    product_name: doc.matchedProduct || rev.product_name || "Chemical Item",
+                    make: doc.matchedMake || rev.offered_make || "Supplier",
+                    document_type: docType,
+                    display_file_name: doc.filename,
+                    original_file_name: doc.filename,
+                    storage_bucket: "crm-documents",
+                    storage_path: storagePath,
+                    source_gmail_message_id: rev.gmail_message_id,
+                    source_gmail_thread_id: rev.gmail_thread_id || null,
+                    source_email_subject: rev.subject || null,
+                    uploaded_by: callingUserId || connection.user_id,
+                  })
+                  .select("id, inquiry_id")
+                  .maybeSingle();
+
+                if (insErr) {
+                  console.error(`[sapj-gmail-agent] crm_product_documents insert failed for ${doc.filename}:`, insErr);
+                  storageFailures += 1;
+                  resyncErrors.push(`DB insert error (${doc.filename}): ${insErr.message}`);
+                  continue;
+                }
+
+                if (insData) {
+                  existingByMsgAndName.set(lookupKey, insData);
+                  existingByPath.set(storagePath, insData);
+                }
+
+                doc.storagePath = storagePath;
+                doc.storageBucket = "crm-documents";
+                doc.isUploaded = true;
+                doc.matchStatus = "MATCHED";
+                totalStored += 1;
+                newDownloadsCount += 1;
+                if (rev.matched_inquiry_id || insData?.inquiry_id) totalLinked += 1;
+                reviewModified = true;
+              } catch (e: any) {
+                console.error(`[sapj-gmail-agent] Error re-syncing doc ${doc.filename}:`, e);
+                storageFailures += 1;
+                resyncErrors.push(`Exception syncing ${doc.filename}: ${e.message}`);
+              }
+            }
+
+            if (reviewModified) {
+              await adminClient
+                .from("kunal_ai_email_reviews")
+                .update({
+                  raw_result: raw,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", rev.id);
+            }
+
+            if (allDocsProcessedInReview) {
+              reviewsProcessedCount += 1;
+            }
+          }
+
+          const nextOffset = reviewOffset + reviewsProcessedCount;
+          const hasMore = (totalRevsCount || 0) > nextOffset;
+
+          // Compute exact global persisted counts across the database
+          const { count: storedDocsCount } = await adminClient
+            .from("crm_product_documents")
+            .select("*", { count: "exact", head: true })
+            .not("storage_path", "is", null);
+
+          const { count: linkedDocsCount } = await adminClient
+            .from("crm_product_documents")
+            .select("*", { count: "exact", head: true })
+            .not("storage_path", "is", null)
+            .not("inquiry_id", "is", null);
+
+          const { data: allReviewsWithDocs } = await adminClient
+            .from("kunal_ai_email_reviews")
+            .select("raw_result")
+            .not("raw_result->detectedDocuments", "is", null);
+
+          let globalDetectedCount = 0;
+          let globalUnavailableCount = 0;
+          for (const ar of allReviewsWithDocs || []) {
+            const raw = (ar.raw_result || {}) as any;
+            const docs = Array.isArray(raw.detectedDocuments) ? raw.detectedDocuments : [];
+            globalDetectedCount += docs.length;
+            for (const d of docs) {
+              if (d.matchStatus === "FILE UNAVAILABLE / NEEDS REVIEW" || d.isUnavailable) {
+                globalUnavailableCount += 1;
+              }
+            }
+          }
+
+          runningConnections.delete(connection.id);
+
+          return json({
+            success: true,
+            status: "resync_batch_completed",
+            has_more: hasMore,
+            next_offset: nextOffset,
+            total_reviews_count: totalRevsCount || 0,
+            documents_detected: globalDetectedCount,
+            documents_actually_stored: storedDocsCount || 0,
+            documents_successfully_linked: linkedDocsCount || 0,
+            documents_needing_resync: Math.max(0, globalDetectedCount - (storedDocsCount || 0) - globalUnavailableCount),
+            documents_unavailable: globalUnavailableCount,
+            storage_verification_failures: storageFailures,
+            errors: resyncErrors,
+          });
+        }
 
         // Scan strategy: NOT reliant on 'unread'!
         // Uses last_sync timestamp with a 24-hour overlap window, or newer_than:14d on first run, or newer_than:7d on scanLast7Days.
@@ -1327,7 +1683,7 @@ Deno.serve(async (req: Request) => {
                       const safeName = safeStorageFilename(matchingAtt.filename || doc.filename || "document.pdf");
                       const folder = `gmail-attachments/${connection.user_id}/${ref.id}`;
                       const storagePath = `${folder}/${Date.now()}_${safeName}`;
-                      const contentType = matchingAtt.mimeType || "application/pdf";
+                      const contentType = getValidMimeType(matchingAtt.filename || doc.filename || "", matchingAtt.mimeType);
 
                       const { error: uploadErr } = await adminClient.storage
                         .from("crm-documents")
@@ -1337,21 +1693,44 @@ Deno.serve(async (req: Request) => {
                         });
 
                       if (!uploadErr) {
-                        (doc as any).storageBucket = "crm-documents";
-                        (doc as any).storagePath = storagePath;
-                        (doc as any).isUploaded = true;
-                        documentsStoredCount += 1;
+                        const DB_DOC_TYPES = ["COA","MSDS","MHD","TDS","SPEC","COC","GMP","ISO","DMF","OTHER"];
+                        const docType = DB_DOC_TYPES.includes(doc.documentType) ? doc.documentType : "OTHER";
 
-                        if (matchResult.suggestedInquiryId) {
-                          const DB_DOC_TYPES = ["COA","MSDS","MHD","TDS","SPEC","COC","GMP","ISO","DMF","OTHER"];
-                          const docType = DB_DOC_TYPES.includes(doc.documentType) ? doc.documentType : "OTHER";
+                        // Verify or upsert crm_product_documents record without invalid onConflict target
+                        const { data: existingDocRow } = await adminClient
+                          .from("crm_product_documents")
+                          .select("id")
+                          .eq("source_gmail_message_id", ref.id)
+                          .eq("display_file_name", doc.filename)
+                          .maybeSingle();
 
+                        let docDbSuccess = false;
+                        if (existingDocRow) {
                           const { error: pDocErr } = await adminClient
                             .from("crm_product_documents")
-                            .upsert({
-                              inquiry_id: matchResult.suggestedInquiryId,
+                            .update({
+                              inquiry_id: matchResult.suggestedInquiryId || null,
                               product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
-                              supplier_name: aiExtracted.make || fromName,
+                              make: aiExtracted.make || fromName,
+                              document_type: docType,
+                              storage_bucket: "crm-documents",
+                              storage_path: storagePath,
+                              uploaded_by: callingUserId || connection.user_id,
+                            })
+                            .eq("id", existingDocRow.id);
+
+                          docDbSuccess = !pDocErr;
+                          if (pDocErr) {
+                            console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents update ${doc.filename}):`, pDocErr);
+                            persistenceErrors.push(`crm_product_documents (${doc.filename}): ${pDocErr.message || JSON.stringify(pDocErr)}`);
+                          }
+                        } else {
+                          const { error: pDocErr } = await adminClient
+                            .from("crm_product_documents")
+                            .insert({
+                              inquiry_id: matchResult.suggestedInquiryId || null,
+                              product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
+                              make: aiExtracted.make || fromName,
                               document_type: docType,
                               display_file_name: doc.filename,
                               original_file_name: doc.filename,
@@ -1361,25 +1740,44 @@ Deno.serve(async (req: Request) => {
                               source_gmail_thread_id: ref.threadId || null,
                               source_email_subject: subject || null,
                               uploaded_by: callingUserId || connection.user_id,
-                              batch_number: doc.batchNumber || null,
-                            }, { onConflict: "inquiry_id,document_type,display_file_name" });
+                            });
 
+                          docDbSuccess = !pDocErr;
                           if (pDocErr) {
-                            console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents ${doc.filename}):`, pDocErr);
+                            console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents insert ${doc.filename}):`, pDocErr);
                             persistenceErrors.push(`crm_product_documents (${doc.filename}): ${pDocErr.message || JSON.stringify(pDocErr)}`);
                           }
+                        }
+
+                        // Requirement 4: Docs Stored may ONLY increment after Storage upload succeeds AND crm_product_documents succeeds
+                        if (docDbSuccess) {
+                          (doc as any).storageBucket = "crm-documents";
+                          (doc as any).storagePath = storagePath;
+                          (doc as any).isUploaded = true;
+                          documentsStoredCount += 1;
+                        } else {
+                          (doc as any).storagePath = null;
+                          (doc as any).isUploaded = false;
+                          documentErrorsCount += 1;
                         }
                       } else {
                         console.warn(`[sapj-gmail-agent] storage upload failed (${doc.filename}):`, uploadErr);
                         (doc as any).storagePath = null;
                         (doc as any).isUploaded = false;
+                        documentErrorsCount += 1;
+                        persistenceErrors.push(`storage upload (${doc.filename}): ${uploadErr.message || JSON.stringify(uploadErr)}`);
                       }
                     }
+                  } else {
+                    (doc as any).storagePath = null;
+                    (doc as any).isUploaded = false;
+                    documentErrorsCount += 1;
                   }
                 } catch (attErr) {
                   console.warn(`[sapj-gmail-agent] attachment fetch error (${doc.filename}):`, attErr);
                   (doc as any).storagePath = null;
                   (doc as any).isUploaded = false;
+                  documentErrorsCount += 1;
                 }
               } else {
                 (doc as any).storagePath = null;
@@ -1624,6 +2022,8 @@ Deno.serve(async (req: Request) => {
     pricing_records_enriched: pricingRecordsEnrichedCount,
     documents_detected: documentsCount,
     documents_stored: documentsStoredCount,
+    documents_needing_resync: Math.max(0, documentsCount - documentsStoredCount),
+    document_errors: documentErrorsCount,
     inquiries_matched: inquiriesMatchedCount,
     needs_review: needsReviewCount,
     no_action: noActionCount,

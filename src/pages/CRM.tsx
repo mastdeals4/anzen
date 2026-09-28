@@ -5,35 +5,38 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send, FolderOpen, Orbit, SlidersHorizontal, LayoutDashboard } from 'lucide-react';
-import { SalesTeam } from './SalesTeam';
-import { CRMDashboardHome } from '../components/crm/CRMDashboardHome';
+import {
+  Inbox,
+  Table,
+  Send,
+  Users,
+  Search,
+  Plus,
+  SlidersHorizontal,
+  RefreshCw,
+} from 'lucide-react';
+
+import { CrmOmnichannelInbox } from '../components/crm/inbox/CrmOmnichannelInbox';
+import { CrmInquiriesWorkspace } from '../components/crm/inquiries/CrmInquiriesWorkspace';
+import { CrmInquiryDrawer } from '../components/crm/inquiries/CrmInquiryDrawer';
+import { CrmBulkEmailWorkspace } from '../components/crm/bulk-email/CrmBulkEmailWorkspace';
+import { CrmCustomersWorkspace } from '../components/crm/customers/CrmCustomersWorkspace';
+import { CrmCustomerDrawer, CustomerDetail } from '../components/crm/customers/CrmCustomerDrawer';
+import { CrmGlobalSearchModal } from '../components/crm/search/CrmGlobalSearchModal';
+import { CrmSettingsModal } from '../components/crm/settings/CrmSettingsModal';
 import { EnquiryControlCenter } from '../components/crm/enquiry-control-center';
-import { GmailBrowserInbox } from '../components/crm/GmailBrowserInbox';
-import { InquiryTableExcel } from '../components/crm/InquiryTableExcel';
-import { ReminderCalendar } from '../components/crm/ReminderCalendar';
-import { PipelineBoard } from '../components/crm/PipelineBoard';
-import { EmailComposer } from '../components/crm/EmailComposer';
-import { CustomerDatabaseExcel } from '../components/crm/CustomerDatabaseExcel';
-import { ActivityLogger } from '../components/crm/ActivityLogger';
-import { AppointmentScheduler } from '../components/crm/AppointmentScheduler';
-import { ArchiveView } from '../components/crm/ArchiveView';
-import { DeliveryLog } from '../components/crm/DeliveryLog';
-import { ProductDocumentsPanel } from '../components/crm/ProductDocumentsPanel';
-import { Inquiry360View } from '../components/crm/Inquiry360View';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
 import { CustomerUpdateDialog } from '../components/crm/CustomerUpdateDialog';
-import { Customer360Panel } from '../components/crm/Customer360Panel';
-import { CRMWorkQueue } from '../components/crm/CRMWorkQueue';
-import { ConversionIntelligence } from '../components/crm/ConversionIntelligence';
 import {
   ensureUniqueCrmContactName,
   findOrCreateCrmContact,
   isDuplicateCrmContactError,
 } from '../utils/customerValidation';
 import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
+
+export type CrmPrimaryTab = 'inbox' | 'inquiries' | 'bulk_email' | 'customers' | 'control-center';
 
 export interface Inquiry {
   id: string;
@@ -107,18 +110,37 @@ export function CRM() {
   const { profile } = useAuth();
   const { t } = useLanguage();
   const { navigationData, clearNavigationData } = useNavigation();
+
+  // Exactly 4 primary CRM destinations, default is INBOX
+  const [activeTab, setActiveTab] = useState<CrmPrimaryTab>('inbox');
+
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'control-center' | 'work' | 'inquiry-360' | 'customer-360' | 'conversion-intelligence' | 'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'archive' | 'sales-team' | 'delivery-log' | 'documents'>('dashboard');
+
+  // Inquiry Drawer & Modals
+  const [targetInquiryId, setTargetInquiryId] = useState<string | null>(null);
+  const [selectedInquiryForDrawer, setSelectedInquiryForDrawer] = useState<any>(null);
+  const [isInquiryDrawerOpen, setIsInquiryDrawerOpen] = useState(false);
+
+  // Customer Drawer
+  const [selectedCustomerForDrawer, setSelectedCustomerForDrawer] = useState<CustomerDetail | null>(null);
+
+  // Global Search Modal (Cmd+K)
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Settings / Control Center / Connection Health Modal
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // New / Edit Inquiry Form Modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
-  // Prefill payload for creating a NEW inquiry (e.g. from AI Pricing "Create new
-  // inquiry"). Distinct from editingInquiry so isEditing stays false → INSERT.
   const [prefillInquiry, setPrefillInquiry] = useState<any>(null);
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [selectedInquiryForEmail, setSelectedInquiryForEmail] = useState<any>(null);
 
+  // Bulk Email Handover State
+  const [stagedBulkRecipients, setStagedBulkRecipients] = useState<any[]>([]);
+
+  // Customer deduplication / selection state
   const [pendingFormData, setPendingFormData] = useState<any>(null);
   const [customerMatches, setCustomerMatches] = useState<any[]>([]);
   const [showCustomerSelectionDialog, setShowCustomerSelectionDialog] = useState(false);
@@ -131,217 +153,212 @@ export function CRM() {
     loadInquiries();
   }, []);
 
+  // Global Hotkey (Cmd/Ctrl+K) for CRM Global Search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Handle external deep-link navigation (e.g. from Pricing Worksheet or Global Search)
   useEffect(() => {
     const targetId = navigationData?.crmInquiryId;
     if (!targetId || typeof targetId !== 'string' || inquiries.length === 0) return;
-    const target = inquiries.find(inquiry => inquiry.id === targetId);
+    const target = inquiries.find((inquiry) => inquiry.id === targetId);
     if (!target) return;
-    setActiveTab('table');
-    setEditingInquiry(target);
-    setModalOpen(true);
+    setActiveTab('inquiries');
+    setTargetInquiryId(targetId);
+    setSelectedInquiryForDrawer(target);
+    setIsInquiryDrawerOpen(true);
     clearNavigationData();
   }, [clearNavigationData, inquiries, navigationData]);
 
-  // Open a prefilled "New Inquiry" form when another module (e.g. AI Pricing's
-  // "Create new inquiry" on an unmatched email) hands over draft fields.
+  // Handle external "Create New Inquiry" prefill
   useEffect(() => {
-    const create = navigationData?.crmCreateInquiry;
+    const create = navigationData?.crmCreateInquiry as any;
     if (!create || typeof create !== 'object') return;
     setEditingInquiry(null);
-    setPrefillInquiry(create);
-    setActiveTab('table');
+    setPrefillInquiry({
+      product_name: create.product_name || '',
+      company_name: create.company_name || '',
+      supplier_name: create.supplier_name || '',
+      quantity: create.quantity || '',
+      purchase_price: create.purchase_price ?? '',
+      purchase_price_currency: create.purchase_price_currency || 'USD',
+      offered_price: create.offered_price ?? '',
+      offered_price_currency: create.offered_price_currency || 'IDR',
+      remarks: create.remarks || '',
+      internal_notes: create.internal_notes || '',
+    });
     setModalOpen(true);
     clearNavigationData();
   }, [clearNavigationData, navigationData]);
 
   const loadInquiries = async () => {
     try {
+      setLoading(true);
       setError(null);
-      // Exclude 'lost' status inquiries from default view (they appear in Archive)
-      const { data, error: fetchError } = await supabase
+      const { data, error } = await supabase
         .from('crm_inquiries')
-        .select('*, user_profiles!assigned_to(full_name)')
-        .neq('pipeline_status', 'lost')
+        .select(`
+          *,
+          user_profiles:assigned_to (
+            full_name
+          )
+        `)
         .order('created_at', { ascending: false });
 
-      if (fetchError) throw fetchError;
+      if (error) throw error;
       setInquiries(data || []);
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Error loading inquiries:', err);
       setError(t('errors.failedToLoadInquiries'));
     } finally {
       setLoading(false);
     }
   };
 
-  const loadCustomers = async () => {
-    try {
-      // CRM Inquiry customer master lives in crm_contacts, not the ERP
-      // customers table. The Inquiry form only ever selects from CRM prospects.
-      const { data, error } = await supabase
-        .from('crm_contacts')
-        .select('id, company_name, contact_person, email, phone, country, address, city')
-        .eq('is_active', true);
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('Error loading CRM contacts:', error);
-      return [];
-    }
-  };
-
-  const loadInquiryCounts = async (contactIds: string[]) => {
-    try {
-      const { data, error } = await supabase
-        .from('crm_inquiries')
-        .select('crm_contact_id')
-        .in('crm_contact_id', contactIds);
-
-      if (error) throw error;
-
-      const counts: Record<string, number> = {};
-      data?.forEach(inquiry => {
-        if (inquiry.crm_contact_id) {
-          counts[inquiry.crm_contact_id] = (counts[inquiry.crm_contact_id] || 0) + 1;
-        }
-      });
-
-      setInquiryCounts(counts);
-    } catch (error) {
-      console.error('Error loading inquiry counts:', error);
-    }
-  };
-
-  const processCustomerMatching = async (formData: any) => {
-    if (formData.crm_contact_id) {
-      const customers = await loadCustomers();
-      const selectedCustomer = customers.find(c => c.id === formData.crm_contact_id);
-
-      if (selectedCustomer) {
-        const changes = detectCustomerChanges(
-          {
-            contact_email: formData.contact_email,
-            contact_phone: formData.contact_phone,
-            contact_person: formData.contact_person,
-          },
-          selectedCustomer
-        );
-
-        if (changes.hasChanges) {
-          setCustomerChanges({
-            ...changes,
-            customer: selectedCustomer,
-          });
-          setPendingFormData(formData);
-          setShowCustomerUpdateDialog(true);
-          return false;
-        }
-      }
-
-      return true;
-    }
-
-    const customers = await loadCustomers();
-    const matches = fuzzyMatchCompanyName(formData.company_name, customers);
-
-    if (matches.length > 0) {
-      const bestMatch = findBestMatch(formData.company_name, customers);
-
-      if (bestMatch && bestMatch.score >= 95) {
-        formData.crm_contact_id = bestMatch.customer.id;
-        return processCustomerMatching(formData);
-      } else {
-        setCustomerMatches(matches);
-        setPendingFormData(formData);
-        await loadInquiryCounts(matches.map(m => m.customer.id));
-        setShowCustomerSelectionDialog(true);
-        return false;
-      }
+  const handleOpenInquiry = async (inquiryId: string) => {
+    const found = inquiries.find((i) => i.id === inquiryId);
+    if (found) {
+      setSelectedInquiryForDrawer(found);
+      setIsInquiryDrawerOpen(true);
     } else {
-      setPendingFormData(formData);
-      setShowCustomerConfirmationDialog(true);
-      return false;
+      const { data } = await supabase
+        .from('crm_inquiries')
+        .select(`
+          *,
+          user_profiles:assigned_to (
+            full_name
+          )
+        `)
+        .eq('id', inquiryId)
+        .maybeSingle();
+
+      if (data) {
+        setSelectedInquiryForDrawer(data);
+        setIsInquiryDrawerOpen(true);
+      }
     }
   };
 
-  const sanitizeFormData = (data: any) => {
-    const sanitized = { ...data };
-    // Convert empty strings to null for date and numeric fields
-    const dateFields = ['delivery_date', 'inquiry_date'];
-    const numericFields = ['purchase_price', 'offered_price'];
+  const handleOpenCustomer = async (customerId: string) => {
+    const { data } = await supabase
+      .from('crm_contacts')
+      .select('*')
+      .eq('id', customerId)
+      .maybeSingle();
 
-    dateFields.forEach(field => {
-      if (sanitized[field] === '' || sanitized[field] === undefined) {
-        sanitized[field] = null;
-      }
-    });
-
-    numericFields.forEach(field => {
-      if (sanitized[field] === '' || sanitized[field] === undefined) {
-        sanitized[field] = null;
-      } else if (sanitized[field] !== null) {
-        sanitized[field] = parseFloat(sanitized[field]);
-      }
-    });
-
-    return sanitized;
+    if (data) {
+      setSelectedCustomerForDrawer(data as CustomerDetail);
+    }
   };
 
+  const handleCreateInquiryFromMessage = (msg: {
+    subject: string;
+    body: string;
+    fromEmail: string;
+    fromName: string;
+  }) => {
+    setEditingInquiry(null);
+    setPrefillInquiry({
+      company_name: msg.fromName || '',
+      contact_email: msg.fromEmail || '',
+      email_subject: msg.subject || '',
+      remarks: msg.body?.slice(0, 500) || '',
+    });
+    setModalOpen(true);
+  };
+
+  // Form submission and customer relationship handling
   const handleFormSubmit = async (formData: any) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      if (!user) throw new Error('User not authenticated');
 
-      if (!editingInquiry) {
-        const canProceed = await processCustomerMatching(formData);
-        if (!canProceed) {
-          return;
+      if (!editingInquiry && !formData.crm_contact_id) {
+        const { data: existingCustomers } = await supabase
+          .from('crm_contacts')
+          .select('id, company_name, contact_person, email, phone, city, address')
+          .eq('is_active', true);
+
+        if (existingCustomers && existingCustomers.length > 0) {
+          const matchResult = findBestMatch(formData.company_name, existingCustomers);
+          if (matchResult && matchResult.score >= 85) {
+            setPendingFormData(formData);
+            const counts: Record<string, number> = {};
+            const { data: countData } = await supabase
+              .from('crm_inquiries')
+              .select('crm_contact_id')
+              .in('crm_contact_id', [matchResult.customer.id]);
+
+            if (countData) {
+              countData.forEach((row) => {
+                if (row.crm_contact_id) {
+                  counts[row.crm_contact_id] = (counts[row.crm_contact_id] || 0) + 1;
+                }
+              });
+            }
+
+            setInquiryCounts(counts);
+            setCustomerMatches([
+              {
+                ...matchResult.customer,
+                similarity: matchResult.score / 100,
+                matchType: matchResult.matchType,
+              },
+            ]);
+            setShowCustomerSelectionDialog(true);
+            return;
+          }
         }
-
       }
 
-      if (editingInquiry) {
-        // Extract products and is_multi_product from formData before update
-        const { products, is_multi_product, ...restFormData } = formData;
+      const sanitizeFormData = (data: any) => {
+        const sanitized: any = {};
+        const emptyToNull = (val: any) => (val === '' || val === undefined ? null : val);
 
-        const updateData: any = sanitizeFormData({
-          ...restFormData,
-          specification: formData.specification || null,
-          purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
-          offered_price: formData.offered_price ? parseFloat(formData.offered_price) : null,
+        Object.keys(data).forEach((key) => {
+          if (['assigned_to', 'next_follow_up', 'delivery_date', 'purchase_price_currency', 'offered_price_currency'].includes(key)) {
+            sanitized[key] = emptyToNull(data[key]);
+          } else {
+            sanitized[key] = data[key];
+          }
         });
+        return sanitized;
+      };
 
+      if (editingInquiry) {
         const { error } = await supabase
           .from('crm_inquiries')
-          .update(updateData)
+          .update(sanitizeFormData(formData))
           .eq('id', editingInquiry.id);
 
         if (error) throw error;
       } else {
-        // Extract products and is_multi_product from formData before insert
-        const { products, is_multi_product, ...restFormData } = formData;
+        const { items, is_multi_product, ...restFormData } = formData;
 
-        // If multi-product, create N separate inquiries in crm_inquiries with .1, .2, .3 suffixes
-        // All common fields are copied to each inquiry
-        if (is_multi_product && products && products.length > 0) {
-          // Create inquiries for each product
-          const inquiriesToInsert = products.map((product: any) => sanitizeFormData({
-            ...restFormData,
-            product_name: product.productName || product.product_name,
-            specification: product.specification || null,
-            quantity: product.quantity,
-            supplier_name: product.supplierName || restFormData.supplier_name || null,
-            supplier_country: product.supplierCountry || restFormData.supplier_country || null,
-            delivery_date: product.deliveryDate || null,
-            delivery_terms: product.deliveryTerms || null,
-            inquiry_date: new Date().toISOString().split('T')[0],
-            assigned_to: user.id,
-            created_by: user.id,
-            purchase_price: null,
-            offered_price: null,
-            is_multi_product: false,
-            has_items: false,
-          }));
+        if (is_multi_product && items && items.length > 0) {
+          const inquiriesToInsert = items.map((item: any) =>
+            sanitizeFormData({
+              ...restFormData,
+              product_name: item.product_name,
+              specification: item.specification || null,
+              quantity: item.quantity,
+              inquiry_date: new Date().toISOString().split('T')[0],
+              assigned_to: user.id,
+              created_by: user.id,
+              purchase_price: item.purchase_price ? parseFloat(item.purchase_price) : null,
+              offered_price: item.offered_price ? parseFloat(item.offered_price) : null,
+              is_multi_product: true,
+              has_items: true,
+            })
+          );
 
           const { data: insertedInquiries, error } = await supabase
             .from('crm_inquiries')
@@ -350,10 +367,8 @@ export function CRM() {
 
           if (error) throw error;
 
-          // Update inquiry numbers to add .1, .2, .3 suffixes
           if (insertedInquiries && insertedInquiries.length > 0) {
             const baseInquiryNumber = insertedInquiries[0].inquiry_number;
-
             for (let i = 0; i < insertedInquiries.length; i++) {
               await supabase
                 .from('crm_inquiries')
@@ -362,7 +377,6 @@ export function CRM() {
             }
           }
         } else {
-          // Single product inquiry
           const insertData: any = sanitizeFormData({
             ...restFormData,
             specification: formData.specification || null,
@@ -375,43 +389,19 @@ export function CRM() {
             has_items: false,
           });
 
-          const { error } = await supabase
-            .from('crm_inquiries')
-            .insert([insertData]);
-
+          const { error } = await supabase.from('crm_inquiries').insert([insertData]);
           if (error) throw error;
         }
       }
 
       setModalOpen(false);
       setEditingInquiry(null);
+      setPrefillInquiry(null);
       loadInquiries();
     } catch (error) {
       console.error('Error saving inquiry:', error);
       alert(t('errors.failedToSaveInquiry'));
       throw error;
-    }
-  };
-
-  const handleEdit = (inquiry: Inquiry) => {
-    setEditingInquiry(inquiry);
-    setModalOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm(t('confirm.deleteInquiry'))) return;
-
-    try {
-      const { error } = await supabase
-        .from('crm_inquiries')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-      loadInquiries();
-    } catch (error) {
-      console.error('Error deleting inquiry:', error);
-      alert(t('errors.failedToDeleteInquiry'));
     }
   };
 
@@ -423,23 +413,16 @@ export function CRM() {
     }
   };
 
-  // Writes a NEW CRM prospect to crm_contacts (not the ERP customers table).
-  // A prospect is promoted to an ERP trading customer only via the manual
-  // ERP Customers workflow — never automatically from the Inquiry form.
   const handleCreateNewCustomer = async (customerData: any) => {
     try {
-      // findOrCreateCrmContact reuses an existing CRM prospect (case- and
-      // whitespace-insensitive company_name match) instead of creating a
-      // duplicate row. Handles race conditions too — if two clicks land at
-      // the same moment, both end up pointing at the same crm_contacts row.
       const { contact } = await findOrCreateCrmContact({
-        company_name:   customerData.company_name,
+        company_name: customerData.company_name,
         contact_person: customerData.contact_person,
-        email:          customerData.email,
-        phone:          customerData.phone,
-        country:        customerData.country,
-        address:        customerData.address,
-        city:           customerData.city,
+        email: customerData.email,
+        phone: customerData.phone,
+        country: customerData.country,
+        address: customerData.address,
+        city: customerData.city,
       });
 
       if (pendingFormData) {
@@ -455,7 +438,6 @@ export function CRM() {
 
   const handleUpdateCustomer = async () => {
     if (!customerChanges || !customerChanges.customer) return;
-
     try {
       const updateData: any = {};
       customerChanges.changedFields.forEach((field: string) => {
@@ -479,175 +461,196 @@ export function CRM() {
       }
     } catch (error: any) {
       console.error('Error updating CRM contact:', error);
-      alert(isDuplicateCrmContactError(error)
-        ? 'A CRM customer with this name already exists.'
-        : (error?.message || t('errors.failedToUpdateCustomer')));
+      alert(
+        isDuplicateCrmContactError(error)
+          ? 'A CRM customer with this name already exists.'
+          : error?.message || t('errors.failedToUpdateCustomer')
+      );
     }
   };
-
-  const handleKeepExistingCustomer = () => {
-    setShowCustomerUpdateDialog(false);
-    if (pendingFormData) {
-      handleFormSubmit(pendingFormData);
-    }
-  };
-
-  const handleSendEmail = (inquiry: Inquiry) => {
-    setSelectedInquiryForEmail({
-      id: inquiry.id,
-      inquiry_number: inquiry.inquiry_number,
-      company_name: inquiry.company_name,
-      contact_person: inquiry.contact_person,
-      contact_email: inquiry.contact_email,
-      product_name: inquiry.product_name,
-      quantity: inquiry.quantity,
-    });
-    setEmailModalOpen(true);
-  };
-
 
   const canManage = profile?.role === 'admin' || profile?.role === 'sales';
 
   return (
     <Layout>
-      <div className="space-y-2">
-        <div className="bg-white rounded-lg shadow-sm">
-          <div className="border-b border-gray-200">
-            <div className="flex overflow-x-auto">
-              {([
-                ['dashboard',   LayoutDashboard, 'CRM Dashboard',     'purple'],
-                ['control-center', SlidersHorizontal, 'Control Center', 'purple'],
-                ['work',        Clock,       "Today's Work",      'purple'],
-                ['inquiry-360', Orbit,       'Inquiry 360',       'purple'],
-                ['customer-360',Users,       'Customer 360',      'purple'],
-                ['conversion-intelligence',BarChart3, 'Conversion Intelligence', 'purple'],
-                ['email',       Inbox,       t('crm.emailInbox'), 'blue'],
-                ['table',       Table,       t('crm.inquiries'),  'blue'],
-                ['pipeline',    LayoutGrid,  t('crm.pipeline'),   'blue'],
-                ['calendar',    CalendarIcon,t('crm.calendar'),   'blue'],
-                ['customers',   Users,       t('crm.customers'),  'blue'],
-                ['activities',  Activity,    t('crm.activities'), 'blue'],
-                ['archive',     Archive,     t('crm.archive'),    'blue'],
-                ['sales-team',  BarChart3,   t('crm.salesTeam'),  'blue'],
-                ['delivery-log',Send,        'Delivery Log',      'blue'],
-                ['documents',   FolderOpen,  'Documents',         'blue'],
-              ] as const).map(([tab, Icon, label, color]) => {
-                const isActive = activeTab === tab;
-                const activeCls = color === 'purple'
-                  ? 'border-purple-500 text-purple-600 font-medium'
-                  : 'border-blue-500 text-blue-600 font-medium';
-                return (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab as typeof activeTab)}
-                    className={`flex items-center gap-1.5 px-3 py-2 border-b-2 transition whitespace-nowrap text-xs ${
-                      isActive ? activeCls : 'border-transparent text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
+      <div className="space-y-3">
+        {/* Top Consolidated CRM Bar: 4 Primary Destinations + Quick Actions */}
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          
+          {/* PRIMARY CRM DESTINATIONS (EXACTLY 4) */}
+          <div className="flex items-center gap-1">
+            {(
+              [
+                ['inbox', Inbox, 'INBOX'],
+                ['inquiries', Table, 'INQUIRIES'],
+                ['bulk_email', Send, 'BULK EMAIL'],
+                ['customers', Users, 'CUSTOMERS'],
+              ] as const
+            ).map(([tabKey, Icon, label]) => {
+              const isActive = activeTab === tabKey;
+              return (
+                <button
+                  key={tabKey}
+                  onClick={() => setActiveTab(tabKey)}
+                  className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md text-xs font-bold transition ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              );
+            })}
           </div>
 
-          <div className="p-3">
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 flex items-center justify-between">
-                <p className="text-red-700">{error}</p>
-                <button
-                  onClick={loadInquiries}
-                  className="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm"
-                >
-                  {t('crm.retry')}
-                </button>
-              </div>
-            )}
+          {/* Quick Header Utilities */}
+          <div className="flex items-center gap-2">
+            {/* Global Search Trigger (Cmd+K) */}
+            <button
+              onClick={() => setIsSearchOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-gray-600 border border-gray-200 rounded-md text-xs transition"
+              title="Global CRM Search (Cmd+K)"
+            >
+              <Search className="w-3.5 h-3.5 text-gray-400" />
+              <span className="hidden md:inline font-medium">Search CRM...</span>
+              <kbd className="hidden sm:inline-block px-1.5 py-0.2 text-[10px] font-semibold text-gray-500 bg-white rounded border border-gray-200">
+                ⌘K
+              </kbd>
+            </button>
 
-            {activeTab === 'dashboard' && (
-              <CRMDashboardHome
-                inquiries={inquiries}
-                onNavigateTab={(tab) => setActiveTab(tab)}
-                canManage={canManage}
-              />
-            )}
+            {/* Integration Health & Settings */}
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-md border border-gray-200 transition"
+              title="Integration Health & Settings (Gmail / WhatsApp)"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
 
-            {activeTab === 'control-center' && (
-              <EnquiryControlCenter canManage={canManage} />
-            )}
-            
-            {activeTab === 'inquiry-360' && (
-              <Inquiry360View inquiries={inquiries as any} />
-            )}
-
-            {activeTab === 'work' && <CRMWorkQueue inquiries={inquiries as any} />}
-
-            {activeTab === 'customer-360' && <Customer360Panel />}
-
-            {activeTab === 'conversion-intelligence' && <ConversionIntelligence />}
-
-            {activeTab === 'email' && (
-              <GmailBrowserInbox />
-            )}
-
-            {activeTab === 'table' && (
-              <InquiryTableExcel
-                inquiries={inquiries}
-                onRefresh={loadInquiries}
-                canManage={canManage}
-                onAddInquiry={() => {
-                  setEditingInquiry(null);
-                  setModalOpen(true);
-                }}
-              />
-            )}
-
-            {activeTab === 'pipeline' && (
-              <PipelineBoard
-                canManage={canManage}
-                onInquiryClick={(inquiry) => handleEdit(inquiry as unknown as Inquiry)}
-              />
-            )}
-
-            {activeTab === 'calendar' && (
-              <div className='space-y-4'>
-                <div className='bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-800'>
-                  Calendar is now the single place for appointment planning. The Appointment tab was merged here to avoid duplication.
-                </div>
-                <ReminderCalendar onReminderCreated={loadInquiries} />
-                <AppointmentScheduler onAppointmentCreated={loadInquiries} />
-              </div>
-            )}
-
-            {activeTab === 'customers' && (
-              <CustomerDatabaseExcel />
-            )}
-
-            {activeTab === 'activities' && (
-              <ActivityLogger onActivityLogged={loadInquiries} />
-            )}
-
-
-            {activeTab === 'archive' && (
-              <ArchiveView canManage={canManage} onRefresh={loadInquiries} />
-            )}
-
-            {activeTab === 'sales-team' && (
-              <SalesTeam embedded />
-            )}
-
-
-            {activeTab === 'delivery-log' && (
-              <DeliveryLog />
-            )}
-
-            {activeTab === 'documents' && (
-              <ProductDocumentsPanel />
-            )}
+            {/* New Inquiry Action */}
+            <button
+              onClick={() => {
+                setEditingInquiry(null);
+                setPrefillInquiry(null);
+                setModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700 shadow-sm transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New Inquiry</span>
+            </button>
           </div>
         </div>
 
+        {/* Error Notification */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center justify-between text-xs text-red-700">
+            <span>{error}</span>
+            <button
+              onClick={loadInquiries}
+              className="px-2.5 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition"
+            >
+              {t('crm.retry')}
+            </button>
+          </div>
+        )}
+
+        {/* 1. INBOX DESTINATION (DEFAULT) */}
+        {activeTab === 'inbox' && (
+          <CrmOmnichannelInbox
+            onOpenInquiry={handleOpenInquiry}
+            onOpenCustomer={handleOpenCustomer}
+            onCreateInquiryFromMessage={handleCreateInquiryFromMessage}
+          />
+        )}
+
+        {/* 2. INQUIRIES DESTINATION (OPERATIONAL CENTER) */}
+        {activeTab === 'inquiries' && (
+          <CrmInquiriesWorkspace
+            canManage={canManage}
+            onAddInquiry={() => {
+              setEditingInquiry(null);
+              setPrefillInquiry(null);
+              setModalOpen(true);
+            }}
+            onOpenCustomer={handleOpenCustomer}
+            initialInquiryId={targetInquiryId}
+          />
+        )}
+
+        {/* 3. BULK EMAIL DESTINATION */}
+        {activeTab === 'bulk_email' && (
+          <CrmBulkEmailWorkspace initialRecipients={stagedBulkRecipients} />
+        )}
+
+        {/* 4. CUSTOMERS DESTINATION */}
+        {activeTab === 'customers' && (
+          <CrmCustomersWorkspace
+            onOpenInquiry={handleOpenInquiry}
+            onNavigateBulkEmail={(recipients) => {
+              setStagedBulkRecipients(recipients);
+              setActiveTab('bulk_email');
+            }}
+          />
+        )}
+
+        {/* Legacy / Direct Re-Homed Integration */}
+        {activeTab === 'control-center' && (
+          <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+            <EnquiryControlCenter canManage={canManage} />
+          </div>
+        )}
+
+        {/* Contextual Inquiry Drawer (Overlay) */}
+        <CrmInquiryDrawer
+          isOpen={isInquiryDrawerOpen}
+          onClose={() => {
+            setIsInquiryDrawerOpen(false);
+            setSelectedInquiryForDrawer(null);
+          }}
+          inquiry={selectedInquiryForDrawer}
+          onRefresh={loadInquiries}
+          onOpenCustomer={(cid: string) => {
+            setIsInquiryDrawerOpen(false);
+            handleOpenCustomer(cid);
+          }}
+        />
+
+        {/* Contextual Customer Drawer (Overlay) */}
+        <CrmCustomerDrawer
+          isOpen={!!selectedCustomerForDrawer}
+          onClose={() => setSelectedCustomerForDrawer(null)}
+          customer={selectedCustomerForDrawer}
+          onOpenInquiry={(inqId) => {
+            setSelectedCustomerForDrawer(null);
+            handleOpenInquiry(inqId);
+          }}
+          onRefresh={loadInquiries}
+        />
+
+        {/* Global CRM Search Modal (Cmd+K) */}
+        <CrmGlobalSearchModal
+          isOpen={isSearchOpen}
+          onClose={() => setIsSearchOpen(false)}
+          onSelectInquiry={handleOpenInquiry}
+          onSelectCustomer={handleOpenCustomer}
+          onSelectCommunication={(comm) => {
+            if (comm.inquiryId) handleOpenInquiry(comm.inquiryId);
+            else if (comm.customerId) handleOpenCustomer(comm.customerId);
+            else setActiveTab('inbox');
+          }}
+        />
+
+        {/* Settings & Integration Health Modal */}
+        <CrmSettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          canManage={canManage}
+        />
+
+        {/* Create / Edit Inquiry Modal */}
         <Modal
           isOpen={modalOpen}
           onClose={() => {
@@ -669,33 +672,13 @@ export function CRM() {
           />
         </Modal>
 
-        <Modal
-          isOpen={emailModalOpen}
-          onClose={() => {
-            setEmailModalOpen(false);
-            setSelectedInquiryForEmail(null);
-          }}
-          title={t('crm.sendEmail')}
-        >
-          <EmailComposer
-            inquiry={selectedInquiryForEmail}
-            onClose={() => {
-              setEmailModalOpen(false);
-              setSelectedInquiryForEmail(null);
-            }}
-            onSent={() => {
-              loadInquiries();
-            }}
-          />
-        </Modal>
-
+        {/* Customer Deduplication & Matching Dialogs */}
         <CustomerSelectionDialog
           isOpen={showCustomerSelectionDialog}
           matches={customerMatches}
           searchTerm={pendingFormData?.company_name || ''}
           onSelect={handleCustomerSelect}
           onCreateNew={() => {
-            // Keep CRM prospecting flexible: allow inquiry creation without linking to master customers
             if (pendingFormData) {
               pendingFormData.crm_contact_id = null;
               setShowCustomerSelectionDialog(false);
@@ -720,7 +703,6 @@ export function CRM() {
           }}
           onConfirm={handleCreateNewCustomer}
           onCancel={() => {
-            // Continue as CRM prospect without creating a sales customer record
             if (pendingFormData) {
               pendingFormData.crm_contact_id = null;
               setShowCustomerConfirmationDialog(false);
@@ -738,7 +720,10 @@ export function CRM() {
           oldValues={customerChanges?.oldValues || {}}
           newValues={customerChanges?.newValues || {}}
           onUpdateCustomer={handleUpdateCustomer}
-          onKeepExisting={handleKeepExistingCustomer}
+          onKeepExisting={() => {
+            setShowCustomerUpdateDialog(false);
+            if (pendingFormData) handleFormSubmit(pendingFormData);
+          }}
           onCancel={() => {
             setShowCustomerUpdateDialog(false);
             setPendingFormData(null);

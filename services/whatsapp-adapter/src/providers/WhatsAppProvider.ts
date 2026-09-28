@@ -57,5 +57,8 @@ export interface WhatsAppProvider {
   sendMessage(to: string, text: string, options?: Record<string, unknown>): Promise<WhatsAppSendResult>;
   getStatus(): Promise<WhatsAppConnectionStatus>;
   downloadMedia?(message: any): Promise<WhatsAppDownloadedMedia | null>;
-  disconnect?(): Promise<void>;
+  disconnect?(): Promise<WhatsAppConnectionStatus>;
+  connect?(): Promise<WhatsAppConnectionStatus>;
+  refreshQr?(): Promise<WhatsAppConnectionStatus>;
+  pair?(phone?: string): Promise<WhatsAppConnectionStatus>;
 }

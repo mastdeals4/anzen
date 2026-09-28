@@ -3,7 +3,7 @@ import { Layout } from '../components/Layout';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { loadMakeSuggestions } from '../services/makeSuggestions';
-import { runSapjGmailAgent, type AgentScanSummary } from '../services/kunalIndiaPrice';
+import { runSapjGmailAgent, fetchHistoricalReconciliation, resyncHistoricalDocuments, type AgentScanSummary } from '../services/kunalIndiaPrice';
 import { showToast } from '../components/ToastNotification';
 import {
   calculateFCL,
@@ -114,6 +114,9 @@ export interface UnifiedPricingRow {
   // State, Workflow & Action Badges
   status: PricingRowStatus;
   actionReason?: string | null;
+  rowClassification: 'inquiry_enriched' | 'new_unmatched' | 'needs_review' | 'alt_make' | 'doc_only' | 'standard_inquiry' | 'no_action';
+  actionStatus?: string;
+  emailDate?: string | null;
   isAiPrepared: boolean;
   alternativeMakeDetected: boolean;
   needsManualLink: boolean;
@@ -314,6 +317,7 @@ export function PricingWorksheet() {
 
   // One-time historical scan state
   const [isScanningHistorical, setIsScanningHistorical] = useState(false);
+  const [isResyncingDocs, setIsResyncingDocs] = useState(false);
   const [historicalProgress, setHistoricalProgress] = useState<{
     batch: number;
     found: number;
@@ -335,13 +339,18 @@ export function PricingWorksheet() {
     dateRange: string;
     totalFound: number;
     totalProcessed: number;
-    pricingEmails: number;
-    pricingCreated: number;
-    pricingEnriched: number;
+    aiPricingDetected: number;
+    inquiriesEnriched: number;
+    newUnlinkedPricing: number;
+    alternativeMakesDetected: number;
+    needsReview: number;
     documentsDetected: number;
     documentsStored: number;
-    inquiriesMatched: number;
-    needsReview: number;
+    documentsLinked: number;
+    documentsNeedingResync: number;
+    documentsUnavailable: number;
+    storageVerificationFailures: number;
+    noAction: number;
     duplicatesSkipped: number;
     errors: string[];
   } | null>(null);
@@ -357,6 +366,11 @@ export function PricingWorksheet() {
   const [customerFilter, setCustomerFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<string>('Needs Action');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [classificationFilter, setClassificationFilter] = useState<string>('all');
+
+  // Table Pagination Controls (Requirement #1: Do not overload browser DOM)
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
 
   // Send to Team Modal target
   const [replyTarget, setReplyTarget] = useState<{
@@ -615,30 +629,60 @@ export function PricingWorksheet() {
         }
       }
 
-      // 4. Fetch AI Email Reviews (recent 100)
-      const { data: aiReviews } = await supabase
-        .from('kunal_ai_email_reviews')
-        .select('*')
-        .order('scanned_at', { ascending: false })
-        .limit(100);
+      // 4. Fetch ALL AI Email Reviews using safe chunked pagination (Requirement #1: complete retrieval without hardcoded truncation)
+      const allAiReviews: any[] = [];
+      let reviewOffset = 0;
+      const REVIEW_CHUNK_SIZE = 500;
+      while (true) {
+        const { data: chunk, error: chunkErr } = await supabase
+          .from('kunal_ai_email_reviews')
+          .select('*')
+          .order('scanned_at', { ascending: false })
+          .range(reviewOffset, reviewOffset + REVIEW_CHUNK_SIZE - 1);
+        if (chunkErr) {
+          console.warn('AI reviews fetch chunk warning:', chunkErr);
+          break;
+        }
+        if (!chunk || chunk.length === 0) break;
+        allAiReviews.push(...chunk);
+        if (chunk.length < REVIEW_CHUNK_SIZE) break;
+        reviewOffset += REVIEW_CHUNK_SIZE;
+      }
+      const aiReviews = allAiReviews;
 
-      // 5. Fetch Documents for inquiries
+      // 5. Fetch ALL Documents to reconcile real storage vs detected AI attachments (Requirement #5)
+      const { data: allDocsData } = await supabase
+        .from('crm_product_documents')
+        .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make, source_gmail_message_id');
+
       const docsMap: Record<string, any[]> = {};
-      if (inqIds.length > 0) {
-        const { data: docsData } = await supabase
-          .from('crm_product_documents')
-          .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make')
-          .in('inquiry_id', inqIds);
-        for (const doc of docsData || []) {
+      const docsByMessageId: Record<string, any[]> = {};
+      const docsByFilename: Record<string, any> = {};
+
+      for (const doc of allDocsData || []) {
+        const docObj = {
+          id: doc.id,
+          documentType: doc.document_type || 'DOC',
+          filename: doc.display_file_name || doc.original_file_name || 'document.pdf',
+          storagePath: doc.storage_path,
+          storageBucket: doc.storage_bucket || 'crm-documents',
+          status: (doc.storage_path ? 'MATCHED' : 'FILE NOT STORED / NEEDS RE-SYNC') as any,
+          isStored: Boolean(doc.storage_path),
+        };
+
+        if (doc.inquiry_id) {
           if (!docsMap[doc.inquiry_id]) docsMap[doc.inquiry_id] = [];
-          docsMap[doc.inquiry_id].push({
-            id: doc.id,
-            documentType: doc.document_type || 'DOC',
-            filename: doc.display_file_name || doc.original_file_name || 'document.pdf',
-            storagePath: doc.storage_path,
-            storageBucket: doc.storage_bucket,
-            status: 'MATCHED' as const,
-          });
+          docsMap[doc.inquiry_id].push(docObj);
+        }
+        if (doc.source_gmail_message_id) {
+          if (!docsByMessageId[doc.source_gmail_message_id]) docsByMessageId[doc.source_gmail_message_id] = [];
+          docsByMessageId[doc.source_gmail_message_id].push(docObj);
+        }
+        if (doc.display_file_name) {
+          docsByFilename[doc.display_file_name.toLowerCase()] = docObj;
+        }
+        if (doc.original_file_name) {
+          docsByFilename[doc.original_file_name.toLowerCase()] = docObj;
         }
       }
 
@@ -752,6 +796,9 @@ export function PricingWorksheet() {
           calcBreakdown: calcResult.calcBreakdown,
           status,
           actionReason,
+          rowClassification: 'standard_inquiry',
+          actionStatus: inq.kunal_price_status || 'requested',
+          emailDate: inq.created_at,
           isAiPrepared: false,
           alternativeMakeDetected: Boolean(
             requestedMake && offeredMake && requestedMake.toLowerCase() !== offeredMake.toLowerCase(),
@@ -786,10 +833,10 @@ export function PricingWorksheet() {
         });
       }
 
-      // Second pass: Merge AI Reviews
+      // Second pass: Merge ALL AI Reviews (Requirement #1, #2, #3, #5)
       for (const rev of aiReviews || []) {
         const raw = rev.raw_result || {};
-        if (raw.fastFiltered || rev.action_status === 'no_action') continue;
+        if (raw.fastFiltered) continue;
 
         const matchedInqId = rev.matched_inquiry_id || raw.suggestedInquiryId;
         const targetRow = matchedInqId ? unifiedMap.get(matchedInqId) : null;
@@ -806,6 +853,30 @@ export function PricingWorksheet() {
         const realThreadId = rev.gmail_thread_id || sourceEmail.threadId || null;
         const hasRealGmail = Boolean(realMessageId);
 
+        // Requirement #5: Reconcile detected documents against real crm_product_documents & storage_path
+        const reconciledDocs = detectedDocs.map((d: any) => {
+          const fname = (d.filename || '').toLowerCase();
+          const matchedDoc = (realMessageId && docsByMessageId[realMessageId]?.find((x: any) => x.filename.toLowerCase() === fname))
+            || docsByFilename[fname]
+            || (d.storagePath ? { storagePath: d.storagePath, isStored: true } : null);
+
+          const realStoragePath = matchedDoc?.storagePath || d.storagePath || null;
+          const isStored = Boolean(realStoragePath);
+          const isUnavailable = Boolean(d.matchStatus === 'FILE UNAVAILABLE / NEEDS REVIEW' || d.isUnavailable);
+
+          return {
+            id: matchedDoc?.id,
+            documentType: d.documentType || 'DOC',
+            filename: d.filename || 'attachment.pdf',
+            storagePath: realStoragePath,
+            storageBucket: d.storageBucket || 'crm-documents',
+            batchNumber: d.batchNumber,
+            status: (isStored ? 'MATCHED' : (isUnavailable ? 'FILE UNAVAILABLE / NEEDS REVIEW' : 'FILE NOT STORED / NEEDS RE-SYNC')) as any,
+            isStored,
+            isUnavailable,
+          };
+        });
+
         const evidenceObj = {
           hasRealGmail,
           sourceType: hasRealGmail ? ('gmail' as const) : ('crm' as const),
@@ -821,47 +892,50 @@ export function PricingWorksheet() {
           threadId: realThreadId,
           messageId: realMessageId,
           attachments: (hasRealGmail && sourceEmail.attachments?.length > 0)
-            ? sourceEmail.attachments.map((a: any) => ({
-                attachmentId: a.attachmentId,
-                filename: a.filename,
-                mimeType: a.mimeType,
-                size: a.size,
-                documentType: a.documentType,
-                matchStatus: a.matchStatus,
-                storagePath: a.storagePath,
-              }))
-            : (detectedDocs.length > 0
-              ? detectedDocs.map((d: any) => ({
-                  filename: d.filename,
-                  documentType: d.documentType,
-                  matchStatus: d.matchStatus,
-                  storagePath: d.storagePath,
-                }))
-              : targetRow?.evidence?.attachments || []),
+            ? sourceEmail.attachments.map((a: any) => {
+                const fname = (a.filename || '').toLowerCase();
+                const matchedDoc = (realMessageId && docsByMessageId[realMessageId]?.find((x: any) => x.filename.toLowerCase() === fname)) || docsByFilename[fname];
+                const realPath = matchedDoc?.storagePath || a.storagePath || null;
+                return {
+                  attachmentId: a.attachmentId,
+                  filename: a.filename,
+                  mimeType: a.mimeType,
+                  size: a.size,
+                  documentType: a.documentType,
+                  matchStatus: realPath ? (a.matchStatus || 'MATCHED') : 'FILE NOT STORED / NEEDS RE-SYNC',
+                  storagePath: realPath,
+                };
+              })
+            : (reconciledDocs.length > 0 ? reconciledDocs : targetRow?.evidence?.attachments || []),
         };
 
         // Determine Document Action Notice
         let docActionNotice: string | null = null;
         const hasAmbiguousDoc = detectedDocs.some((d: any) => d.matchStatus === 'AMBIGUOUS');
         const hasReviewDoc = detectedDocs.some((d: any) => d.matchStatus === 'REVIEW');
+        const hasUnstoredDoc = reconciledDocs.some((d: any) => !d.isStored && !d.isUnavailable);
+        const hasUnavailableDoc = reconciledDocs.some((d: any) => d.isUnavailable);
         if (hasAmbiguousDoc) {
           docActionNotice = 'Document match ambiguous';
-        } else if (hasReviewDoc) {
+        } else if (hasReviewDoc || hasUnavailableDoc) {
           docActionNotice = 'COA needs review';
+        } else if (hasUnstoredDoc) {
+          docActionNotice = 'Attachment needs re-sync';
         }
 
         if (targetRow) {
           // Enrich inquiry row with live AI extraction
           targetRow.aiReviewId = rev.id;
           targetRow.isAiPrepared = true;
-          // When Gmail AI finds a supplier reply for an existing inquiry,
-          // replace CRM fallback evidence with the REAL Gmail evidence
+          targetRow.rowClassification = 'inquiry_enriched';
+          targetRow.actionStatus = rev.action_status;
+          targetRow.emailDate = rev.email_date;
+
           if (hasRealGmail || !targetRow.evidence) {
             targetRow.evidence = evidenceObj;
           }
 
           // Rule 5: Do not use AI Gmail extraction to overwrite a manually entered supplier value.
-          // Manual verified data has priority until a new AI result is explicitly reviewed.
           const hasManualSourcePrice = targetRow.sourcePrice !== null && targetRow.sourcePrice > 0;
           if (extractedPrice && !hasManualSourcePrice) {
             targetRow.sourcePrice = extractedPrice;
@@ -897,16 +971,10 @@ export function PricingWorksheet() {
           if (raw.alternativeMake?.detected) {
             targetRow.alternativeMakeDetected = true;
           }
-          if (detectedDocs.length > 0) {
+          if (reconciledDocs.length > 0) {
             targetRow.documents = [
               ...targetRow.documents,
-              ...detectedDocs.map((d: any) => ({
-                documentType: d.documentType || 'DOC',
-                filename: d.filename || 'attachment.pdf',
-                storagePath: d.storagePath,
-                batchNumber: d.batchNumber,
-                status: (d.matchStatus as any) || 'MATCHED',
-              })),
+              ...reconciledDocs,
             ];
             if (docActionNotice) {
               targetRow.docActionNotice = docActionNotice;
@@ -932,8 +1000,35 @@ export function PricingWorksheet() {
               targetRow.actionReason = 'Price received';
             }
           }
-        } else if ((extractedPrice || detectedDocs.length > 0) && (rev.action_status === 'pending_review' || rev.action_status === 'needs_manual_link')) {
-          // AI review without exact matched inquiry row -> standalone item requiring action ONLY if pending review
+        } else {
+          // Unlinked AI Review -> Categorize distinctly so nothing is lost (Requirement #2 & #3)
+          const isNoAction = rev.action_status === 'no_action' || rev.ai_type === 'No Action' || rev.ai_type === 'NO ACTION';
+          const isAltMake = rev.ai_type === 'ALTERNATIVE MAKE' || Boolean(raw.alternativeMake?.detected);
+          const isDocOnly = (rev.ai_type === 'DOCUMENT RECEIVED' || (reconciledDocs.length > 0 && extractedPrice === null)) && !isNoAction;
+          const isNewPrice = extractedPrice !== null && !isNoAction;
+
+          let rowClassification: UnifiedPricingRow['rowClassification'] = 'needs_review';
+          let status: PricingRowStatus = 'Needs Review';
+          let actionReason = 'Inquiry match ambiguous';
+
+          if (isNoAction) {
+            rowClassification = 'no_action';
+            status = 'Completed';
+            actionReason = 'Archived / Ignored';
+          } else if (isAltMake) {
+            rowClassification = 'alt_make';
+            status = 'Needs Review';
+            actionReason = 'Alternative make offered';
+          } else if (isDocOnly) {
+            rowClassification = 'doc_only';
+            status = 'Needs Review';
+            actionReason = 'Document received';
+          } else if (isNewPrice) {
+            rowClassification = 'new_unmatched';
+            status = 'Needs Review';
+            actionReason = 'New supplier pricing';
+          }
+
           const fallbackId = `ai-${rev.id}`;
           const calc = calculateCanonicalPricing(
             extractedPrice,
@@ -959,7 +1054,7 @@ export function PricingWorksheet() {
             inquiryId: null,
             inquiryNumber: raw.matchedInquiryNumber || 'UNLINKED',
             aceerpNo: raw.aceerpNo || '-',
-            customerName: 'Pending Link',
+            customerName: isNoAction ? 'Archived Mail' : 'Pending Link',
             productName: rev.product_name || extractionRow.product_name || 'Chemical Item',
             specification: extractionRow.specification || '',
             quantity: extractionRow.quantity || '1,000 kg',
@@ -991,18 +1086,16 @@ export function PricingWorksheet() {
             quoteFxIdr: 16200,
             totalQuoteAmount: calc.totalQuoteAmount,
             calcBreakdown: calc.calcBreakdown,
-            status: 'Needs Review',
-            actionReason: raw.needsManualLink ? 'Inquiry match ambiguous' : 'Link inquiry',
+            status,
+            actionReason,
+            rowClassification,
+            actionStatus: rev.action_status,
+            emailDate: rev.email_date,
             isAiPrepared: true,
-            alternativeMakeDetected: Boolean(raw.alternativeMake?.detected),
-            needsManualLink: true,
-            documents: detectedDocs.map((d: any) => ({
-              documentType: d.documentType || 'DOC',
-              filename: d.filename || 'attachment.pdf',
-              batchNumber: d.batchNumber,
-              status: (d.matchStatus as any) || 'REVIEW',
-            })),
-            docActionNotice: docActionNotice || (detectedDocs.length > 0 ? 'Document match ambiguous' : null),
+            alternativeMakeDetected: isAltMake,
+            needsManualLink: !isNoAction,
+            documents: reconciledDocs,
+            docActionNotice: docActionNotice || (reconciledDocs.some((d: any) => !d.isStored) ? 'Attachment needs re-sync' : null),
             evidence: evidenceObj,
             sourceType: 'india',
           });
@@ -1244,26 +1337,27 @@ export function PricingWorksheet() {
         ? `${new Date(minDateScanned).toLocaleDateString()} — ${new Date(maxDateScanned).toLocaleDateString()}`
         : 'Full Mailbox History';
 
-      setHistoricalReport({
-        mailbox: mailboxName,
-        dateRange: dateRangeStr,
-        totalFound,
-        totalProcessed,
-        pricingEmails: totalPricing,
-        pricingCreated: totalPricingCreated,
-        pricingEnriched: totalPricingEnriched,
-        documentsDetected: totalDocs,
-        documentsStored: totalDocsStored,
-        inquiriesMatched: totalInquiriesMatched,
-        needsReview: totalNeedsReview,
-        duplicatesSkipped: totalDuplicatesSkipped,
-        errors: allErrors,
-      });
+      // Automatically run document recovery for newly detected documents
+      try {
+        await resyncHistoricalDocuments();
+      } catch (docErr) {
+        console.warn('Post-scan document recovery warning:', docErr);
+      }
+
+      // Requirement #6: All counts come from actual persisted records, not only in-memory counters
+      const reconciledReport = await fetchHistoricalReconciliation(
+        mailboxName,
+        dateRangeStr,
+        allErrors,
+        totalDuplicatesSkipped,
+      );
+
+      setHistoricalReport(reconciledReport);
 
       showToast({
         type: 'success',
         title: 'Historical Scan Complete',
-        message: `Successfully processed ${totalProcessed} historical emails across ${batchCount} safe batches.`,
+        message: `Processed ${reconciledReport.totalProcessed} historical emails: ${reconciledReport.aiPricingDetected} pricing, ${reconciledReport.documentsStored} docs stored, ${reconciledReport.documentsNeedingResync} need re-sync.`,
       });
 
       await loadData();
@@ -1275,6 +1369,35 @@ export function PricingWorksheet() {
       });
     } finally {
       setIsScanningHistorical(false);
+    }
+  };
+
+  const handleResyncDocuments = async () => {
+    if (isScanning || isScanning7Days || isScanningHistorical || isResyncingDocs) return;
+    setIsResyncingDocs(true);
+    try {
+      showToast({
+        type: 'info',
+        title: 'Document Re-Sync Started',
+        message: 'Recovering unpersisted attachments from Gmail directly into Supabase Storage...',
+      });
+      const result = await resyncHistoricalDocuments();
+      const reconciledReport = await fetchHistoricalReconciliation();
+      setHistoricalReport(reconciledReport);
+      await loadData();
+      showToast({
+        type: 'success',
+        title: 'Document Re-Sync Complete',
+        message: `Stored: ${result.documentsStored}, Linked: ${result.documentsLinked}, Needing Re-Sync: ${result.documentsNeedingResync}, Unavailable: ${result.documentsUnavailable}`,
+      });
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Document Re-Sync Failed',
+        message: err.message || 'Failed to re-sync documents',
+      });
+    } finally {
+      setIsResyncingDocs(false);
     }
   };
 
@@ -1315,9 +1438,14 @@ export function PricingWorksheet() {
   const displayedRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
+      // Classification filter (Requirement #2)
+      if (classificationFilter !== 'all' && r.rowClassification !== classificationFilter) {
+        return false;
+      }
       // Status filter
       if (statusFilter === 'Needs Action') {
-        // EXCLUDE ordinary 'Waiting Supplier' rows from 'Needs Action'
+        // EXCLUDE ordinary 'Waiting Supplier' and 'no_action' rows from 'Needs Action'
+        if (r.rowClassification === 'no_action') return false;
         if (r.status !== 'Needs Review' && r.status !== 'Price Received' && r.status !== 'Ready to Quote') {
           return false;
         }
@@ -1344,7 +1472,15 @@ export function PricingWorksheet() {
       }
       return true;
     });
-  }, [rows, statusFilter, customerFilter, sourceFilter, search]);
+  }, [rows, statusFilter, customerFilter, sourceFilter, classificationFilter, search]);
+
+  // Safe table pagination (Requirement #1: Avoid overloading DOM while allowing full access)
+  const totalPages = Math.max(1, Math.ceil(displayedRows.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const paginatedRows = useMemo(() => {
+    const startIndex = (safePage - 1) * pageSize;
+    return displayedRows.slice(startIndex, startIndex + pageSize);
+  }, [displayedRows, safePage, pageSize]);
 
   // STABLE LOCAL DRAFT INPUT HANDLERS
   // Allows user to type "1", "1250", "4600.50" without losing focus or moving buckets
@@ -1725,12 +1861,23 @@ export function PricingWorksheet() {
               <button
                 id="btn-run-historical-scan"
                 onClick={handleRunHistoricalScan}
-                disabled={isScanning || isScanning7Days || isScanningHistorical}
+                disabled={isScanning || isScanning7Days || isScanningHistorical || isResyncingDocs}
                 className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded font-semibold text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
                 title="Run one-time historical scan across all mailbox history"
               >
                 <Clock className={`w-3.5 h-3.5 text-amber-700 ${isScanningHistorical ? 'animate-spin' : ''}`} />
                 <span>{isScanningHistorical ? 'Scanning History...' : 'RUN FULL HISTORICAL SCAN — ONCE'}</span>
+              </button>
+
+              <button
+                id="btn-resync-documents"
+                onClick={handleResyncDocuments}
+                disabled={isScanning || isScanning7Days || isScanningHistorical || isResyncingDocs}
+                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded font-semibold text-xs flex items-center gap-1.5 shadow-2xs disabled:opacity-50 transition-colors cursor-pointer"
+                title="Automatically re-sync and verify historical email attachments"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-indigo-700 ${isResyncingDocs ? 'animate-spin' : ''}`} />
+                <span>{isResyncingDocs ? 'Re-Syncing Docs...' : 'RE-SYNC DOCUMENTS'}</span>
               </button>
             </div>
           </div>
@@ -1810,7 +1957,7 @@ export function PricingWorksheet() {
           {/* Main Workflow Tabs */}
           <div className="flex flex-wrap items-center gap-1 text-xs">
             <button
-              onClick={() => setStatusFilter('Needs Action')}
+              onClick={() => { setStatusFilter('Needs Action'); setPage(1); }}
               className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-2 ${
                 statusFilter === 'Needs Action'
                   ? 'bg-amber-600 text-white shadow-2xs'
@@ -1827,7 +1974,7 @@ export function PricingWorksheet() {
             </button>
 
             <button
-              onClick={() => setStatusFilter('Waiting Supplier')}
+              onClick={() => { setStatusFilter('Waiting Supplier'); setPage(1); }}
               className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'Waiting Supplier'
                   ? 'bg-blue-600 text-white shadow-2xs'
@@ -1839,7 +1986,7 @@ export function PricingWorksheet() {
             </button>
 
             <button
-              onClick={() => setStatusFilter('Price Received')}
+              onClick={() => { setStatusFilter('Price Received'); setPage(1); }}
               className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'Price Received'
                   ? 'bg-blue-600 text-white shadow-2xs'
@@ -1851,7 +1998,7 @@ export function PricingWorksheet() {
             </button>
 
             <button
-              onClick={() => setStatusFilter('Ready to Quote')}
+              onClick={() => { setStatusFilter('Ready to Quote'); setPage(1); }}
               className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'Ready to Quote'
                   ? 'bg-blue-600 text-white shadow-2xs'
@@ -1863,7 +2010,7 @@ export function PricingWorksheet() {
             </button>
 
             <button
-              onClick={() => setStatusFilter('Completed')}
+              onClick={() => { setStatusFilter('Completed'); setPage(1); }}
               className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'Completed'
                   ? 'bg-blue-600 text-white shadow-2xs'
@@ -1875,7 +2022,7 @@ export function PricingWorksheet() {
             </button>
 
             <button
-              onClick={() => setStatusFilter('all')}
+              onClick={() => { setStatusFilter('all'); setPage(1); }}
               className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'all'
                   ? 'bg-gray-800 text-white shadow-2xs'
@@ -1914,23 +2061,31 @@ export function PricingWorksheet() {
             </select>
 
             <select
-              aria-label="Source Filter"
-              value={sourceFilter}
-              onChange={e => setSourceFilter(e.target.value)}
-              className="border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none"
+              aria-label="Classification Filter"
+              value={classificationFilter}
+              onChange={e => {
+                setClassificationFilter(e.target.value);
+                setPage(1);
+              }}
+              className="border border-gray-200 rounded px-2 py-1 text-xs bg-white focus:outline-none font-medium"
             >
-              <option value="all">All Sources</option>
-              <option value="india">India</option>
-              <option value="china">China</option>
-              <option value="local">Local</option>
+              <option value="all">All Classifications</option>
+              <option value="inquiry_enriched">Enriched Inquiries</option>
+              <option value="new_unmatched">New Unmatched Pricing</option>
+              <option value="alt_make">Alternative Makes</option>
+              <option value="needs_review">Needs Review</option>
+              <option value="doc_only">Document Only</option>
+              <option value="no_action">No Action / Archived</option>
             </select>
 
-            {(search || customerFilter !== 'all' || sourceFilter !== 'all') && (
+            {(search || customerFilter !== 'all' || sourceFilter !== 'all' || classificationFilter !== 'all') && (
               <button
                 onClick={() => {
                   setSearch('');
                   setCustomerFilter('all');
                   setSourceFilter('all');
+                  setClassificationFilter('all');
+                  setPage(1);
                 }}
                 className="text-[11px] text-blue-600 hover:underline px-1 cursor-pointer"
               >
@@ -1989,7 +2144,7 @@ export function PricingWorksheet() {
                     </td>
                   </tr>
                 ) : (
-                  displayedRows.map(row => {
+                  paginatedRows.map(row => {
                     const isExpanded = expandedId === row.id;
                     const sourcePriceDraft =
                       priceDrafts[row.id]?.sourcePrice ?? (row.sourcePrice != null ? String(row.sourcePrice) : '');
@@ -2070,11 +2225,43 @@ export function PricingWorksheet() {
                             onClick={() => setEvidenceDrawerRow(row)}
                           >
                             <div className="font-medium text-gray-900 truncate hover:text-blue-700">{row.productName}</div>
-                            {row.isAiPrepared && (
-                              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-700 bg-amber-100 px-1 rounded">
-                                <Sparkles className="w-2.5 h-2.5" /> AI Prepared
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1 mt-0.5">
+                              {row.rowClassification === 'inquiry_enriched' && (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-blue-700 bg-blue-100/70 border border-blue-200 px-1 py-0.2 rounded" title="Existing inquiry enriched by AI">
+                                  <Sparkles className="w-2.5 h-2.5" /> Enriched
+                                </span>
+                              )}
+                              {row.rowClassification === 'new_unmatched' && (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-800 bg-amber-100 border border-amber-300 px-1 py-0.2 rounded" title="New unmatched AI pricing result">
+                                  <Sparkles className="w-2.5 h-2.5" /> Unmatched
+                                </span>
+                              )}
+                              {row.rowClassification === 'alt_make' && (
+                                <span className="inline-flex items-center text-[9px] font-semibold text-purple-700 bg-purple-100 border border-purple-200 px-1 py-0.2 rounded" title="Alternative make detected">
+                                  Alt Make
+                                </span>
+                              )}
+                              {row.rowClassification === 'doc_only' && (
+                                <span className="inline-flex items-center text-[9px] font-semibold text-cyan-800 bg-cyan-100 border border-cyan-200 px-1 py-0.2 rounded" title="Document-only email">
+                                  Doc Only
+                                </span>
+                              )}
+                              {row.rowClassification === 'needs_review' && (
+                                <span className="inline-flex items-center text-[9px] font-semibold text-amber-900 bg-amber-100 border border-amber-300 px-1 py-0.2 rounded" title="Needs review">
+                                  Needs Review
+                                </span>
+                              )}
+                              {row.rowClassification === 'no_action' && (
+                                <span className="inline-flex items-center text-[9px] font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-1 py-0.2 rounded" title="Archived / Ignored">
+                                  Archived
+                                </span>
+                              )}
+                              {row.isAiPrepared && !row.rowClassification && (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-700 bg-amber-100 px-1 rounded">
+                                  <Sparkles className="w-2.5 h-2.5" /> AI Prepared
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           {/* Requested Make */}
@@ -2771,6 +2958,63 @@ export function PricingWorksheet() {
               </tbody>
             </table>
           </div>
+
+          {/* Table Pagination Bar (Requirement #1: Full retrieval with safe DOM footprint) */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-600">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing{' '}
+                <strong className="text-gray-900 font-mono">
+                  {displayedRows.length === 0 ? 0 : (safePage - 1) * pageSize + 1}
+                </strong>{' '}
+                to{' '}
+                <strong className="text-gray-900 font-mono">
+                  {Math.min(safePage * pageSize, displayedRows.length)}
+                </strong>{' '}
+                of <strong className="text-gray-900 font-mono">{displayedRows.length}</strong> items
+              </span>
+              <span className="text-gray-300">|</span>
+              <div className="flex items-center gap-1">
+                <span>Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="border border-gray-200 bg-white rounded px-1.5 py-0.5 text-xs font-medium focus:outline-none"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-2.5 py-1 bg-white border border-gray-200 hover:bg-gray-100 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="px-2 text-xs font-medium text-gray-700">
+                Page <strong className="font-mono">{safePage}</strong> of{' '}
+                <strong className="font-mono">{totalPages}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="px-2.5 py-1 bg-white border border-gray-200 hover:bg-gray-100 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs transition-colors cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2803,14 +3047,17 @@ export function PricingWorksheet() {
         onSaveCorrection={handleSaveCorrection}
       />
 
-      {/* 7. ONE-TIME HISTORICAL SCAN COMPLETION REPORT MODAL */}
+      {/* 7. ONE-TIME HISTORICAL SCAN COMPLETION REPORT MODAL (Requirement #6) */}
       {historicalReport && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl overflow-hidden border border-gray-200">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl overflow-hidden border border-gray-200">
             <div className="bg-blue-900 text-white px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-green-400" />
-                <h3 className="font-bold text-sm">FINAL HISTORICAL COMPLETION REPORT</h3>
+                <div>
+                  <h3 className="font-bold text-sm">HISTORICAL COMPLETION REPORT</h3>
+                  <p className="text-[10px] text-blue-200">Reconciled directly from persisted database records</p>
+                </div>
               </div>
               <button
                 type="button"
@@ -2823,53 +3070,84 @@ export function PricingWorksheet() {
 
             <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
               <div className="bg-gray-50 border border-gray-200 rounded p-3 grid grid-cols-2 gap-2 text-gray-700">
-                <div><strong>Mailbox Scanned:</strong> {historicalReport.mailbox}</div>
-                <div><strong>Date Range Scanned:</strong> {historicalReport.dateRange}</div>
+                <div><strong>Mailbox:</strong> {historicalReport.mailbox}</div>
+                <div><strong>Date Range:</strong> {historicalReport.dateRange}</div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {/* Requirement #6: 12 Distinct Metrics derived from persisted DB records */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                 <div className="border border-gray-200 rounded p-2.5 bg-white">
-                  <div className="text-[11px] text-gray-500 font-medium">Total Messages Found</div>
-                  <div className="text-base font-bold text-gray-900 font-mono mt-0.5">{historicalReport.totalFound}</div>
+                  <div className="text-[10px] text-gray-500 font-medium">Total Processed</div>
+                  <div className="text-base font-bold text-gray-900 font-mono mt-0.5">{historicalReport.totalProcessed}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-blue-50/50">
-                  <div className="text-[11px] text-blue-700 font-medium">Total Messages Processed</div>
-                  <div className="text-base font-bold text-blue-900 font-mono mt-0.5">{historicalReport.totalProcessed}</div>
+
+                <div className="border border-blue-200 rounded p-2.5 bg-blue-50/50">
+                  <div className="text-[10px] text-blue-700 font-medium">AI Pricing Detected</div>
+                  <div className="text-base font-bold text-blue-900 font-mono mt-0.5">{historicalReport.aiPricingDetected}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-green-50/50">
-                  <div className="text-[11px] text-green-700 font-medium">Pricing Emails Detected</div>
-                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.pricingEmails}</div>
+
+                <div className="border border-green-200 rounded p-2.5 bg-green-50/50">
+                  <div className="text-[10px] text-green-700 font-medium">Inquiries Enriched</div>
+                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.inquiriesEnriched}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-green-50/50">
-                  <div className="text-[11px] text-green-700 font-medium">Pricing Records Created</div>
-                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.pricingCreated}</div>
+
+                <div className="border border-amber-200 rounded p-2.5 bg-amber-50/50">
+                  <div className="text-[10px] text-amber-700 font-medium">New Unlinked Pricing</div>
+                  <div className="text-base font-bold text-amber-900 font-mono mt-0.5">{historicalReport.newUnlinkedPricing}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-green-50/50">
-                  <div className="text-[11px] text-green-700 font-medium">Pricing Records Enriched</div>
-                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.pricingEnriched}</div>
+
+                <div className="border border-purple-200 rounded p-2.5 bg-purple-50/50">
+                  <div className="text-[10px] text-purple-700 font-medium">Alternative Makes</div>
+                  <div className="text-base font-bold text-purple-900 font-mono mt-0.5">{historicalReport.alternativeMakesDetected}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-purple-50/50">
-                  <div className="text-[11px] text-purple-700 font-medium">Documents Detected</div>
-                  <div className="text-base font-bold text-purple-900 font-mono mt-0.5">{historicalReport.documentsDetected}</div>
+
+                <div className="border border-amber-300 rounded p-2.5 bg-amber-50/70">
+                  <div className="text-[10px] text-amber-800 font-medium">Needs Review</div>
+                  <div className="text-base font-bold text-amber-950 font-mono mt-0.5">{historicalReport.needsReview}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-purple-50/50">
-                  <div className="text-[11px] text-purple-700 font-medium">Documents Stored</div>
-                  <div className="text-base font-bold text-purple-900 font-mono mt-0.5">{historicalReport.documentsStored}</div>
+
+                <div className="border border-indigo-200 rounded p-2.5 bg-indigo-50/50">
+                  <div className="text-[10px] text-indigo-700 font-medium">Documents Detected</div>
+                  <div className="text-base font-bold text-indigo-900 font-mono mt-0.5">{historicalReport.documentsDetected}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-blue-50/50">
-                  <div className="text-[11px] text-blue-700 font-medium">Inquiries Matched</div>
-                  <div className="text-base font-bold text-blue-900 font-mono mt-0.5">{historicalReport.inquiriesMatched}</div>
+
+                <div className="border border-green-200 rounded p-2.5 bg-green-50/50">
+                  <div className="text-[10px] text-green-700 font-medium">Documents Actually Stored</div>
+                  <div className="text-base font-bold text-green-900 font-mono mt-0.5">{historicalReport.documentsStored}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-amber-50/50">
-                  <div className="text-[11px] text-amber-700 font-medium">Needs Review</div>
-                  <div className="text-base font-bold text-amber-900 font-mono mt-0.5">{historicalReport.needsReview}</div>
+
+                <div className="border border-emerald-200 rounded p-2.5 bg-emerald-50/50">
+                  <div className="text-[10px] text-emerald-700 font-medium">Documents Successfully Linked</div>
+                  <div className="text-base font-bold text-emerald-900 font-mono mt-0.5">{historicalReport.documentsLinked}</div>
                 </div>
+
+                <div className="border border-red-200 rounded p-2.5 bg-red-50/50">
+                  <div className="text-[10px] text-red-700 font-medium">Documents Needing Re-Sync</div>
+                  <div className="text-base font-bold text-red-900 font-mono mt-0.5">{historicalReport.documentsNeedingResync}</div>
+                </div>
+
+                <div className="border border-gray-200 rounded p-2.5 bg-gray-50/80">
+                  <div className="text-[10px] text-gray-700 font-medium">Documents Unavailable</div>
+                  <div className="text-base font-bold text-gray-900 font-mono mt-0.5">{historicalReport.documentsUnavailable}</div>
+                </div>
+
+                <div className="border border-amber-200 rounded p-2.5 bg-amber-50/50">
+                  <div className="text-[10px] text-amber-700 font-medium">Storage Verification Failures</div>
+                  <div className="text-base font-bold text-amber-900 font-mono mt-0.5">{historicalReport.storageVerificationFailures}</div>
+                </div>
+
                 <div className="border border-gray-200 rounded p-2.5 bg-gray-50">
-                  <div className="text-[11px] text-gray-500 font-medium">Duplicates Skipped</div>
+                  <div className="text-[10px] text-gray-500 font-medium">No Action / Archived</div>
+                  <div className="text-base font-bold text-gray-700 font-mono mt-0.5">{historicalReport.noAction}</div>
+                </div>
+
+                <div className="border border-gray-200 rounded p-2.5 bg-gray-50">
+                  <div className="text-[10px] text-gray-500 font-medium">Duplicates Skipped</div>
                   <div className="text-base font-bold text-gray-700 font-mono mt-0.5">{historicalReport.duplicatesSkipped}</div>
                 </div>
-                <div className="border border-gray-200 rounded p-2.5 bg-red-50/50">
-                  <div className="text-[11px] text-red-700 font-medium">Errors</div>
+
+                <div className="border border-red-200 rounded p-2.5 bg-red-50/50">
+                  <div className="text-[10px] text-red-700 font-medium">Errors Encountered</div>
                   <div className="text-base font-bold text-red-900 font-mono mt-0.5">{historicalReport.errors.length}</div>
                 </div>
               </div>

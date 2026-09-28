@@ -103,8 +103,49 @@ test('I. One-Time Full Historical Email Scan: backfill logic, duplicate protecti
   assert.ok(pricingWorksheetCode.includes('RUN FULL HISTORICAL SCAN — ONCE'), 'button exists in PricingWorksheet');
   assert.ok(pricingWorksheetCode.includes('handleRunHistoricalScan'), 'handleRunHistoricalScan exists');
   assert.ok(pricingWorksheetCode.includes('historicalProgress'), 'tracks historical progress');
-  assert.ok(pricingWorksheetCode.includes('historicalReport'), 'renders FINAL HISTORICAL COMPLETION REPORT');
-  assert.ok(pricingWorksheetCode.includes('FINAL HISTORICAL COMPLETION REPORT'), 'report modal header exists');
+  assert.ok(pricingWorksheetCode.includes('historicalReport'), 'renders HISTORICAL COMPLETION REPORT');
+  assert.ok(pricingWorksheetCode.includes('HISTORICAL COMPLETION REPORT'), 'report modal header exists');
   assert.ok(sapjAgentCode.includes('fullHistoricalScan'), 'sapj-gmail-agent supports fullHistoricalScan flag');
   assert.ok(kunalIndiaPriceCode.includes('fullHistoricalScan'), 'kunalIndiaPrice service supports fullHistoricalScan');
+});
+
+test('J. Full Historical AI Results: No .limit(100) and safe paginated retrieval', () => {
+  assert.ok(!pricingWorksheetCode.includes(".limit(100)"), 'UI does NOT restrict AI reviews with .limit(100)');
+  assert.ok(pricingWorksheetCode.includes('REVIEW_CHUNK_SIZE = 500'), 'uses safe chunked pagination for AI reviews');
+  assert.ok(pricingWorksheetCode.includes('paginatedRows'), 'uses paginatedRows to prevent DOM overload');
+  assert.ok(pricingWorksheetCode.includes('pageSize'), 'supports adjustable page sizes');
+  assert.ok(pricingWorksheetCode.includes('safePage'), 'calculates safe page index');
+});
+
+test('K. Distinct Categorization: Enriched inquiry, unmatched pricing, alt make, doc only, needs review, no action', () => {
+  assert.ok(pricingWorksheetCode.includes('rowClassification'), 'tracks rowClassification');
+  assert.ok(pricingWorksheetCode.includes('classificationFilter'), 'supports classificationFilter');
+  assert.ok(pricingWorksheetCode.includes("'inquiry_enriched'"), 'distinguishes inquiry_enriched');
+  assert.ok(pricingWorksheetCode.includes("'new_unmatched'"), 'distinguishes new_unmatched');
+  assert.ok(pricingWorksheetCode.includes("'alt_make'"), 'distinguishes alt_make');
+  assert.ok(pricingWorksheetCode.includes("'doc_only'"), 'distinguishes doc_only');
+  assert.ok(pricingWorksheetCode.includes("'needs_review'"), 'distinguishes needs_review');
+  assert.ok(pricingWorksheetCode.includes("'no_action'"), 'distinguishes no_action');
+});
+
+test('L. Real Document Storage: Only increments if storage upload and db record succeed with storage_path', () => {
+  assert.ok(sapjAgentCode.includes('documentsStoredCount += 1') || sapjAgentCode.includes('documentsStoredCount++'), 'increments documentsStoredCount');
+  assert.ok(sapjAgentCode.includes('documentErrorsCount += 1') || sapjAgentCode.includes('documentErrorsCount++'), 'increments documentErrorsCount on any upload/insert failure');
+  assert.ok(sapjAgentCode.includes('storage_path: storagePath'), 'verifies storage_path exists');
+  assert.ok(pricingWorksheetCode.includes('isStored'), 'tracks boolean isStored based on real storage_path');
+  assert.ok(pricingWorksheetCode.includes('FILE NOT STORED / NEEDS RE-SYNC'), 'marks un-synced docs');
+});
+
+test('M. Reconciled Completion Report: Separate numbers from persisted DB records', () => {
+  assert.ok(kunalIndiaPriceCode.includes('fetchHistoricalReconciliation'), 'fetchHistoricalReconciliation exists');
+  assert.ok(pricingWorksheetCode.includes('fetchHistoricalReconciliation'), 'invokes fetchHistoricalReconciliation after scan');
+  assert.ok(pricingWorksheetCode.includes('aiPricingDetected'), 'shows aiPricingDetected card');
+  assert.ok(pricingWorksheetCode.includes('inquiriesEnriched'), 'shows inquiriesEnriched card');
+  assert.ok(pricingWorksheetCode.includes('newUnlinkedPricing'), 'shows newUnlinkedPricing card');
+  assert.ok(pricingWorksheetCode.includes('alternativeMakesDetected'), 'shows alternativeMakesDetected card');
+  assert.ok(pricingWorksheetCode.includes('needsReview'), 'shows needsReview card');
+  assert.ok(pricingWorksheetCode.includes('documentsDetected'), 'shows documentsDetected card');
+  assert.ok(pricingWorksheetCode.includes('documentsStored'), 'shows documentsStored card');
+  assert.ok(pricingWorksheetCode.includes('documentsNeedingResync'), 'shows documentsNeedingResync card');
+  assert.ok(pricingWorksheetCode.includes('noAction'), 'shows noAction card');
 });

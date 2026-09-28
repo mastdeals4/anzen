@@ -19,6 +19,7 @@ import {
   Paperclip,
   Check,
   Database,
+  RefreshCw,
 } from 'lucide-react';
 
 interface Props {
@@ -45,15 +46,51 @@ interface Props {
   }) => Promise<void>;
 }
 
-interface ThreadEmailItem {
-  id: string;
-  message_id: string;
+export interface GmailAttachment {
+  filename: string;
+  mimeType: string;
+  size: number;
+  attachmentId?: string;
+  storagePath?: string | null;
+  storageBucket?: string;
+  documentType?: string;
+  matchStatus?: string;
+}
+
+export interface GmailThreadMessage {
+  messageId: string;
+  threadId: string;
+  from: string;
+  to: string;
+  cc?: string;
   subject: string;
-  from_email: string;
-  from_name: string | null;
-  to_email: string | null;
-  body: string | null;
-  received_date: string;
+  date: string | null;
+  snippet: string;
+  body: string;
+  bodyHtml?: string;
+  bodyText?: string;
+  attachments: GmailAttachment[];
+  hasAttachments: boolean;
+  labels?: string[];
+}
+
+function formatBytes(bytes: number, decimals = 1): string {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+function getInitials(fromStr = ''): string {
+  const clean = fromStr.replace(/<.*>/, '').trim();
+  if (!clean) return 'G';
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
 }
 
 export function KunalEmailEvidenceDrawer({
@@ -68,9 +105,14 @@ export function KunalEmailEvidenceDrawer({
   const [activeTab, setActiveTab] = useState<'both' | 'source' | 'ai'>('both');
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [showFullThread, setShowFullThread] = useState(false);
-  const [threadEmails, setThreadEmails] = useState<ThreadEmailItem[]>([]);
+
+  // Live Gmail thread state
+  const [threadMessages, setThreadMessages] = useState<GmailThreadMessage[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [connectedEmail, setConnectedEmail] = useState<string | null>(null);
+  const [expandedMsgIds, setExpandedMsgIds] = useState<Record<string, boolean>>({});
+  const [streamingAttachmentId, setStreamingAttachmentId] = useState<string | null>(null);
 
   // Edit fields
   const [editInquiryId, setEditInquiryId] = useState('');
@@ -92,40 +134,102 @@ export function KunalEmailEvidenceDrawer({
       setEditCurrency(row.sourceCurrency || 'INR');
       setEditUnit(row.unit || 'KG');
       setIsEditing(false);
-      setShowFullThread(false);
     }
   }, [row]);
 
-  // Load Gmail thread messages if real thread ID is present
-  useEffect(() => {
-    const threadId = row?.evidence?.hasRealGmail ? row.evidence.threadId : null;
-    if (isOpen && threadId) {
-      setLoadingThread(true);
-      supabase
-        .from('crm_email_inbox')
-        .select('id, message_id, subject, from_email, from_name, to_email, body, received_date')
-        .eq('thread_id', threadId)
-        .order('received_date', { ascending: true })
-        .then(
-          ({ data, error }) => {
-            if (!error && data) {
-              setThreadEmails(data as ThreadEmailItem[]);
-            }
-            setLoadingThread(false);
-          },
-          () => {
-            setLoadingThread(false);
-          },
-        );
-    } else {
-      setThreadEmails([]);
+  // Fetch full Gmail thread from edge function
+  const fetchThread = async (tId?: string | null, mId?: string | null) => {
+    if (!tId && !mId) return;
+    setLoadingThread(true);
+    setThreadError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('gmail-inbox-message', {
+        body: {
+          threadId: tId || undefined,
+          messageId: mId || undefined,
+          includeThread: true,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Failed to fetch thread from Gmail connection');
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.error || data?.code || 'Thread could not be retrieved from connected Gmail accounts');
+      }
+
+      const msgs = (data.thread_messages || []) as GmailThreadMessage[];
+      setThreadMessages(msgs);
+      setConnectedEmail(data.emailAddress || null);
+
+      // Expand target message and latest message by default
+      const initialExpanded: Record<string, boolean> = {};
+      const targetMsgId = mId || (msgs.length > 0 ? msgs[msgs.length - 1].messageId : null);
+
+      msgs.forEach((m, idx) => {
+        if (m.messageId === targetMsgId || idx === msgs.length - 1 || msgs.length <= 2) {
+          initialExpanded[m.messageId] = true;
+        }
+      });
+      setExpandedMsgIds(initialExpanded);
+    } catch (err: any) {
+      console.error('[KunalEmailEvidenceDrawer] Error loading thread:', err);
+      setThreadError(err.message || 'Failed to retrieve complete Gmail thread from connected account.');
+    } finally {
+      setLoadingThread(false);
     }
-  }, [isOpen, row?.evidence?.hasRealGmail, row?.evidence?.threadId]);
+  };
+
+  // Load Gmail thread messages when drawer opens
+  useEffect(() => {
+    if (isOpen && row?.evidence?.hasRealGmail) {
+      const tId = row.evidence.threadId;
+      const mId = row.evidence.messageId;
+      if (tId || mId) {
+        fetchThread(tId, mId);
+      } else {
+        setThreadMessages([]);
+        setThreadError('No Gmail thread or message ID associated with this review.');
+      }
+    } else {
+      setThreadMessages([]);
+      setThreadError(null);
+      setConnectedEmail(null);
+      setExpandedMsgIds({});
+    }
+  }, [isOpen, row?.id, row?.evidence?.hasRealGmail, row?.evidence?.threadId, row?.evidence?.messageId]);
+
+  const toggleMessage = (msgId: string) => {
+    setExpandedMsgIds(prev => ({
+      ...prev,
+      [msgId]: !prev[msgId],
+    }));
+  };
+
+  const handleExpandAll = () => {
+    const allExp: Record<string, boolean> = {};
+    threadMessages.forEach(m => {
+      allExp[m.messageId] = true;
+    });
+    setExpandedMsgIds(allExp);
+  };
+
+  const handleCollapseAll = () => {
+    const targetMsgId = row?.evidence?.messageId;
+    const collapsed: Record<string, boolean> = {};
+    if (targetMsgId) collapsed[targetMsgId] = true;
+    setExpandedMsgIds(collapsed);
+  };
 
   // Helper to open / download documents via signed URL
   const handleOpenDocument = async (storagePath?: string, filename?: string, isDownload = false) => {
     if (!storagePath) {
-      showToast({ type: 'warning', title: 'File Missing', message: 'No file storage path recorded for this document. Please upload manually or run catch-up sync.' });
+      showToast({
+        type: 'warning',
+        title: 'File Missing',
+        message: 'No file storage path recorded for this document. Please upload manually or run catch-up sync.',
+      });
       return;
     }
     try {
@@ -142,11 +246,60 @@ export function KunalEmailEvidenceDrawer({
     }
   };
 
+  // Helper to stream attachment live from Gmail API via Edge Function
+  const handleStreamGmailAttachment = async (
+    messageId: string,
+    attachmentId: string,
+    filename: string,
+    mimeType?: string,
+    isDownload = false
+  ) => {
+    setStreamingAttachmentId(`${messageId}-${attachmentId}`);
+    try {
+      const { data, error } = await supabase.functions.invoke('gmail-attachment-view', {
+        body: {
+          messageId,
+          attachmentId,
+          filename,
+          mimeType,
+          disposition: isDownload ? 'attachment' : 'inline',
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Could not fetch attachment bytes from Gmail');
+      }
+
+      const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      if (isDownload) {
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      }
+
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Attachment Retrieval Failed',
+        message: err.message || 'Failed to download attachment from Gmail',
+      });
+    } finally {
+      setStreamingAttachmentId(null);
+    }
+  };
+
   if (!isOpen || !row) return null;
 
   const evidence = row.evidence;
-  const hasRealGmail = Boolean(evidence?.hasRealGmail && evidence?.messageId);
-  const attachments = evidence?.attachments || [];
+  const hasRealGmail = Boolean(evidence?.hasRealGmail && (evidence?.messageId || evidence?.threadId));
 
   const handleSaveEdit = async () => {
     setIsSaving(true);
@@ -177,12 +330,12 @@ export function KunalEmailEvidenceDrawer({
     <div className="fixed inset-0 z-50 flex justify-end">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/30 backdrop-blur-[1px] transition-opacity"
+        className="fixed inset-0 bg-black/35 backdrop-blur-[1px] transition-opacity"
         onClick={onClose}
       />
 
-      {/* Internal Slide-Over Panel */}
-      <div className="relative w-full max-w-3xl bg-white h-full shadow-2xl z-10 flex flex-col border-l border-gray-200 overflow-hidden animate-in slide-in-from-right duration-200">
+      {/* Internal Slide-Over Panel (spacious for side-by-side thread + AI view) */}
+      <div className="relative w-full max-w-5xl lg:max-w-6xl bg-white h-full shadow-2xl z-10 flex flex-col border-l border-gray-200 overflow-hidden animate-in slide-in-from-right duration-200">
         {/* Panel Header */}
         <div className="p-3.5 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
@@ -195,11 +348,12 @@ export function KunalEmailEvidenceDrawer({
                   ? (evidence?.subject || 'Supplier Email Evidence')
                   : `CRM Inquiry ${row.inquiryNumber} — ${row.productName}`}
               </div>
-              <div className="text-[10px] text-gray-500 flex items-center gap-2">
+              <div className="text-[10px] text-gray-500 flex items-center gap-2 flex-wrap">
                 {hasRealGmail ? (
                   <>
                     <span>From: <strong className="text-gray-700">{evidence?.from || 'Unknown'}</strong></span>
                     {evidence?.date && <span>• {new Date(evidence.date).toLocaleDateString()}</span>}
+                    {connectedEmail && <span className="text-gray-500">• Connected via: <strong className="text-gray-700">{connectedEmail}</strong></span>}
                     {row.inquiryNumber && <span className="text-blue-700 font-mono">[{row.inquiryNumber}]</span>}
                   </>
                 ) : (
@@ -226,7 +380,7 @@ export function KunalEmailEvidenceDrawer({
                 onClick={() => setActiveTab('source')}
                 className={`px-2 py-0.5 rounded cursor-pointer ${activeTab === 'source' ? 'bg-white text-gray-900 shadow-2xs' : 'text-gray-600'}`}
               >
-                {hasRealGmail ? 'Source Email' : 'CRM Source'}
+                {hasRealGmail ? `Gmail Thread (${threadMessages.length || 1})` : 'CRM Source'}
               </button>
               <button
                 onClick={() => setActiveTab('ai')}
@@ -282,20 +436,21 @@ export function KunalEmailEvidenceDrawer({
           )}
 
           {/* Grid Layout: Source Evidence vs AI Extraction */}
-          <div className={`grid gap-4 ${activeTab === 'both' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+          <div className={`grid gap-4 ${activeTab === 'both' ? 'grid-cols-1 lg:grid-cols-12' : 'grid-cols-1'}`}>
             {/* ============================================================ */}
-            {/* COLUMN 1: SOURCE EVIDENCE (ACTUAL GMAIL OR CRM FALLBACK) */}
+            {/* COLUMN 1: SOURCE EVIDENCE (COMPLETE GMAIL THREAD OR CRM) */}
             {/* ============================================================ */}
             {(activeTab === 'both' || activeTab === 'source') && (
-              <div className="border border-gray-200 rounded-lg bg-gray-50/60 p-3 space-y-3 flex flex-col">
-                <div className="flex items-center justify-between pb-2 border-b border-gray-200">
-                  <div className="flex items-center gap-1.5">
+              <div className={`border border-gray-200 rounded-lg bg-gray-50/70 p-3.5 space-y-3 flex flex-col ${activeTab === 'both' ? 'lg:col-span-7' : ''}`}>
+                {/* Header with Thread count and Controls */}
+                <div className="flex items-center justify-between pb-2 border-b border-gray-200 gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
                     <span className="font-bold text-gray-900 uppercase tracking-wide text-[11px]">
                       Source Evidence
                     </span>
                     {hasRealGmail ? (
                       <span className="text-[10px] bg-green-100 text-green-800 border border-green-200 px-1.5 py-0.5 rounded font-bold">
-                        Actual Gmail
+                        Actual Gmail ({threadMessages.length} msg{threadMessages.length !== 1 ? 's' : ''})
                       </span>
                     ) : (
                       <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded font-bold">
@@ -304,120 +459,277 @@ export function KunalEmailEvidenceDrawer({
                     )}
                   </div>
 
-                  {hasRealGmail && threadEmails.length > 1 && (
-                    <button
-                      onClick={() => setShowFullThread(!showFullThread)}
-                      className="text-[10px] text-blue-600 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
-                    >
-                      {showFullThread ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      <span>{loadingThread ? 'Loading thread...' : showFullThread ? 'Current Message Only' : `Full Thread (${threadEmails.length})`}</span>
-                    </button>
+                  {hasRealGmail && threadMessages.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleExpandAll}
+                        className="text-[10px] text-blue-600 hover:underline cursor-pointer font-medium"
+                      >
+                        Expand All
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <button
+                        onClick={handleCollapseAll}
+                        className="text-[10px] text-blue-600 hover:underline cursor-pointer font-medium"
+                      >
+                        Collapse Older
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <button
+                        onClick={() => fetchThread(row.evidence?.threadId, row.evidence?.messageId)}
+                        disabled={loadingThread}
+                        className="text-[10px] text-gray-500 hover:text-gray-800 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Refresh thread"
+                      >
+                        <RefreshCw className={`w-2.5 h-2.5 ${loadingThread ? 'animate-spin' : ''}`} />
+                        <span>Refresh</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
                 {hasRealGmail ? (
-                  /* REAL GMAIL HEADERS & BODY */
-                  <>
-                    <div className="bg-white border border-gray-200 rounded p-2 text-[11px] space-y-1 font-mono text-gray-700">
-                      <div><strong className="text-gray-900">From:</strong> {evidence?.from || 'Unknown'}</div>
-                      <div><strong className="text-gray-900">To:</strong> {evidence?.to || 'kunal@sapharmajaya.co.id'}</div>
-                      {evidence?.cc && <div><strong className="text-gray-900">CC:</strong> {evidence.cc}</div>}
-                      <div><strong className="text-gray-900">Date:</strong> {evidence?.date ? new Date(evidence.date).toLocaleString() : 'N/A'}</div>
-                      <div><strong className="text-gray-900">Subject:</strong> {evidence?.subject || '(No Subject)'}</div>
-                      <div><strong className="text-gray-900">Message ID:</strong> <span className="text-gray-500">{evidence?.messageId}</span></div>
-                      {evidence?.threadId && (
-                        <div><strong className="text-gray-900">Thread ID:</strong> <span className="text-gray-500">{evidence.threadId}</span></div>
-                      )}
-                    </div>
-
-                    {/* Thread Accordion */}
-                    {showFullThread && threadEmails.length > 0 && (
-                      <div className="space-y-2 border-l-2 border-blue-400 pl-2">
-                        <div className="text-[10px] font-bold text-blue-900 uppercase">Gmail Thread History:</div>
-                        {threadEmails.map((te, idx) => (
-                          <div key={te.id || idx} className="bg-white border border-gray-200 rounded p-2 text-[10px] space-y-1">
-                            <div className="flex items-center justify-between font-bold text-gray-700">
-                              <span>{te.from_name || te.from_email}</span>
-                              <span className="font-normal text-gray-400">{new Date(te.received_date).toLocaleDateString()}</span>
-                            </div>
-                            <div className="text-gray-600 whitespace-pre-wrap max-h-32 overflow-y-auto font-sans">
-                              {te.body || '(No body text)'}
-                            </div>
-                          </div>
-                        ))}
+                  /* ============================================================ */
+                  /* COMPLETE GMAIL THREAD (OLDEST -> NEWEST) */
+                  /* ============================================================ */
+                  <div className="space-y-3">
+                    {/* Loading State */}
+                    {loadingThread && threadMessages.length === 0 && (
+                      <div className="p-8 flex flex-col items-center justify-center gap-3 text-gray-500 bg-white rounded-lg border border-gray-200">
+                        <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                        <div className="text-xs font-medium">Fetching complete Gmail thread from connected account...</div>
                       </div>
                     )}
 
-                    {/* Main Email Body Content */}
-                    <div className="flex-1 bg-white border border-gray-200 rounded p-3 overflow-y-auto max-h-[320px] font-sans text-gray-800 leading-relaxed whitespace-pre-wrap selection:bg-blue-100">
-                      {evidence?.bodyText || evidence?.quote || 'No email body available in review.'}
-                    </div>
-
-                    {/* Real Email Attachments */}
-                    <div className="space-y-1.5 pt-1">
-                      <div className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
-                        <Paperclip className="w-3 h-3" />
-                        <span>Email Attachments ({attachments.length}):</span>
-                      </div>
-
-                      {attachments.length === 0 ? (
-                        <div className="text-[11px] text-gray-400 italic">No attachments detected in this email.</div>
-                      ) : (
-                        <div className="space-y-1">
-                          {attachments.map((att, idx) => (
-                            <div
-                              key={att.id || att.attachmentId || idx}
-                              className="bg-white border border-gray-200 rounded p-1.5 flex items-center justify-between gap-2"
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
-                                <span className="text-[11px] font-medium text-gray-800 truncate" title={att.filename}>
-                                  {att.filename}
-                                </span>
-                                {att.documentType && (
-                                  <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded font-bold">
-                                    {att.documentType}
-                                  </span>
-                                )}
-                                {att.storagePath ? (
-                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
-                                    ✓ Uploaded
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] text-amber-700 font-semibold flex-shrink-0 bg-amber-50 px-1 rounded border border-amber-200">
-                                    FILE NOT STORED / NEEDS RE-SYNC
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenDocument(att.storagePath, att.filename, false)}
-                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
-                                  title="Open document via signed URL"
-                                >
-                                  <Eye className="w-3 h-3" />
-                                  <span>View</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenDocument(att.storagePath, att.filename, true)}
-                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
-                                  title="Download attachment"
-                                >
-                                  <Download className="w-3 h-3" />
-                                  <span>Get</span>
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                    {/* Real Error State (Requirement #7) */}
+                    {threadError && (
+                      <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs space-y-2">
+                        <div className="flex items-center gap-1.5 font-bold text-red-900">
+                          <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                          <span>Gmail Retrieval Notice</span>
                         </div>
-                      )}
-                    </div>
-                  </>
+                        <div className="text-red-700 text-[11px] leading-relaxed">
+                          {threadError}
+                        </div>
+                        <div className="pt-1 flex items-center gap-2">
+                          <button
+                            onClick={() => fetchThread(row.evidence?.threadId, row.evidence?.messageId)}
+                            disabled={loadingThread}
+                            className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded font-medium text-[11px] cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${loadingThread ? 'animate-spin' : ''}`} />
+                            <span>Retry Fetch</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Thread Messages List (Chronological: Oldest -> Newest) */}
+                    {!loadingThread && threadMessages.length === 0 && !threadError && (
+                      <div className="p-4 bg-white border border-gray-200 rounded-lg text-center text-gray-500 text-xs">
+                        No messages found in this Gmail thread.
+                      </div>
+                    )}
+
+                    {threadMessages.length > 0 && (
+                      <div className="space-y-2.5">
+                        {threadMessages.map((msg, idx) => {
+                          const isTargetExtracted = msg.messageId === row.evidence?.messageId;
+                          const isExpanded = Boolean(expandedMsgIds[msg.messageId]);
+                          const hasAtts = msg.attachments && msg.attachments.length > 0;
+
+                          return (
+                            <div
+                              key={msg.messageId || idx}
+                              className={`rounded-lg border transition-all duration-150 overflow-hidden ${
+                                isTargetExtracted
+                                  ? 'border-indigo-400 bg-indigo-50/20 shadow-xs ring-1 ring-indigo-400/50'
+                                  : 'border-gray-200 bg-white hover:border-gray-300'
+                              }`}
+                            >
+                              {/* Clickable Card Header */}
+                              <div
+                                onClick={() => toggleMessage(msg.messageId)}
+                                className={`p-2.5 flex items-center justify-between gap-3 cursor-pointer select-none ${
+                                  isTargetExtracted ? 'bg-indigo-50/40' : 'bg-gray-50/40 hover:bg-gray-50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div
+                                    className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 ${
+                                      isTargetExtracted ? 'bg-indigo-600 text-white shadow-2xs' : 'bg-gray-200 text-gray-700'
+                                    }`}
+                                  >
+                                    {getInitials(msg.from)}
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className={`font-semibold text-xs truncate ${isTargetExtracted ? 'text-indigo-950 font-bold' : 'text-gray-900'}`}>
+                                        {msg.from || 'Unknown Sender'}
+                                      </span>
+                                      {isTargetExtracted && (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                          <Sparkles className="w-2.5 h-2.5 text-indigo-600" />
+                                          AI EXTRACTION SOURCE
+                                        </span>
+                                      )}
+                                      {hasAtts && (
+                                        <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-semibold bg-gray-100 text-gray-600">
+                                          <Paperclip className="w-2.5 h-2.5" />
+                                          {msg.attachments.length}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {!isExpanded && (
+                                      <div className="text-[11px] text-gray-500 truncate max-w-lg font-sans">
+                                        {msg.snippet || msg.body?.slice(0, 100) || '(No preview available)'}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <span className="text-[10px] text-gray-400 font-sans">
+                                    {msg.date
+                                      ? new Date(msg.date).toLocaleString([], {
+                                          month: 'short',
+                                          day: 'numeric',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                        })
+                                      : 'N/A'}
+                                  </span>
+                                  <div className="text-gray-400">
+                                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Expanded Card Details */}
+                              {isExpanded && (
+                                <div className="border-t border-gray-100 p-3 space-y-3 bg-white">
+                                  {/* Detailed Headers Table */}
+                                  <div className="bg-gray-50/80 rounded p-2.5 text-[10.5px] space-y-1 font-mono text-gray-700 border border-gray-200/70">
+                                    <div><strong className="text-gray-900 font-sans">From:</strong> {msg.from}</div>
+                                    <div><strong className="text-gray-900 font-sans">To:</strong> {msg.to}</div>
+                                    {msg.cc && <div><strong className="text-gray-900 font-sans">CC:</strong> {msg.cc}</div>}
+                                    <div>
+                                      <strong className="text-gray-900 font-sans">Date:</strong>{' '}
+                                      {msg.date ? new Date(msg.date).toLocaleString() : 'N/A'}
+                                    </div>
+                                    <div><strong className="text-gray-900 font-sans">Subject:</strong> {msg.subject}</div>
+                                    <div className="flex items-center gap-3 text-[10px] text-gray-400 pt-0.5">
+                                      <span>Message ID: <span className="font-mono text-gray-500">{msg.messageId}</span></span>
+                                      {msg.threadId && (
+                                        <span>Thread ID: <span className="font-mono text-gray-500">{msg.threadId}</span></span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* FULL Email Body Content */}
+                                  <div className="bg-white border border-gray-200 rounded p-3 text-xs leading-relaxed text-gray-800 whitespace-pre-wrap font-sans max-h-[380px] overflow-y-auto selection:bg-indigo-100">
+                                    {msg.bodyText || msg.body || msg.snippet || 'No text content available in this message.'}
+                                  </div>
+
+                                  {/* Attachments for this Message */}
+                                  {hasAtts && (
+                                    <div className="space-y-1.5 pt-1">
+                                      <div className="text-[10px] font-bold text-gray-700 uppercase flex items-center gap-1">
+                                        <Paperclip className="w-3 h-3 text-gray-500" />
+                                        <span>Message Attachments ({msg.attachments.length}):</span>
+                                      </div>
+                                      <div className="space-y-1">
+                                        {msg.attachments.map((att, aIdx) => {
+                                          const isBusy = streamingAttachmentId === `${msg.messageId}-${att.attachmentId}`;
+                                          return (
+                                            <div
+                                              key={att.attachmentId || aIdx}
+                                              className="bg-white border border-gray-200 rounded p-1.5 flex items-center justify-between gap-2"
+                                            >
+                                              <div className="flex items-center gap-1.5 min-w-0">
+                                                <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                                                <span className="text-[11px] font-medium text-gray-800 truncate" title={att.filename}>
+                                                  {att.filename}
+                                                </span>
+                                                {att.size > 0 && (
+                                                  <span className="text-[9px] text-gray-400 font-mono">
+                                                    ({formatBytes(att.size)})
+                                                  </span>
+                                                )}
+                                                {att.documentType && (
+                                                  <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded font-bold">
+                                                    {att.documentType}
+                                                  </span>
+                                                )}
+                                                {att.storagePath ? (
+                                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0 bg-green-50 px-1 rounded border border-green-200">
+                                                    ✓ Stored in CRM
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-[9px] text-blue-700 font-semibold flex-shrink-0 bg-blue-50 px-1 rounded border border-blue-200">
+                                                    Gmail Attachment
+                                                  </span>
+                                                )}
+                                              </div>
+
+                                              <div className="flex items-center gap-1 flex-shrink-0">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    if (att.storagePath) {
+                                                      handleOpenDocument(att.storagePath, att.filename, false);
+                                                    } else if (att.attachmentId) {
+                                                      handleStreamGmailAttachment(msg.messageId, att.attachmentId, att.filename, att.mimeType, false);
+                                                    } else {
+                                                      showToast({ type: 'warning', title: 'File Unavailable', message: 'Attachment cannot be opened directly.' });
+                                                    }
+                                                  }}
+                                                  disabled={isBusy}
+                                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer disabled:opacity-40"
+                                                  title="View attachment"
+                                                >
+                                                  <Eye className="w-3 h-3" />
+                                                  <span>{isBusy ? 'Opening...' : 'View'}</span>
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    if (att.storagePath) {
+                                                      handleOpenDocument(att.storagePath, att.filename, true);
+                                                    } else if (att.attachmentId) {
+                                                      handleStreamGmailAttachment(msg.messageId, att.attachmentId, att.filename, att.mimeType, true);
+                                                    } else {
+                                                      showToast({ type: 'warning', title: 'File Unavailable', message: 'Attachment cannot be downloaded directly.' });
+                                                    }
+                                                  }}
+                                                  disabled={isBusy}
+                                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer disabled:opacity-40"
+                                                  title="Download attachment"
+                                                >
+                                                  <Download className="w-3 h-3" />
+                                                  <span>{isBusy ? 'Downloading...' : 'Get'}</span>
+                                                </button>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 ) : (
-                  /* CRM FALLBACK CARD — NO FAKE GMAIL HEADERS */
+                  /* ============================================================ */
+                  /* CRM FALLBACK CARD (NO FAKE GMAIL HEADERS) */
+                  /* ============================================================ */
                   <div className="space-y-3">
                     <div className="bg-amber-50/70 border border-amber-200 rounded p-3 text-xs space-y-2">
                       <div className="font-bold text-amber-950 flex items-center gap-1.5 text-[11px]">
@@ -467,8 +779,8 @@ export function KunalEmailEvidenceDrawer({
                                   {doc.filename}
                                 </span>
                                 {doc.storagePath ? (
-                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0">
-                                    ✓ Uploaded
+                                  <span className="text-[9px] text-green-700 font-semibold flex-shrink-0 bg-green-50 px-1 rounded border border-green-200">
+                                    ✓ Stored in CRM
                                   </span>
                                 ) : (
                                   <span className="text-[9px] text-amber-700 font-semibold flex-shrink-0 bg-amber-50 px-1 rounded border border-amber-200">
@@ -481,8 +793,9 @@ export function KunalEmailEvidenceDrawer({
                                 <button
                                   type="button"
                                   onClick={() => handleOpenDocument(doc.storagePath, doc.filename, false)}
-                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
-                                  title="View document via signed URL"
+                                  disabled={!doc.storagePath}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer disabled:opacity-40"
+                                  title="View document"
                                 >
                                   <Eye className="w-3 h-3" />
                                   <span>View</span>
@@ -490,7 +803,8 @@ export function KunalEmailEvidenceDrawer({
                                 <button
                                   type="button"
                                   onClick={() => handleOpenDocument(doc.storagePath, doc.filename, true)}
-                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                  disabled={!doc.storagePath}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] flex items-center gap-0.5 cursor-pointer disabled:opacity-40"
                                   title="Download document"
                                 >
                                   <Download className="w-3 h-3" />
@@ -508,10 +822,10 @@ export function KunalEmailEvidenceDrawer({
             )}
 
             {/* ============================================================ */}
-            {/* COLUMN 2: AI EXTRACTION / UNDERSTOOD DATA */}
+            {/* COLUMN 2: AI EXTRACTION / UNDERSTOOD DATA (BESIDE THE THREAD) */}
             {/* ============================================================ */}
             {(activeTab === 'both' || activeTab === 'ai') && (
-              <div className="border border-blue-200 rounded-lg bg-blue-50/20 p-3 space-y-3 flex flex-col">
+              <div className={`border border-blue-200 rounded-lg bg-blue-50/20 p-3.5 space-y-3 flex flex-col ${activeTab === 'both' ? 'lg:col-span-5' : ''}`}>
                 <div className="flex items-center justify-between pb-2 border-b border-blue-200">
                   <div className="flex items-center gap-1.5">
                     <span className="font-bold text-blue-950 uppercase tracking-wide text-[11px]">
@@ -764,4 +1078,5 @@ export function KunalEmailEvidenceDrawer({
     </div>
   );
 }
+
 export default KunalEmailEvidenceDrawer;

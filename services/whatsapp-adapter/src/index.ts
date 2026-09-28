@@ -53,6 +53,47 @@ app.get('/api/status', async (_req: Request, res: Response) => {
   }
 });
 
+// Session Lifecycle: Connect / Start Session
+app.post('/api/session/connect', async (_req: Request, res: Response) => {
+  try {
+    const status = provider.connect ? await provider.connect() : await provider.getStatus();
+    res.status(200).json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Session Lifecycle: Disconnect / Log Out Session
+app.post('/api/session/disconnect', async (_req: Request, res: Response) => {
+  try {
+    const status = provider.disconnect ? await provider.disconnect() : await provider.getStatus();
+    res.status(200).json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Session Lifecycle: Refresh QR Code
+app.post('/api/session/refresh-qr', async (_req: Request, res: Response) => {
+  try {
+    const status = provider.refreshQr ? await provider.refreshQr() : await provider.getStatus();
+    res.status(200).json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Session Lifecycle: Pair / Confirm Scan
+app.post('/api/session/pair', async (req: Request, res: Response) => {
+  try {
+    const { phone } = req.body || {};
+    const status = provider.pair ? await provider.pair(phone) : await provider.getStatus();
+    res.status(200).json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Outbound Send
 app.post('/api/messages/send', requireApiKey, async (req: Request, res: Response) => {
   const { to, text, options } = req.body;
@@ -73,8 +114,17 @@ app.post('/api/messages/send', requireApiKey, async (req: Request, res: Response
 });
 
 // Test / Staging Inbound Injection Endpoint
-// Allows automated tests to simulate inbound customer messages & media
-app.post('/api/test/inject-inbound', requireApiKey, async (req: Request, res: Response) => {
+// Allows automated tests or UI test trigger to simulate inbound customer messages & media
+app.post('/api/test/inject-inbound', async (req: Request, res: Response) => {
+  // Allow API key or localhost
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const isLocalhost = req.hostname === 'localhost' || req.hostname === '127.0.0.1';
+
+  if (!isLocalhost && token !== ADAPTER_API_KEY) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid adapter API key' });
+  }
+
   try {
     const result = await provider.forwardInboundToErp(req.body);
     res.status(result.success ? 200 : 502).json(result);

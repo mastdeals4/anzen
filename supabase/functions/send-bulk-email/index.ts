@@ -553,6 +553,43 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // ── 3b. Enforce strict email account roles ─────────────────────────────
+    // CRM / Sales: sales@sapharmajaya.co.id
+    // Kunal Pricing: kunal@avira.co.id
+    // CRM/Bulk Email must send from sales@sapharmajaya.co.id.
+    // Kunal Pricing must send from kunal@avira.co.id.
+    // Never cross-use these accounts.
+    const senderEmail = (connection.email_address || "").toLowerCase().trim();
+    const CRM_SALES_EMAIL = "sales@sapharmajaya.co.id";
+    const KUNAL_PRICING_EMAIL = "kunal@avira.co.id";
+
+    const CRM_WORKFLOWS = ["crm_bulk_email", "customer_quote", "stock_update", "delivery_log"];
+    const PRICING_WORKFLOWS = ["pricing_sourcing", "pricing_reminder", "india_pricing"];
+
+    if (CRM_WORKFLOWS.includes(workflowType)) {
+      if (senderEmail === KUNAL_PRICING_EMAIL) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `CRM / Bulk Email workflow cannot send from Kunal Pricing account (${KUNAL_PRICING_EMAIL}). Must send from ${CRM_SALES_EMAIL}.`,
+            code: "STRICT_ACCOUNT_ROLE_VIOLATION",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    } else if (PRICING_WORKFLOWS.includes(workflowType)) {
+      if (senderEmail === CRM_SALES_EMAIL) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Pricing workflow cannot send from CRM/Sales account (${CRM_SALES_EMAIL}). Must send from ${KUNAL_PRICING_EMAIL}.`,
+            code: "STRICT_ACCOUNT_ROLE_VIOLATION",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // ── 4. Build & send via Gmail API ─────────────────────────────────────
     // Token refresh credentials come from the Edge Function environment only.
     const accessToken = await getValidAccessToken(supabase, connection, {});

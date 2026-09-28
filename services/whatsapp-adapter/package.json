@@ -9,13 +9,19 @@
     "dev": "ts-node-dev --respawn src/index.ts",
     "test": "node --test"
   },
-  "keywords": ["open-wa", "whatsapp", "erp-adapter"],
+  "keywords": [
+    "open-wa",
+    "whatsapp",
+    "erp-adapter"
+  ],
   "author": "Anzen Development Team",
   "license": "UNLICENSED",
   "dependencies": {
-    "express": "^4.19.2",
+    "@types/qrcode": "^1.5.6",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

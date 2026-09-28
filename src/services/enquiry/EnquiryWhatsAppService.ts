@@ -84,7 +84,7 @@ export class EnquiryWhatsAppService {
       if (!res.ok) {
         return {
           status: 'error',
-          session: 'staging',
+          session: 'sapj-business-whatsapp',
           error: `HTTP ${res.status}: ${res.statusText}`,
         };
       }
@@ -92,8 +92,137 @@ export class EnquiryWhatsAppService {
     } catch (err: any) {
       return {
         status: 'disconnected',
-        session: 'staging',
-        error: err.message || 'Adapter unreachable',
+        session: 'sapj-business-whatsapp',
+        error: err.message || 'WhatsApp adapter service unreachable on port 3100',
+      };
+    }
+  }
+
+  /**
+   * Initiates OpenWA session connection / starts QR generation.
+   */
+  static async connectSession(): Promise<WhatsAppConnectionStatusResult> {
+    try {
+      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
+      const res = await fetch(`${adapterUrl}/api/session/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        return {
+          status: 'error',
+          session: 'sapj-business-whatsapp',
+          error: `HTTP ${res.status}: ${res.statusText}`,
+        };
+      }
+      return await res.json();
+    } catch (err: any) {
+      return {
+        status: 'disconnected',
+        session: 'sapj-business-whatsapp',
+        error: err.message || 'Failed to connect WhatsApp session',
+      };
+    }
+  }
+
+  /**
+   * Disconnects / logs out active WhatsApp session.
+   */
+  static async disconnectSession(): Promise<WhatsAppConnectionStatusResult> {
+    try {
+      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
+      const res = await fetch(`${adapterUrl}/api/session/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        return {
+          status: 'error',
+          session: 'sapj-business-whatsapp',
+          error: `HTTP ${res.status}: ${res.statusText}`,
+        };
+      }
+      return await res.json();
+    } catch (err: any) {
+      return {
+        status: 'disconnected',
+        session: 'sapj-business-whatsapp',
+        error: err.message || 'Failed to disconnect WhatsApp session',
+      };
+    }
+  }
+
+  /**
+   * Requests a fresh QR code for session authentication.
+   */
+  static async refreshQr(): Promise<WhatsAppConnectionStatusResult> {
+    try {
+      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
+      const res = await fetch(`${adapterUrl}/api/session/refresh-qr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        return {
+          status: 'error',
+          session: 'sapj-business-whatsapp',
+          error: `HTTP ${res.status}: ${res.statusText}`,
+        };
+      }
+      return await res.json();
+    } catch (err: any) {
+      return {
+        status: 'disconnected',
+        session: 'sapj-business-whatsapp',
+        error: err.message || 'Failed to refresh QR code',
+      };
+    }
+  }
+
+  /**
+   * Pairs the business WhatsApp session (confirms scan or sets verified business phone).
+   */
+  static async pairSession(phone?: string): Promise<WhatsAppConnectionStatusResult> {
+    try {
+      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
+      const res = await fetch(`${adapterUrl}/api/session/pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      if (!res.ok) {
+        return {
+          status: 'error',
+          session: 'sapj-business-whatsapp',
+          error: `HTTP ${res.status}: ${res.statusText}`,
+        };
+      }
+      return await res.json();
+    } catch (err: any) {
+      return {
+        status: 'disconnected',
+        session: 'sapj-business-whatsapp',
+        error: err.message || 'Failed to pair session',
+      };
+    }
+  }
+
+  /**
+   * Injects an inbound test message to verify end-to-end ingestion into ERP.
+   */
+  static async injectTestInbound(payload: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+    try {
+      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
+      const res = await fetch(`${adapterUrl}/api/test/inject-inbound`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return await res.json();
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message || 'Failed to trigger test inbound message',
       };
     }
   }
