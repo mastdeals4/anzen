@@ -64,7 +64,8 @@ export type PricingRowStatus =
   | 'Price Received'
   | 'Ready to Quote'
   | 'Waiting Supplier'
-  | 'Completed';
+  | 'Completed'
+  | 'Archived';
 
 export interface UnifiedPricingRow {
   id: string; // unique row id (inquiry id or ai review id)
@@ -270,9 +271,10 @@ function calculateCanonicalPricing(
 
   const landedCost = Math.round(res.landed_cost_per_kg_usd * 100) / 100;
   const suggestedQuote = Math.round(res.final_price_per_kg_usd * 100) / 100;
-  const finalQuote = overrides?.quotePriceOverride !== undefined
+  // CRITICAL: Preserve difference between Suggested Quote (recommendation) and Actual Quoted Price (approved quote)
+  const finalQuote = (overrides?.quotePriceOverride !== undefined && overrides?.quotePriceOverride !== null && overrides.quotePriceOverride > 0)
     ? overrides.quotePriceOverride
-    : suggestedQuote;
+    : null;
 
   const totalQuote = finalQuote ? Math.round(finalQuote * sellingQty * 100) / 100 : null;
 
@@ -512,7 +514,7 @@ export function PricingWorksheet() {
         .eq('id', targetRow.aiReviewId);
     }
 
-    const nextStatus: PricingRowStatus = targetRow.quotePrice ? 'Ready to Quote' : 'Price Received';
+    const nextStatus: PricingRowStatus = (targetRow.quotePrice && targetRow.quotePrice > 0) ? 'Completed' : 'Needs Review';
     updateRow(rowId, {
       status: nextStatus,
       actionReason: null,
@@ -526,6 +528,7 @@ export function PricingWorksheet() {
   };
 
   // Direct manual correction from evidence drawer
+  // Direct manual correction from evidence drawer
   const handleSaveCorrection = async (
     rowId: string,
     correction: {
@@ -536,6 +539,7 @@ export function PricingWorksheet() {
       sourcePrice?: number | null;
       sourceCurrency?: 'INR' | 'USD';
       unit?: string;
+      quotePrice?: number | null;
     },
   ) => {
     const targetRow = rows.find(r => r.id === rowId);
@@ -543,20 +547,82 @@ export function PricingWorksheet() {
 
     const matchedInquiry = allInquiriesList.find(i => i.id === correction.inquiryId);
     const updatedInqId = correction.inquiryId || targetRow.inquiryId;
+    const effectiveQuotePrice = correction.quotePrice !== undefined ? correction.quotePrice : targetRow.quotePrice;
+    const isQuoteReady = Boolean(effectiveQuotePrice && effectiveQuotePrice > 0);
+
+    const finalSourcePrice = correction.sourcePrice !== undefined ? correction.sourcePrice : targetRow.sourcePrice;
+    const finalSourceCurrency = correction.sourceCurrency || targetRow.sourceCurrency;
+
+    let purchasePriceUsdPerKg = targetRow.purchasePriceUsdPerKg;
+    let landedCostUsd = targetRow.landedCostUsd;
+    let suggestedQuoteUsd = targetRow.suggestedQuoteUsd;
+    let totalQuoteAmount = targetRow.totalQuoteAmount;
+    let calcBreakdown = targetRow.calcBreakdown;
+
+    if (finalSourcePrice && finalSourcePrice > 0) {
+      const calc = calculateCanonicalPricing(
+        finalSourcePrice,
+        finalSourceCurrency,
+        targetRow.quantity,
+        config,
+        {
+          containerType: targetRow.containerType,
+          packingType: targetRow.packingType,
+          effectiveInrRate: targetRow.effectiveInrRate,
+          indiaMarginPct: targetRow.indiaMarginPct,
+          freightUsdPerKg: targetRow.freightUsdPerKg,
+          dutyPct: targetRow.dutyPct,
+          insurancePct: targetRow.insurancePct,
+          clearanceUsd: targetRow.clearanceUsd,
+          indonesiaMarginPct: targetRow.indonesiaMarginPct,
+          quotePriceOverride: effectiveQuotePrice,
+        },
+      );
+      purchasePriceUsdPerKg = calc.purchasePriceUsdPerKg;
+      landedCostUsd = calc.landedCostUsd;
+      suggestedQuoteUsd = calc.suggestedQuoteUsd;
+      totalQuoteAmount = calc.totalQuoteAmount;
+      calcBreakdown = calc.calcBreakdown;
+    }
 
     const patch: Partial<UnifiedPricingRow> = {
       ...correction,
+      quotePrice: effectiveQuotePrice,
+      purchasePriceUsdPerKg,
+      landedCostUsd,
+      suggestedQuoteUsd,
+      totalQuoteAmount,
+      calcBreakdown,
       inquiryId: updatedInqId,
       inquiryNumber: matchedInquiry?.inquiry_number || targetRow.inquiryNumber,
       aceerpNo: matchedInquiry?.aceerp_no || targetRow.aceerpNo,
       customerName: matchedInquiry?.company_name || targetRow.customerName,
       productName: correction.productName || targetRow.productName,
       needsManualLink: false,
-      actionReason: null,
-      status: (correction.sourcePrice && correction.sourcePrice > 0) ? 'Ready to Quote' : 'Price Received',
+      actionReason: isQuoteReady ? null : 'Pending quoted price',
+      status: isQuoteReady ? 'Completed' : 'Needs Review',
     };
 
     updateRow(rowId, patch);
+
+    const now = new Date().toISOString();
+    if (updatedInqId) {
+      await supabase
+        .from('crm_inquiries')
+        .update({
+          purchase_price: landedCostUsd,
+          offered_price: effectiveQuotePrice,
+          purchase_price_currency: 'USD',
+          offered_price_currency: targetRow.quoteCurrency,
+          kunal_price_status: isQuoteReady ? 'entered' : 'requested',
+          price_ready: isQuoteReady,
+          quote_status: 'not_sent',
+          supplier_name: patch.offeredMake || targetRow.requestedMake,
+          source_status: finalSourcePrice ? 'received' : 'waiting',
+          updated_at: now,
+        })
+        .eq('id', updatedInqId);
+    }
 
     if (targetRow.aiReviewId) {
       await supabase
@@ -567,8 +633,8 @@ export function PricingWorksheet() {
           offered_make: patch.offeredMake,
           source_price: patch.sourcePrice,
           source_currency: patch.sourceCurrency,
-          action_status: 'reviewed',
-          updated_at: new Date().toISOString(),
+          action_status: isQuoteReady ? 'price_saved' : 'reviewed',
+          updated_at: now,
         })
         .eq('id', targetRow.aiReviewId);
     }
@@ -696,11 +762,24 @@ export function PricingWorksheet() {
 
         // CRITICAL FIX: Only use actual source_price from pricing_options.
         // DO NOT use old CRM purchase_price as calculated landed cost or source price!
-        const sourcePrice: number | null = selectedOpt?.source_price ?? null;
+        const sourcePrice: number | null = selectedOpt?.source_price != null ? Number(selectedOpt.source_price) : null;
         const sourceCurrency: 'INR' | 'USD' = (selectedOpt?.source_currency as any) === 'USD' ? 'USD' : 'INR';
         const requestedMake = inq.supplier_name || '';
         const offeredMake = selectedOpt?.offered_make || inq.supplier_name || '';
         const supplierName = selectedOpt?.supplier || '';
+
+        // REQUIREMENT #2: Load existing saved customer quote correctly.
+        // First resolve actual saved customer quote from selected pricing option selling_price.
+        // BUT if no usable selected option selling_price, use crm_inquiries.offered_price when populated.
+        const actualQuotedPrice: number | null =
+          (selectedOpt?.selling_price !== undefined && selectedOpt?.selling_price !== null && Number(selectedOpt.selling_price) > 0)
+            ? Number(selectedOpt.selling_price)
+            : (inq.offered_price !== undefined && inq.offered_price !== null && Number(inq.offered_price) > 0)
+              ? Number(inq.offered_price)
+              : null;
+
+        const quoteCurrency: 'USD' | 'IDR' =
+          (selectedOpt?.selling_currency === 'IDR' || inq.offered_price_currency === 'IDR') ? 'IDR' : 'USD';
 
         // Default Canonical FCL Assumptions
         const containerType: '20ft' | '40ft' = '20ft';
@@ -718,7 +797,7 @@ export function PricingWorksheet() {
           purchasePriceUsdPerKg: null as number | null,
           landedCostUsd: null as number | null,
           suggestedQuoteUsd: null as number | null,
-          quotePrice: null as number | null,
+          quotePrice: actualQuotedPrice,
           totalQuoteAmount: null as number | null,
           calcBreakdown: null as Record<string, number> | null,
         };
@@ -739,20 +818,41 @@ export function PricingWorksheet() {
               insurancePct,
               clearanceUsd,
               indonesiaMarginPct,
-              quotePriceOverride: selectedOpt?.selling_price ?? null,
+              quotePriceOverride: actualQuotedPrice,
             },
           );
+        } else {
+          calcResult.quotePrice = actualQuotedPrice;
         }
 
-        // Status Determination:
-        // Inquiries without active incoming AI email reviews remain in 'Waiting Supplier'
-        // or 'Completed' if a customer quote was entered/sent.
-        // They must NOT jump to 'Needs Action' ('Price Received' / 'Ready to Quote').
-        let status: PricingRowStatus = 'Waiting Supplier';
-        const actionReason: string | null = null;
+        // REQUIREMENT #4: Fix Completed Status.
+        // COMPLETED must mean there is an actual completed quotation state (actual quote exists and is saved/sent).
+        // If supplier price exists but customer quote missing -> Ready to Quote
+        // If supplier price missing -> Waiting Supplier
+        // If quote_status = 'sent' or entered but quote price is missing -> Needs Review (data inconsistency)
+        const hasQuotedPrice = actualQuotedPrice !== null && actualQuotedPrice > 0;
+        const isQuoteSent = inq.quote_status === 'sent';
+        const isQuoteEntered = inq.kunal_price_status === 'entered';
+        const hasSupplierPrice = sourcePrice !== null && sourcePrice > 0;
 
-        if (inq.quote_status === 'sent' || inq.kunal_price_status === 'entered') {
+        let status: PricingRowStatus = 'Waiting Supplier';
+        let actionReason: string | null = null;
+
+        if (hasQuotedPrice) {
           status = 'Completed';
+        } else {
+          if (isQuoteSent) {
+            status = 'Needs Review';
+            actionReason = 'Quote marked sent but price missing';
+          } else if (isQuoteEntered) {
+            status = 'Needs Review';
+            actionReason = 'Status entered but quote price missing';
+          } else if (hasSupplierPrice) {
+            status = 'Ready to Quote';
+            actionReason = 'Ready to quote';
+          } else {
+            status = 'Waiting Supplier';
+          }
         }
 
         const docs = docsMap[inq.id] || [];
@@ -790,7 +890,7 @@ export function PricingWorksheet() {
           landedCostUsd: calcResult.landedCostUsd,
           suggestedQuoteUsd: calcResult.suggestedQuoteUsd,
           quotePrice: calcResult.quotePrice,
-          quoteCurrency: 'USD',
+          quoteCurrency,
           quoteFxIdr: 16200,
           totalQuoteAmount: calcResult.totalQuoteAmount,
           calcBreakdown: calcResult.calcBreakdown,
@@ -955,6 +1055,7 @@ export function PricingWorksheet() {
                 insurancePct: targetRow.insurancePct,
                 clearanceUsd: targetRow.clearanceUsd,
                 indonesiaMarginPct: targetRow.indonesiaMarginPct,
+                quotePriceOverride: targetRow.quotePrice,
               },
             );
             targetRow.purchasePriceUsdPerKg = calc.purchasePriceUsdPerKg;
@@ -984,20 +1085,16 @@ export function PricingWorksheet() {
           // Transition to action statuses ONLY if the review is pending review and row is not Completed
           const isPendingReview = rev.action_status === 'pending_review' || rev.action_status === 'needs_manual_link';
           if (isPendingReview && targetRow.status !== 'Completed') {
+            targetRow.status = 'Needs Review';
             if (raw.needsManualLink) {
-              targetRow.status = 'Needs Review';
               targetRow.needsManualLink = true;
               targetRow.actionReason = 'Inquiry match ambiguous';
             } else if (raw.alternativeMake?.detected) {
               targetRow.actionReason = 'Confirm make';
             } else if (docActionNotice) {
               targetRow.actionReason = docActionNotice;
-            } else if (targetRow.quotePrice && targetRow.landedCostUsd) {
-              targetRow.status = 'Ready to Quote';
-              targetRow.actionReason = 'Ready to quote';
-            } else if (targetRow.sourcePrice) {
-              targetRow.status = 'Price Received';
-              targetRow.actionReason = 'Price received';
+            } else {
+              targetRow.actionReason = 'Supplier price received - pending quote';
             }
           }
         } else {
@@ -1013,7 +1110,7 @@ export function PricingWorksheet() {
 
           if (isNoAction) {
             rowClassification = 'no_action';
-            status = 'Completed';
+            status = 'Archived';
             actionReason = 'Archived / Ignored';
           } else if (isAltMake) {
             rowClassification = 'alt_make';
@@ -1444,8 +1541,8 @@ export function PricingWorksheet() {
       }
       // Status filter
       if (statusFilter === 'Needs Action') {
-        // EXCLUDE ordinary 'Waiting Supplier' and 'no_action' rows from 'Needs Action'
-        if (r.rowClassification === 'no_action') return false;
+        // EXCLUDE ordinary 'Waiting Supplier' and 'no_action' / 'Archived' rows from 'Needs Action'
+        if (r.rowClassification === 'no_action' || r.status === 'Archived') return false;
         if (r.status !== 'Needs Review' && r.status !== 'Price Received' && r.status !== 'Ready to Quote') {
           return false;
         }
@@ -1514,6 +1611,7 @@ export function PricingWorksheet() {
             insurancePct: row.insurancePct,
             clearanceUsd: row.clearanceUsd,
             indonesiaMarginPct: row.indonesiaMarginPct,
+            quotePriceOverride: row.quotePrice,
           },
         );
 
@@ -1523,8 +1621,8 @@ export function PricingWorksheet() {
           purchasePriceUsdPerKg: calc.purchasePriceUsdPerKg,
           landedCostUsd: calc.landedCostUsd,
           suggestedQuoteUsd: calc.suggestedQuoteUsd,
-          quotePrice: calc.quotePrice,
-          totalQuoteAmount: calc.totalQuoteAmount,
+          quotePrice: row.quotePrice,
+          totalQuoteAmount: row.quotePrice ? Math.round(row.quotePrice * (parseFloat(String(row.quantity || '0').replace(/[^0-9.]/g, '')) || 12000) * 100) / 100 : null,
           calcBreakdown: calc.calcBreakdown,
           // CRITICAL: DO NOT MODIFY row.status during typing!
         };
@@ -1749,21 +1847,23 @@ export function PricingWorksheet() {
           .eq('id', row.aiReviewId);
       }
 
-      // Transition row status after save:
-      // A Waiting Supplier record that has been manually entered and saved must NOT jump to Needs Action!
-      // If quote price was entered and saved, it transitions to 'Completed'.
-      // If no quote price was entered, it remains in 'Waiting Supplier'.
-      let nextStatus: PricingRowStatus = 'Waiting Supplier';
+      // Direct transition to Completed when Actual Quoted Price exists.
+      // If unquoted:
+      //   - if supplier price exists, it remains in 'Needs Review' (so it stays in 'NEED ACTION NOW' ready for quote)
+      //   - if no supplier price exists, it remains in 'Waiting Supplier'.
+      let nextStatus: PricingRowStatus;
       if (isQuoteEntered) {
         nextStatus = 'Completed';
-      } else if (row.status === 'Waiting Supplier') {
-        nextStatus = 'Waiting Supplier';
-      } else if (row.status === 'Needs Review' || row.status === 'Price Received') {
-        nextStatus = 'Waiting Supplier';
+      } else if (row.sourcePrice && row.sourcePrice > 0) {
+        nextStatus = 'Needs Review';
       } else {
-        nextStatus = row.status;
+        nextStatus = 'Waiting Supplier';
       }
-      updateRow(row.id, { status: nextStatus, needsManualLink: false, actionReason: null });
+      updateRow(row.id, {
+        status: nextStatus,
+        needsManualLink: false,
+        actionReason: isQuoteEntered ? null : 'Pending quoted price',
+      });
       showToast({ type: 'success', title: 'Saved', message: `Pricing saved for ${row.inquiryNumber}.` });
     } catch (err: any) {
       showToast({ type: 'error', title: 'Save Failed', message: err.message || 'Could not save pricing' });
@@ -1955,7 +2055,8 @@ export function PricingWorksheet() {
         {/* ============================================================ */}
         <div className="space-y-2">
           {/* Main Workflow Tabs */}
-          <div className="flex flex-wrap items-center gap-1 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            {/* Primary Flow Tabs */}
             <button
               onClick={() => { setStatusFilter('Needs Action'); setPage(1); }}
               className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-2 ${
@@ -1975,7 +2076,7 @@ export function PricingWorksheet() {
 
             <button
               onClick={() => { setStatusFilter('Waiting Supplier'); setPage(1); }}
-              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'Waiting Supplier'
                   ? 'bg-blue-600 text-white shadow-2xs'
                   : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
@@ -1986,34 +2087,10 @@ export function PricingWorksheet() {
             </button>
 
             <button
-              onClick={() => { setStatusFilter('Price Received'); setPage(1); }}
-              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
-                statusFilter === 'Price Received'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
-              }`}
-            >
-              <span>Price Received</span>
-              <span className="text-[10px] opacity-75 font-semibold">({counts.priceReceived})</span>
-            </button>
-
-            <button
-              onClick={() => { setStatusFilter('Ready to Quote'); setPage(1); }}
-              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
-                statusFilter === 'Ready to Quote'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
-              }`}
-            >
-              <span>Ready to Quote</span>
-              <span className="text-[10px] opacity-75 font-semibold">({counts.readyToQuote})</span>
-            </button>
-
-            <button
               onClick={() => { setStatusFilter('Completed'); setPage(1); }}
-              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'Completed'
-                  ? 'bg-blue-600 text-white shadow-2xs'
+                  ? 'bg-green-700 text-white shadow-2xs'
                   : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
               }`}
             >
@@ -2023,13 +2100,43 @@ export function PricingWorksheet() {
 
             <button
               onClick={() => { setStatusFilter('all'); setPage(1); }}
-              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-2.5 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 ${
                 statusFilter === 'all'
                   ? 'bg-gray-800 text-white shadow-2xs'
                   : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
               }`}
             >
               <span>All ({counts.total})</span>
+            </button>
+
+            {/* Informational Sub-filters */}
+            <div className="h-4 w-px bg-gray-300 mx-1 hidden sm:block" />
+            <span className="text-[10px] text-gray-400 font-semibold uppercase hidden md:inline">Filters:</span>
+
+            <button
+              onClick={() => { setStatusFilter('Price Received'); setPage(1); }}
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                statusFilter === 'Price Received'
+                  ? 'bg-slate-700 text-white shadow-2xs'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+              }`}
+              title="Informational filter: inquiries where supplier price has been received"
+            >
+              <span>Price Received</span>
+              <span className="text-[10px] opacity-75 font-semibold">({counts.priceReceived})</span>
+            </button>
+
+            <button
+              onClick={() => { setStatusFilter('Ready to Quote'); setPage(1); }}
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                statusFilter === 'Ready to Quote'
+                  ? 'bg-slate-700 text-white shadow-2xs'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+              }`}
+              title="Informational filter: inquiries ready for customer quotation"
+            >
+              <span>Ready to Quote</span>
+              <span className="text-[10px] opacity-75 font-semibold">({counts.readyToQuote})</span>
             </button>
           </div>
 
@@ -2112,13 +2219,15 @@ export function PricingWorksheet() {
                   <th className="py-2 px-2 w-24 text-right border-r border-gray-200 bg-amber-50/40 text-amber-950 font-bold">
                     SUPPLIER PRICE
                   </th>
-                  <th className="py-2 px-1 text-center w-14 border-r border-gray-200">CURR</th>
-                  <th className="py-2 px-1 text-center w-12 border-r border-gray-200">UNIT</th>
-                  <th className="py-2 px-2.5 w-28 text-right bg-blue-50/60 text-blue-900 border-r border-gray-200 font-bold">
-                    SUGGESTED LANDED
+                  <th className="py-2 px-1 text-center w-16 border-r border-gray-200">CURR/UNIT</th>
+                  <th className="py-2 px-2 w-20 text-right bg-blue-50/60 text-blue-950 border-r border-gray-200 font-bold" title="Calculated Landed Cost per kg">
+                    LANDED
                   </th>
-                  <th className="py-2 px-2.5 w-28 text-right bg-green-50/60 text-green-900 border-r border-gray-200 font-bold">
+                  <th className="py-2 px-2 w-24 text-right bg-emerald-50/60 text-emerald-950 border-r border-gray-200 font-bold" title="Canonical Pricing Engine Recommended Quote">
                     SUGGESTED QUOTE
+                  </th>
+                  <th className="py-2 px-2.5 w-28 text-right bg-green-50/60 text-green-950 border-r border-gray-200 font-bold" title="Actual Customer Quoted Price">
+                    QUOTED PRICE
                   </th>
                   <th className="py-2 px-2 text-center w-32 border-r border-gray-200">STATUS / REASON</th>
                   <th className="py-2 px-2 text-center w-24">ACTIONS</th>
@@ -2315,47 +2424,65 @@ export function PricingWorksheet() {
                             />
                           </td>
 
-                          {/* Currency */}
+                          {/* Currency & Unit */}
                           <td className="py-1 px-1 border-r border-gray-200 text-center">
-                            <select
-                              aria-label="Currency"
-                              value={row.sourceCurrency}
-                              onChange={e => updateRow(row.id, { sourceCurrency: e.target.value as any })}
-                              className="text-[10px] bg-transparent font-medium border-none p-0 focus:outline-none"
-                            >
-                              <option value="INR">INR</option>
-                              <option value="USD">USD</option>
-                            </select>
+                            <div className="flex items-center justify-center gap-0.5">
+                              <select
+                                aria-label="Currency"
+                                value={row.sourceCurrency}
+                                onChange={e => updateRow(row.id, { sourceCurrency: e.target.value as any })}
+                                className="text-[10px] bg-transparent font-medium border-none p-0 focus:outline-none cursor-pointer"
+                              >
+                                <option value="INR">INR</option>
+                                <option value="USD">USD</option>
+                              </select>
+                              <span className="text-gray-300">/</span>
+                              <select
+                                aria-label="Unit"
+                                value={row.unit}
+                                onChange={e => updateRow(row.id, { unit: e.target.value })}
+                                className="text-[10px] bg-transparent font-medium border-none p-0 focus:outline-none cursor-pointer"
+                              >
+                                <option value="KG">KG</option>
+                                <option value="MT">MT</option>
+                              </select>
+                            </div>
                           </td>
 
-                          {/* Unit */}
-                          <td className="py-1 px-1 border-r border-gray-200 text-center">
-                            <select
-                              aria-label="Unit"
-                              value={row.unit}
-                              onChange={e => updateRow(row.id, { unit: e.target.value })}
-                              className="text-[10px] bg-transparent font-medium border-none p-0 focus:outline-none"
-                            >
-                              <option value="KG">KG</option>
-                              <option value="MT">MT</option>
-                            </select>
-                          </td>
-
-                          {/* SUGGESTED LANDED COST (Real Canonical calculateFCL Output) */}
+                          {/* LANDED COST (Real Canonical calculateFCL Output) */}
                           <td className="py-1 px-2 border-r border-gray-200 text-right font-mono font-bold bg-blue-50/40 text-blue-950">
                             {row.landedCostUsd !== null ? `$${row.landedCostUsd.toFixed(2)}` : '—'}
                           </td>
 
-                          {/* SUGGESTED QUOTE (Editable Excel-like Cell with local string draft) */}
+                          {/* SUGGESTED QUOTE (Canonical Pricing Engine Recommendation) */}
+                          <td className="py-1 px-2 border-r border-gray-200 text-right font-mono font-bold bg-emerald-50/40 text-emerald-950">
+                            {row.suggestedQuoteUsd !== null ? `$${row.suggestedQuoteUsd.toFixed(2)}` : '—'}
+                          </td>
+
+                          {/* ACTUAL QUOTED PRICE (Approved Customer Quoted Price) */}
                           <td className="py-1 px-1.5 border-r border-gray-200 text-right bg-green-50/40">
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={quotePriceDraft}
-                              onChange={e => handleQuotePriceDraftChange(row.id, e.target.value)}
-                              className="w-20 text-right font-mono font-bold text-green-900 border border-green-200 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-green-500"
-                              placeholder="—"
-                            />
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="text-[10px] font-semibold text-green-800">{row.quoteCurrency || 'USD'}</span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={quotePriceDraft}
+                                onChange={e => handleQuotePriceDraftChange(row.id, e.target.value)}
+                                className="w-18 text-right font-mono font-bold text-green-950 border border-green-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-green-500 shadow-2xs"
+                                placeholder="—"
+                                title="Actual Customer Quoted Price"
+                              />
+                              {row.suggestedQuoteUsd !== null && !quotePriceDraft && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuotePriceDraftChange(row.id, String(row.suggestedQuoteUsd))}
+                                  className="text-[9px] text-emerald-800 hover:text-emerald-950 bg-emerald-100 hover:bg-emerald-200 px-1 py-0.5 rounded font-bold cursor-pointer"
+                                  title={`Use Suggested Quote: $${row.suggestedQuoteUsd.toFixed(2)}`}
+                                >
+                                  Use
+                                </button>
+                              )}
+                            </div>
                           </td>
 
                           {/* Status & Reason Badge */}
@@ -2892,16 +3019,27 @@ export function PricingWorksheet() {
                                       </div>
 
                                       <div className="col-span-2">
-                                        <label className="text-[10px] text-gray-600 font-bold">
-                                          Quote Price Override ($/kg)
-                                        </label>
+                                        <div className="flex items-center justify-between mb-1">
+                                          <label className="text-[10px] text-gray-700 font-bold">
+                                            Actual Quoted Price ($/kg)
+                                          </label>
+                                          {row.suggestedQuoteUsd !== null && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleQuotePriceDraftChange(row.id, String(row.suggestedQuoteUsd))}
+                                              className="text-[10px] text-blue-600 hover:text-blue-800 font-medium underline cursor-pointer"
+                                            >
+                                              Use Suggested (${row.suggestedQuoteUsd.toFixed(2)})
+                                            </button>
+                                          )}
+                                        </div>
                                         <input
                                           type="text"
                                           inputMode="decimal"
                                           value={quotePriceDraft}
                                           onChange={e => handleQuotePriceDraftChange(row.id, e.target.value)}
                                           className="w-full border border-green-400 rounded px-2 py-1 text-xs bg-white font-mono font-bold text-green-950"
-                                          placeholder="Enter or override quote price..."
+                                          placeholder="Enter actual customer quoted price..."
                                         />
                                       </div>
 

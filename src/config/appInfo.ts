@@ -15,7 +15,7 @@ export const APP_INFO = {
   name: (import.meta.env.VITE_APP_NAME as string | undefined) || 'SAPJ Pharma ERP',
   tagline: 'Enterprise Resource Planning System',
   /** Current release. Bump here (only here) on each release. */
-  version: 'v1.4.0',
+  version: 'v1.5.0',
   /** Stamped by Vite at build time — never hand-edited. */
   buildDate: __BUILD_DATE__,
   status: 'Production',
@@ -36,6 +36,13 @@ export interface VersionEntry {
 
 /** Release timeline, newest first. The first entry is the current release. */
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: 'v1.5.0',
+    date: '2026-09-29',
+    title: 'CRM, Pricing & Omnichannel Operations',
+    summary:
+      'Expanded SAPJ production operations with consolidated CRM navigation, Excel-style inquiry/pricing workflows, Kunal Pricing AI, Gmail thread evidence, WhatsApp omnichannel integration, pricing/status corrections, document traceability, and responsive navigation improvements.',
+  },
   {
     version: 'v1.4.0',
     date: '2026-08-10',

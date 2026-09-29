@@ -104,6 +104,7 @@ export const translations = {
       usernameOrEmail: 'Username or Email',
     },
     nav: {
+      home: 'Home',
       dashboard: 'Dashboard',
       products: 'Products',
       stock: 'Stock',
@@ -1196,6 +1197,7 @@ export const translations = {
       usernameOrEmail: 'Nama Pengguna atau Email',
     },
     nav: {
+      home: 'Beranda',
       dashboard: 'Dasbor',
       products: 'Produk',
       stock: 'Stok',

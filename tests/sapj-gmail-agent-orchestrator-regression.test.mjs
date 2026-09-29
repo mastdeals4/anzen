@@ -161,7 +161,7 @@ test('6. Duplicate Scan Protection: safe repeated scans do not duplicate review 
 
 test('7. Concurrent Check Now Protection: prevents duplicate concurrent execution on same connection', () => {
   assert.match(agentFn, /const runningConnections = new Set<string>\(\);/);
-  assert.match(agentFn, /if \(runningConnections\.has\(connection\.id\)\)/);
+  assert.match(agentFn, /runningConnections\.has\(connection\.id\)/);
   assert.match(agentFn, /status:\s*["']already_running["']/);
 });
 

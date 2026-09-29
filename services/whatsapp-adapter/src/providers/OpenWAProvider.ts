@@ -37,6 +37,7 @@ export class OpenWAProvider implements WhatsAppProvider {
   private lastError?: string;
   private monitorInterval: NodeJS.Timeout | null = null;
   private isInitializing: boolean = false;
+  private lastDiagnosticTime: number = 0;
 
   constructor(config: OpenWAProviderConfig) {
     const isMock = process.env.MOCK_MODE === 'true';
@@ -131,14 +132,13 @@ export class OpenWAProvider implements WhatsAppProvider {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--disable-gpu',
         ],
       });
 
       this.page = await this.browser.newPage();
+      await this.page.setViewport({ width: 1366, height: 900 });
       await this.page.setUserAgent(
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
       );
@@ -230,10 +230,15 @@ export class OpenWAProvider implements WhatsAppProvider {
           await new Promise((r) => setTimeout(r, 1200));
         }
 
-        // 3. Check for real QR Code Canvas
-        const qrCanvas = await this.page.$('canvas[aria-label]');
+        // 3. Check for real QR Code Canvas (supports all WhatsApp Web DOM variations)
+        const qrCanvas = await this.page.$('canvas[aria-label], div[data-ref] canvas, canvas');
         if (qrCanvas) {
-          const qrDataUrl = await this.page.evaluate((c: any) => c.toDataURL('image/png'), qrCanvas);
+          const qrDataUrl = await this.page.evaluate((c: any) => {
+            if (c && c.width > 50 && c.height > 50) {
+              return c.toDataURL('image/png');
+            }
+            return null;
+          }, qrCanvas);
           if (qrDataUrl && qrDataUrl.startsWith('data:image/png;base64,')) {
             if (this.status !== 'unpaired' || this.qrCode !== qrDataUrl) {
               this.qrCode = qrDataUrl;
@@ -241,8 +246,28 @@ export class OpenWAProvider implements WhatsAppProvider {
               this.lastSeen = new Date().toISOString();
               console.log('[OpenWAProvider] Authentic WhatsApp Web pairing QR code ready.');
             }
+            return;
           }
-          return;
+        }
+
+        // Diagnostic heartbeat every ~10s
+        const now = Date.now();
+        if (!this.lastDiagnosticTime || now - this.lastDiagnosticTime > 10000) {
+          this.lastDiagnosticTime = now;
+          const diag = await this.page.evaluate(() => {
+            const canvasEl = document.querySelector('canvas');
+            const spinner = !!document.querySelector('[data-testid="loading-spinner"]');
+            const intro = !!document.querySelector('[data-testid="intro-title"], [data-testid="intro-md-beta-logo-dark"]');
+            return {
+              title: document.title,
+              hasCanvas: !!canvasEl,
+              canvasSize: canvasEl ? `${canvasEl.width}x${canvasEl.height}` : null,
+              hasSpinner: spinner,
+              hasIntro: intro,
+              bodyText: (document.body ? document.body.innerText : '').slice(0, 100).replace(/\s+/g, ' '),
+            };
+          }).catch((err) => ({ error: err.message }));
+          console.log('[OpenWAProvider] Diagnostic DOM status:', JSON.stringify(diag));
         }
       } catch (err: any) {
         // Suppress benign context destroyed errors during navigation

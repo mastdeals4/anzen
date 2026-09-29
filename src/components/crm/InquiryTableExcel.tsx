@@ -137,9 +137,18 @@ interface InquiryTableProps {
   onRefresh: () => void;
   canManage: boolean;
   onAddInquiry?: () => void;
+  onOpenDrawer?: (inquiry: Inquiry) => void;
+  onOpenCustomer?: (customerId: string) => void;
 }
 
-export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquiry }: InquiryTableProps) {
+export function InquiryTableExcel({
+  inquiries,
+  onRefresh,
+  canManage,
+  onAddInquiry,
+  onOpenDrawer,
+  onOpenCustomer,
+}: InquiryTableProps) {
   const { profile } = useAuth();
   // Role-based pricing masks: P.Price is admin/manager only; O.Price is
   // admin/manager always, sales only when price_ready=true; warehouse / auditor
@@ -209,24 +218,26 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
   const filterRef = useRef<HTMLDivElement>(null);
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
-    checkbox: 50,
-    inquiry_number: 120,
-    inquiry_date: 120,
-    product_name: 200,
-    specification: 200,
-    quantity: 100,
-    supplier_name: 150,
+    checkbox: 45,
+    inquiry_number: 140,
+    inquiry_date: 110,
     company_name: 180,
-    mail_subject: 200,
+    product_name: 180,
+    specification: 160,
+    quantity: 90,
+    supplier_name: 150,
     aceerp_no: 120,
-    status: 130,
-    pipeline_status: 130,
-    our_side: 130,
-    purchase_price: 100,
-    offered_price: 100,
-    delivery_date: 120,
+    purchase_price: 110,
+    offered_price: 110,
+    our_side: 140,
+    quote_status: 120,
+    status_next: 190,
+    delivery_date: 110,
+    pipeline_status: 120,
     priority: 100,
-    remarks: 200,
+    mail_subject: 160,
+    remarks: 160,
+    actions: 80,
   } as Record<string, number>);
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(() => {
     try {
@@ -234,21 +245,23 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         checkbox: true,
         inquiry_number: true,
         inquiry_date: true,
+        company_name: true,
         product_name: true,
         specification: true,
         quantity: true,
         supplier_name: true,
-        company_name: true,
-        mail_subject: true,
         aceerp_no: true,
-        status_next: true,
-        pipeline_status: true,
-        our_side: true,
         purchase_price: true,
         offered_price: true,
+        our_side: true,
+        quote_status: true,
+        status_next: true,
         delivery_date: true,
+        pipeline_status: true,
         priority: true,
+        mail_subject: true,
         remarks: true,
+        actions: true,
         ...JSON.parse(localStorage.getItem('crm_inquiry_table_visibility') || '{}'),
       };
     } catch {
@@ -553,6 +566,104 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       setDocumentPreviewBlobUrl(null);
     } finally {
       setDocumentPreviewLoading(false);
+    }
+  };
+
+  const getQuoteStatus = (inquiry: Inquiry): { label: string; tone: 'warning' | 'info' | 'success' | 'neutral' } => {
+    const pipeline = (inquiry.pipeline_status || inquiry.status || '').toLowerCase();
+    const qStatus = (inquiry.quote_status || '').toLowerCase();
+    if (pipeline === 'won' || qStatus === 'won') return { label: 'Won', tone: 'success' };
+    if (pipeline === 'lost' || qStatus === 'lost') return { label: 'Lost', tone: 'neutral' };
+    if (qStatus === 'follow_up_due') return { label: 'Follow-up required', tone: 'warning' };
+    if (inquiry.quote_sent_at || inquiry.price_sent_at || qStatus === 'sent' || pipeline === 'quoted') {
+      return { label: 'Sent', tone: 'success' };
+    }
+    if (inquiry.price_ready || inquiry.offered_price != null || qStatus === 'prepared' || qStatus === 'ready') {
+      return { label: 'Prepared', tone: 'info' };
+    }
+    return { label: 'Not prepared', tone: 'neutral' };
+  };
+
+  const getPendingAction = (inquiry: Inquiry): { label: string; tone: 'warning' | 'info' | 'success' | 'neutral' } => {
+    const pipeline = (inquiry.pipeline_status || inquiry.status || '').toLowerCase();
+    if (pipeline === 'won') return { label: 'Won', tone: 'success' };
+    if (pipeline === 'lost') return { label: 'Lost', tone: 'neutral' };
+    if (pipeline === 'closed') return { label: 'Closed', tone: 'neutral' };
+
+    const coaReq = inquiry.coa_required ?? true;
+    const coaSent = Boolean(inquiry.coa_sent_at || inquiry.coa_sent);
+    const sampleReq = Boolean(inquiry.sample_required);
+    const sampleSent = Boolean(inquiry.sample_sent_at || inquiry.sample_sent);
+    const agencyReq = Boolean(inquiry.agency_letter_required);
+    const agencySent = Boolean(inquiry.agency_letter_sent_at);
+    const othersReq = Boolean(inquiry.others_required);
+    const othersSent = Boolean(inquiry.others_sent_at);
+
+    const priceSent = Boolean(inquiry.price_sent_at || inquiry.quote_sent_at || inquiry.quote_status === 'sent');
+    const hasPPrice = inquiry.purchase_price != null;
+    const hasOPrice = inquiry.offered_price != null;
+    const isPriceReady = inquiry.price_ready === true || inquiry.kunal_price_status === 'entered' || (hasPPrice && hasOPrice);
+
+    // 1. If quote / price has already been sent to customer:
+    if (priceSent) {
+      if (coaReq && !coaSent) {
+        return { label: 'Price sent — COA pending', tone: 'warning' };
+      }
+      if (coaReq && coaSent) {
+        return { label: 'COA + price sent — waiting customer', tone: 'success' };
+      }
+      return { label: 'Quote sent — waiting customer', tone: 'info' };
+    }
+
+    // 2. If price is ready/prepared but quote has not been sent:
+    if (isPriceReady || hasOPrice) {
+      if (coaReq && !coaSent) {
+        return { label: 'Price ready — COA pending', tone: 'warning' };
+      }
+      return { label: 'Price ready — quote not sent', tone: 'warning' };
+    }
+
+    // 3. If supplier price is not yet available:
+    if (!hasPPrice) {
+      if (coaReq && !coaSent) {
+        return { label: 'Supplier price & COA pending', tone: 'warning' };
+      }
+      return { label: 'Supplier price pending', tone: 'warning' };
+    }
+
+    // 4. If supplier purchase price is available but offered price is not yet set:
+    if (hasPPrice && !hasOPrice) {
+      return { label: 'Supplier price received — O.Price pending', tone: 'warning' };
+    }
+
+    // 5. Document-specific pendings:
+    if (coaReq && !coaSent) {
+      return { label: 'COA pending', tone: 'warning' };
+    }
+    if (sampleReq && !sampleSent) {
+      return { label: 'Sample pending', tone: 'warning' };
+    }
+    if (agencyReq && !agencySent) {
+      return { label: 'Agency letter pending', tone: 'warning' };
+    }
+    if (othersReq && !othersSent) {
+      return { label: 'Document pending', tone: 'warning' };
+    }
+
+    return { label: 'Action pending', tone: 'neutral' };
+  };
+
+  const getToneBadgeClass = (tone: 'warning' | 'info' | 'success' | 'neutral') => {
+    switch (tone) {
+      case 'warning':
+        return 'bg-amber-50 text-amber-800 border-amber-300';
+      case 'info':
+        return 'bg-sky-50 text-sky-800 border-sky-300';
+      case 'success':
+        return 'bg-emerald-50 text-emerald-800 border-emerald-300';
+      case 'neutral':
+      default:
+        return 'bg-gray-100 text-gray-700 border-gray-300';
     }
   };
 
@@ -1710,23 +1821,25 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
             <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded shadow-lg z-50 p-2">
               <button onClick={resetTablePrefs} className="text-[11px] text-blue-600 hover:underline mb-1">Reset widths</button>
               {[
-                ['inquiry_number', 'Inquiry No'],
+                ['inquiry_number', 'ACRP / Inquiry #'],
                 ['inquiry_date', 'Date'],
+                ['company_name', 'Customer'],
                 ['product_name', 'Product'],
                 ['specification', 'Specification'],
                 ['quantity', 'Qty'],
                 ['supplier_name', 'Supplier'],
-                ['company_name', 'Company'],
-                ['mail_subject', 'Mail Subject'],
-                ['aceerp_no', 'AC ERP#'],
-                ['status_next', 'Status'],
-                ['pipeline_status', 'Pipeline'],
-                ['our_side', 'Our Side'],
+                ['aceerp_no', 'ACE ERP#'],
                 ['purchase_price', 'P.Price'],
                 ['offered_price', 'O.Price'],
+                ['our_side', 'Requirements / Docs'],
+                ['quote_status', 'Quote Status'],
+                ['status_next', 'Pending / Next Action'],
                 ['delivery_date', 'Delivery'],
+                ['pipeline_status', 'Pipeline'],
                 ['priority', 'Priority'],
+                ['mail_subject', 'Mail Subject'],
                 ['remarks', 'Remarks'],
+                ['actions', 'Detail'],
               ].map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-700">
                   <input name="checkbox" aria-label="Checkbox"
@@ -1957,25 +2070,18 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   />
                 </th>
 
-                <ResizableHeader column="inquiry_number" label="No." className="whitespace-nowrap" />
+                <ResizableHeader column="inquiry_number" label="ACRP / Inquiry #" className="whitespace-nowrap" />
 
                 <ResizableHeader column="inquiry_date" label="Date" className="whitespace-nowrap" />
 
-                <ResizableHeader column="product_name" label="Product" />
-
-                <ResizableHeader column="specification" label="Specification" />
-
-                <ResizableHeader column="quantity" label="Qty" />
-
-                <ResizableHeader column="supplier_name" label="Supplier" />
-
-                {/* Company - Sortable with Filter */}
+                {/* Customer - Sortable with Filter */}
                 {isColumnVisible('company_name') && <th style={{ width: columnWidths.company_name, minWidth: columnWidths.company_name }} className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[150px] relative">
                   <div className="flex items-center justify-between gap-2">
-                    <span>Company</span>
+                    <span>Customer</span>
                     <button
                       onClick={() => setOpenFilter(openFilter === 'company_name' ? null : 'company_name')}
                       className={`p-0.5 rounded hover:bg-gray-200 ${isColumnFiltered('company_name') ? 'text-blue-600' : ''}`}
+                      title="Filter Customer"
                     >
                       <ChevronDown className="w-4 h-4" />
                     </button>
@@ -1983,7 +2089,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   {openFilter === 'company_name' && (
                     <div ref={filterRef} className="absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 w-64">
                       <div className="p-2 border-b border-gray-200 flex items-center justify-between">
-                        <span className="text-xs font-medium">Filter Company</span>
+                        <span className="text-xs font-medium">Filter Customer</span>
                         {isColumnFiltered('company_name') && (
                           <button
                             onClick={() => clearColumnFilter('company_name')}
@@ -2013,32 +2119,33 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   )}
                 </th>}
 
-                <ResizableHeader column="mail_subject" label="Mail Subject" />
+                <ResizableHeader column="product_name" label="Product" />
 
-                <ResizableHeader column="aceerp_no" label="ACE ERP#" />
+                <ResizableHeader column="specification" label="Specification" />
 
-                {isColumnVisible('status_next') && <th style={{ width: columnWidths.status, minWidth: columnWidths.status }} className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[130px]">
-                  Status
-                </th>}
+                <ResizableHeader column="quantity" label="Qty" />
 
-                {/* Pipeline Status with filter */}
-                {isColumnVisible('pipeline_status') && <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 relative min-w-[130px]">
-                  <div className="flex items-center justify-between gap-2">
-                    <span>Pipeline</span>
+                <ResizableHeader column="supplier_name" label="Supplier" />
+
+                {/* ACE ERP No - Sortable with Filter */}
+                {isColumnVisible('aceerp_no') && <th style={{ width: columnWidths.aceerp_no, minWidth: columnWidths.aceerp_no }} className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[120px] relative">
+                  <div className="flex items-center justify-between gap-1">
+                    <span>ACE ERP#</span>
                     <button
-                      onClick={() => setOpenFilter(openFilter === 'pipeline_status' ? null : 'pipeline_status')}
-                      className={`p-0.5 rounded hover:bg-gray-200 ${isColumnFiltered('pipeline_status') ? 'text-blue-600' : ''}`}
+                      onClick={() => setOpenFilter(openFilter === 'aceerp_no' ? null : 'aceerp_no')}
+                      className={`p-0.5 rounded hover:bg-gray-200 ${isColumnFiltered('aceerp_no') ? 'text-blue-600' : ''}`}
+                      title="Filter ACE ERP#"
                     >
-                      <ChevronDown className="w-4 h-4" />
+                      <ChevronDown className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  {openFilter === 'pipeline_status' && (
+                  {openFilter === 'aceerp_no' && (
                     <div ref={filterRef} className="absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 w-56">
                       <div className="p-2 border-b border-gray-200 flex items-center justify-between">
-                        <span className="text-xs font-medium">Filter Pipeline</span>
-                        {isColumnFiltered('pipeline_status') && (
+                        <span className="text-xs font-medium">Filter ACE ERP#</span>
+                        {isColumnFiltered('aceerp_no') && (
                           <button
-                            onClick={() => clearColumnFilter('pipeline_status')}
+                            onClick={() => clearColumnFilter('aceerp_no')}
                             className="text-xs text-blue-600 hover:text-blue-700"
                           >
                             Clear
@@ -2046,17 +2153,17 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                         )}
                       </div>
                       <div className="p-2 max-h-64 overflow-y-auto">
-                        {pipelineStatusOptions.map(option => {
-                          const isSelected = filters.find(f => f.column === 'pipeline_status')?.values.includes(option.value);
+                        {getUniqueValues('aceerp_no').map(aceVal => {
+                          const isSelected = filters.find(f => f.column === 'aceerp_no')?.values.includes(String(aceVal));
                           return (
-                            <label key={option.value} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
-                              <input name="checkbox" aria-label="Checkbox"
+                            <label key={String(aceVal)} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
+                              <input
                                 type="checkbox"
                                 checked={isSelected}
-                                onChange={() => toggleFilter('pipeline_status', option.value)}
+                                onChange={() => toggleFilter('aceerp_no', String(aceVal))}
                                 className="rounded border-gray-300"
                               />
-                              <span className="text-sm">{option.label}</span>
+                              <span className="text-sm">{String(aceVal)}</span>
                             </label>
                           );
                         })}
@@ -2065,10 +2172,38 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   )}
                 </th>}
 
-                {/* Our Side */}
-                {isColumnVisible('our_side') && <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[120px] relative">
+                {/* Purchase Price (Admin Only) */}
+                {canSeePPrice && isColumnVisible('purchase_price') && (
+                  <th
+                    style={{ width: columnWidths.purchase_price, minWidth: columnWidths.purchase_price }}
+                    className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
+                  >
+                    <span>P.Price</span>
+                    <div
+                      className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
+                      onMouseDown={(e) => handleResizeStart('purchase_price', e)}
+                    />
+                  </th>
+                )}
+
+                {/* Offered Price (O.Price) */}
+                {canSeeQuoteColumn && isColumnVisible('offered_price') && (
+                  <th
+                    style={{ width: columnWidths.offered_price, minWidth: columnWidths.offered_price }}
+                    className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
+                  >
+                    <span>O.Price</span>
+                    <div
+                      className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
+                      onMouseDown={(e) => handleResizeStart('offered_price', e)}
+                    />
+                  </th>
+                )}
+
+                {/* Requirements / Documents / Our Side */}
+                {isColumnVisible('our_side') && <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[130px] relative">
                   <div className="flex items-center justify-between gap-2">
-                    <span>Our Side</span>
+                    <span>Requirements / Docs</span>
                     <button
                       onClick={() => setOpenFilter(openFilter === 'our_side' ? null : 'our_side')}
                       className={`p-0.5 rounded hover:bg-gray-200 ${isColumnFiltered('our_side') ? 'text-blue-600' : ''}`}
@@ -2079,7 +2214,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   {openFilter === 'our_side' && (
                     <div ref={filterRef} className="absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 w-56">
                       <div className="p-2 border-b border-gray-200 flex items-center justify-between">
-                        <span className="text-xs font-medium">Filter Our Side</span>
+                        <span className="text-xs font-medium">Filter Requirements</span>
                         {isColumnFiltered('our_side') && (
                           <button
                             onClick={() => clearColumnFilter('our_side')}
@@ -2147,39 +2282,76 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   )}
                 </th>}
 
-                {canSeePPrice && isColumnVisible('purchase_price') && (
+                {/* Quote Status */}
+                {isColumnVisible('quote_status') && (
+                  <th style={{ width: columnWidths.quote_status, minWidth: columnWidths.quote_status }} className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[120px]">
+                    Quote Status
+                  </th>
+                )}
+
+                {/* Pending / Next Action */}
+                {isColumnVisible('status_next') && (
+                  <th style={{ width: columnWidths.status_next, minWidth: columnWidths.status_next }} className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 min-w-[180px]">
+                    Pending / Next Action
+                  </th>
+                )}
+
+                {/* Delivery Date */}
+                {isColumnVisible('delivery_date') && (
                   <th
-                    style={{ width: columnWidths.purchase_price, minWidth: columnWidths.purchase_price }}
+                    style={{ width: columnWidths.delivery_date, minWidth: columnWidths.delivery_date }}
                     className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
                   >
-                    <span>P.Price</span>
+                    <span>Delivery</span>
                     <div
                       className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
-                      onMouseDown={(e) => handleResizeStart('purchase_price', e)}
+                      onMouseDown={(e) => handleResizeStart('delivery_date', e)}
                     />
                   </th>
                 )}
 
-                {canSeeQuoteColumn && isColumnVisible('offered_price') && <th
-                  style={{ width: columnWidths.offered_price, minWidth: columnWidths.offered_price }}
-                  className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
-                >
-                  <span>O.Price</span>
-                  <div
-                    className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
-                    onMouseDown={(e) => handleResizeStart('offered_price', e)}
-                  />
-                </th>}
-
-                {isColumnVisible('delivery_date') && <th
-                  style={{ width: columnWidths.delivery_date, minWidth: columnWidths.delivery_date }}
-                  className="relative px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300"
-                >
-                  <span>Delivery</span>
-                  <div
-                    className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400"
-                    onMouseDown={(e) => handleResizeStart('delivery_date', e)}
-                  />
+                {/* Pipeline Status with filter */}
+                {isColumnVisible('pipeline_status') && <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300 relative min-w-[130px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>Pipeline</span>
+                    <button
+                      onClick={() => setOpenFilter(openFilter === 'pipeline_status' ? null : 'pipeline_status')}
+                      className={`p-0.5 rounded hover:bg-gray-200 ${isColumnFiltered('pipeline_status') ? 'text-blue-600' : ''}`}
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {openFilter === 'pipeline_status' && (
+                    <div ref={filterRef} className="absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 w-56">
+                      <div className="p-2 border-b border-gray-200 flex items-center justify-between">
+                        <span className="text-xs font-medium">Filter Pipeline</span>
+                        {isColumnFiltered('pipeline_status') && (
+                          <button
+                            onClick={() => clearColumnFilter('pipeline_status')}
+                            className="text-xs text-blue-600 hover:text-blue-700"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      <div className="p-2 max-h-64 overflow-y-auto">
+                        {pipelineStatusOptions.map(option => {
+                          const isSelected = filters.find(f => f.column === 'pipeline_status')?.values.includes(option.value);
+                          return (
+                            <label key={option.value} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
+                              <input name="checkbox" aria-label="Checkbox"
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleFilter('pipeline_status', option.value)}
+                                className="rounded border-gray-300"
+                              />
+                              <span className="text-sm">{option.label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </th>}
 
                 {/* Priority with filter */}
@@ -2227,13 +2399,21 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                   )}
                 </th>}
 
+                <ResizableHeader column="mail_subject" label="Mail Subject" />
+
                 <ResizableHeader column="remarks" label="Remarks" />
+
+                {isColumnVisible('actions') && (
+                  <th style={{ width: columnWidths.actions, minWidth: columnWidths.actions }} className="px-2 py-2 text-center font-semibold text-gray-700 border-r border-gray-300">
+                    Detail
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {filteredData.length === 0 ? (
                 <tr>
-                  <td colSpan={19} className="px-3 py-8 text-center text-gray-500">
+                  <td colSpan={20} className="px-3 py-8 text-center text-gray-500">
                     No inquiries found
                   </td>
                 </tr>
@@ -2274,7 +2454,14 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                             <Layers className="w-3.5 h-3.5 text-blue-500" />
                           </span>
                         )}
-                        <span>{inquiry.inquiry_number}</span>
+                        <button
+                          type="button"
+                          onClick={() => onOpenDrawer?.(inquiry)}
+                          className="font-bold hover:underline text-blue-600 text-left"
+                          title="Click to view full inquiry details"
+                        >
+                          {inquiry.inquiry_number}
+                        </button>
                         {inquiry.price_ready && (
                           <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full whitespace-nowrap" title="Final price ready — quote can be sent to customer">
                             <CheckCircle2 className="w-2.5 h-2.5" /> Price Ready
@@ -2291,7 +2478,36 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                       })}
                     </td>}
 
-                    {isColumnVisible('product_name') && <td className="px-3 py-1.5 border-r border-gray-200">
+                    {/* Customer */}
+                    {isColumnVisible('company_name') && <td className="px-3 py-1.5 border-r border-gray-200">
+                      <div
+                        className={`font-medium text-sm ${(inquiry.crm_contact_id || inquiry.customer_id) && onOpenCustomer ? 'text-gray-900 hover:text-blue-700 cursor-pointer hover:underline' : 'text-gray-900'}`}
+                        onClick={() => (inquiry.crm_contact_id || inquiry.customer_id) && onOpenCustomer?.(inquiry.crm_contact_id || inquiry.customer_id!)}
+                        title={(inquiry.crm_contact_id || inquiry.customer_id) && onOpenCustomer ? 'Click to view customer' : undefined}
+                      >
+                        {inquiry.company_name}
+                      </div>
+                      {inquiry.contact_person && (
+                        <div className="text-xs text-gray-500 mt-0.5">{inquiry.contact_person}</div>
+                      )}
+                      {inquiry.contact_phone && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <a
+                            href={`https://wa.me/${inquiry.contact_phone.replace(/[^0-9]/g, '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-xs text-green-600 hover:text-green-700 hover:underline"
+                            title="Open WhatsApp"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            {inquiry.contact_phone}
+                          </a>
+                        </div>
+                      )}
+                    </td>}
+
+                    {isColumnVisible('product_name') && <td className="px-3 py-1.5 border-r border-gray-200 font-medium">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'product_name' ? (
                         <input name="value" aria-label="Value"
                           type="text"
@@ -2390,59 +2606,6 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                       )}
                     </td>}
 
-                    {/* Company */}
-                    {isColumnVisible('company_name') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      <div className="font-medium text-sm">{inquiry.company_name}</div>
-                      {inquiry.contact_person && (
-                        <div className="text-xs text-gray-500 mt-0.5">{inquiry.contact_person}</div>
-                      )}
-                      {inquiry.contact_phone && (
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <a
-                            href={`https://wa.me/${inquiry.contact_phone.replace(/[^0-9]/g, '')}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center gap-1 text-xs text-green-600 hover:text-green-700 hover:underline"
-                            title="Open WhatsApp"
-                          >
-                            <MessageSquare className="w-3 h-3" />
-                            {inquiry.contact_phone}
-                          </a>
-                        </div>
-                      )}
-                    </td>}
-
-                    {/* Mail Subject */}
-                    {isColumnVisible('mail_subject') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      {editingCell?.id === inquiry.id && editingCell?.field === 'mail_subject' ? (
-                        <input name="value" aria-label="Value"
-                          type="text"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onBlur={saveEdit}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveEdit();
-                            if (e.key === 'Escape') setEditingCell(null);
-                          }}
-                          className="w-full px-2 py-1 border-2 border-blue-500 rounded focus:outline-none text-xs"
-                          autoFocus
-                        />
-                      ) : (
-                        <div
-                          onDoubleClick={() => startEditing(inquiry, 'mail_subject')}
-                          className="cursor-text hover:bg-yellow-50 px-2 py-1 rounded text-xs"
-                          title={inquiry.mail_subject || ''}
-                        >
-                          {inquiry.mail_subject ? (
-                            <div className="line-clamp-2">{inquiry.mail_subject}</div>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
-                        </div>
-                      )}
-                    </td>}
-
                     {/* ACE ERP No */}
                     {isColumnVisible('aceerp_no') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {editingCell?.id === inquiry.id && editingCell?.field === 'aceerp_no' ? (
@@ -2461,68 +2624,16 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                       ) : (
                         <div
                           onDoubleClick={() => canManage && startEditing(inquiry, 'aceerp_no')}
-                          className={canManage ? "cursor-text hover:bg-yellow-50 px-2 py-1 rounded" : "px-2 py-1"}
+                          className={canManage ? "cursor-text hover:bg-yellow-50 px-2 py-1 rounded font-mono" : "px-2 py-1 font-mono"}
                         >
                           {inquiry.aceerp_no || (canManage ? <span className="text-gray-400 text-xs">Click to add</span> : '-')}
                         </div>
                       )}
                     </td>}
 
-                    {/* Workflow Status */}
-                    {isColumnVisible('status_next') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      {(() => {
-                        const workflowStatus = getWorkflowStatus(inquiry);
-                        const docTypes = getInquiryDocTypeLabels(inquiry);
-                        return (
-                          <div className="space-y-1" title={workflowTooltip(inquiry)}>
-                            <span
-                              className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 whitespace-nowrap ${workflowStatusClass(workflowStatus)}`}
-                            >
-                              {workflowStatus}
-                            </span>
-                            {docTypes.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {docTypes.map(type => (
-                                  <span key={type} className="inline-flex items-center rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 border border-blue-100">
-                                    {type}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>}
-
-                    {/* Pipeline Status */}
-                    {isColumnVisible('pipeline_status') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      <select name="inquiry" aria-label="Inquiry"
-                        value={inquiry.pipeline_status || 'new'}
-                        onChange={(e) => updatePipelineStatus(inquiry, e.target.value)}
-                        disabled={!canManage}
-                        className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-blue-500 focus:outline-none cursor-pointer bg-white"
-                      >
-                        {pipelineStatusOptions.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                    </td>}
-
-                    {/* Our Side */}
-                    {isColumnVisible('our_side') && <td className="px-3 py-1.5 border-r border-gray-200">
-                      <div className="flex items-center justify-center">
-                        <OurSideChips
-                          inquiry={inquiry}
-                          onMarkSent={canManage ? (type) => markRequirementSent(inquiry, type) : undefined}
-                          documentTypes={getInquiryDocTypeLabels(inquiry)}
-                          onPreviewDocuments={getInquiryDocs(inquiry.id).length > 0 ? () => openDocumentPreview(inquiry) : undefined}
-                        />
-                      </div>
-                    </td>}
-
                     {/* Purchase Price (Admin Only) */}
                     {canSeePPrice && isColumnVisible('purchase_price') && (
-                      <td className="px-3 py-1.5 border-r border-gray-200">
+                      <td className="px-3 py-1.5 border-r border-gray-200 font-mono">
                         {editingCell?.id === inquiry.id && editingCell?.field === 'purchase_price' ? (
                           <input name="value" aria-label="Click to add"
                             type="text"
@@ -2552,7 +2663,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                     )}
 
                     {/* Offered Price (O.Price) — sales sees only when price_ready=true; warehouse/auditor never see) */}
-                    {canSeeQuoteColumn && isColumnVisible('offered_price') && <td className="px-3 py-1.5 border-r border-gray-200">
+                    {canSeeQuoteColumn && isColumnVisible('offered_price') && <td className="px-3 py-1.5 border-r border-gray-200 font-mono">
                       {(() => {
                         const allowed = canSeeFinalQuote(profile?.role, inquiry.price_ready);
                         if (!allowed) {
@@ -2581,6 +2692,58 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                               `$${inquiry.offered_price.toLocaleString('en-US', { minimumFractionDigits: 2 })}` :
                               (canManage && !isSalesRole ? <span className="text-gray-400">Click to add</span> : '-')
                             }
+                          </div>
+                        );
+                      })()}
+                    </td>}
+
+                    {/* Requirements / Documents / Our Side */}
+                    {isColumnVisible('our_side') && <td className="px-3 py-1.5 border-r border-gray-200">
+                      <div className="flex items-center justify-center">
+                        <OurSideChips
+                          inquiry={inquiry}
+                          onMarkSent={canManage ? (type) => markRequirementSent(inquiry, type) : undefined}
+                          documentTypes={getInquiryDocTypeLabels(inquiry)}
+                          onPreviewDocuments={getInquiryDocs(inquiry.id).length > 0 ? () => openDocumentPreview(inquiry) : undefined}
+                        />
+                      </div>
+                    </td>}
+
+                    {/* Quote Status */}
+                    {isColumnVisible('quote_status') && (
+                      <td className="px-3 py-1.5 border-r border-gray-200 whitespace-nowrap">
+                        {(() => {
+                          const q = getQuoteStatus(inquiry);
+                          return (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border ${getToneBadgeClass(q.tone)}`}>
+                              {q.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                    )}
+
+                    {/* Pending / Next Action */}
+                    {isColumnVisible('status_next') && <td className="px-3 py-1.5 border-r border-gray-200">
+                      {(() => {
+                        const pending = getPendingAction(inquiry);
+                        const docTypes = getInquiryDocTypeLabels(inquiry);
+                        return (
+                          <div className="space-y-1" title={workflowTooltip(inquiry)}>
+                            <span
+                              className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 whitespace-nowrap ${getToneBadgeClass(pending.tone)}`}
+                            >
+                              {pending.label}
+                            </span>
+                            {docTypes.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {docTypes.map(type => (
+                                  <span key={type} className="inline-flex items-center rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 border border-blue-100">
+                                    {type}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
@@ -2618,6 +2781,20 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                       )}
                     </td>}
 
+                    {/* Pipeline Status */}
+                    {isColumnVisible('pipeline_status') && <td className="px-3 py-1.5 border-r border-gray-200">
+                      <select name="inquiry" aria-label="Inquiry"
+                        value={inquiry.pipeline_status || 'new'}
+                        onChange={(e) => updatePipelineStatus(inquiry, e.target.value)}
+                        disabled={!canManage}
+                        className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-blue-500 focus:outline-none cursor-pointer bg-white"
+                      >
+                        {pipelineStatusOptions.map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </td>}
+
                     {/* Priority */}
                     {isColumnVisible('priority') && <td className="px-3 py-1.5 border-r border-gray-200">
                       <select name="inquiry" aria-label="Inquiry"
@@ -2630,6 +2807,36 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                           <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
+                    </td>}
+
+                    {/* Mail Subject */}
+                    {isColumnVisible('mail_subject') && <td className="px-3 py-1.5 border-r border-gray-200">
+                      {editingCell?.id === inquiry.id && editingCell?.field === 'mail_subject' ? (
+                        <input name="value" aria-label="Value"
+                          type="text"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={saveEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveEdit();
+                            if (e.key === 'Escape') setEditingCell(null);
+                          }}
+                          className="w-full px-2 py-1 border-2 border-blue-500 rounded focus:outline-none text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        <div
+                          onDoubleClick={() => startEditing(inquiry, 'mail_subject')}
+                          className="cursor-text hover:bg-yellow-50 px-2 py-1 rounded text-xs"
+                          title={inquiry.mail_subject || ''}
+                        >
+                          {inquiry.mail_subject ? (
+                            <div className="line-clamp-2">{inquiry.mail_subject}</div>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </div>
+                      )}
                     </td>}
 
                     {/* Remarks */}
@@ -2656,6 +2863,21 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                         </div>
                       )}
                     </td>}
+
+                    {/* Actions / Detail */}
+                    {isColumnVisible('actions') && (
+                      <td className="px-2 py-1.5 border-r border-gray-200 text-center whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => onOpenDrawer?.(inquiry)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition"
+                          title="Open supplementary inquiry drawer"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          Detail
+                        </button>
+                      </td>
+                    )}
                   </tr>
                   {inquiry.has_items && expandedRows.has(inquiry.id) && inquiryItems.get(inquiry.id)?.map((item) => (
                     <tr key={item.id} className="bg-blue-50 border-b border-blue-100">
@@ -2663,45 +2885,45 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                       <td className="px-3 py-2 border-r border-gray-200 text-sm text-blue-700 pl-8">
                         {item.inquiry_number}
                       </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">
-                        -
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-sm">
-                        {item.product_name}
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">
-                        {item.specification || '-'}
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-sm">
-                        {item.quantity}
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>
-                      <td className="px-3 py-2 border-r border-gray-200">
-                        <PipelineStatusBadge status={item.pipeline_stage} />
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-center">
-                        {item.document_sent ? (
-                          <div className="flex items-center justify-center gap-1">
-                            <Check className="w-4 h-4 text-green-600" />
-                            <span className="text-xs text-gray-500">
-                              {item.document_sent_at ? new Date(item.document_sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
-                            </span>
-                          </div>
-                        ) : (
-                          <XCircle className="w-4 h-4 text-gray-400 mx-auto" />
-                        )}
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">
-                        {item.notes || '-'}
-                      </td>
-                      <td className="px-3 py-2 border-r border-gray-200"></td>
-                      <td className="px-3 py-2 border-r border-gray-200"></td>
-                      <td className="px-3 py-2 border-r border-gray-200"></td>
-                      <td className="px-3 py-2 border-r border-gray-200"></td>
-                      <td className="px-3 py-2 border-r border-gray-200"></td>
+                      {isColumnVisible('inquiry_date') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>}
+                      {isColumnVisible('company_name') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>}
+                      {isColumnVisible('product_name') && <td className="px-3 py-2 border-r border-gray-200 text-sm font-medium">{item.product_name}</td>}
+                      {isColumnVisible('specification') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">{item.specification || '-'}</td>}
+                      {isColumnVisible('quantity') && <td className="px-3 py-2 border-r border-gray-200 text-sm">{item.quantity}</td>}
+                      {isColumnVisible('supplier_name') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">{item.supplier_name || item.make || '-'}</td>}
+                      {isColumnVisible('aceerp_no') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600 font-mono">{item.aceerp_no || '-'}</td>}
+                      {canSeePPrice && isColumnVisible('purchase_price') && (
+                        <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-700 font-mono">
+                          {item.purchase_price ? `$${item.purchase_price.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}
+                        </td>
+                      )}
+                      {canSeeQuoteColumn && isColumnVisible('offered_price') && (
+                        <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-700 font-mono">
+                          {item.offered_price ? `$${item.offered_price.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}
+                        </td>
+                      )}
+                      {isColumnVisible('our_side') && (
+                        <td className="px-3 py-2 border-r border-gray-200 text-center">
+                          {item.document_sent ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <Check className="w-4 h-4 text-green-600" />
+                              <span className="text-xs text-gray-500">
+                                {item.document_sent_at ? new Date(item.document_sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
+                              </span>
+                            </div>
+                          ) : (
+                            <XCircle className="w-4 h-4 text-gray-400 mx-auto" />
+                          )}
+                        </td>
+                      )}
+                      {isColumnVisible('quote_status') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>}
+                      {isColumnVisible('status_next') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">{item.status || '-'}</td>}
+                      {isColumnVisible('delivery_date') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">{item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '-'}</td>}
+                      {isColumnVisible('pipeline_status') && <td className="px-3 py-2 border-r border-gray-200"><PipelineStatusBadge status={item.pipeline_stage} /></td>}
+                      {isColumnVisible('priority') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>}
+                      {isColumnVisible('mail_subject') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>}
+                      {isColumnVisible('remarks') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-600">{item.notes || item.remarks || '-'}</td>}
+                      {isColumnVisible('actions') && <td className="px-3 py-2 border-r border-gray-200"></td>}
                     </tr>
                   ))}
                 </React.Fragment>

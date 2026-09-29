@@ -29,3 +29,9 @@ services/whatsapp-adapter/*.tar.gz
 *.tar.gz
 wa_qr_extracted.png
 # end managed by open-wa
+
+# Local daemons, logs, configs & verification screenshots
+services/whatsapp-adapter/*.plist
+services/whatsapp-adapter/config.yml
+services/whatsapp-adapter/logs/
+/*.png

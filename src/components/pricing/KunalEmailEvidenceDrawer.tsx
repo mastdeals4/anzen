@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../ToastNotification';
 import type { UnifiedPricingRow } from '../../pages/PricingWorksheet';
@@ -43,6 +44,7 @@ interface Props {
     sourcePrice?: number | null;
     sourceCurrency?: 'INR' | 'USD';
     unit?: string;
+    quotePrice?: number | null;
   }) => Promise<void>;
 }
 
@@ -93,6 +95,44 @@ function getInitials(fromStr = ''): string {
   return clean.slice(0, 2).toUpperCase();
 }
 
+/**
+ * Safely renders email body text or HTML using DOMPurify with standard email typography and table styling.
+ * Prevents raw <table><tr><td><style> HTML from displaying as literal text.
+ */
+function renderSafeEmailContent(bodyText?: string | null, bodyHtml?: string | null) {
+  const rawHtml = bodyHtml || '';
+  const rawText = bodyText || '';
+  const hasHtml = Boolean(rawHtml && /<[a-z][\s\S]*>/i.test(rawHtml)) || /<[a-z][\s\S]*>/i.test(rawText);
+  const contentToRender = rawHtml || (hasHtml ? rawText : '');
+
+  if (hasHtml && contentToRender) {
+    const sanitized = DOMPurify.sanitize(contentToRender, {
+      ADD_TAGS: [
+        'style', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'div', 'span', 'p', 'b', 'strong', 'i', 'em', 'u',
+        'br', 'hr', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3',
+        'h4', 'h5', 'h6', 'font', 'blockquote', 'pre', 'code'
+      ],
+      ADD_ATTR: [
+        'target', 'style', 'class', 'href', 'cellpadding', 'cellspacing',
+        'border', 'align', 'valign', 'width', 'color', 'colspan', 'rowspan'
+      ],
+    });
+    return (
+      <div
+        className="email-rendered-html text-xs text-gray-800 leading-relaxed font-sans max-h-[420px] overflow-y-auto overflow-x-auto p-3 bg-white rounded border border-gray-200 shadow-2xs select-text [&_table]:border-collapse [&_table]:w-auto [&_table]:max-w-full [&_table]:my-2 [&_table]:text-[11px] [&_th]:border [&_th]:border-gray-300 [&_th]:p-1.5 [&_th]:bg-gray-50 [&_th]:font-semibold [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5"
+        dangerouslySetInnerHTML={{ __html: sanitized }}
+      />
+    );
+  }
+
+  return (
+    <div className="text-xs text-gray-800 leading-relaxed whitespace-pre-wrap font-sans select-text p-3 bg-white rounded border border-gray-200 max-h-[420px] overflow-y-auto">
+      {rawText || rawHtml || 'No text content available in this message.'}
+    </div>
+  );
+}
+
 export function KunalEmailEvidenceDrawer({
   isOpen,
   onClose,
@@ -122,6 +162,7 @@ export function KunalEmailEvidenceDrawer({
   const [editPrice, setEditPrice] = useState('');
   const [editCurrency, setEditCurrency] = useState<'INR' | 'USD'>('INR');
   const [editUnit, setEditUnit] = useState('KG');
+  const [editQuotePrice, setEditQuotePrice] = useState('');
 
   // Sync edit form with current row
   useEffect(() => {
@@ -133,6 +174,7 @@ export function KunalEmailEvidenceDrawer({
       setEditPrice(row.sourcePrice != null ? String(row.sourcePrice) : '');
       setEditCurrency(row.sourceCurrency || 'INR');
       setEditUnit(row.unit || 'KG');
+      setEditQuotePrice(row.quotePrice != null ? String(row.quotePrice) : '');
       setIsEditing(false);
     }
   }, [row]);
@@ -306,6 +348,8 @@ export function KunalEmailEvidenceDrawer({
     try {
       const parsedPrice = parseFloat(editPrice);
       const validPrice = !isNaN(parsedPrice) && parsedPrice > 0 ? parsedPrice : null;
+      const parsedQuotePrice = parseFloat(editQuotePrice);
+      const validQuotePrice = !isNaN(parsedQuotePrice) && parsedQuotePrice > 0 ? parsedQuotePrice : null;
 
       await onSaveCorrection(row.id, {
         inquiryId: editInquiryId || undefined,
@@ -315,6 +359,7 @@ export function KunalEmailEvidenceDrawer({
         sourcePrice: validPrice,
         sourceCurrency: editCurrency,
         unit: editUnit,
+        quotePrice: validQuotePrice,
       });
 
       setIsEditing(false);
@@ -352,9 +397,12 @@ export function KunalEmailEvidenceDrawer({
                 {hasRealGmail ? (
                   <>
                     <span>From: <strong className="text-gray-700">{evidence?.from || 'Unknown'}</strong></span>
-                    {evidence?.date && <span>• {new Date(evidence.date).toLocaleDateString()}</span>}
+                    {evidence?.to && <span>• To: <strong className="text-gray-700">{evidence.to}</strong></span>}
+                    {evidence?.cc && <span>• CC: <strong className="text-gray-700">{evidence.cc}</strong></span>}
+                    {evidence?.date && <span>• {new Date(evidence.date).toLocaleString()}</span>}
                     {connectedEmail && <span className="text-gray-500">• Connected via: <strong className="text-gray-700">{connectedEmail}</strong></span>}
                     {row.inquiryNumber && <span className="text-blue-700 font-mono">[{row.inquiryNumber}]</span>}
+                    {row.aceerpNo && row.aceerpNo !== '-' && <span className="text-gray-600 font-mono">[ACE: {row.aceerpNo}]</span>}
                   </>
                 ) : (
                   <>
@@ -526,9 +574,30 @@ export function KunalEmailEvidenceDrawer({
 
                     {/* Thread Messages List (Chronological: Oldest -> Newest) */}
                     {!loadingThread && threadMessages.length === 0 && !threadError && (
-                      <div className="p-4 bg-white border border-gray-200 rounded-lg text-center text-gray-500 text-xs">
-                        No messages found in this Gmail thread.
-                      </div>
+                      row.evidence?.bodyText || row.evidence?.bodyHtml ? (
+                        <div className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-gray-100">
+                            <span className="font-bold text-indigo-900 text-[11px] flex items-center gap-1">
+                              <Sparkles className="w-3 h-3 text-indigo-600" />
+                              Extracted Message Content (Initial Scan)
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-mono">
+                              {row.evidence.date ? new Date(row.evidence.date).toLocaleString() : ''}
+                            </span>
+                          </div>
+                          <div className="text-[10.5px] font-mono text-gray-700 bg-gray-50/80 p-2 rounded border border-gray-200/70 space-y-0.5">
+                            {row.evidence.subject && <div><strong className="font-sans text-gray-900">Subject:</strong> {row.evidence.subject}</div>}
+                            {row.evidence.from && <div><strong className="font-sans text-gray-900">From:</strong> {row.evidence.from}</div>}
+                            {row.evidence.to && <div><strong className="font-sans text-gray-900">To:</strong> {row.evidence.to}</div>}
+                            {row.evidence.cc && <div><strong className="font-sans text-gray-900">CC:</strong> {row.evidence.cc}</div>}
+                          </div>
+                          {renderSafeEmailContent(row.evidence.bodyText, row.evidence.bodyHtml)}
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-white border border-gray-200 rounded-lg text-center text-gray-500 text-xs">
+                          No messages found in this Gmail thread.
+                        </div>
+                      )
                     )}
 
                     {threadMessages.length > 0 && (
@@ -628,10 +697,8 @@ export function KunalEmailEvidenceDrawer({
                                     </div>
                                   </div>
 
-                                  {/* FULL Email Body Content */}
-                                  <div className="bg-white border border-gray-200 rounded p-3 text-xs leading-relaxed text-gray-800 whitespace-pre-wrap font-sans max-h-[380px] overflow-y-auto selection:bg-indigo-100">
-                                    {msg.bodyText || msg.body || msg.snippet || 'No text content available in this message.'}
-                                  </div>
+                                  {/* FULL Email Body Content (Rendered safely without raw HTML) */}
+                                  {renderSafeEmailContent(msg.bodyText || msg.body, msg.bodyHtml)}
 
                                   {/* Attachments for this Message */}
                                   {hasAtts && (
@@ -872,7 +939,25 @@ export function KunalEmailEvidenceDrawer({
 
                       <div>
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Make</span>
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Supplier</span>
+                          <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
+                          </span>
+                        </div>
+                        <span className="font-bold text-gray-900">{row.supplierName || '-'}</span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Requested Make</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="font-bold text-gray-900">{row.requestedMake || '-'}</span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Offered Make</span>
                           <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
                             {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
                           </span>
@@ -882,15 +967,7 @@ export function KunalEmailEvidenceDrawer({
 
                       <div>
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Quantity</span>
-                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
-                        </div>
-                        <span className="font-medium text-gray-800">{row.quantity}</span>
-                      </div>
-
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Price & Currency</span>
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Supplier Price</span>
                           <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
                             {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
                           </span>
@@ -902,8 +979,65 @@ export function KunalEmailEvidenceDrawer({
 
                       <div>
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-400 text-[10px] uppercase font-semibold">MOQ & Availability</span>
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Currency</span>
+                          <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
+                          </span>
+                        </div>
+                        <span className="font-bold text-gray-900">{row.sourceCurrency}</span>
+                      </div>
+
+                      <div className="bg-blue-50/60 p-1.5 rounded border border-blue-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-blue-900 text-[10px] uppercase font-bold">Landed Cost</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-blue-100 text-blue-800">ENGINE</span>
+                        </div>
+                        <span className="font-mono font-bold text-sm text-blue-950">
+                          {row.landedCostUsd != null ? `$${row.landedCostUsd.toFixed(2)} / kg` : '—'}
+                        </span>
+                      </div>
+
+                      <div className="bg-emerald-50/60 p-1.5 rounded border border-emerald-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-emerald-900 text-[10px] uppercase font-bold">Suggested Quote</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-emerald-100 text-emerald-800">RECOMMENDED</span>
+                        </div>
+                        <span className="font-mono font-bold text-sm text-emerald-950">
+                          {row.suggestedQuoteUsd != null ? `$${row.suggestedQuoteUsd.toFixed(2)} / kg` : '—'}
+                        </span>
+                      </div>
+
+                      <div className="col-span-2 bg-green-50 p-2 rounded border border-green-300">
+                        <div className="flex items-center justify-between">
+                          <span className="text-green-900 text-[10px] uppercase font-black">Actual Quoted Price</span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-600 text-white">CUSTOMER QUOTE</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="font-mono font-black text-base text-green-950">
+                            {row.quotePrice != null ? `${row.quoteCurrency || 'USD'} ${row.quotePrice}` : '— (Not Quoted Yet)'}
+                          </span>
+                          {!row.quotePrice && (
+                            <span className="text-[10px] text-amber-700 font-semibold bg-amber-100 px-1.5 py-0.5 rounded">
+                              Action Needed: Enter Quote
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Quantity</span>
                           <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="font-medium text-gray-800">{row.quantity} ({row.unit})</span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">MOQ & Availability</span>
+                          <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
+                          </span>
                         </div>
                         <span className="text-gray-700 capitalize">{row.moq} • {row.availability}</span>
                       </div>
@@ -911,7 +1045,9 @@ export function KunalEmailEvidenceDrawer({
                       <div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-400 text-[10px] uppercase font-semibold">Lead Time</span>
-                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                          <span className={`text-[9px] font-bold px-1 rounded ${hasRealGmail ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {hasRealGmail ? 'EMAIL BODY' : 'CRM'}
+                          </span>
                         </div>
                         <span className="text-gray-700">{row.leadTime}</span>
                       </div>
@@ -926,12 +1062,18 @@ export function KunalEmailEvidenceDrawer({
 
                       <div>
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Inquiry & ACE ERP</span>
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">Inquiry</span>
                           <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
                         </div>
-                        <span className="font-mono font-bold text-blue-700">
-                          {row.inquiryNumber} {row.aceerpNo !== '-' && `(${row.aceerpNo})`}
-                        </span>
+                        <span className="font-mono font-bold text-blue-700">{row.inquiryNumber}</span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-[10px] uppercase font-semibold">ACE ERP</span>
+                          <span className="text-[9px] font-bold px-1 rounded bg-gray-100 text-gray-600">CRM</span>
+                        </div>
+                        <span className="font-mono font-bold text-gray-800">{row.aceerpNo || '-'}</span>
                       </div>
                     </div>
 
@@ -1027,6 +1169,31 @@ export function KunalEmailEvidenceDrawer({
                             <option value="MT">MT</option>
                           </select>
                         </div>
+                      </div>
+
+                      <div className="col-span-2 bg-green-50/60 p-2 rounded border border-green-200">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] text-green-950 font-bold uppercase">
+                            Actual Quoted Price ($/kg)
+                          </label>
+                          {row.suggestedQuoteUsd !== null && (
+                            <button
+                              type="button"
+                              onClick={() => setEditQuotePrice(String(row.suggestedQuoteUsd))}
+                              className="text-[10px] text-blue-700 hover:text-blue-900 font-semibold underline cursor-pointer"
+                            >
+                              Use Suggested (${row.suggestedQuoteUsd.toFixed(2)})
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={editQuotePrice}
+                          onChange={e => setEditQuotePrice(e.target.value)}
+                          className="w-full border border-green-400 rounded px-2 py-1 text-xs font-mono font-bold text-green-950 bg-white"
+                          placeholder="e.g. 2.45 (Approved Customer Quote)"
+                        />
                       </div>
                     </div>
 

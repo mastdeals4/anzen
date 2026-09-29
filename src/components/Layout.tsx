@@ -7,10 +7,10 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { NotificationDropdown } from './NotificationDropdown';
 import {
-  LayoutDashboard, Package, Boxes, Warehouse, Users, CircleUser as UserCircle,
-  ShoppingCart, DollarSign, Settings, LogOut, Menu, X, Globe, Truck, Zap,
-  CheckSquare, FileText, TrendingUp, ClipboardList, Calendar, Calculator,
-  BarChart2, Tags, Search,
+  LayoutDashboard, UsersRound, UserRound, ClipboardCheck, Truck, ReceiptText,
+  Package, Boxes, Warehouse, ClipboardList, FileInput, Container, Landmark,
+  Calculator, BadgeDollarSign, BarChart3, ListChecks, Zap, Settings,
+  LogOut, Menu, X, Globe, Calendar, Search, MoreHorizontal, ChevronRight,
 } from 'lucide-react';
 import logo from '../assets/Untitled-1.svg';
 
@@ -218,31 +218,26 @@ export function Layout({ children }: LayoutProps) {
     hoverTimerRef.current = setTimeout(() => setHoverExpanded(false), 120);
   };
 
-  // All menu items — order/IDs unchanged, fully localized
+  // Module-level menu items with semantic Lucide icons matching user specification
   const allItems: MenuItem[] = [
     { id: 'dashboard',           label: t('nav.dashboard'),           icon: LayoutDashboard },
-    { id: 'crm',                 label: t('nav.crm'),                  icon: UserCircle },
-    { id: 'customers',           label: t('nav.customers'),            icon: Users },
-    { id: 'sales-orders',        label: t('nav.salesOrders'),          icon: FileText },
+    { id: 'crm',                 label: t('nav.crm'),                  icon: UsersRound },
+    { id: 'customers',           label: t('nav.customers'),            icon: UserRound },
+    { id: 'sales-orders',        label: t('nav.salesOrders'),          icon: ClipboardCheck },
     { id: 'delivery-challan',    label: t('nav.deliveryChallan'),      icon: Truck },
-    { id: 'sales',               label: t('nav.sales'),                icon: ShoppingCart },
+    { id: 'sales',               label: t('nav.sales'),                icon: ReceiptText },
     { id: 'products',            label: t('nav.products'),             icon: Package },
     { id: 'batches',             label: t('nav.batches'),              icon: Boxes },
     { id: 'stock',               label: t('nav.stock'),                icon: Warehouse },
     { id: 'inventory',           label: t('nav.inventory'),            icon: Warehouse },
     { id: 'purchase-orders',     label: t('nav.purchaseOrders'),       icon: ClipboardList },
-    { id: 'import-requirements', label: t('nav.importRequirements'),   icon: TrendingUp },
-    { id: 'import-containers',   label: t('nav.importContainers'),     icon: Package },
-    { id: 'finance',             label: t('nav.finance'),              icon: DollarSign },
-    { id: 'purchase-invoices',   label: t('nav.purchaseInvoices', 'Purchase Invoices'), icon: FileText, path: '/finance/purchase' },
-    { id: 'tax-compliance',      label: t('nav.taxCompliance', 'Tax Compliance'),       icon: FileText, path: '/finance/tax' },
+    { id: 'import-requirements', label: t('nav.importRequirements'),   icon: FileInput },
+    { id: 'import-containers',   label: t('nav.importContainers'),     icon: Container },
+    { id: 'finance',             label: t('nav.finance'),              icon: Landmark },
     { id: 'price-calculator',    label: t('nav.priceCalculator', 'Price Calculator'),   icon: Calculator },
-    { id: 'pricing-dashboard',   label: t('nav.pricingOverview', 'Pricing Overview'),   icon: Tags },
-    { id: 'sourcing-outbox',     label: t('nav.sourcingOutbox', 'Sourcing Outbox'),     icon: Tags },
-    { id: 'pricing-worksheet',   label: t('nav.pricingWorksheet', 'Pricing Worksheet'), icon: Tags },
-    { id: 'pricing-ledger',      label: t('nav.pricingLedger', 'Price History'),       icon: Tags },
-    { id: 'reports',             label: t('nav.reports', 'Reports'),                    icon: BarChart2 },
-    { id: 'tasks',               label: t('nav.tasks'),                icon: CheckSquare },
+    { id: 'pricing-dashboard',   label: t('nav.pricingOverview', 'Pricing Overview'),   icon: BadgeDollarSign },
+    { id: 'reports',             label: t('nav.reports', 'Reports'),                    icon: BarChart3 },
+    { id: 'tasks',               label: t('nav.tasks'),                icon: ListChecks },
     { id: 'command-center',      label: t('nav.commandCenter'),        icon: Zap },
     { id: 'settings',            label: t('nav.settings'),             icon: Settings },
   ];
@@ -252,11 +247,27 @@ export function Layout({ children }: LayoutProps) {
     { label: t('nav.groupSales', 'Sales'),         items: allItems.filter(i => ['sales-orders', 'delivery-challan', 'sales'].includes(i.id)) },
     { label: t('nav.groupStock', 'Stock'),         items: allItems.filter(i => ['products', 'batches', 'stock'].includes(i.id)) },
     { label: t('nav.groupPurchases', 'Purchases'), items: allItems.filter(i => ['purchase-orders', 'import-requirements', 'import-containers'].includes(i.id)) },
-    { label: t('nav.groupFinance', 'Finance'),     items: allItems.filter(i => ['finance', 'purchase-invoices', 'tax-compliance', 'price-calculator'].includes(i.id)) },
+    { label: t('nav.groupFinance', 'Finance'),     items: allItems.filter(i => ['finance', 'price-calculator'].includes(i.id)) },
     { label: t('nav.groupPricing', 'Pricing'),     items: allItems.filter(i => ['pricing-dashboard'].includes(i.id)) },
     { label: t('nav.groupReports', 'Reports'),     items: allItems.filter(i => ['reports'].includes(i.id)) },
     { label: t('nav.groupSystem', 'System'),       items: allItems.filter(i => ['tasks', 'command-center', 'settings'].includes(i.id)) },
   ];
+
+  // Helper: check if a module is accessible. For Finance, if user has finance OR granular purchase-invoices OR tax-compliance,
+  // expose parent Finance module in the global sidebar while keeping internal section access governed inside Finance.
+  const isItemAccessible = (itemId: string) => {
+    if (itemId === 'finance') {
+      return (
+        accessibleModules.has('finance') ||
+        accessibleModules.has('purchase-invoices') ||
+        accessibleModules.has('tax-compliance')
+      );
+    }
+    return accessibleModules.has(itemId);
+  };
+
+  const currentItem = allItems.find(i => i.id === currentPage);
+  const currentPageTitle = currentItem?.label || (currentPage ? currentPage.charAt(0).toUpperCase() + currentPage.slice(1).replace(/-/g, ' ') : 'Dashboard');
 
   const toggleLanguage = () => {
     setLanguage(language === 'en' ? 'id' : 'en');
@@ -273,11 +284,8 @@ export function Layout({ children }: LayoutProps) {
   const mainPadding = sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-[200px]';
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Setup Mode banner — visible on every page while the flag is on so
-          admins never forget to switch back to Production Mode before going
-          live. Server-authoritative: app_settings.setup_mode + is_setup_mode()
-          DB helper apply the same bypass to protection triggers and RPCs. */}
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Setup Mode banner */}
       {setupMode && (
         <div className="sticky top-0 z-40 bg-amber-500 text-white text-xs md:text-sm px-4 py-1.5 text-center font-medium shadow">
           <span className="uppercase tracking-wide mr-2">Setup Mode Enabled</span>
@@ -286,22 +294,120 @@ export function Layout({ children }: LayoutProps) {
           </span>
         </div>
       )}
-      {/* Mobile overlay */}
+
+      {/* Mobile Drawer Backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-gray-900 bg-opacity-50 z-20 lg:hidden"
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 lg:hidden transition-opacity duration-300"
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
-      {/* Sidebar */}
+      {/* Mobile Slide-Over Navigation Drawer */}
+      <aside
+        className={`fixed top-0 left-0 bottom-0 z-50 w-72 max-w-[85vw] bg-white flex flex-col shadow-2xl
+          transform transition-transform duration-300 ease-out lg:hidden
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        aria-label="Mobile Navigation Drawer"
+      >
+        {/* Mobile Drawer Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50/80">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <img src={logo} alt="SAPJ Logo" className="w-7 h-7 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-gray-900 truncate leading-tight">{currentCompanyName}</p>
+              <span className="text-[10px] font-semibold text-blue-600 uppercase tracking-wider">SAPJ ERP</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-200/70 text-gray-600 transition-colors"
+            aria-label="Close menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Mobile Drawer Nav Groups */}
+        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-3 overscroll-contain">
+          {groups.map((group) => {
+            const visibleItems = group.items.filter(item => isItemAccessible(item.id));
+            if (visibleItems.length === 0) return null;
+
+            return (
+              <div key={group.label} className="space-y-1">
+                <p className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  {group.label}
+                </p>
+                <div className="space-y-0.5">
+                  {visibleItems.map(item => {
+                    const Icon = item.icon;
+                    const isActive = currentPage === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => navigate((item.path ?? `/${item.id}`).replace(/^\//, ''))}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-colors min-h-[44px]
+                          ${isActive
+                            ? 'bg-blue-50 text-blue-700 font-semibold'
+                            : 'text-gray-700 hover:bg-gray-100 font-medium'
+                          }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-500'}`} strokeWidth={isActive ? 2 : 1.75} />
+                          <span className="text-sm truncate">{item.label}</span>
+                        </div>
+                        {isActive ? (
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-gray-300" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Mobile Drawer User Footer */}
+        {profile && (
+          <div className="border-t border-gray-200 bg-gray-50/80 p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-gray-900 truncate">{profile.full_name || profile.username}</p>
+                <p className="text-[11px] text-gray-500 capitalize">{profile.role}</p>
+              </div>
+              <button
+                onClick={toggleLanguage}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-gray-200 bg-white text-xs font-semibold text-gray-700 uppercase"
+                title="Change language"
+              >
+                <Globe className="w-3.5 h-3.5 text-gray-500" />
+                <span>{language}</span>
+              </button>
+            </div>
+            <button
+              onClick={() => signOut()}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-medium transition-colors min-h-[40px]"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>{t('auth.logout')}</span>
+            </button>
+          </div>
+        )}
+      </aside>
+
+      {/* Desktop Compact / Responsive Sidebar */}
       <aside
         ref={sidebarRef}
         onMouseEnter={handleSidebarMouseEnter}
         onMouseLeave={handleSidebarMouseLeave}
-        className={`fixed top-0 left-0 z-30 h-full bg-white border-r border-gray-200 flex flex-col
-          transform transition-[width,transform] duration-200 ease-in-out
-          lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        className={`hidden lg:flex fixed top-0 left-0 z-30 h-full bg-white border-r border-gray-200 flex-col
+          transform transition-[width] duration-200 ease-in-out
           ${isCollapsed ? 'w-16' : 'w-[200px]'}
           ${hoverExpanded ? 'shadow-xl ring-1 ring-black/5 z-30' : ''}`}
       >
@@ -321,18 +427,12 @@ export function Layout({ children }: LayoutProps) {
               <p className="text-sm font-bold text-gray-900 truncate leading-tight">{currentCompanyName}</p>
             </div>
           )}
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden p-1 rounded hover:bg-gray-100 ml-auto"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
         </div>
 
         {/* Nav groups */}
         <nav className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
           {groups.map((group, gi) => {
-            const visibleItems = group.items.filter(item => accessibleModules.has(item.id));
+            const visibleItems = group.items.filter(item => isItemAccessible(item.id));
             if (visibleItems.length === 0) return null;
 
             return (
@@ -369,7 +469,7 @@ export function Layout({ children }: LayoutProps) {
                         {isActive && (
                           <span className="absolute left-0 top-1 bottom-1 w-0.5 bg-blue-500 rounded-r" />
                         )}
-                        <Icon className="flex-shrink-0" style={{ width: 15, height: 15 }} />
+                        <Icon className="flex-shrink-0" style={{ width: 15, height: 15 }} strokeWidth={isActive ? 2 : 1.75} />
                         {!isCollapsed && (
                           <span className="text-xs font-medium truncate">{item.label}</span>
                         )}
@@ -396,26 +496,49 @@ export function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Main content */}
-      <div className={`transition-[padding] duration-200 ${mainPadding}`}>
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-          <div className="flex items-center justify-between px-3 py-1.5">
-            <div className="flex items-center gap-1.5">
+      <div className={`flex-1 flex flex-col transition-[padding] duration-200 ${mainPadding} min-w-0 max-w-full overflow-x-hidden`}>
+        <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
+          <div className="flex items-center justify-between px-2.5 sm:px-3 py-1.5">
+            {/* Left Controls & Page Header */}
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Mobile menu button (touch target >= 44px) */}
               <button
+                type="button"
                 onClick={() => setSidebarOpen(true)}
-                className="lg:hidden p-1 rounded hover:bg-gray-100"
+                className="lg:hidden w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 active:bg-gray-200 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 title="Open menu"
+                aria-label="Open navigation menu"
               >
-                <Menu className="w-4 h-4" />
+                <Menu className="w-5 h-5" />
               </button>
+
+              {/* Desktop toggle button */}
               <button
+                type="button"
                 onClick={handleToggleSidebar}
-                className="hidden lg:block p-1 rounded hover:bg-gray-100"
+                className="hidden lg:flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 aria-expanded={!sidebarCollapsed}
               >
                 <Menu className="w-4 h-4" />
               </button>
+
+              {/* Mobile Branding & Active Module Badge */}
+              <div className="lg:hidden flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => navigate('dashboard')}
+                  className="flex items-center focus:outline-none"
+                  aria-label="SAPJ Home"
+                >
+                  <img src={logo} alt="SAPJ" className="w-6 h-6 flex-shrink-0" />
+                </button>
+                <div className="h-4 w-px bg-gray-200" />
+                <span className="text-xs font-bold text-gray-900 bg-gray-100/90 px-2 py-0.5 rounded-md truncate max-w-[130px] sm:max-w-[200px]">
+                  {currentPageTitle}
+                </span>
+              </div>
             </div>
 
             {/* Desktop date range */}
@@ -442,7 +565,8 @@ export function Layout({ children }: LayoutProps) {
             <div className={`md:hidden relative ${!showDateRange ? 'invisible' : ''}`} ref={datePickerRef} aria-hidden={!showDateRange}>
               {showDateRange && <button
                 onClick={() => setDatePickerOpen(!datePickerOpen)}
-                className="p-1.5 rounded hover:bg-gray-100 flex items-center gap-1 text-gray-600"
+                className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 focus:outline-none"
+                aria-label="Toggle date filter"
               >
                 <Calendar className="w-4 h-4" />
               </button>}
@@ -479,8 +603,22 @@ export function Layout({ children }: LayoutProps) {
               )}
             </div>
 
+            {/* Header Right Actions */}
             <div className="flex items-center gap-1">
+              {/* Mobile Search Button */}
               <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                className="sm:hidden w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600"
+                title="Search"
+                aria-label="Search"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+
+              {/* Desktop Search Button */}
+              <button
+                type="button"
                 onClick={() => setSearchOpen(true)}
                 className="hidden sm:flex items-center gap-1 px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs"
                 title="Search (Ctrl/Cmd+K)"
@@ -488,33 +626,99 @@ export function Layout({ children }: LayoutProps) {
                 <Search className="w-3.5 h-3.5" />
                 <span>Search</span><kbd className="text-[10px] bg-gray-100 px-1 rounded">⌘K</kbd>
               </button>
+
               <NotificationDropdown />
 
               <button
+                type="button"
                 onClick={toggleLanguage}
-                className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
+                className="hidden sm:flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 text-gray-700"
                 title="Toggle language"
               >
                 <Globe className="w-3.5 h-3.5 text-gray-600" />
-                <span className="text-xs font-medium text-gray-700 uppercase">{language}</span>
+                <span className="text-xs font-medium uppercase">{language}</span>
               </button>
 
               <button
+                type="button"
                 onClick={() => signOut()}
-                className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 text-gray-700"
+                className="hidden sm:flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 text-gray-700"
                 title={t('auth.logout')}
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium hidden md:inline">{t('auth.logout')}</span>
+                <span className="text-xs font-medium">{t('auth.logout')}</span>
               </button>
             </div>
           </div>
         </header>
 
-        <main className="p-2.5 sm:p-3">
+        {/* Content Area */}
+        <main className="flex-1 p-2.5 sm:p-3 pb-20 lg:pb-3 max-w-full overflow-x-hidden">
           {children}
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Shortcut Layer */}
+      <nav
+        aria-label="Mobile Navigation"
+        className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-gray-200 px-1 py-1 flex items-center justify-around shadow-[0_-2px_10px_rgba(0,0,0,0.06)] lg:hidden"
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 4px)' }}
+      >
+        {/* 1. HOME */}
+        <button
+          type="button"
+          onClick={() => navigate('dashboard')}
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 rounded-lg transition-colors min-h-[48px]
+            ${currentPage === 'dashboard' ? 'text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'}`}
+        >
+          <LayoutDashboard className="w-5 h-5 flex-shrink-0" strokeWidth={currentPage === 'dashboard' ? 2 : 1.75} />
+          <span className="text-[10px] mt-0.5 truncate tracking-tight">{t('nav.home', 'Home')}</span>
+        </button>
+
+        {/* 2. CRM */}
+        <button
+          type="button"
+          onClick={() => navigate('crm')}
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 rounded-lg transition-colors min-h-[48px]
+            ${['crm', 'customers'].includes(currentPage) ? 'text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'}`}
+        >
+          <UsersRound className="w-5 h-5 flex-shrink-0" strokeWidth={['crm', 'customers'].includes(currentPage) ? 2 : 1.75} />
+          <span className="text-[10px] mt-0.5 truncate tracking-tight">{t('nav.crm', 'CRM')}</span>
+        </button>
+
+        {/* 3. SALES */}
+        <button
+          type="button"
+          onClick={() => navigate('sales')}
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 rounded-lg transition-colors min-h-[48px]
+            ${['sales', 'sales-orders', 'delivery-challan'].includes(currentPage) ? 'text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'}`}
+        >
+          <ReceiptText className="w-5 h-5 flex-shrink-0" strokeWidth={['sales', 'sales-orders', 'delivery-challan'].includes(currentPage) ? 2 : 1.75} />
+          <span className="text-[10px] mt-0.5 truncate tracking-tight">{t('nav.sales', 'Sales')}</span>
+        </button>
+
+        {/* 4. STOCK */}
+        <button
+          type="button"
+          onClick={() => navigate('stock')}
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 rounded-lg transition-colors min-h-[48px]
+            ${['stock', 'products', 'batches', 'inventory'].includes(currentPage) ? 'text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'}`}
+        >
+          <Warehouse className="w-5 h-5 flex-shrink-0" strokeWidth={['stock', 'products', 'batches', 'inventory'].includes(currentPage) ? 2 : 1.75} />
+          <span className="text-[10px] mt-0.5 truncate tracking-tight">{t('nav.stock', 'Stock')}</span>
+        </button>
+
+        {/* 5. MORE */}
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 rounded-lg transition-colors min-h-[48px]
+            ${sidebarOpen ? 'text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'}`}
+        >
+          <MoreHorizontal className="w-5 h-5 flex-shrink-0" strokeWidth={1.75} />
+          <span className="text-[10px] mt-0.5 truncate tracking-tight">More</span>
+        </button>
+      </nav>
 
       {searchOpen && (
         <div className="fixed inset-0 z-[70] bg-black/30 flex items-start justify-center pt-[12vh] px-4" onMouseDown={() => setSearchOpen(false)}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { supabase } from '../../../lib/supabase';
 import { useNavigation } from '../../../contexts/NavigationContext';
 import { showToast } from '../../ToastNotification';
@@ -72,8 +73,13 @@ interface TimelineEvent {
   direction: 'inbound' | 'outbound' | 'internal';
   title: string;
   sender: string;
+  recipient?: string;
+  cc?: string;
+  subject?: string;
   timestamp: string;
   body: string;
+  bodyHtml?: string;
+  sourceType?: 'gmail' | 'crm' | 'whatsapp' | 'internal';
   attachments?: Array<{
     filename: string;
     size?: number;
@@ -166,7 +172,50 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
       // 2. Fetch Unified Timeline Events (Email + WhatsApp + Internal)
       const events: TimelineEvent[] = [];
 
-      // A. Fetch Email Activities & Gmail review evidence
+      // A. Check if linked Gmail thread exists via review or external id
+      let hasLoadedGmailThread = false;
+      const tId = rev?.evidence?.threadId;
+      const mId = rev?.evidence?.messageId;
+      if (tId || mId) {
+        try {
+          const { data: threadData } = await supabase.functions.invoke('gmail-inbox-message', {
+            body: {
+              threadId: tId || undefined,
+              messageId: mId || undefined,
+              includeThread: true,
+            },
+          });
+          if (threadData?.success && Array.isArray(threadData.thread_messages) && threadData.thread_messages.length > 0) {
+            hasLoadedGmailThread = true;
+            threadData.thread_messages.forEach((gm: any) => {
+              const isOutbound = (gm.from || '').toLowerCase().includes('sapharmajaya') || (gm.from || '').toLowerCase().includes('avira');
+              events.push({
+                id: `gmail-${gm.messageId}`,
+                channel: 'email',
+                direction: isOutbound ? 'outbound' : 'inbound',
+                title: gm.subject || 'Gmail Message',
+                subject: gm.subject,
+                sender: gm.from || 'Gmail User',
+                recipient: gm.to || '',
+                cc: gm.cc || undefined,
+                timestamp: gm.date || new Date().toISOString(),
+                body: gm.body || gm.bodyText || gm.snippet || '',
+                bodyHtml: gm.bodyHtml,
+                sourceType: 'gmail',
+                attachments: (gm.attachments || []).map((a: any) => ({
+                  filename: a.filename,
+                  size: a.size,
+                  storagePath: a.storagePath || null,
+                })),
+              });
+            });
+          }
+        } catch (threadErr) {
+          console.warn('Could not load Gmail thread from edge function:', threadErr);
+        }
+      }
+
+      // B. Fetch Email Activities (CRM logged)
       const { data: emailActs } = await supabase
         .from('crm_email_activities')
         .select('*')
@@ -174,26 +223,42 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
         .order('sent_date', { ascending: true });
 
       (emailActs || []).forEach(ea => {
+        const toRecipients = Array.isArray(ea.to_email) ? ea.to_email.join(', ') : (ea.to_email || '');
+        const ccRecipients = Array.isArray(ea.cc_email) ? ea.cc_email.join(', ') : (ea.cc_email || '');
         events.push({
           id: `ea-${ea.id}`,
           channel: 'email',
           direction: ea.email_type === 'sent' ? 'outbound' : 'inbound',
           title: ea.subject || 'Email Communication',
-          sender: ea.from_email,
+          subject: ea.subject,
+          sender: ea.from_email || 'sales@sapharmajaya.co.id',
+          recipient: toRecipients,
+          cc: ccRecipients || undefined,
           timestamp: ea.sent_date || ea.created_at,
           body: ea.body || '(No body text)',
+          bodyHtml: /<[a-z][\s\S]*>/i.test(ea.body || '') ? ea.body : undefined,
+          sourceType: 'crm',
+          attachments: (ea.attachment_urls || []).map((url: string) => ({
+            filename: url.split('/').pop() || 'Attachment',
+            storagePath: url,
+          })),
         });
       });
 
-      if (rev?.evidence?.sourceQuote || rev?.summary) {
+      // C. If review has quotation summary and wasn't loaded via real Gmail thread
+      if (!hasLoadedGmailThread && (rev?.evidence?.sourceQuote || rev?.summary)) {
         events.push({
           id: `rev-${rev.id}`,
           channel: 'email',
           direction: 'inbound',
           title: rev.evidence?.subject || 'Supplier Quotation Email',
+          subject: rev.evidence?.subject,
           sender: rev.sender_email || 'Supplier',
+          recipient: 'kunal@avira.co.id',
           timestamp: rev.created_at,
           body: rev.evidence?.sourceQuote || rev.summary,
+          bodyHtml: /<[a-z][\s\S]*>/i.test(rev.evidence?.sourceQuote || rev.summary || '') ? (rev.evidence?.sourceQuote || rev.summary) : undefined,
+          sourceType: 'crm',
           attachments: (rev.evidence?.attachments || []).map((a: any) => ({
             filename: a.filename,
             size: a.size,
@@ -202,7 +267,7 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
         });
       }
 
-      // B. Fetch WhatsApp Conversation Messages
+      // D. Fetch WhatsApp Conversation Messages
       const { data: waLinks } = await supabase
         .from('enquiry_conversation_links')
         .select('conversation_id')
@@ -218,19 +283,25 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
           .order('received_or_sent_at', { ascending: true });
 
         (waMsgs || []).forEach(wm => {
+          const isWhatsApp = wm.channel === 'whatsapp';
           events.push({
             id: `wm-${wm.id}`,
-            channel: wm.channel === 'whatsapp' ? 'whatsapp' : 'email',
+            channel: isWhatsApp ? 'whatsapp' : 'email',
             direction: wm.direction || 'inbound',
-            title: 'WhatsApp Message',
+            title: wm.subject || (isWhatsApp ? 'WhatsApp Message' : 'Email Message'),
+            subject: wm.subject,
             sender: wm.sender_name || wm.sender_address,
+            recipient: Array.isArray(wm.recipient_addresses) ? wm.recipient_addresses.join(', ') : wm.recipient_addresses,
             timestamp: wm.received_or_sent_at,
-            body: wm.body_text || '(No text)',
+            body: wm.body_text || wm.body_html || '(No text)',
+            bodyHtml: wm.body_html,
+            sourceType: isWhatsApp ? 'whatsapp' : 'crm',
+            attachments: Array.isArray(wm.attachments) ? wm.attachments : undefined,
           });
         });
       }
 
-      // C. Fetch Internal Activities (calls, meetings, notes)
+      // E. Fetch Internal Activities (calls, meetings, notes)
       const { data: crmActs } = await supabase
         .from('crm_activities')
         .select('*')
@@ -245,9 +316,11 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
           channel: 'internal',
           direction: 'internal',
           title: ca.subject || `Internal ${ca.activity_type || 'Activity'}`,
+          subject: ca.subject,
           sender: 'Internal Staff',
           timestamp: ca.created_at,
           body: ca.notes || ca.description || ca.subject || '',
+          sourceType: 'internal',
         });
       });
 
@@ -368,6 +441,30 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
     setNavigationData({ crmInquiryId: inquiry.id });
     setCurrentPage('pricing-worksheet');
     onClose();
+  };
+
+  const renderEmailBody = (body?: string, bodyHtml?: string) => {
+    const raw = bodyHtml || body || '';
+    const hasHtml = /<[a-z][\s\S]*>/i.test(raw);
+
+    if (hasHtml) {
+      const sanitized = DOMPurify.sanitize(raw, {
+        ADD_TAGS: ['style', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span', 'p', 'b', 'strong', 'i', 'em', 'u', 'br', 'hr', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'font'],
+        ADD_ATTR: ['target', 'style', 'class', 'href', 'cellpadding', 'cellspacing', 'border', 'align', 'valign', 'width', 'color', 'colspan', 'rowspan'],
+      });
+      return (
+        <div
+          className="email-rendered-body bg-white rounded border border-gray-200 p-3 text-xs text-gray-800 overflow-x-auto shadow-2xs font-sans leading-normal max-w-full"
+          dangerouslySetInnerHTML={{ __html: sanitized }}
+        />
+      );
+    }
+
+    return (
+      <div className="text-xs text-gray-800 leading-relaxed whitespace-pre-wrap font-sans select-text p-2.5 bg-gray-50/50 rounded border border-gray-100">
+        {raw}
+      </div>
+    );
   };
 
   if (!isOpen || !inquiry) return null;
@@ -658,16 +755,55 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
                           {isInternal && <FileText className="w-3 h-3" />}
                         </span>
                         <span className="font-bold text-gray-900 text-xs">{evt.title}</span>
-                        <span className="text-[10px] text-gray-400">• From: {evt.sender}</span>
                       </div>
-                      <span className="text-[10px] text-gray-400">
-                        {new Date(evt.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {evt.sourceType === 'gmail' ? (
+                          <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">
+                            Gmail Verified Thread
+                          </span>
+                        ) : evt.channel === 'email' ? (
+                          <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 rounded px-1.5 py-0.5 font-medium">
+                            Logged via CRM
+                          </span>
+                        ) : null}
+                        <span className="text-[10px] text-gray-400">
+                          {new Date(evt.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="text-xs text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
-                      {evt.body}
-                    </div>
+                    {/* Email Meta Details: Sender, Recipient, CC, Subject */}
+                    {isEmail && (
+                      <div className="bg-slate-50 border border-slate-200 rounded p-2 text-[11px] space-y-1 text-gray-600">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span><strong className="text-gray-700">From:</strong> {evt.sender}</span>
+                          {evt.recipient && <span><strong className="text-gray-700">To:</strong> {evt.recipient}</span>}
+                        </div>
+                        {evt.cc && (
+                          <div><strong className="text-gray-700">CC:</strong> {evt.cc}</div>
+                        )}
+                        {evt.subject && (
+                          <div className="font-semibold text-gray-900 pt-0.5"><strong className="text-gray-700 font-normal">Subject:</strong> {evt.subject}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* WhatsApp Meta Details */}
+                    {isWhatsApp && (
+                      <div className="bg-emerald-50/50 border border-emerald-100 rounded px-2 py-1 text-[11px] text-gray-600 flex items-center justify-between">
+                        <span><strong className="text-gray-700">From:</strong> {evt.sender}</span>
+                        {evt.recipient && <span><strong className="text-gray-700">To:</strong> {evt.recipient}</span>}
+                      </div>
+                    )}
+
+                    {/* Rendered Email / WhatsApp Body */}
+                    {isEmail ? (
+                      renderEmailBody(evt.body, evt.bodyHtml)
+                    ) : (
+                      <div className="text-xs text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
+                        {evt.body}
+                      </div>
+                    )}
 
                     {/* Attachments if any */}
                     {evt.attachments && evt.attachments.length > 0 && (

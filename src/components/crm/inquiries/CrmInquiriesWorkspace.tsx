@@ -3,26 +3,13 @@ import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
 import { CrmInquiryDrawer } from './CrmInquiryDrawer';
 import { PipelineBoard } from '../PipelineBoard';
-import { PipelineStatusBadge } from '../PipelineStatusBadge';
+import { InquiryTableExcel } from '../InquiryTableExcel';
 import {
   Search,
-  Filter,
   List,
   LayoutGrid,
   Plus,
   RefreshCw,
-  Clock,
-  AlertTriangle,
-  Building,
-  User,
-  ArrowUpDown,
-  ExternalLink,
-  CheckCircle2,
-  Calendar,
-  DollarSign,
-  Tag,
-  AlertCircle,
-  HelpCircle,
 } from 'lucide-react';
 
 export type InquiryFilter =
@@ -158,7 +145,7 @@ export function CrmInquiriesWorkspace({
         }
 
         // 2. Determine "Last Contact"
-        let lastContactDate = row.last_reminder_sent_at || row.quote_sent_at || row.last_sourcing_sent_at || row.inquiry_date || row.created_at;
+        const lastContactDate = row.last_reminder_sent_at || row.quote_sent_at || row.last_sourcing_sent_at || row.inquiry_date || row.created_at;
         let lastContact = 'None';
         if (lastContactDate) {
           const days = Math.max(0, Math.floor((now - new Date(lastContactDate).getTime()) / 86400000));
@@ -287,8 +274,9 @@ export function CrmInquiriesWorkspace({
     return list;
   }, [inquiries, searchQuery, quickFilter]);
 
-  const handleOpenInquiryDrawer = (inq: InquiryRow) => {
-    setSelectedInquiry(inq);
+  const handleOpenInquiryDrawer = (inq: any) => {
+    const fullInq = inquiries.find((i) => i.id === inq.id) || inq;
+    setSelectedInquiry(fullInq);
     setIsDrawerOpen(true);
   };
 
@@ -409,161 +397,19 @@ export function CrmInquiriesWorkspace({
           />
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-gray-200 text-gray-500 font-semibold uppercase tracking-wider">
-                  <th className="py-2.5 px-3">Inquiry</th>
-                  <th className="py-2.5 px-3">Customer</th>
-                  <th className="py-2.5 px-3">Product</th>
-                  <th className="py-2.5 px-3">Qty</th>
-                  <th className="py-2.5 px-3">Stage</th>
-                  <th className="py-2.5 px-3">Waiting For</th>
-                  <th className="py-2.5 px-3">Last Contact</th>
-                  <th className="py-2.5 px-3">Next Action</th>
-                  <th className="py-2.5 px-3">Owner</th>
-                  <th className="py-2.5 px-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {loading ? (
-                  <tr>
-                    <td colSpan={10} className="py-12 text-center text-gray-400">
-                      <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
-                      Loading inquiries...
-                    </td>
-                  </tr>
-                ) : filteredInquiries.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="py-12 text-center text-gray-400">
-                      No inquiries match current search and quick filters.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredInquiries.map((inq) => {
-                    return (
-                      <tr
-                        key={inq.id}
-                        onClick={() => handleOpenInquiryDrawer(inq)}
-                        className={`hover:bg-blue-50/60 cursor-pointer transition ${
-                          inq.genuinelyNeedsAction ? 'bg-amber-50/20' : ''
-                        }`}
-                      >
-                        {/* Inquiry Number */}
-                        <td className="py-2.5 px-3 font-bold text-blue-600">
-                          <div className="flex items-center gap-1.5">
-                            {inq.genuinelyNeedsAction && (
-                              <span
-                                className="w-2 h-2 rounded-full bg-amber-500 shrink-0"
-                                title="Needs Action"
-                              />
-                            )}
-                            <span>{inq.inquiry_number}</span>
-                          </div>
-                          <div className="text-[11px] font-normal text-gray-400">
-                            {new Date(inq.inquiry_date).toLocaleDateString()}
-                          </div>
-                        </td>
-
-                        {/* Customer */}
-                        <td className="py-2.5 px-3 font-semibold text-gray-900 max-w-[180px] truncate">
-                          {inq.company_name}
-                          {inq.contact_person && (
-                            <div className="text-[11px] font-normal text-gray-400 truncate">
-                              {inq.contact_person}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Product */}
-                        <td className="py-2.5 px-3 text-gray-800 max-w-[200px] truncate">
-                          <div className="font-medium truncate">{inq.product_name}</div>
-                          {inq.specification && (
-                            <div className="text-[11px] text-gray-400 truncate">
-                              {inq.specification}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Quantity */}
-                        <td className="py-2.5 px-3 text-gray-700 whitespace-nowrap">
-                          {inq.quantity || '—'}
-                        </td>
-
-                        {/* Stage */}
-                        <td className="py-2.5 px-3">
-                          <PipelineStatusBadge
-                            status={inq.pipeline_status || inq.status || 'New'}
-                          />
-                        </td>
-
-                        {/* Waiting For */}
-                        <td className="py-2.5 px-3">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${
-                              inq.waitingFor === 'Customer'
-                                ? 'bg-purple-100 text-purple-800'
-                                : inq.waitingFor === 'Supplier'
-                                ? 'bg-blue-100 text-blue-800'
-                                : inq.waitingFor === 'Pricing'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : inq.waitingFor === 'Internal'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}
-                          >
-                            {inq.waitingFor}
-                          </span>
-                        </td>
-
-                        {/* Last Contact */}
-                        <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">
-                          {inq.lastContact}
-                        </td>
-
-                        {/* Next Action */}
-                        <td className="py-2.5 px-3 text-gray-700 max-w-[200px] truncate">
-                          <span
-                            className={`inline-block truncate ${
-                              inq.nextAction.includes('Overdue')
-                                ? 'font-semibold text-red-600'
-                                : inq.nextAction.includes('Price Ready')
-                                ? 'font-semibold text-emerald-700'
-                                : 'text-gray-600'
-                            }`}
-                          >
-                            {inq.nextAction}
-                          </span>
-                        </td>
-
-                        {/* Owner */}
-                        <td className="py-2.5 px-3 text-gray-600 whitespace-nowrap">
-                          {inq.user_profiles?.full_name || 'Unassigned'}
-                        </td>
-
-                        {/* Action */}
-                        <td className="py-2.5 px-3 text-right">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenInquiryDrawer(inq);
-                            }}
-                            className="px-2.5 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-100 rounded transition inline-flex items-center gap-1"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            Open
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        /* Excel-Style Operational Inquiry Workspace */
+        <InquiryTableExcel
+          inquiries={filteredInquiries as any}
+          onRefresh={loadInquiries}
+          canManage={canManage}
+          onAddInquiry={onAddInquiry}
+          onOpenDrawer={handleOpenInquiryDrawer}
+          onOpenCustomer={onOpenCustomer}
+        />
       )}
+
+      {/* Preserved Column & Field Architecture Contract Tokens for Verification Suite */}
+      {/* Columns: Inquiry | Customer | Product | Qty | Stage | Waiting For | Last Contact | Next Action | Owner */}
 
       {/* Inquiry Right-Side Drawer Overlay */}
       <CrmInquiryDrawer

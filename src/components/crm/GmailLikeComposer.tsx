@@ -551,13 +551,16 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
         body: {
           ...(isIndiaMode
             ? {
-                requiredSenderEmail: 'kunal@sapharmajaya.co.id',
-                replyTo: 'kunal@sapharmajaya.co.id',
+                requiredSenderEmail: 'kunal@avira.co.id',
+                replyTo: 'kunal@avira.co.id',
                 workflowType: 'india_pricing',
               }
             : {
                 userId: user.id,
-                workflowType: 'crm_bulk_email',
+                requiredSenderEmail: 'sales@sapharmajaya.co.id',
+                replyTo: 'sales@sapharmajaya.co.id',
+                workflowType: mode === 'price' ? 'customer_quote' : 'crm_bulk_email',
+                allowFallback: true,
               }),
           toEmails: toList,
           cc: ccList,
@@ -618,7 +621,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
         const { data: activityData, error: activityError } = await supabase.from('crm_email_activities').insert([{
           inquiry_id: inq.id,
           email_type: 'sent',
-          from_email: user.email,
+          from_email: isIndiaMode ? 'kunal@avira.co.id' : 'sales@sapharmajaya.co.id',
           to_email: toList,
           cc_email: ccList.length > 0 ? ccList : null,
           bcc_email: bccList.length > 0 ? bccList : null,
