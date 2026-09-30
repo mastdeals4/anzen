@@ -172,6 +172,20 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
   // Authoritative inventory/base unit from product master
   const firstItemUnit = formatUnit(items[0]?.products?.unit || items[0]?.batches?.products?.unit);
 
+  // Packaging is stored authoritatively on the batch as packaging_details.
+  // Older DC rows may not have copied pack_size/pack_type into the DC item,
+  // so the document must fall back to the batch packaging instead of showing "-".
+  const getPackagingDisplay = (item: ChallanItem) => {
+    if (item.pack_type && item.pack_size) {
+      const unit = formatUnit(item.products?.unit || item.batches?.products?.unit);
+      return item.number_of_packs
+        ? `${item.pack_size} ${unit}/${item.pack_type}`
+        : `${item.pack_size} ${unit} ${item.pack_type}`;
+    }
+
+    return item.batches?.packaging_details?.trim() || '-';
+  };
+
   return (
     <div className="doc-print-root fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 print:static print:bg-white print:overflow-visible">
       <div className="doc-print-scroll flex min-h-screen items-start justify-center p-4 pt-10 print:p-0 print:min-h-0 print:block">
@@ -286,11 +300,7 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
                         {item.batches?.expiry_date ? formatExpiryDate(item.batches.expiry_date) : '-'}
                       </td>
                       <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
-                        {item.pack_type && item.pack_size && item.number_of_packs
-                          ? `${item.pack_size} ${formatUnit(item.products?.unit || item.batches?.products?.unit)}/${item.pack_type}`
-                          : item.pack_type && item.pack_size
-                          ? `${item.pack_size} ${item.pack_type}`
-                          : '-'}
+                        {getPackagingDisplay(item)}
                       </td>
                       <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
                         {item.number_of_packs || '-'}
