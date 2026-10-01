@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { X, Printer, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -9,6 +9,9 @@ import { DocumentHeader } from './DocumentHeader';
 import { DocumentPrintStyles } from './DocumentPrintStyles';
 import { SnapshotMissingError } from './SnapshotMissingError';
 import { formatUnit } from '../utils/unitDisplay';
+import { resolveItemPackaging } from '../utils/deliveryPackaging';
+import { supabase } from '../lib/supabase';
+
 interface ChallanItem {
   id: string;
   product_id: string;
@@ -21,7 +24,10 @@ interface ChallanItem {
     product_name: string;
     product_code: string;
     unit: string;
-  };
+    per_pack_weight?: number | null;
+    pack_type?: string | null;
+    packaging_type?: string | null;
+  } | null;
   batches?: {
     batch_number: string;
     expiry_date: string | null;
@@ -30,9 +36,14 @@ interface ChallanItem {
       product_name: string;
       product_code: string;
       unit: string;
+      per_pack_weight?: number | null;
+      pack_type?: string | null;
+      packaging_type?: string | null;
     } | null;
     packaging_details: string | null;
-  };
+    per_pack_weight?: number | null;
+    pack_type?: string | null;
+  } | null;
 }
 
 interface DeliveryChallanViewProps {
@@ -64,6 +75,49 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
   // useResolvedCompanyLogo runs unconditionally so React hook order stays
   // stable when we early-return below. It's cheap when logoUrl is null.
   const { ready: logoReady } = useResolvedCompanyLogo(companyProfile?.company_logo_url);
+
+  // Maintain local state to enrich items from product master if caller passed minimal fields
+  const [enrichedItems, setEnrichedItems] = useState<ChallanItem[]>(items);
+
+  useEffect(() => {
+    setEnrichedItems(items);
+    const missingProductIds = items
+      .filter(it => (!it.pack_size || !it.pack_type) && !it.products?.per_pack_weight && it.product_id)
+      .map(it => it.product_id);
+
+    if (missingProductIds.length === 0) return;
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const { data: prods } = await supabase
+          .from('products')
+          .select('id, per_pack_weight, pack_type, packaging_type, unit')
+          .in('id', Array.from(new Set(missingProductIds)));
+
+        if (!isMounted || !prods || prods.length === 0) return;
+
+        const prodMap = new Map(prods.map(p => [p.id, p]));
+        setEnrichedItems(prev => prev.map(it => {
+          const pm = prodMap.get(it.product_id);
+          if (!pm) return it;
+          return {
+            ...it,
+            products: {
+              ...(it.products || { product_name: '', product_code: '', unit: pm.unit || '' }),
+              per_pack_weight: it.products?.per_pack_weight ?? pm.per_pack_weight,
+              pack_type: it.products?.pack_type ?? pm.pack_type,
+              packaging_type: it.products?.packaging_type ?? pm.packaging_type,
+            }
+          };
+        }));
+      } catch (err) {
+        console.error('Failed to enrich packaging from product master:', err);
+      }
+    })();
+
+    return () => { isMounted = false; };
+  }, [items]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -168,23 +222,10 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
     return `${month} ${year}`;
   };
 
-  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const itemsToDisplay = enrichedItems;
+  const totalQuantity = itemsToDisplay.reduce((sum, item) => sum + item.quantity, 0);
   // Authoritative inventory/base unit from product master
-  const firstItemUnit = formatUnit(items[0]?.products?.unit || items[0]?.batches?.products?.unit);
-
-  // Packaging is stored authoritatively on the batch as packaging_details.
-  // Older DC rows may not have copied pack_size/pack_type into the DC item,
-  // so the document must fall back to the batch packaging instead of showing "-".
-  const getPackagingDisplay = (item: ChallanItem) => {
-    if (item.pack_type && item.pack_size) {
-      const unit = formatUnit(item.products?.unit || item.batches?.products?.unit);
-      return item.number_of_packs
-        ? `${item.pack_size} ${unit}/${item.pack_type}`
-        : `${item.pack_size} ${unit} ${item.pack_type}`;
-    }
-
-    return item.batches?.packaging_details?.trim() || '-';
-  };
+  const firstItemUnit = formatUnit(itemsToDisplay[0]?.products?.unit || itemsToDisplay[0]?.batches?.products?.unit);
 
   return (
     <div className="doc-print-root fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 print:static print:bg-white print:overflow-visible">
@@ -291,23 +332,26 @@ export function DeliveryChallanView({ challan, items, onClose, companyProfile }:
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, index) => (
-                    <tr key={item.id} className="border-b border-black">
-                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{index + 1}</td>
-                      <td className="border-r border-black px-1 py-1 print:px-0.5 print:py-0.5">{item.products?.product_name || item.batches?.products?.product_name || '-'}</td>
-                    <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.batches?.batch_number}<br/><span className="text-[8px]">{item.batches?.product_sources?.supplier_name || 'Not recorded'}</span></td>
-                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
-                        {item.batches?.expiry_date ? formatExpiryDate(item.batches.expiry_date) : '-'}
-                      </td>
-                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
-                        {getPackagingDisplay(item)}
-                      </td>
-                      <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
-                        {item.number_of_packs || '-'}
-                      </td>
-                      <td className="px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.quantity.toLocaleString()} {formatUnit(item.products?.unit || item.batches?.products?.unit || firstItemUnit)}</td>
-                    </tr>
-                  ))}
+                  {itemsToDisplay.map((item, index) => {
+                    const resolved = resolveItemPackaging(item, firstItemUnit);
+                    return (
+                      <tr key={item.id} className="border-b border-black">
+                        <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{index + 1}</td>
+                        <td className="border-r border-black px-1 py-1 print:px-0.5 print:py-0.5">{item.products?.product_name || item.batches?.products?.product_name || '-'}</td>
+                        <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.batches?.batch_number}<br/><span className="text-[8px]">{item.batches?.product_sources?.supplier_name || 'Not recorded'}</span></td>
+                        <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
+                          {item.batches?.expiry_date ? formatExpiryDate(item.batches.expiry_date) : '-'}
+                        </td>
+                        <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
+                          {resolved.displayPackaging}
+                        </td>
+                        <td className="border-r border-black px-1 py-1 text-center print:px-0.5 print:py-0.5">
+                          {resolved.displayPacks}
+                        </td>
+                        <td className="px-1 py-1 text-center print:px-0.5 print:py-0.5">{item.quantity.toLocaleString()} {formatUnit(item.products?.unit || item.batches?.products?.unit || firstItemUnit)}</td>
+                      </tr>
+                    );
+                  })}
                   <tr className="border-t-2 border-black bg-gray-50 font-bold">
                     <td colSpan={6} className="border-r border-black px-1 py-1 text-right print:px-0.5 print:py-0.5">
                       Total Kuantitas / Total Quantity:

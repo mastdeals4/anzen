@@ -19,6 +19,7 @@ import { fetchLinkedDocumentsBundle, LinkedDocRef } from '../utils/linkedDocumen
 import { LinkedDocsCell } from '../components/LinkedDocsCell';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
 import { formatUnit } from '../utils/unitDisplay';
+import { formatPackTypeForDisplay } from '../utils/deliveryPackaging';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -66,15 +67,33 @@ interface ChallanItem {
   pack_type: string | null;
   number_of_packs: number | null;
   products?: {
+    id?: string;
     product_name: string;
     product_code?: string;
     unit: string;
+    per_pack_weight?: number | null;
+    pack_type?: string | null;
+    packaging_type?: string | null;
   } | null;
   batches?: {
+    id?: string;
     batch_number: string;
     expiry_date: string | null;
     current_stock: number;
     packaging_details: string | null;
+    per_pack_weight?: number | null;
+    pack_type?: string | null;
+    make_id?: string | null;
+    product_sources?: { supplier_name: string | null; grade: string | null } | null;
+    products?: {
+      id?: string;
+      product_name: string;
+      product_code?: string;
+      unit: string;
+      per_pack_weight?: number | null;
+      pack_type?: string | null;
+      packaging_type?: string | null;
+    } | null;
   };
 }
 
@@ -90,6 +109,9 @@ interface Product {
   product_name: string;
   product_code: string;
   unit: string;
+  per_pack_weight?: number | null;
+  pack_type?: string | null;
+  packaging_type?: string | null;
 }
 
 interface SalesOrderItemSource {
@@ -110,6 +132,8 @@ interface Batch {
   reserved_stock: number;
   expiry_date: string | null;
   packaging_details: string | null;
+  per_pack_weight?: number | null;
+  pack_type?: string | null;
   import_date: string | null;
   make_id: string | null;
   product_sources?: { supplier_name: string | null; grade: string | null } | null;
@@ -411,7 +435,7 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('products')
-        .select('id, product_name, product_code, unit')
+        .select('id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type')
         .eq('is_active', true)
         .order('product_name');
 
@@ -426,7 +450,7 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, product_id, make_id, current_stock, reserved_stock, expiry_date, packaging_details, import_date, product_sources!batches_make_id_fkey(supplier_name, grade)')
+        .select('id, batch_number, product_id, make_id, current_stock, reserved_stock, expiry_date, packaging_details, per_pack_weight, pack_type, import_date, product_sources!batches_make_id_fkey(supplier_name, grade)')
         .eq('is_active', true)
         .gt('current_stock', 0)
         .order('import_date', { ascending: true });
@@ -445,7 +469,15 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('delivery_challan_items')
-        .select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, current_stock, make_id, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))')
+        .select(`
+          *,
+          products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type),
+          batches(
+            id, batch_number, expiry_date, packaging_details, per_pack_weight, pack_type, current_stock, make_id,
+            products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type),
+            product_sources!batches_make_id_fkey(supplier_name, grade)
+          )
+        `)
         .eq('challan_id', challanId);
 
       if (error) throw error;
@@ -553,11 +585,24 @@ export function DeliveryChallan() {
                 let numberOfPacks: number | null = null;
                 let lineQty = 0;
 
-                if (batch.packaging_details) {
+                if (batch.per_pack_weight && Number(batch.per_pack_weight) > 0 && batch.pack_type) {
+                  packSize = Number(batch.per_pack_weight);
+                  packType = formatPackTypeForDisplay(batch.pack_type);
+                } else if (batch.packaging_details) {
                   const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/i);
                   if (match) {
-                    packType = match[2].toLowerCase();
+                    packType = formatPackTypeForDisplay(match[2]);
                     packSize = parseFloat(match[3]);
+                  }
+                }
+
+                if (!packSize || !packType) {
+                  const prod = products.find(p => p.id === item.product_id) || (item.products as any);
+                  const pWeight = Number(prod?.per_pack_weight);
+                  const pType = prod?.pack_type || prod?.packaging_type;
+                  if (pWeight > 0 && pType) {
+                    packSize = packSize || pWeight;
+                    packType = packType || formatPackTypeForDisplay(pType);
                   }
                 }
 
@@ -592,14 +637,20 @@ export function DeliveryChallan() {
 
               // If no stock was allocated for this SO item, add a placeholder row so user can see it
               if (!hasAllocated) {
+                const prod = products.find(p => p.id === item.product_id) || (item.products as any);
+                const pWeight = Number(prod?.per_pack_weight);
+                const pType = prod?.pack_type || prod?.packaging_type;
+                const phPackSize = pWeight > 0 ? pWeight : null;
+                const phPackType = (pWeight > 0 && pType) ? formatPackTypeForDisplay(pType) : null;
+                const phPacks = (phPackSize && neededQty > 0) ? Math.ceil(neededQty / phPackSize) : null;
                 newItems.push({
                   sales_order_item_id: item.id,
                   product_id: item.product_id,
                   batch_id: '',
                   quantity: neededQty,
-                  pack_size: null,
-                  pack_type: null,
-                  number_of_packs: null,
+                  pack_size: phPackSize,
+                  pack_type: phPackType,
+                  number_of_packs: phPacks,
                   products: item.products,
                 });
               }
@@ -684,58 +735,70 @@ export function DeliveryChallan() {
         }
       }
 
-      let packSize = null;
-      let packType = null;
-      let numberOfPacks = null;
+      let packSize: number | null = null;
+      let packType: string | null = null;
+      let numberOfPacks: number | null = null;
 
-      // Extract packaging details from batch
-      if (batch.packaging_details) {
+      // Extract packaging details: Batch structured -> Batch regex -> Product Master
+      if (batch.per_pack_weight && Number(batch.per_pack_weight) > 0 && batch.pack_type) {
+        packSize = Number(batch.per_pack_weight);
+        packType = formatPackTypeForDisplay(batch.pack_type);
+      } else if (batch.packaging_details) {
         const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/i);
         if (match) {
-          packType = match[2].toLowerCase();
+          packType = formatPackTypeForDisplay(match[2]);
           packSize = parseFloat(match[3]);
-
-          // Calculate available stock minus usage in other rows of this form
-          let usedInOtherRows = 0;
-          items.forEach((it, i) => {
-            if (i !== index && it.batch_id === batchId) {
-              usedInOtherRows += it.quantity || 0;
-            }
-          });
-          const availableStock = Math.max(0, getAvailableStock(batch) - usedInOtherRows);
-
-          if (packSize && packSize > 0) {
-            const maxPacks = Math.floor(availableStock / packSize);
-
-            // Determine needed quantity for this SO item
-            let neededQty = 0;
-            if (soItemId) {
-              const sourceItem = salesOrderItemSources.find(s => s.id === soItemId);
-              if (sourceItem) {
-                const totalTarget = Math.max(0, Number(sourceItem.quantity) - Number(sourceItem.delivered_quantity || 0));
-                let otherRowsQty = 0;
-                items.forEach((it, i) => {
-                  if (i !== index && it.sales_order_item_id === soItemId) {
-                    otherRowsQty += it.quantity || 0;
-                  }
-                });
-                neededQty = Math.max(0, totalTarget - otherRowsQty);
-              }
-            }
-
-            if (neededQty > 0) {
-              const neededPacks = Math.ceil(neededQty / packSize);
-              numberOfPacks = Math.min(maxPacks, neededPacks);
-            } else {
-              numberOfPacks = maxPacks >= 1 ? 1 : 0;
-            }
-          } else {
-            numberOfPacks = 1;
-          }
         }
       }
 
-      const quantity = packSize && numberOfPacks ? packSize * numberOfPacks : 0;
+      if (!packSize || !packType) {
+        const prod = products.find(p => p.id === batch.product_id);
+        const pWeight = Number(prod?.per_pack_weight);
+        const pType = prod?.pack_type || prod?.packaging_type;
+        if (pWeight > 0 && pType) {
+          packSize = packSize || pWeight;
+          packType = packType || formatPackTypeForDisplay(pType);
+        }
+      }
+
+      // Calculate available stock minus usage in other rows of this form
+      let usedInOtherRows = 0;
+      items.forEach((it, i) => {
+        if (i !== index && it.batch_id === batchId) {
+          usedInOtherRows += it.quantity || 0;
+        }
+      });
+      const availableStock = Math.max(0, getAvailableStock(batch) - usedInOtherRows);
+
+      // Determine needed quantity for this SO item
+      let neededQty = 0;
+      if (soItemId) {
+        const sourceItem = salesOrderItemSources.find(s => s.id === soItemId);
+        if (sourceItem) {
+          const totalTarget = Math.max(0, Number(sourceItem.quantity) - Number(sourceItem.delivered_quantity || 0));
+          let otherRowsQty = 0;
+          items.forEach((it, i) => {
+            if (i !== index && it.sales_order_item_id === soItemId) {
+              otherRowsQty += it.quantity || 0;
+            }
+          });
+          neededQty = Math.max(0, totalTarget - otherRowsQty);
+        }
+      }
+
+      if (packSize && packSize > 0) {
+        const maxPacks = Math.floor(availableStock / packSize);
+        if (neededQty > 0) {
+          const neededPacks = Math.ceil(neededQty / packSize);
+          numberOfPacks = Math.min(maxPacks, neededPacks);
+        } else {
+          numberOfPacks = maxPacks >= 1 ? 1 : 0;
+        }
+      } else {
+        numberOfPacks = currentItem.number_of_packs || 1;
+      }
+
+      const quantity = packSize && numberOfPacks ? packSize * numberOfPacks : (neededQty > 0 ? neededQty : (currentItem.quantity || 0));
 
       newItems[index] = {
         ...newItems[index],
@@ -974,11 +1037,59 @@ export function DeliveryChallan() {
           .select()
           .single();
 
-        if (updateError) throw updateError;
+        const prepareItemsWithPackaging = (rawItems: ChallanItem[]) => {
+          return rawItems.map(item => {
+            let packSize = item.pack_size ? parseFloat(String(item.pack_size)) : null;
+            let packType = item.pack_type || null;
+            let numberOfPacks = item.number_of_packs ? parseInt(String(item.number_of_packs), 10) : null;
+            const qty = parseFloat(String(item.quantity)) || 0;
+
+            if (!packSize || !packType) {
+              const batch = batches.find(b => b.id === item.batch_id);
+              if (batch?.per_pack_weight && Number(batch.per_pack_weight) > 0 && batch.pack_type) {
+                packSize = Number(batch.per_pack_weight);
+                packType = formatPackTypeForDisplay(batch.pack_type);
+              } else if (batch?.packaging_details) {
+                const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/i);
+                if (match) {
+                  packType = formatPackTypeForDisplay(match[2]);
+                  packSize = parseFloat(match[3]);
+                }
+              }
+            }
+
+            if (!packSize || !packType) {
+              const prod = products.find(p => p.id === item.product_id);
+              const pWeight = Number(prod?.per_pack_weight);
+              const pType = prod?.pack_type || prod?.packaging_type;
+              if (pWeight > 0 && pType) {
+                packSize = packSize || pWeight;
+                packType = packType || formatPackTypeForDisplay(pType);
+              }
+            }
+
+            if (packSize && packSize > 0) {
+              const calcPacks = Math.round(qty / packSize);
+              if (!numberOfPacks || Math.abs(numberOfPacks * packSize - qty) > 0.01) {
+                numberOfPacks = calcPacks > 0 ? calcPacks : (numberOfPacks || 1);
+              }
+            }
+
+            return {
+              ...item,
+              quantity: qty,
+              pack_size: packSize,
+              pack_type: packType,
+              number_of_packs: numberOfPacks,
+            };
+          });
+        };
+
+        const preparedItems = prepareItemsWithPackaging(items);
 
         // Approved allocations are immutable. Corrections must use the
         // canonical rejection/cancellation reversal and a replacement DC.
-        const itemsForRpc = items.map(item => ({
+        const itemsForRpc = preparedItems.map(item => ({
           product_id: item.product_id,
           batch_id: item.batch_id,
           sales_order_item_id: item.sales_order_item_id || null,
@@ -1028,15 +1139,64 @@ export function DeliveryChallan() {
       }
 
       if (!editingChallan) {
-        const challanItemsData = items.map(item => ({
+        const prepareItemsWithPackaging = (rawItems: ChallanItem[]) => {
+          return rawItems.map(item => {
+            let packSize = item.pack_size ? parseFloat(String(item.pack_size)) : null;
+            let packType = item.pack_type || null;
+            let numberOfPacks = item.number_of_packs ? parseInt(String(item.number_of_packs), 10) : null;
+            const qty = parseFloat(String(item.quantity)) || 0;
+
+            if (!packSize || !packType) {
+              const batch = batches.find(b => b.id === item.batch_id);
+              if (batch?.per_pack_weight && Number(batch.per_pack_weight) > 0 && batch.pack_type) {
+                packSize = Number(batch.per_pack_weight);
+                packType = formatPackTypeForDisplay(batch.pack_type);
+              } else if (batch?.packaging_details) {
+                const match = batch.packaging_details.match(/(\d+)\s+(\w+)s?\s+x\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/i);
+                if (match) {
+                  packType = formatPackTypeForDisplay(match[2]);
+                  packSize = parseFloat(match[3]);
+                }
+              }
+            }
+
+            if (!packSize || !packType) {
+              const prod = products.find(p => p.id === item.product_id);
+              const pWeight = Number(prod?.per_pack_weight);
+              const pType = prod?.pack_type || prod?.packaging_type;
+              if (pWeight > 0 && pType) {
+                packSize = packSize || pWeight;
+                packType = packType || formatPackTypeForDisplay(pType);
+              }
+            }
+
+            if (packSize && packSize > 0) {
+              const calcPacks = Math.round(qty / packSize);
+              if (!numberOfPacks || Math.abs(numberOfPacks * packSize - qty) > 0.01) {
+                numberOfPacks = calcPacks > 0 ? calcPacks : (numberOfPacks || 1);
+              }
+            }
+
+            return {
+              ...item,
+              quantity: qty,
+              pack_size: packSize,
+              pack_type: packType,
+              number_of_packs: numberOfPacks,
+            };
+          });
+        };
+
+        const preparedNewItems = prepareItemsWithPackaging(items);
+        const challanItemsData = preparedNewItems.map(item => ({
           challan_id: challanId,
-            product_id: item.product_id,
-            batch_id: item.batch_id,
-            sales_order_item_id: item.sales_order_item_id || null,
-          quantity: parseFloat(String(item.quantity)),
-          pack_size: item.pack_size ? parseFloat(String(item.pack_size)) : null,
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          sales_order_item_id: item.sales_order_item_id || null,
+          quantity: item.quantity,
+          pack_size: item.pack_size,
           pack_type: item.pack_type,
-          number_of_packs: item.number_of_packs ? parseInt(String(item.number_of_packs), 10) : null,
+          number_of_packs: item.number_of_packs,
         }));
 
         if (challanItemsData.length === 0) {

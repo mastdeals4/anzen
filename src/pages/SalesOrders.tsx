@@ -288,7 +288,7 @@ export default function SalesOrders() {
   const openLinkedChallanView = async (challanId: string) => {
     const [{ data: challan }, { data: items }] = await Promise.all([
       supabase.from('delivery_challans').select('*, customers(company_name, address, city, phone, pbf_license)').eq('id', challanId).maybeSingle(),
-      supabase.from('delivery_challan_items').select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))').eq('challan_id', challanId)
+      supabase.from('delivery_challan_items').select('*, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), batches(id, batch_number, expiry_date, packaging_details, per_pack_weight, pack_type, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), product_sources!batches_make_id_fkey(supplier_name, grade))').eq('challan_id', challanId)
     ]);
     if (!challan) return;
     setLinkedChallanPreview(challan);

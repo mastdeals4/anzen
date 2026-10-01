@@ -282,7 +282,7 @@ export function StockMovementsModal({
     if (!challan) return;
     const { data: items } = await supabase
       .from('delivery_challan_items')
-      .select(`*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details, products(product_name, product_code, unit), product_sources!batches_make_id_fkey(supplier_name, grade))`)
+      .select(`*, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), batches(id, batch_number, expiry_date, packaging_details, per_pack_weight, pack_type, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), product_sources!batches_make_id_fkey(supplier_name, grade))`)
       .eq('challan_id', challan.id);
     setQuickViewDC({ challan, items: items || [] });
   };
