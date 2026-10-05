@@ -32,7 +32,7 @@ export function ExportSalesProfitModal({
   currentStartDate,
   currentEndDate,
 }: ExportSalesProfitModalProps) {
-  const [exportFormat, setExportFormat] = useState<'consolidated' | 'detailed'>('consolidated');
+  const [exportFormat, setExportFormat] = useState<'consolidated' | 'detailed'>('detailed');
   const [exportMode, setExportMode] = useState<'this_year' | 'specific_month' | 'custom' | 'current_screen'>('current_screen');
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);

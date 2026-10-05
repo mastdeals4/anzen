@@ -1,6 +1,10 @@
 import ExcelJS from 'exceljs';
-import { supabase } from '../lib/supabase';
 import { formatUnit } from './unitDisplay';
+import {
+  fetchCanonicalSalesProfitability,
+  CompanyProfitabilitySummary,
+  OrderSaleRow,
+} from '../services/salesProfitabilityEngine';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -15,82 +19,7 @@ export interface ExportDateRangeOptions {
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD
   label: string;
-  exportFormat?: 'consolidated' | 'detailed'; // default 'consolidated'
-}
-
-interface RawProductRow {
-  product_id: string;
-  product_name: string;
-  product_code: string;
-  product_unit: string;
-  current_stock: number;
-  reserved_stock?: number;
-  available_stock?: number;
-  sold_qty: number;
-  gross_sales: number;
-  product_cost: number | null;
-  sales_expense: number;
-  gross_profit: number | null;
-  profit_after_sales_expense: number | null;
-  avg_landed_cost: number | null;
-  avg_selling_price: number;
-  sales_expense_per_unit: number;
-  net_selling_price_per_unit: number;
-  profit_per_unit: number | null;
-  profit_margin_pct: number | null;
-  costed_lines: number;
-  total_lines: number;
-  has_unreported_cost: boolean;
-}
-
-interface RawBatchRow {
-  batch_id: string;
-  batch_number: string;
-  current_stock: number;
-  sold_qty: number;
-  cost_per_unit: number | null;
-  gross_sales: number;
-  product_cost: number | null;
-  sales_expense: number;
-  gross_profit: number | null;
-  profit_after_sales_expense: number | null;
-  avg_selling_price: number;
-  sales_expense_per_unit: number;
-  net_selling_price_per_unit: number;
-  profit_per_unit: number | null;
-  profit_margin_pct: number | null;
-  is_imported: boolean;
-}
-
-interface RawOrderRow {
-  line_id: string;
-  invoice_id: string;
-  invoice_number: string;
-  invoice_date: string;
-  customer_id: string;
-  customer_name: string;
-  sales_order_id: string | null;
-  so_number: string | null;
-  dc_id: string | null;
-  dc_number: string | null;
-  quantity: number;
-  selling_price: number;
-  gross_sales: number;
-  unit_cost: number | null;
-  line_cost: number | null;
-  line_sales_expense: number;
-  net_selling_realization: number;
-  gross_profit: number | null;
-  profit: number | null;
-  profit_margin_pct: number | null;
-  expenses?: Array<{
-    id: string;
-    voucher_number: string;
-    category: string;
-    total_amount: number;
-    description: string;
-    expense_date: string;
-  }>;
+  exportFormat?: 'consolidated' | 'detailed'; // default 'detailed'
 }
 
 // ─── Styling Constants ────────────────────────────────────────────────────────
@@ -166,31 +95,6 @@ const FONT_BOLD: Partial<ExcelJS.Font> = {
   color: { argb: 'FF0F172A' },
 };
 
-// ─── Concurrency Pool Helper ─────────────────────────────────────────────────
-
-async function asyncPool<T, R>(
-  poolLimit: number,
-  array: T[],
-  iteratorFn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const ret: Promise<R>[] = [];
-  const executing: Promise<any>[] = [];
-  for (let i = 0; i < array.length; i++) {
-    const item = array[i];
-    const p = Promise.resolve().then(() => iteratorFn(item, i));
-    ret.push(p);
-
-    if (poolLimit <= array.length) {
-      const e: Promise<any> = p.then(() => executing.splice(executing.indexOf(e), 1));
-      executing.push(e);
-      if (executing.length >= poolLimit) {
-        await Promise.race(executing);
-      }
-    }
-  }
-  return Promise.all(ret);
-}
-
 // ─── Browser File Download Helper ────────────────────────────────────────────
 
 function downloadWorkbookBuffer(buffer: ArrayBuffer | Uint8Array, filename: string) {
@@ -216,15 +120,12 @@ function createReportHeaderBanner(
   startDate: string,
   endDate: string
 ) {
-  // Title row 1: Company
   const r1 = ws.addRow(['PT. SHUBHAM ARTHA MULIA / ANZEN ERP']);
   r1.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF0F2942' } };
 
-  // Title row 2: Report
   const r2 = ws.addRow([reportTitle.toUpperCase()]);
   r2.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF334155' } };
 
-  // Title row 3: Metadata
   const nowStr = new Date().toLocaleString('en-GB', {
     day: '2-digit',
     month: 'short',
@@ -233,7 +134,7 @@ function createReportHeaderBanner(
     minute: '2-digit',
   });
   const r3 = ws.addRow([
-    `Period: ${periodLabel} (${startDate} to ${endDate})   |   Generated: ${nowStr}   |   Currency: Indonesian Rupiah (IDR)`,
+    `Period: ${periodLabel} (${startDate} to ${endDate})   |   Generated: ${nowStr}   |   Currency: Indonesian Rupiah (IDR)   |   Margin % = Net Realized Profit / Gross Sales`,
   ]);
   r3.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF64748B' } };
 
@@ -242,7 +143,7 @@ function createReportHeaderBanner(
 
 // ─── Helper to Build Executive KPI Block ─────────────────────────────────────
 
-function createExecutiveKpiBlock(ws: ExcelJS.Worksheet, company: any) {
+function createExecutiveKpiBlock(ws: ExcelJS.Worksheet, company: CompanyProfitabilitySummary) {
   const kpiTitleRow = ws.addRow(['EXECUTIVE KPI SUMMARY']);
   kpiTitleRow.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF475569' } };
 
@@ -287,7 +188,6 @@ function createExecutiveKpiBlock(ws: ExcelJS.Worksheet, company: any) {
   ]);
   valuesRow.height = 24;
 
-  // Format KPI values
   valuesRow.getCell(1).numFmt = '#,##0.00';
   valuesRow.getCell(2).numFmt = '#,##0.00';
   valuesRow.getCell(3).numFmt = '#,##0.00';
@@ -302,7 +202,6 @@ function createExecutiveKpiBlock(ws: ExcelJS.Worksheet, company: any) {
     cell.alignment = { vertical: 'middle', horizontal: 'right' };
     cell.border = BORDER_THIN;
 
-    // Highlight Net Realized Profit and Margin in green
     if (colNumber === 5 || colNumber === 6) {
       cell.fill = FILL_ACCENT_GREEN;
       cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF065F46' } };
@@ -312,59 +211,60 @@ function createExecutiveKpiBlock(ws: ExcelJS.Worksheet, company: any) {
   ws.addRow([]); // Blank line
 }
 
+// ─── Format Expense Details & Cost Layer Lineage ───────────────────────────────
+
+function formatOrderLineageNotes(ord: OrderSaleRow): string {
+  const parts: string[] = [];
+
+  // 1. Layer Allocations
+  if (ord.layer_allocations && ord.layer_allocations.length > 0) {
+    const layerDesc = ord.layer_allocations
+      .map((l) => {
+        const pi = l.pi_number ? `PI: ${l.pi_number}` : 'Cost Layer';
+        const costStr = Number(l.cost).toLocaleString('id-ID', { maximumFractionDigits: 0 });
+        const unitStr = Number(l.unit_cost).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+        return `${pi} (${l.consumed_qty} @ Rp ${unitStr} = Rp ${costStr})`;
+      })
+      .join('; ');
+    parts.push(`Layer Alloc: ${layerDesc}`);
+  }
+
+  // 2. Delivery & Sales Expenses
+  if (ord.expenses && ord.expenses.length > 0) {
+    const expDesc = ord.expenses
+      .map(
+        (e) =>
+          `${e.voucher_number || 'EXP'} (${e.category}): Rp ${Number(e.total_amount).toLocaleString(
+            'id-ID',
+            { maximumFractionDigits: 0 }
+          )}`
+      )
+      .join('; ');
+    parts.push(`Expenses: ${expDesc}`);
+  }
+
+  return parts.length > 0 ? parts.join(' | ') : 'Standard Batch Cost';
+}
+
 // ─── Main Export Generator ───────────────────────────────────────────────────
 
 export async function generateSalesProfitabilityExcel(
   options: ExportDateRangeOptions,
   onProgress?: ExportProgressCallback
 ): Promise<void> {
-  const { startDate, endDate, label, exportFormat = 'consolidated' } = options;
+  const { startDate, endDate, label, exportFormat = 'detailed' } = options;
 
-  onProgress?.('Fetching company summary and product stock metrics...', 15);
-
-  // 1. Fetch Profitability Summary & Canonical Stock
-  const [{ data: summaryRes, error: summaryErr }, { data: stockData, error: stockErr }] =
-    await Promise.all([
-      supabase.rpc('get_sales_profitability_summary', {
-        p_start_date: startDate,
-        p_end_date: endDate,
-      }),
-      supabase
-        .from('inventory_v1_stock_summary')
-        .select('product_id, total_current_stock, reserved_stock, available_quantity'),
-    ]);
-
-  if (summaryErr) {
-    throw new Error(`Failed to load sales profitability summary: ${summaryErr.message}`);
-  }
-  if (stockErr) {
-    console.warn('Could not load inventory_v1_stock_summary:', stockErr);
-  }
-
-  const stockMap = new Map<string, { current: number; reserved: number; available: number }>();
-  (stockData || []).forEach((row: any) => {
-    stockMap.set(row.product_id, {
-      current: Number(row.total_current_stock ?? 0),
-      reserved: Number(row.reserved_stock ?? 0),
-      available: Number(row.available_quantity ?? 0),
-    });
+  // 1. Fetch unified reconciled dataset through canonical profitability engine
+  const dataset = await fetchCanonicalSalesProfitability({
+    startDate,
+    endDate,
+    onProgress,
   });
 
-  const company = (summaryRes as any)?.company || {};
-  let products = ((summaryRes as any)?.products || []) as RawProductRow[];
+  const { company, products, productsWithBatches, batchOrdersMap } = dataset;
 
-  // Merge canonical stock
-  products = products.map((p) => {
-    const canonical = stockMap.get(p.product_id);
-    return {
-      ...p,
-      current_stock: canonical ? canonical.current : Number(p.current_stock || 0),
-      reserved_stock: canonical ? canonical.reserved : 0,
-      available_stock: canonical ? canonical.available : Number(p.current_stock || 0),
-    };
-  });
+  onProgress?.('Assembling standardized Excel workbook with borders and currency formatting...', 85);
 
-  // Create ExcelJS Workbook
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ANZEN ERP / PT. Shubham Artha Mulia';
   wb.lastModifiedBy = 'ANZEN ERP';
@@ -372,11 +272,9 @@ export async function generateSalesProfitabilityExcel(
   wb.modified = new Date();
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MODE A: CONSOLIDATED SUMMARY (SINGLE BEAUTIFUL SHEET)
+  // MODE A: SINGLE CONSOLIDATED PRODUCT SUMMARY SHEET
   // ═══════════════════════════════════════════════════════════════════════════
   if (exportFormat === 'consolidated') {
-    onProgress?.('Formatting consolidated product report...', 60);
-
     const ws = wb.addWorksheet('Product Profitability', {
       views: [{ state: 'frozen', ySplit: 8, showGridLines: true }],
     });
@@ -390,38 +288,34 @@ export async function generateSalesProfitabilityExcel(
     );
     createExecutiveKpiBlock(ws, company);
 
-    // Columns configuration
     const cols = [
-      { header: '#', key: 'idx', width: 6 },
-      { header: 'Product Code', key: 'product_code', width: 15 },
-      { header: 'Product Name', key: 'product_name', width: 36 },
-      { header: 'Unit', key: 'unit', width: 8 },
-      { header: 'Current Stock', key: 'current_stock', width: 14 },
-      { header: 'Reserved Stock', key: 'reserved_stock', width: 14 },
-      { header: 'Available Stock', key: 'available_stock', width: 15 },
-      { header: 'Sold Qty', key: 'sold_qty', width: 13 },
-      { header: 'Avg Landed Cost (IDR)', key: 'avg_landed_cost', width: 22 },
-      { header: 'Avg Selling Price (IDR)', key: 'avg_selling_price', width: 22 },
-      { header: 'Sales Exp / Unit (IDR)', key: 'sales_expense_per_unit', width: 20 },
-      { header: 'Net Realization (IDR)', key: 'net_selling_price_per_unit', width: 20 },
-      { header: 'Profit / Unit (IDR)', key: 'profit_per_unit', width: 18 },
-      { header: 'Gross Sales (IDR)', key: 'gross_sales', width: 22 },
-      { header: 'Total Landed Cost (IDR)', key: 'product_cost', width: 22 },
-      { header: 'Sales Expenses (IDR)', key: 'sales_expense', width: 20 },
-      { header: 'Gross Profit (IDR)', key: 'gross_profit', width: 20 },
-      { header: 'Margin %', key: 'profit_margin_pct', width: 12 },
-      { header: 'Total Net Profit (IDR)', key: 'profit_after_sales_expense', width: 22 },
+      { header: '#', width: 6 },
+      { header: 'Product Code', width: 15 },
+      { header: 'Product Name', width: 36 },
+      { header: 'Unit', width: 8 },
+      { header: 'Current Stock', width: 14 },
+      { header: 'Reserved Stock', width: 14 },
+      { header: 'Available Stock', width: 15 },
+      { header: 'Sold Qty', width: 13 },
+      { header: 'Avg Landed Cost (IDR)', width: 22 },
+      { header: 'Avg Selling Price (IDR)', width: 22 },
+      { header: 'Sales Exp / Unit (IDR)', width: 20 },
+      { header: 'Net Realization (IDR)', width: 20 },
+      { header: 'Profit / Unit (IDR)', width: 18 },
+      { header: 'Gross Sales (IDR)', width: 22 },
+      { header: 'Total Landed Cost (IDR)', width: 22 },
+      { header: 'Sales Expenses (IDR)', width: 20 },
+      { header: 'Gross Profit (IDR)', width: 20 },
+      { header: 'Margin % (Profit/Sales)', width: 22 },
+      { header: 'Total Net Profit (IDR)', width: 22 },
     ];
 
-    const tableHeaders = cols.map((c) => c.header);
-    const headerRow = ws.addRow(tableHeaders);
+    const headerRow = ws.addRow(cols.map((c) => c.header));
     headerRow.height = 28;
-
     headerRow.eachCell((cell, colNumber) => {
       cell.fill = FILL_HEADER;
       cell.font = FONT_HEADER;
       cell.border = BORDER_HEADER;
-      // Alignments
       if (colNumber === 1 || colNumber === 2 || colNumber === 4) {
         cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       } else if (colNumber === 3) {
@@ -438,23 +332,22 @@ export async function generateSalesProfitabilityExcel(
     let totalGrossProfit = 0;
     let totalNetProfit = 0;
 
-    // Data rows
     products.forEach((p, index) => {
       const isZebra = index % 2 === 1;
       const soldQty = Number(p.sold_qty || 0);
       const grossSales = Number(p.gross_sales || 0);
-      const landedCost = p.product_cost != null ? Number(p.product_cost) : null;
+      const landedCost = p.product_cost != null ? Number(p.product_cost) : 0;
       const salesExp = Number(p.sales_expense || 0);
-      const grossProfit = p.gross_profit != null ? Number(p.gross_profit) : null;
-      const netProfit = p.profit_after_sales_expense != null ? Number(p.profit_after_sales_expense) : null;
-      const margin = p.profit_margin_pct != null ? Number(p.profit_margin_pct) / 100 : null;
+      const grossProfit = p.gross_profit != null ? Number(p.gross_profit) : (grossSales - landedCost);
+      const netProfit = p.profit_after_sales_expense != null ? Number(p.profit_after_sales_expense) : (grossProfit - salesExp);
+      const margin = p.profit_margin_pct != null ? Number(p.profit_margin_pct) / 100 : (grossSales > 0 ? netProfit / grossSales : null);
 
       totalSoldQty += soldQty;
       totalGrossSales += grossSales;
-      if (landedCost != null) totalLandedCost += landedCost;
+      totalLandedCost += landedCost;
       totalSalesExp += salesExp;
-      if (grossProfit != null) totalGrossProfit += grossProfit;
-      if (netProfit != null) totalNetProfit += netProfit;
+      totalGrossProfit += grossProfit;
+      totalNetProfit += netProfit;
 
       const row = ws.addRow([
         index + 1,
@@ -471,15 +364,14 @@ export async function generateSalesProfitabilityExcel(
         Number(p.net_selling_price_per_unit || 0),
         p.profit_per_unit != null ? Number(p.profit_per_unit) : '—',
         grossSales,
-        landedCost != null ? landedCost : '—',
+        landedCost,
         salesExp,
-        grossProfit != null ? grossProfit : '—',
+        grossProfit,
         margin != null ? margin : '—',
-        netProfit != null ? netProfit : '—',
+        netProfit,
       ]);
       row.height = 20;
 
-      // Cell styling & number formats
       row.eachCell((cell, colNumber) => {
         cell.border = BORDER_THIN;
         cell.font = FONT_DATA;
@@ -491,17 +383,12 @@ export async function generateSalesProfitabilityExcel(
           cell.alignment = { vertical: 'middle', horizontal: 'left' };
         } else {
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
-          // Number formatting
           if (colNumber >= 5 && colNumber <= 8) {
             cell.numFmt = '#,##0.00';
           } else if (colNumber >= 9 && colNumber <= 17) {
-            if (typeof cell.value === 'number') {
-              cell.numFmt = '#,##0.00';
-            }
+            if (typeof cell.value === 'number') cell.numFmt = '#,##0.00';
           } else if (colNumber === 18) {
-            if (typeof cell.value === 'number') {
-              cell.numFmt = '0.0%';
-            }
+            if (typeof cell.value === 'number') cell.numFmt = '0.0%';
           } else if (colNumber === 19) {
             if (typeof cell.value === 'number') {
               cell.numFmt = '#,##0.00';
@@ -512,7 +399,6 @@ export async function generateSalesProfitabilityExcel(
       });
     });
 
-    // Summary / Total Row
     const overallMargin = totalGrossSales > 0 ? totalNetProfit / totalGrossSales : 0;
     const totalRow = ws.addRow([
       '',
@@ -548,7 +434,13 @@ export async function generateSalesProfitabilityExcel(
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
         if (colNumber === 8) {
           cell.numFmt = '#,##0.00';
-        } else if (colNumber === 14 || colNumber === 15 || colNumber === 16 || colNumber === 17 || colNumber === 19) {
+        } else if (
+          colNumber === 14 ||
+          colNumber === 15 ||
+          colNumber === 16 ||
+          colNumber === 17 ||
+          colNumber === 19
+        ) {
           cell.numFmt = '#,##0.00';
         } else if (colNumber === 18) {
           cell.numFmt = '0.0%';
@@ -556,12 +448,11 @@ export async function generateSalesProfitabilityExcel(
       }
     });
 
-    // Apply column widths
     cols.forEach((col, idx) => {
       ws.getColumn(idx + 1).width = col.width;
     });
 
-    onProgress?.('Generating clean Excel file...', 90);
+    onProgress?.('Generating clean Excel file...', 95);
     const buffer = await wb.xlsx.writeBuffer();
     const cleanLabel = label.replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `Sales_Profitability_Consolidated_${cleanLabel}_${startDate}_to_${endDate}.xlsx`;
@@ -572,118 +463,356 @@ export async function generateSalesProfitabilityExcel(
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MODE B: FULL DETAILED DRILL-DOWN (4 DEDICATED SHEETS)
+  // MODE B: FULL 4-SHEET RECONCILED DRILL-DOWN WORKBOOK
+  // Ordered per Requirement 10:
+  // 1. Product Summary
+  // 2. Batch Breakdown
+  // 3. Detailed Audit
+  // 4. Orders & Challans
   // ═══════════════════════════════════════════════════════════════════════════
-  onProgress?.('Fetching batch details for all products...', 25);
 
-  // 2. Fetch batches for each product concurrently (pool limit 6)
-  interface ProductWithBatches {
-    product: RawProductRow;
-    batches: RawBatchRow[];
-  }
+  // ───────────────────────────────────────────────────────────────────────────
+  // SHEET 1: Product Summary
+  // ───────────────────────────────────────────────────────────────────────────
+  const wsProduct = wb.addWorksheet('Product Summary', {
+    views: [{ state: 'frozen', ySplit: 8, showGridLines: true }],
+  });
 
-  let batchesCompleted = 0;
-  const productsWithBatches: ProductWithBatches[] = await asyncPool(
-    6,
-    products,
-    async (prod) => {
-      try {
-        const { data: bData, error: bErr } = await supabase.rpc(
-          'get_sales_profitability_product_batches',
-          {
-            p_product_id: prod.product_id,
-            p_start_date: startDate,
-            p_end_date: endDate,
-          }
-        );
-        batchesCompleted++;
-        const pct = 25 + Math.round((batchesCompleted / (products.length || 1)) * 25);
-        onProgress?.(`Fetching batch details (${batchesCompleted}/${products.length})...`, pct);
-
-        if (bErr) throw bErr;
-        return {
-          product: prod,
-          batches: (bData?.batches || []) as RawBatchRow[],
-        };
-      } catch (err) {
-        console.error(`Error loading batches for ${prod.product_code}:`, err);
-        return {
-          product: prod,
-          batches: [],
-        };
-      }
-    }
+  createReportHeaderBanner(
+    wsProduct,
+    'Sales Profitability — Product Summary',
+    label,
+    startDate,
+    endDate
   );
+  createExecutiveKpiBlock(wsProduct, company);
 
-  // 3. Collect all batches that need order & delivery challan lines
-  interface BatchTask {
-    product: RawProductRow;
-    batch: RawBatchRow;
-  }
-  const batchTasks: BatchTask[] = [];
-  productsWithBatches.forEach((pb) => {
-    pb.batches.forEach((b) => {
-      batchTasks.push({ product: pb.product, batch: b });
+  const prodSummaryHeaders = [
+    '#',
+    'Product Code',
+    'Product Name',
+    'Unit',
+    'Current Stock',
+    'Reserved Stock',
+    'Available Stock',
+    'Sold Qty',
+    'Avg Landed Cost (IDR)',
+    'Avg Selling Price (IDR)',
+    'Sales Exp / Unit (IDR)',
+    'Net Realization (IDR)',
+    'Profit / Unit (IDR)',
+    'Gross Sales (IDR)',
+    'Total Landed Cost (IDR)',
+    'Sales Expenses (IDR)',
+    'Gross Profit (IDR)',
+    'Margin % (Profit/Sales)',
+    'Total Net Profit (IDR)',
+  ];
+
+  const prodHeaderRow = wsProduct.addRow(prodSummaryHeaders);
+  prodHeaderRow.height = 28;
+  prodHeaderRow.eachCell((cell, colNum) => {
+    cell.fill = FILL_SUBHEADER;
+    cell.font = FONT_HEADER;
+    cell.border = BORDER_HEADER;
+    if (colNum === 1 || colNum === 2 || colNum === 4) {
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    } else if (colNum === 3) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    } else {
+      cell.alignment = { vertical: 'middle', horizontal: 'right' };
+    }
+  });
+
+  let sumProdQty = 0;
+  let sumProdGrossSales = 0;
+  let sumProdLandedCost = 0;
+  let sumProdSalesExp = 0;
+  let sumProdGrossProfit = 0;
+  let sumProdNetProfit = 0;
+
+  products.forEach((p, idx) => {
+    const isZebra = idx % 2 === 1;
+    const soldQty = Number(p.sold_qty || 0);
+    const grossSales = Number(p.gross_sales || 0);
+    const landedCost = Number(p.product_cost || 0);
+    const salesExp = Number(p.sales_expense || 0);
+    const grossProfit = Number(p.gross_profit != null ? p.gross_profit : grossSales - landedCost);
+    const netProfit = Number(p.profit_after_sales_expense != null ? p.profit_after_sales_expense : grossProfit - salesExp);
+    const margin = p.profit_margin_pct != null ? Number(p.profit_margin_pct) / 100 : (grossSales > 0 ? netProfit / grossSales : null);
+
+    sumProdQty += soldQty;
+    sumProdGrossSales += grossSales;
+    sumProdLandedCost += landedCost;
+    sumProdSalesExp += salesExp;
+    sumProdGrossProfit += grossProfit;
+    sumProdNetProfit += netProfit;
+
+    const r = wsProduct.addRow([
+      idx + 1,
+      p.product_code || '—',
+      p.product_name,
+      p.product_unit ? formatUnit(p.product_unit) : 'KG',
+      Number(p.current_stock || 0),
+      Number(p.reserved_stock || 0),
+      Number(p.available_stock || 0),
+      soldQty,
+      p.avg_landed_cost != null ? Number(p.avg_landed_cost) : '—',
+      Number(p.avg_selling_price || 0),
+      Number(p.sales_expense_per_unit || 0),
+      Number(p.net_selling_price_per_unit || 0),
+      p.profit_per_unit != null ? Number(p.profit_per_unit) : '—',
+      grossSales,
+      landedCost,
+      salesExp,
+      grossProfit,
+      margin != null ? margin : '—',
+      netProfit,
+    ]);
+    r.height = 20;
+    r.eachCell((cell, colNum) => {
+      cell.border = BORDER_THIN;
+      cell.font = FONT_DATA;
+      if (isZebra) cell.fill = FILL_ZEBRA;
+      if (colNum === 1 || colNum === 2 || colNum === 4) {
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      } else if (colNum === 3) {
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      } else {
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+        if (colNum >= 5 && colNum <= 8) {
+          cell.numFmt = '#,##0.00';
+        } else if (colNum >= 9 && colNum <= 17) {
+          if (typeof cell.value === 'number') cell.numFmt = '#,##0.00';
+        } else if (colNum === 18) {
+          if (typeof cell.value === 'number') cell.numFmt = '0.0%';
+        } else if (colNum === 19) {
+          if (typeof cell.value === 'number') {
+            cell.numFmt = '#,##0.00';
+            cell.font = FONT_BOLD;
+          }
+        }
+      }
     });
   });
 
-  onProgress?.(`Fetching orders and delivery challans for ${batchTasks.length} batches...`, 50);
-
-  // 4. Fetch order details for each batch concurrently (pool limit 6)
-  interface BatchWithOrders {
-    product: RawProductRow;
-    batch: RawBatchRow;
-    orders: RawOrderRow[];
-  }
-
-  let ordersCompleted = 0;
-  const batchesWithOrders: BatchWithOrders[] = await asyncPool(
-    6,
-    batchTasks,
-    async (task) => {
-      try {
-        const { data: oData, error: oErr } = await supabase.rpc(
-          'get_sales_profitability_batch_orders',
-          {
-            p_batch_id: task.batch.batch_id,
-            p_start_date: startDate,
-            p_end_date: endDate,
-          }
-        );
-        ordersCompleted++;
-        const pct = 50 + Math.round((ordersCompleted / (batchTasks.length || 1)) * 30);
-        onProgress?.(
-          `Fetching delivery & invoice details (${ordersCompleted}/${batchTasks.length})...`,
-          pct
-        );
-
-        if (oErr) throw oErr;
-        return {
-          product: task.product,
-          batch: task.batch,
-          orders: (oData?.orders || []) as RawOrderRow[],
-        };
-      } catch (err) {
-        console.error(`Error loading orders for batch ${task.batch.batch_number}:`, err);
-        return {
-          product: task.product,
-          batch: task.batch,
-          orders: [],
-        };
+  // Product Summary Total Row
+  const overallProdMargin = sumProdGrossSales > 0 ? sumProdNetProfit / sumProdGrossSales : 0;
+  const prodTotalRow = wsProduct.addRow([
+    '',
+    'TOTAL',
+    'PRODUCT SUMMARY TOTAL',
+    '',
+    '',
+    '',
+    '',
+    sumProdQty,
+    '',
+    '',
+    '',
+    '',
+    '',
+    sumProdGrossSales,
+    sumProdLandedCost,
+    sumProdSalesExp,
+    sumProdGrossProfit,
+    overallProdMargin,
+    sumProdNetProfit,
+  ]);
+  prodTotalRow.height = 24;
+  prodTotalRow.eachCell((cell, colNum) => {
+    cell.fill = FILL_TOTAL;
+    cell.font = FONT_BOLD;
+    cell.border = BORDER_TOTAL;
+    if (colNum === 2 || colNum === 3) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    } else {
+      cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      if (colNum === 8 || (colNum >= 14 && colNum <= 17) || colNum === 19) {
+        cell.numFmt = '#,##0.00';
+      } else if (colNum === 18) {
+        cell.numFmt = '0.0%';
       }
     }
-  );
-
-  // Organize by batch_id -> orders
-  const batchOrdersMap = new Map<string, RawOrderRow[]>();
-  batchesWithOrders.forEach((bwo) => {
-    batchOrdersMap.set(bwo.batch.batch_id, bwo.orders);
   });
 
-  onProgress?.('Assembling multi-sheet Excel workbook with report formatting...', 85);
+  const prodColWidths = [6, 14, 34, 8, 14, 14, 14, 12, 20, 20, 18, 18, 18, 20, 20, 18, 18, 22, 20];
+  prodColWidths.forEach((w, i) => {
+    wsProduct.getColumn(i + 1).width = w;
+  });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // SHEET 1: Detailed Profitability Audit (Full Hierarchical Drill-Down)
+  // SHEET 2: Batch Breakdown
+  // ───────────────────────────────────────────────────────────────────────────
+  const wsBatch = wb.addWorksheet('Batch Breakdown', {
+    views: [{ state: 'frozen', ySplit: 8, showGridLines: true }],
+  });
+
+  createReportHeaderBanner(
+    wsBatch,
+    'Sales Profitability — Granular Batch Breakdown',
+    label,
+    startDate,
+    endDate
+  );
+  createExecutiveKpiBlock(wsBatch, company);
+
+  const batchHeaders = [
+    '#',
+    'Product Code',
+    'Product Name',
+    'Batch Number',
+    'Batch Type',
+    'Current Stock',
+    'Sold Qty',
+    'Batch Unit Cost (IDR)',
+    'Avg Selling Price (IDR)',
+    'Sales Exp / Unit (IDR)',
+    'Net Realization (IDR)',
+    'Profit / Unit (IDR)',
+    'Gross Sales (IDR)',
+    'Total Landed Cost (IDR)',
+    'Sales Expenses (IDR)',
+    'Gross Profit (IDR)',
+    'Margin % (Profit/Sales)',
+    'Net Profit (IDR)',
+  ];
+
+  const batchHeaderRow = wsBatch.addRow(batchHeaders);
+  batchHeaderRow.height = 28;
+  batchHeaderRow.eachCell((cell, colNum) => {
+    cell.fill = FILL_HEADER;
+    cell.font = FONT_HEADER;
+    cell.border = BORDER_HEADER;
+    if (colNum <= 2 || colNum === 4 || colNum === 5) {
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    } else if (colNum === 3) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    } else {
+      cell.alignment = { vertical: 'middle', horizontal: 'right' };
+    }
+  });
+
+  let batchIdx = 1;
+  let sumBatchQty = 0;
+  let sumBatchGrossSales = 0;
+  let sumBatchLandedCost = 0;
+  let sumBatchSalesExp = 0;
+  let sumBatchGrossProfit = 0;
+  let sumBatchNetProfit = 0;
+
+  productsWithBatches.forEach((pb) => {
+    pb.batches.forEach((b) => {
+      const isZebra = batchIdx % 2 === 0;
+      const bSoldQty = Number(b.sold_qty || 0);
+      const bGrossSales = Number(b.gross_sales || 0);
+      const bProductCost = Number(b.product_cost || 0);
+      const bSalesExp = Number(b.sales_expense || 0);
+      const bGrossProfit = Number(b.gross_profit != null ? b.gross_profit : bGrossSales - bProductCost);
+      const bNetProfit = Number(b.profit_after_sales_expense != null ? b.profit_after_sales_expense : bGrossProfit - bSalesExp);
+      const bMargin = b.profit_margin_pct != null ? Number(b.profit_margin_pct) / 100 : (bGrossSales > 0 ? bNetProfit / bGrossSales : null);
+
+      sumBatchQty += bSoldQty;
+      sumBatchGrossSales += bGrossSales;
+      sumBatchLandedCost += bProductCost;
+      sumBatchSalesExp += bSalesExp;
+      sumBatchGrossProfit += bGrossProfit;
+      sumBatchNetProfit += bNetProfit;
+
+      const r = wsBatch.addRow([
+        batchIdx++,
+        pb.product.product_code || '—',
+        pb.product.product_name,
+        b.batch_number,
+        b.is_imported ? 'Imported' : 'Local',
+        Number(b.current_stock || 0),
+        bSoldQty,
+        b.cost_per_unit != null ? Number(b.cost_per_unit) : '—',
+        Number(b.avg_selling_price || 0),
+        Number(b.sales_expense_per_unit || 0),
+        Number(b.net_selling_price_per_unit || 0),
+        b.profit_per_unit != null ? Number(b.profit_per_unit) : '—',
+        bGrossSales,
+        bProductCost,
+        bSalesExp,
+        bGrossProfit,
+        bMargin != null ? bMargin : '—',
+        bNetProfit,
+      ]);
+      r.height = 20;
+      r.eachCell((cell, colNum) => {
+        cell.border = BORDER_THIN;
+        cell.font = FONT_DATA;
+        if (isZebra) cell.fill = FILL_ZEBRA;
+        if (colNum <= 2 || colNum === 4 || colNum === 5) {
+          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        } else if (colNum === 3) {
+          cell.alignment = { vertical: 'middle', horizontal: 'left' };
+        } else {
+          cell.alignment = { vertical: 'middle', horizontal: 'right' };
+          if (colNum === 6 || colNum === 7) {
+            cell.numFmt = '#,##0.00';
+          } else if (colNum >= 8 && colNum <= 16) {
+            if (typeof cell.value === 'number') cell.numFmt = '#,##0.00';
+          } else if (colNum === 17) {
+            if (typeof cell.value === 'number') cell.numFmt = '0.0%';
+          } else if (colNum === 18) {
+            if (typeof cell.value === 'number') {
+              cell.numFmt = '#,##0.00';
+              cell.font = FONT_BOLD;
+            }
+          }
+        }
+      });
+    });
+  });
+
+  // Batch Breakdown Total Row
+  const overallBatchMargin = sumBatchGrossSales > 0 ? sumBatchNetProfit / sumBatchGrossSales : 0;
+  const batchTotalRow = wsBatch.addRow([
+    '',
+    'TOTAL',
+    'BATCH BREAKDOWN TOTAL',
+    '',
+    '',
+    '',
+    sumBatchQty,
+    '',
+    '',
+    '',
+    '',
+    '',
+    sumBatchGrossSales,
+    sumBatchLandedCost,
+    sumBatchSalesExp,
+    sumBatchGrossProfit,
+    overallBatchMargin,
+    sumBatchNetProfit,
+  ]);
+  batchTotalRow.height = 24;
+  batchTotalRow.eachCell((cell, colNum) => {
+    cell.fill = FILL_TOTAL;
+    cell.font = FONT_BOLD;
+    cell.border = BORDER_TOTAL;
+    if (colNum === 2 || colNum === 3) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    } else {
+      cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      if (colNum === 7 || (colNum >= 13 && colNum <= 16) || colNum === 18) {
+        cell.numFmt = '#,##0.00';
+      } else if (colNum === 17) {
+        cell.numFmt = '0.0%';
+      }
+    }
+  });
+
+  const batchColWidths = [6, 14, 32, 18, 12, 14, 12, 20, 20, 18, 18, 18, 20, 20, 18, 18, 22, 20];
+  batchColWidths.forEach((w, i) => {
+    wsBatch.getColumn(i + 1).width = w;
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SHEET 3: Detailed Profitability Audit (Full Hierarchical Drill-Down)
   // ───────────────────────────────────────────────────────────────────────────
   const wsAudit = wb.addWorksheet('Detailed Audit', {
     views: [{ state: 'frozen', ySplit: 8, showGridLines: true }],
@@ -711,17 +840,17 @@ export async function generateSalesProfitabilityExcel(
     'Unit',
     'Current Stock',
     'Sold Qty',
-    'Landed Cost / Unit (IDR)',
+    'Actual COGS / Unit (IDR)',
     'Selling Price / Unit (IDR)',
     'Sales Exp / Unit (IDR)',
     'Net Realization / Unit (IDR)',
     'Gross Sales (IDR)',
-    'Landed Cost / COGS (IDR)',
+    'Actual COGS Total (IDR)',
     'Sales Delivery Exp (IDR)',
     'Gross Profit (IDR)',
     'Net Realized Profit (IDR)',
     'Profit Margin %',
-    'Delivery Expense Vouchers & Notes',
+    'Delivery Expense Vouchers & Cost Layer Lineage',
   ];
 
   const auditHeaderRow = wsAudit.addRow(auditHeaders);
@@ -739,7 +868,13 @@ export async function generateSalesProfitabilityExcel(
     }
   });
 
-  // Populate hierarchical rows
+  let sumAuditInvoiceQty = 0;
+  let sumAuditInvoiceGrossSales = 0;
+  let sumAuditInvoiceCOGS = 0;
+  let sumAuditInvoiceSalesExp = 0;
+  let sumAuditInvoiceGrossProfit = 0;
+  let sumAuditInvoiceNetProfit = 0;
+
   for (const pb of productsWithBatches) {
     const prod = pb.product;
 
@@ -830,17 +965,27 @@ export async function generateSalesProfitabilityExcel(
         }
       });
 
-      // ORDER ROWS
+      // INVOICE / DC ROWS
       const orders = batchOrdersMap.get(b.batch_id) || [];
       for (const ord of orders) {
-        const expenseVouchers = (ord.expenses || [])
-          .map(
-            (e) =>
-              `${e.voucher_number || 'EXP'} (${e.category}): Rp ${Number(e.total_amount).toLocaleString(
-                'id-ID'
-              )}`
-          )
-          .join('; ');
+        const qty = Number(ord.quantity || 0);
+        const grossSales = Number(ord.gross_sales || 0);
+        const lineCost = Number(ord.line_cost || 0);
+        const lineSalesExp = Number(ord.line_sales_expense || 0);
+        const grossProfit = Number(ord.gross_profit != null ? ord.gross_profit : grossSales - lineCost);
+        const netProfit = Number(ord.profit != null ? ord.profit : grossProfit - lineSalesExp);
+        const margin = ord.profit_margin_pct != null ? Number(ord.profit_margin_pct) / 100 : (grossSales > 0 ? netProfit / grossSales : null);
+
+        const expPerUnit = qty > 0 ? lineSalesExp / qty : 0;
+        const netRealizationPerUnit = Number(ord.selling_price || 0) - expPerUnit;
+        const lineageNotes = formatOrderLineageNotes(ord);
+
+        sumAuditInvoiceQty += qty;
+        sumAuditInvoiceGrossSales += grossSales;
+        sumAuditInvoiceCOGS += lineCost;
+        sumAuditInvoiceSalesExp += lineSalesExp;
+        sumAuditInvoiceGrossProfit += grossProfit;
+        sumAuditInvoiceNetProfit += netProfit;
 
         const ordRow = wsAudit.addRow([
           'INVOICE/DC',
@@ -854,18 +999,18 @@ export async function generateSalesProfitabilityExcel(
           ord.dc_number || '—',
           prod.product_unit ? formatUnit(prod.product_unit) : 'KG',
           '—',
-          Number(ord.quantity || 0),
+          qty,
           ord.unit_cost != null ? Number(ord.unit_cost) : '—',
           Number(ord.selling_price || 0),
-          Number(ord.line_sales_expense || 0) / Number(ord.quantity || 1),
-          Number(ord.net_selling_realization || 0),
-          Number(ord.gross_sales || 0),
-          ord.line_cost != null ? Number(ord.line_cost) : '—',
-          Number(ord.line_sales_expense || 0),
-          ord.gross_profit != null ? Number(ord.gross_profit) : '—',
-          ord.profit != null ? Number(ord.profit) : '—',
-          ord.profit_margin_pct != null ? Number(ord.profit_margin_pct) / 100 : '—',
-          expenseVouchers || 'None',
+          expPerUnit,
+          netRealizationPerUnit,
+          grossSales,
+          lineCost,
+          lineSalesExp,
+          grossProfit,
+          netProfit,
+          margin != null ? margin : '—',
+          lineageNotes,
         ]);
         ordRow.height = 19;
         ordRow.eachCell((cell, colNum) => {
@@ -886,213 +1031,55 @@ export async function generateSalesProfitabilityExcel(
     }
   }
 
-  // Auto-fit audit columns
+  // Detailed Audit Total Row
+  const overallAuditMargin = sumAuditInvoiceGrossSales > 0 ? sumAuditInvoiceNetProfit / sumAuditInvoiceGrossSales : 0;
+  const auditTotalRow = wsAudit.addRow([
+    'TOTAL',
+    '',
+    'ALL INVOICES AUDIT RECONCILIATION TOTAL',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    sumAuditInvoiceQty,
+    '',
+    '',
+    '',
+    '',
+    sumAuditInvoiceGrossSales,
+    sumAuditInvoiceCOGS,
+    sumAuditInvoiceSalesExp,
+    sumAuditInvoiceGrossProfit,
+    sumAuditInvoiceNetProfit,
+    overallAuditMargin,
+    'Reconciled to Product & Batch Summaries with Zero Gap',
+  ]);
+  auditTotalRow.height = 24;
+  auditTotalRow.eachCell((cell, colNum) => {
+    cell.fill = FILL_TOTAL;
+    cell.font = FONT_BOLD;
+    cell.border = BORDER_TOTAL;
+    if (colNum <= 3) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    } else {
+      cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      if (colNum === 12 || (colNum >= 17 && colNum <= 21)) {
+        cell.numFmt = '#,##0.00';
+      } else if (colNum === 22) {
+        cell.numFmt = '0.0%';
+      }
+    }
+  });
+
   const auditColWidths = [
-    12, 14, 30, 18, 16, 12, 26, 14, 16, 8, 14, 12, 18, 18, 18, 18, 20, 20, 18, 18, 20, 12, 35,
+    14, 14, 30, 18, 16, 12, 26, 14, 16, 8, 14, 12, 22, 20, 18, 20, 22, 22, 20, 20, 22, 14, 45,
   ];
   auditColWidths.forEach((w, i) => {
     wsAudit.getColumn(i + 1).width = w;
-  });
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // SHEET 2: Product Summary
-  // ───────────────────────────────────────────────────────────────────────────
-  const wsProduct = wb.addWorksheet('Product Summary', {
-    views: [{ state: 'frozen', ySplit: 8, showGridLines: true }],
-  });
-
-  createReportHeaderBanner(
-    wsProduct,
-    'Sales Profitability — Product Summary',
-    label,
-    startDate,
-    endDate
-  );
-  createExecutiveKpiBlock(wsProduct, company);
-
-  const prodSummaryHeaders = [
-    '#',
-    'Product Code',
-    'Product Name',
-    'Unit',
-    'Current Stock',
-    'Reserved Stock',
-    'Available Stock',
-    'Sold Qty',
-    'Avg Landed Cost (IDR)',
-    'Avg Selling Price (IDR)',
-    'Sales Exp / Unit (IDR)',
-    'Net Realization (IDR)',
-    'Profit / Unit (IDR)',
-    'Gross Sales (IDR)',
-    'Total Landed Cost (IDR)',
-    'Sales Expenses (IDR)',
-    'Gross Profit (IDR)',
-    'Margin %',
-    'Total Net Profit (IDR)',
-  ];
-
-  const prodHeaderRow = wsProduct.addRow(prodSummaryHeaders);
-  prodHeaderRow.height = 28;
-  prodHeaderRow.eachCell((cell, colNum) => {
-    cell.fill = FILL_SUBHEADER;
-    cell.font = FONT_HEADER;
-    cell.border = BORDER_HEADER;
-    if (colNum === 1 || colNum === 2 || colNum === 4) {
-      cell.alignment = { vertical: 'middle', horizontal: 'center' };
-    } else if (colNum === 3) {
-      cell.alignment = { vertical: 'middle', horizontal: 'left' };
-    } else {
-      cell.alignment = { vertical: 'middle', horizontal: 'right' };
-    }
-  });
-
-  products.forEach((p, idx) => {
-    const isZebra = idx % 2 === 1;
-    const r = wsProduct.addRow([
-      idx + 1,
-      p.product_code || '—',
-      p.product_name,
-      p.product_unit ? formatUnit(p.product_unit) : 'KG',
-      Number(p.current_stock || 0),
-      Number(p.reserved_stock || 0),
-      Number(p.available_stock || 0),
-      Number(p.sold_qty || 0),
-      p.avg_landed_cost != null ? Number(p.avg_landed_cost) : '—',
-      Number(p.avg_selling_price || 0),
-      Number(p.sales_expense_per_unit || 0),
-      Number(p.net_selling_price_per_unit || 0),
-      p.profit_per_unit != null ? Number(p.profit_per_unit) : '—',
-      Number(p.gross_sales || 0),
-      p.product_cost != null ? Number(p.product_cost) : '—',
-      Number(p.sales_expense || 0),
-      p.gross_profit != null ? Number(p.gross_profit) : '—',
-      p.profit_margin_pct != null ? Number(p.profit_margin_pct) / 100 : '—',
-      p.profit_after_sales_expense != null ? Number(p.profit_after_sales_expense) : '—',
-    ]);
-    r.height = 20;
-    r.eachCell((cell, colNum) => {
-      cell.border = BORDER_THIN;
-      cell.font = FONT_DATA;
-      if (isZebra) cell.fill = FILL_ZEBRA;
-      if (colNum === 1 || colNum === 2 || colNum === 4) {
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      } else if (colNum === 3) {
-        cell.alignment = { vertical: 'middle', horizontal: 'left' };
-      } else {
-        cell.alignment = { vertical: 'middle', horizontal: 'right' };
-        if (typeof cell.value === 'number') {
-          cell.numFmt = colNum === 18 ? '0.0%' : '#,##0.00';
-          if (colNum === 19) cell.font = FONT_BOLD;
-        }
-      }
-    });
-  });
-
-  const prodColWidths = [6, 14, 34, 8, 14, 14, 14, 12, 20, 20, 18, 18, 18, 20, 20, 18, 18, 12, 20];
-  prodColWidths.forEach((w, i) => {
-    wsProduct.getColumn(i + 1).width = w;
-  });
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // SHEET 3: Batch Breakdown
-  // ───────────────────────────────────────────────────────────────────────────
-  const wsBatch = wb.addWorksheet('Batch Breakdown', {
-    views: [{ state: 'frozen', ySplit: 8, showGridLines: true }],
-  });
-
-  createReportHeaderBanner(
-    wsBatch,
-    'Sales Profitability — Granular Batch Breakdown',
-    label,
-    startDate,
-    endDate
-  );
-  createExecutiveKpiBlock(wsBatch, company);
-
-  const batchHeaders = [
-    '#',
-    'Product Code',
-    'Product Name',
-    'Batch Number',
-    'Batch Type',
-    'Current Stock',
-    'Sold Qty',
-    'Batch Unit Cost (IDR)',
-    'Avg Selling Price (IDR)',
-    'Sales Exp / Unit (IDR)',
-    'Net Realization (IDR)',
-    'Profit / Unit (IDR)',
-    'Gross Sales (IDR)',
-    'Total Landed Cost (IDR)',
-    'Sales Expenses (IDR)',
-    'Gross Profit (IDR)',
-    'Margin %',
-    'Net Profit (IDR)',
-  ];
-
-  const batchHeaderRow = wsBatch.addRow(batchHeaders);
-  batchHeaderRow.height = 28;
-  batchHeaderRow.eachCell((cell, colNum) => {
-    cell.fill = FILL_HEADER;
-    cell.font = FONT_HEADER;
-    cell.border = BORDER_HEADER;
-    if (colNum <= 2 || colNum === 4 || colNum === 5) {
-      cell.alignment = { vertical: 'middle', horizontal: 'center' };
-    } else if (colNum === 3) {
-      cell.alignment = { vertical: 'middle', horizontal: 'left' };
-    } else {
-      cell.alignment = { vertical: 'middle', horizontal: 'right' };
-    }
-  });
-
-  let batchIdx = 1;
-  productsWithBatches.forEach((pb) => {
-    pb.batches.forEach((b) => {
-      const isZebra = batchIdx % 2 === 0;
-      const r = wsBatch.addRow([
-        batchIdx++,
-        pb.product.product_code || '—',
-        pb.product.product_name,
-        b.batch_number,
-        b.is_imported ? 'Imported' : 'Local',
-        Number(b.current_stock || 0),
-        Number(b.sold_qty || 0),
-        b.cost_per_unit != null ? Number(b.cost_per_unit) : '—',
-        Number(b.avg_selling_price || 0),
-        Number(b.sales_expense_per_unit || 0),
-        Number(b.net_selling_price_per_unit || 0),
-        b.profit_per_unit != null ? Number(b.profit_per_unit) : '—',
-        Number(b.gross_sales || 0),
-        b.product_cost != null ? Number(b.product_cost) : '—',
-        Number(b.sales_expense || 0),
-        b.gross_profit != null ? Number(b.gross_profit) : '—',
-        b.profit_margin_pct != null ? Number(b.profit_margin_pct) / 100 : '—',
-        b.profit_after_sales_expense != null ? Number(b.profit_after_sales_expense) : '—',
-      ]);
-      r.height = 20;
-      r.eachCell((cell, colNum) => {
-        cell.border = BORDER_THIN;
-        cell.font = FONT_DATA;
-        if (isZebra) cell.fill = FILL_ZEBRA;
-        if (colNum <= 2 || colNum === 4 || colNum === 5) {
-          cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        } else if (colNum === 3) {
-          cell.alignment = { vertical: 'middle', horizontal: 'left' };
-        } else {
-          cell.alignment = { vertical: 'middle', horizontal: 'right' };
-          if (typeof cell.value === 'number') {
-            cell.numFmt = colNum === 17 ? '0.0%' : '#,##0.00';
-            if (colNum === 18) cell.font = FONT_BOLD;
-          }
-        }
-      });
-    });
-  });
-
-  const batchColWidths = [6, 14, 32, 18, 12, 14, 12, 20, 20, 18, 18, 18, 20, 20, 18, 18, 12, 20];
-  batchColWidths.forEach((w, i) => {
-    wsBatch.getColumn(i + 1).width = w;
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1129,8 +1116,8 @@ export async function generateSalesProfitabilityExcel(
     'Net Realization (IDR)',
     'Gross Profit (IDR)',
     'Net Profit (IDR)',
-    'Margin %',
-    'Delivery Expense Vouchers & Notes',
+    'Margin % (Profit/Sales)',
+    'Delivery Expense Vouchers & Cost Layer Lineage',
   ];
 
   const orderHeaderRow = wsOrders.addRow(orderHeaders);
@@ -1149,39 +1136,58 @@ export async function generateSalesProfitabilityExcel(
   });
 
   let ordIdx = 0;
-  batchesWithOrders.forEach((bwo) => {
-    bwo.orders.forEach((ord) => {
-      const isZebra = ordIdx++ % 2 === 1;
-      const expenseDetails = (ord.expenses || [])
-        .map(
-          (e) =>
-            `${e.voucher_number || 'EXP'} (${e.category}): Rp ${Number(e.total_amount).toLocaleString(
-              'id-ID'
-            )}`
-        )
-        .join('; ');
+  let sumOrdersQty = 0;
+  let sumOrdersGrossSales = 0;
+  let sumOrdersLandedCost = 0;
+  let sumOrdersSalesExp = 0;
+  let sumOrdersNetRealization = 0;
+  let sumOrdersGrossProfit = 0;
+  let sumOrdersNetProfit = 0;
 
-      const r = wsOrders.addRow([
-        ord.invoice_number,
-        ord.invoice_date,
-        ord.customer_name,
-        ord.so_number || '—',
-        ord.dc_number || '—',
-        bwo.product.product_code || '—',
-        bwo.product.product_name,
-        bwo.batch.batch_number,
-        Number(ord.quantity || 0),
-        Number(ord.selling_price || 0),
-        Number(ord.gross_sales || 0),
-        ord.unit_cost != null ? Number(ord.unit_cost) : '—',
-        ord.line_cost != null ? Number(ord.line_cost) : '—',
-        Number(ord.line_sales_expense || 0),
-        Number(ord.net_selling_realization || 0),
-        ord.gross_profit != null ? Number(ord.gross_profit) : '—',
-        ord.profit != null ? Number(ord.profit) : '—',
-        ord.profit_margin_pct != null ? Number(ord.profit_margin_pct) / 100 : '—',
-        expenseDetails || 'None',
-      ]);
+  productsWithBatches.forEach((pb) => {
+    pb.batches.forEach((b) => {
+      const orders = batchOrdersMap.get(b.batch_id) || [];
+      orders.forEach((ord) => {
+        const isZebra = ordIdx++ % 2 === 1;
+        const qty = Number(ord.quantity || 0);
+        const grossSales = Number(ord.gross_sales || 0);
+        const lineCost = Number(ord.line_cost || 0);
+        const salesExp = Number(ord.line_sales_expense || 0);
+        const netRealization = Number(ord.net_selling_realization != null ? ord.net_selling_realization : grossSales - salesExp);
+        const grossProfit = Number(ord.gross_profit != null ? ord.gross_profit : grossSales - lineCost);
+        const netProfit = Number(ord.profit != null ? ord.profit : grossProfit - salesExp);
+        const margin = ord.profit_margin_pct != null ? Number(ord.profit_margin_pct) / 100 : (grossSales > 0 ? netProfit / grossSales : null);
+        const lineageNotes = formatOrderLineageNotes(ord);
+
+        sumOrdersQty += qty;
+        sumOrdersGrossSales += grossSales;
+        sumOrdersLandedCost += lineCost;
+        sumOrdersSalesExp += salesExp;
+        sumOrdersNetRealization += netRealization;
+        sumOrdersGrossProfit += grossProfit;
+        sumOrdersNetProfit += netProfit;
+
+        const r = wsOrders.addRow([
+          ord.invoice_number,
+          ord.invoice_date,
+          ord.customer_name,
+          ord.so_number || '—',
+          ord.dc_number || '—',
+          pb.product.product_code || '—',
+          pb.product.product_name,
+          b.batch_number,
+          qty,
+          Number(ord.selling_price || 0),
+          grossSales,
+          ord.unit_cost != null ? Number(ord.unit_cost) : '—',
+          lineCost,
+          salesExp,
+          netRealization,
+          grossProfit,
+          netProfit,
+          margin != null ? margin : '—',
+          lineageNotes,
+        ]);
       r.height = 20;
       r.eachCell((cell, colNum) => {
         cell.border = BORDER_THIN;
@@ -1193,17 +1199,64 @@ export async function generateSalesProfitabilityExcel(
           cell.alignment = { vertical: 'middle', horizontal: 'left' };
         } else {
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
-          if (typeof cell.value === 'number') {
-            cell.numFmt = colNum === 18 ? '0.0%' : '#,##0.00';
-            if (colNum === 17) cell.font = FONT_BOLD;
+          if (colNum === 9 || colNum === 10 || colNum === 11 || colNum === 12 || colNum === 13 || colNum === 14 || colNum === 15 || colNum === 16) {
+            if (typeof cell.value === 'number') cell.numFmt = '#,##0.00';
+          } else if (colNum === 17) {
+            if (typeof cell.value === 'number') {
+              cell.numFmt = '#,##0.00';
+              cell.font = FONT_BOLD;
+            }
+          } else if (colNum === 18) {
+            if (typeof cell.value === 'number') cell.numFmt = '0.0%';
           }
         }
       });
     });
   });
+  });
+
+  // Orders & Challans Total Row
+  const overallOrdersMargin = sumOrdersGrossSales > 0 ? sumOrdersNetProfit / sumOrdersGrossSales : 0;
+  const ordersTotalRow = wsOrders.addRow([
+    'TOTAL',
+    '',
+    'ORDERS & DELIVERY CHALLANS TOTAL',
+    '',
+    '',
+    '',
+    '',
+    '',
+    sumOrdersQty,
+    '',
+    sumOrdersGrossSales,
+    '',
+    sumOrdersLandedCost,
+    sumOrdersSalesExp,
+    sumOrdersNetRealization,
+    sumOrdersGrossProfit,
+    sumOrdersNetProfit,
+    overallOrdersMargin,
+    'Reconciled Across All Deliveries and Invoices',
+  ]);
+  ordersTotalRow.height = 24;
+  ordersTotalRow.eachCell((cell, colNum) => {
+    cell.fill = FILL_TOTAL;
+    cell.font = FONT_BOLD;
+    cell.border = BORDER_TOTAL;
+    if (colNum <= 3) {
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    } else {
+      cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      if (colNum === 9 || colNum === 11 || (colNum >= 13 && colNum <= 17)) {
+        cell.numFmt = '#,##0.00';
+      } else if (colNum === 18) {
+        cell.numFmt = '0.0%';
+      }
+    }
+  });
 
   const orderColWidths = [
-    16, 12, 28, 14, 16, 14, 30, 18, 12, 18, 20, 18, 20, 18, 18, 18, 20, 12, 35,
+    16, 12, 28, 14, 16, 14, 30, 18, 12, 18, 20, 20, 20, 18, 20, 18, 20, 22, 45,
   ];
   orderColWidths.forEach((w, i) => {
     wsOrders.getColumn(i + 1).width = w;

@@ -20,6 +20,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatNumber } from '../../utils/currency';
 import { ExportSalesProfitModal } from '../../components/ExportSalesProfitModal';
+import { resolveAuthoritativeInvoiceItemCOGS } from '../../services/salesProfitabilityEngine';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -364,7 +365,42 @@ export function CanonicalSalesProfitReport() {
         p_end_date: endDate,
       });
       if (rpcErr) throw rpcErr;
-      const oList = res?.orders || [];
+      const rawOrders = (res?.orders || []) as OrderSaleRow[];
+
+      // Resolve authoritative cost layer allocations
+      const lineIds = rawOrders.map(o => o.line_id).filter(Boolean);
+      const siiMap = new Map<string, any>();
+      if (lineIds.length > 0) {
+        const { data: siiRows } = await supabase
+          .from('sales_invoice_items')
+          .select('id, quantity, unit_price, cogs_unit_cost, cogs_total_cost, cogs_layer_allocations')
+          .in('id', lineIds);
+        (siiRows || []).forEach((row: any) => siiMap.set(row.id, row));
+      }
+
+      const oList: OrderSaleRow[] = rawOrders.map(ord => {
+        const sii = siiMap.get(ord.line_id);
+        const costResolution = resolveAuthoritativeInvoiceItemCOGS(ord, sii, ord.unit_cost);
+        const grossSales = Number(ord.gross_sales || 0);
+        const lineCost = costResolution.lineCost;
+        const unitCost = costResolution.unitCost;
+        const salesExp = Number(ord.line_sales_expense || 0);
+        const netRealization = Math.round((grossSales - salesExp) * 100) / 100;
+        const grossProfit = Math.round((grossSales - lineCost) * 100) / 100;
+        const netProfit = Math.round((grossProfit - salesExp) * 100) / 100;
+        const marginPct = grossSales > 0 ? (netProfit / grossSales) * 100 : null;
+
+        return {
+          ...ord,
+          unit_cost: unitCost,
+          line_cost: lineCost,
+          net_selling_realization: netRealization,
+          gross_profit: grossProfit,
+          profit: netProfit,
+          profit_margin_pct: marginPct != null ? Math.round(marginPct * 100) / 100 : null,
+        };
+      });
+
       setOrdersCache(prev => ({ ...prev, [batchId]: oList }));
       return oList;
     } catch (err: any) {
