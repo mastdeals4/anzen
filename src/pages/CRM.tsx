@@ -29,6 +29,7 @@ import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
 import { CustomerUpdateDialog } from '../components/crm/CustomerUpdateDialog';
+import { registerRecentInquiryValues } from '../services/crmInquirySuggestions';
 import {
   ensureUniqueCrmContactName,
   findOrCreateCrmContact,
@@ -323,8 +324,40 @@ export function CRM() {
         const sanitized: any = {};
         const emptyToNull = (val: any) => (val === '' || val === undefined ? null : val);
 
+        // Fields that should never be sent to the crm_inquiries table
+        const excludedFields = new Set(['products', 'items']);
+
+        // UUID, date, timestamp, and numeric fields that must be null if empty string
+        const nullableFields = new Set([
+          'crm_contact_id',
+          'customer_id',
+          'assigned_to',
+          'created_by',
+          'sales_member_id',
+          'source_email_id',
+          'converted_to_quotation',
+          'converted_to_order',
+          'delivery_date',
+          'delivery_date_expected',
+          'next_follow_up',
+          'last_contact_date',
+          'coa_sent_date',
+          'msds_sent_date',
+          'sample_sent_date',
+          'price_quoted_date',
+          'lost_at',
+          'closed_at',
+          'purchase_price',
+          'offered_price',
+          'purchase_price_currency',
+          'offered_price_currency',
+        ]);
+
         Object.keys(data).forEach((key) => {
-          if (['assigned_to', 'next_follow_up', 'delivery_date', 'purchase_price_currency', 'offered_price_currency'].includes(key)) {
+          if (excludedFields.has(key)) {
+            return;
+          }
+          if (nullableFields.has(key)) {
             sanitized[key] = emptyToNull(data[key]);
           } else {
             sanitized[key] = data[key];
@@ -334,27 +367,33 @@ export function CRM() {
       };
 
       if (editingInquiry) {
+        const updatePayload = sanitizeFormData(formData);
         const { error } = await supabase
           .from('crm_inquiries')
-          .update(sanitizeFormData(formData))
+          .update(updatePayload)
           .eq('id', editingInquiry.id);
 
         if (error) throw error;
       } else {
-        const { items, is_multi_product, ...restFormData } = formData;
+        const { items, products, is_multi_product, ...restFormData } = formData;
+        const multiProducts = (items && items.length > 0) ? items : (products && products.length > 0 ? products : []);
 
-        if (is_multi_product && items && items.length > 0) {
-          const inquiriesToInsert = items.map((item: any) =>
+        if (is_multi_product && multiProducts.length > 0) {
+          const inquiriesToInsert = multiProducts.map((item: any) =>
             sanitizeFormData({
               ...restFormData,
-              product_name: item.product_name,
+              product_name: item.product_name || item.productName,
               specification: item.specification || null,
               quantity: item.quantity,
+              supplier_name: item.supplier_name || item.supplierName || restFormData.supplier_name || null,
+              supplier_country: item.supplier_country || item.supplierCountry || restFormData.supplier_country || null,
+              delivery_date: item.delivery_date || item.deliveryDate || restFormData.delivery_date || null,
+              delivery_terms: item.delivery_terms || item.deliveryTerms || restFormData.delivery_terms || null,
               inquiry_date: new Date().toISOString().split('T')[0],
               assigned_to: user.id,
               created_by: user.id,
-              purchase_price: item.purchase_price ? parseFloat(item.purchase_price) : null,
-              offered_price: item.offered_price ? parseFloat(item.offered_price) : null,
+              purchase_price: item.purchase_price && !isNaN(parseFloat(item.purchase_price)) ? parseFloat(item.purchase_price) : null,
+              offered_price: item.offered_price && !isNaN(parseFloat(item.offered_price)) ? parseFloat(item.offered_price) : null,
               is_multi_product: true,
               has_items: true,
             })
@@ -383,25 +422,45 @@ export function CRM() {
             inquiry_date: new Date().toISOString().split('T')[0],
             assigned_to: user.id,
             created_by: user.id,
-            purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
-            offered_price: formData.offered_price ? parseFloat(formData.offered_price) : null,
+            purchase_price: formData.purchase_price && !isNaN(parseFloat(formData.purchase_price)) ? parseFloat(formData.purchase_price) : null,
+            offered_price: formData.offered_price && !isNaN(parseFloat(formData.offered_price)) ? parseFloat(formData.offered_price) : null,
             is_multi_product: false,
             has_items: false,
           });
 
-          const { error } = await supabase.from('crm_inquiries').insert([insertData]);
-          if (error) throw error;
+          const { error, status } = await supabase.from('crm_inquiries').insert([insertData]);
+          if (error) {
+            console.error('[CRM_INQUIRY_INSERT_ERROR]', {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint,
+              status,
+              payloadKeys: Object.keys(insertData),
+            });
+            throw error;
+          }
         }
       }
+
+      registerRecentInquiryValues({
+        product_name: formData.product_name,
+        specification: formData.specification,
+        supplier_country: formData.supplier_country,
+      });
 
       setModalOpen(false);
       setEditingInquiry(null);
       setPrefillInquiry(null);
       loadInquiries();
-    } catch (error) {
-      console.error('Error saving inquiry:', error);
+    } catch (error: any) {
+      console.error('Error saving inquiry:', {
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+      });
       alert(t('errors.failedToSaveInquiry'));
-      throw error;
     }
   };
 

@@ -24,6 +24,14 @@ interface SearchableSelectProps {
   required?: boolean;
   /** When provided, shows a "Create X" option when no results match. Called with the current search text. */
   onCreateNew?: (searchText: string) => void;
+  /** When true, renders an editable text input instead of a select button for typeahead / autocomplete */
+  freeSolo?: boolean;
+  /** Callback fired on user input in freeSolo mode (useful for async searching) */
+  onSearch?: (query: string) => void;
+  /** If false, disables internal option filtering (for when options are already filtered externally) */
+  filterOptions?: boolean;
+  /** Loading state indicator */
+  loading?: boolean;
 }
 
 const STRIP_PREFIXES = /^(PT\.?\s*|CV\.?\s*|UD\.?\s*|TBK\.?\s*|LTD\.?\s*|CO\.?\s*)/i;
@@ -49,13 +57,19 @@ export function SearchableSelect({
   placeholder = 'Select...',
   className = '',
   disabled = false,
+  required = false,
   onCreateNew,
+  freeSolo = false,
+  onSearch,
+  filterOptions,
+  loading = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -63,9 +77,13 @@ export function SearchableSelect({
   const debouncedFilter = useDebounce(filter, 120);
 
   const filtered = useMemo(() => {
-    if (!debouncedFilter) return options;
-    const q = debouncedFilter.toLowerCase().trim();
-    const normalizedQ = normalize(debouncedFilter);
+    if (filterOptions === false) {
+      return options;
+    }
+    const searchTarget = freeSolo ? value : debouncedFilter;
+    if (!searchTarget) return options;
+    const q = searchTarget.toLowerCase().trim();
+    const normalizedQ = normalize(searchTarget);
     const qTokens = normalizedQ.split(/\s+/).filter(Boolean);
     return options.filter(opt => {
       const raw = opt.label.toLowerCase();
@@ -77,11 +95,12 @@ export function SearchableSelect({
       const optTokens = stripped.split(/\s+/).filter(Boolean);
       return qTokens.every(qt => optTokens.some(ot => ot.includes(qt)));
     });
-  }, [options, debouncedFilter]);
+  }, [options, debouncedFilter, filterOptions, freeSolo, value]);
 
   const updateDropdownPosition = useCallback(() => {
-    if (!buttonRef.current) return;
-    const rect = buttonRef.current.getBoundingClientRect();
+    const trigger = freeSolo ? inputRef.current : buttonRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
     const dropdownHeight = Math.min(320, window.innerHeight * 0.4);
@@ -93,6 +112,7 @@ export function SearchableSelect({
         position: 'fixed',
         top: rect.bottom + 2,
         left: leftPos,
+        width: Math.max(rect.width, 240),
         minWidth,
         zIndex: 9999,
       });
@@ -101,11 +121,12 @@ export function SearchableSelect({
         position: 'fixed',
         bottom: window.innerHeight - rect.top + 2,
         left: leftPos,
+        width: Math.max(rect.width, 240),
         minWidth,
         zIndex: 9999,
       });
     }
-  }, []);
+  }, [freeSolo]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -115,7 +136,7 @@ export function SearchableSelect({
         !(listRef.current && listRef.current.closest('[data-searchable-dropdown]')?.contains(target))
       ) {
         setIsOpen(false);
-        setFilter('');
+        if (!freeSolo) setFilter('');
       }
     };
     if (isOpen) {
@@ -128,24 +149,26 @@ export function SearchableSelect({
         window.removeEventListener('resize', updateDropdownPosition);
       };
     }
-  }, [isOpen, updateDropdownPosition]);
+  }, [isOpen, updateDropdownPosition, freeSolo]);
 
   useEffect(() => {
     if (isOpen) {
       updateDropdownPosition();
-      buttonRef.current?.focus();
-      if (value && !filter) {
-        const idx = filtered.findIndex(o => o.value === value);
-        if (idx !== -1) {
-          setHighlightedIndex(idx);
-          scrollToIndex(idx);
+      if (!freeSolo) {
+        buttonRef.current?.focus();
+        if (value && !filter) {
+          const idx = filtered.findIndex(o => o.value === value);
+          if (idx !== -1) {
+            setHighlightedIndex(idx);
+            scrollToIndex(idx);
+          }
         }
       }
     } else {
       setHighlightedIndex(-1);
-      setFilter('');
+      if (!freeSolo) setFilter('');
     }
-  }, [isOpen]);
+  }, [isOpen, freeSolo]);
 
   useEffect(() => {
     setHighlightedIndex(-1);
@@ -168,6 +191,53 @@ export function SearchableSelect({
     onChange(val);
     setIsOpen(false);
     setFilter('');
+    if (freeSolo) {
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setIsOpen(true);
+        if (onSearch) onSearch(value);
+      }
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setIsOpen(false);
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIndex(prev => (prev < flatFiltered.length - 1 ? prev + 1 : prev));
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex(prev => (prev > 0 ? prev - 1 : 0));
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      if (highlightedIndex >= 0 && highlightedIndex < flatFiltered.length) {
+        e.preventDefault();
+        handleSelect(flatFiltered[highlightedIndex].value);
+      } else {
+        setIsOpen(false);
+      }
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      setIsOpen(false);
+      return;
+    }
   };
 
   const handleButtonKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -237,7 +307,7 @@ export function SearchableSelect({
       style={dropdownStyle}
       className="bg-white border border-gray-200 rounded shadow-2xl overflow-hidden"
     >
-      {filter && (
+      {!freeSolo && filter && (
         <div className="px-2 py-1 border-b border-gray-100 bg-gray-50 flex items-center gap-1">
           <span className="text-[10px] text-gray-400 uppercase tracking-wide shrink-0">Filter:</span>
           <span className="text-xs font-medium text-gray-800 truncate">{filter}</span>
@@ -248,6 +318,12 @@ export function SearchableSelect({
           >
             ✕
           </button>
+        </div>
+      )}
+      {loading && (
+        <div className="px-3 py-1.5 text-xs text-gray-400 flex items-center gap-1.5 border-b border-gray-50">
+          <span className="w-2.5 h-2.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <span>Searching...</span>
         </div>
       )}
       <div ref={listRef} className="max-h-72 overflow-y-auto" role="listbox">
@@ -262,7 +338,7 @@ export function SearchableSelect({
               Create &ldquo;{filter.trim()}&rdquo;
             </div>
           ) : (
-            <div className="px-2 py-2 text-xs text-gray-400 text-center">No results</div>
+            <div className="px-2 py-2 text-xs text-gray-400 text-center">No suggestions</div>
           )
         ) : (
           <>
@@ -334,33 +410,91 @@ export function SearchableSelect({
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        id={id}
-        name={name || id}
-        aria-label={ariaLabel || (!ariaLabelledBy ? placeholder : undefined)}
-        aria-labelledby={ariaLabelledBy}
-        onClick={() => {
-          if (!disabled) {
-            setIsOpen(prev => !prev);
-          }
-        }}
-        onKeyDown={handleButtonKeyDown}
-        disabled={disabled}
-        className={`w-full px-3 border rounded-lg text-left flex items-center justify-between h-[34px] ${
-          /\bpy-/.test(className) ? '' : 'py-2'
-        } ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-blue-500'} ${className}`}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-      >
-        <span className={`truncate text-sm ${selectedOption ? 'text-gray-900' : 'text-gray-400'}`}>
-          {isOpen && filter ? (
-            <span className="text-gray-600">{filter}<span className="animate-pulse">|</span></span>
-          ) : selectedOption ? selectedOption.label : placeholder}
-        </span>
-        <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 ml-2 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+      {freeSolo ? (
+        <div className="relative flex items-center w-full">
+          <input
+            ref={inputRef}
+            type="text"
+            id={id}
+            name={name || id}
+            aria-label={ariaLabel || (!ariaLabelledBy ? placeholder : undefined)}
+            aria-labelledby={ariaLabelledBy}
+            value={value}
+            onChange={(e) => {
+              const val = e.target.value;
+              onChange(val);
+              if (onSearch) onSearch(val);
+              setIsOpen(true);
+              setHighlightedIndex(-1);
+            }}
+            onFocus={() => {
+              if (!disabled) {
+                if (onSearch) onSearch(value);
+                setIsOpen(true);
+              }
+            }}
+            onKeyDown={handleInputKeyDown}
+            placeholder={placeholder}
+            disabled={disabled}
+            required={required}
+            autoComplete="off"
+            className={`w-full px-3 pr-8 border rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 h-9 transition ${
+              disabled
+                ? 'bg-gray-100 cursor-not-allowed'
+                : 'bg-white border-gray-300 hover:border-gray-400 focus:border-blue-500'
+            } ${className}`}
+            aria-haspopup="listbox"
+            aria-expanded={isOpen}
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            onClick={() => {
+              if (!disabled) {
+                if (!isOpen) {
+                  inputRef.current?.focus();
+                  setIsOpen(true);
+                  if (onSearch) onSearch(value);
+                } else {
+                  setIsOpen(false);
+                }
+              }
+            }}
+            className="absolute right-2.5 text-gray-400 hover:text-gray-600 focus:outline-none p-0.5"
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+      ) : (
+        <button
+          ref={buttonRef}
+          type="button"
+          id={id}
+          name={name || id}
+          aria-label={ariaLabel || (!ariaLabelledBy ? placeholder : undefined)}
+          aria-labelledby={ariaLabelledBy}
+          onClick={() => {
+            if (!disabled) {
+              setIsOpen(prev => !prev);
+            }
+          }}
+          onKeyDown={handleButtonKeyDown}
+          disabled={disabled}
+          className={`w-full px-3 border rounded-lg text-left flex items-center justify-between h-[34px] ${
+            /\bpy-/.test(className) ? '' : 'py-2'
+          } ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-blue-500'} ${className}`}
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
+        >
+          <span className={`truncate text-sm ${selectedOption ? 'text-gray-900' : 'text-gray-400'}`}>
+            {isOpen && filter ? (
+              <span className="text-gray-600">{filter}<span className="animate-pulse">|</span></span>
+            ) : selectedOption ? selectedOption.label : placeholder}
+          </span>
+          <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 ml-2 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+      )}
 
       {typeof document !== 'undefined' && dropdown && createPortal(dropdown, document.body)}
     </div>

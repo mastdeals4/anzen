@@ -1,10 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
   findOrCreateCrmContact,
 } from '../../utils/customerValidation';
 import { Plus, X, Search } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { SearchableSelect } from '../SearchableSelect';
+import { useDebounce } from '../../hooks/useDebounce';
+import {
+  searchHistoricalProducts,
+  searchHistoricalSpecifications,
+  getHistoricalCountrySuggestions,
+} from '../../services/crmInquirySuggestions';
 
 interface Customer {
   id: string;
@@ -33,6 +40,13 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const [productSuggestions, setProductSuggestions] = useState<string[]>([]);
+  const [specSuggestions, setSpecSuggestions] = useState<string[]>([]);
+  const [countrySuggestions, setCountrySuggestions] = useState<string[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [loadingSpecs, setLoadingSpecs] = useState(false);
+  const [loadingCountries, setLoadingCountries] = useState(false);
 
   const [formData, setFormData] = useState({
     product_name: initialData?.product_name || '',
@@ -84,6 +98,85 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  const debouncedProductQuery = useDebounce(formData.product_name, 250);
+  const debouncedSpecQuery = useDebounce(formData.specification, 250);
+  const debouncedCountryQuery = useDebounce(formData.supplier_country, 250);
+
+  useEffect(() => {
+    let active = true;
+    if (!debouncedProductQuery || debouncedProductQuery.trim().length < 1) {
+      setProductSuggestions([]);
+      return;
+    }
+    setLoadingProducts(true);
+    searchHistoricalProducts(debouncedProductQuery)
+      .then((res) => {
+        if (active) setProductSuggestions(res);
+      })
+      .catch(() => {
+        if (active) setProductSuggestions([]);
+      })
+      .finally(() => {
+        if (active) setLoadingProducts(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [debouncedProductQuery]);
+
+  useEffect(() => {
+    let active = true;
+    if (!debouncedSpecQuery || debouncedSpecQuery.trim().length < 1) {
+      setSpecSuggestions([]);
+      return;
+    }
+    setLoadingSpecs(true);
+    searchHistoricalSpecifications(debouncedSpecQuery)
+      .then((res) => {
+        if (active) setSpecSuggestions(res);
+      })
+      .catch(() => {
+        if (active) setSpecSuggestions([]);
+      })
+      .finally(() => {
+        if (active) setLoadingSpecs(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [debouncedSpecQuery]);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingCountries(true);
+    getHistoricalCountrySuggestions(debouncedCountryQuery)
+      .then((res) => {
+        if (active) setCountrySuggestions(res);
+      })
+      .catch(() => {
+        if (active) setCountrySuggestions(['India', 'China']);
+      })
+      .finally(() => {
+        if (active) setLoadingCountries(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [debouncedCountryQuery]);
+
+  const productOptions = useMemo(
+    () => productSuggestions.map((name) => ({ value: name, label: name })),
+    [productSuggestions]
+  );
+  const specOptions = useMemo(
+    () => specSuggestions.map((name) => ({ value: name, label: name })),
+    [specSuggestions]
+  );
+  const countryOptions = useMemo(
+    () => countrySuggestions.map((name) => ({ value: name, label: name })),
+    [countrySuggestions]
+  );
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -276,6 +369,79 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           </label>
         </div>
 
+        {/* Multi-Product Products List */}
+        {formData.is_multi_product && (
+          <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                Products ({formData.products.length})
+              </span>
+              <button
+                type="button"
+                onClick={addProduct}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-md font-medium transition"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Another Product
+              </button>
+            </div>
+
+            {(formData.products as any[]).map((prod: any, index: number) => (
+              <div key={index} className="grid grid-cols-12 gap-2 p-2 bg-white rounded border border-gray-200 items-end">
+                <div className="col-span-5">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Product Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={prod.productName}
+                    onChange={(e) => updateProduct(index, 'productName', e.target.value)}
+                    placeholder="e.g., Paracetamol IP"
+                    className="w-full h-8 px-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div className="col-span-3">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Specification
+                  </label>
+                  <input
+                    type="text"
+                    value={prod.specification}
+                    onChange={(e) => updateProduct(index, 'specification', e.target.value)}
+                    placeholder="USP / BP"
+                    className="w-full h-8 px-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="col-span-3">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Quantity <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={prod.quantity}
+                    onChange={(e) => updateProduct(index, 'quantity', e.target.value)}
+                    placeholder="e.g., 500 KG"
+                    className="w-full h-8 px-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div className="col-span-1 flex justify-center pb-1">
+                  {formData.products.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeProduct(index)}
+                      className="text-red-500 hover:text-red-700 p-1"
+                      title="Remove product"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Row: Product Name | Specification */}
         {!formData.is_multi_product && (
           <div className="grid grid-cols-2 gap-3">
@@ -283,11 +449,16 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Product Name <span className="text-red-500">*</span>
               </label>
-              <input name="product_name" aria-label="Enter product name"
-                type="text"
+              <SearchableSelect
+                id="inquiry_product_name"
+                name="product_name"
+                aria-label="Enter product name"
+                freeSolo
+                filterOptions={false}
                 value={formData.product_name}
-                onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
-                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                onChange={(val) => setFormData((prev) => ({ ...prev, product_name: val }))}
+                options={productOptions}
+                loading={loadingProducts}
                 placeholder="Enter product name"
                 required
               />
@@ -296,11 +467,16 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Specification
               </label>
-              <input name="specification" aria-label="Specification"
-                type="text"
+              <SearchableSelect
+                id="inquiry_specification"
+                name="specification"
+                aria-label="Specification"
+                freeSolo
+                filterOptions={false}
                 value={formData.specification}
-                onChange={(e) => setFormData({ ...formData, specification: e.target.value })}
-                className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                onChange={(val) => setFormData((prev) => ({ ...prev, specification: val }))}
+                options={specOptions}
+                loading={loadingSpecs}
                 placeholder="BP / USP / EP"
               />
             </div>
@@ -376,11 +552,16 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Country of Origin
             </label>
-            <input name="country_of_origin" aria-label="Country of Origin"
-              type="text"
+            <SearchableSelect
+              id="inquiry_country_of_origin"
+              name="country_of_origin"
+              aria-label="Country of Origin"
+              freeSolo
+              filterOptions={false}
               value={formData.supplier_country}
-              onChange={(e) => setFormData({ ...formData, supplier_country: e.target.value })}
-              className="w-full h-9 px-3 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              onChange={(val) => setFormData((prev) => ({ ...prev, supplier_country: val }))}
+              options={countryOptions}
+              loading={loadingCountries}
               placeholder="Supplier country"
             />
           </div>
@@ -393,7 +574,13 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 type="text"
                 value={customerSearch || formData.company_name}
                 onChange={(e) => {
-                  setCustomerSearch(e.target.value);
+                  const val = e.target.value;
+                  setCustomerSearch(val);
+                  setFormData(prev => ({
+                    ...prev,
+                    company_name: val,
+                    crm_contact_id: prev.company_name === val ? prev.crm_contact_id : '',
+                  }));
                   setShowCustomerDropdown(true);
                 }}
                 onFocus={() => setShowCustomerDropdown(true)}
