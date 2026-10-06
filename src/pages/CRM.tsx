@@ -14,6 +14,7 @@ import {
   Plus,
   SlidersHorizontal,
   RefreshCw,
+  FileText,
 } from 'lucide-react';
 
 import { CrmOmnichannelInbox } from '../components/crm/inbox/CrmOmnichannelInbox';
@@ -25,6 +26,7 @@ import { CrmCustomerDrawer, CustomerDetail } from '../components/crm/customers/C
 import { CrmGlobalSearchModal } from '../components/crm/search/CrmGlobalSearchModal';
 import { CrmSettingsModal } from '../components/crm/settings/CrmSettingsModal';
 import { EnquiryControlCenter } from '../components/crm/enquiry-control-center';
+import { ProductDocumentsPanel } from '../components/crm/ProductDocumentsPanel';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
@@ -37,7 +39,7 @@ import {
 } from '../utils/customerValidation';
 import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
 
-export type CrmPrimaryTab = 'inbox' | 'inquiries' | 'bulk_email' | 'customers' | 'control-center';
+export type CrmPrimaryTab = 'inbox' | 'inquiries' | 'bulk_email' | 'customers' | 'control-center' | 'documents';
 
 export interface Inquiry {
   id: string;
@@ -536,7 +538,7 @@ export function CRM() {
         {/* Top Consolidated CRM Bar: 4 Primary Destinations + Quick Actions */}
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
           
-          {/* PRIMARY CRM DESTINATIONS (EXACTLY 4) */}
+          {/* PRIMARY CRM DESTINATIONS */}
           <div className="flex items-center gap-1">
             {(
               [
@@ -544,6 +546,7 @@ export function CRM() {
                 ['inquiries', Table, 'INQUIRIES'],
                 ['bulk_email', Send, 'BULK EMAIL'],
                 ['customers', Users, 'CUSTOMERS'],
+                ['documents', FileText, 'DOCUMENT BANK'],
               ] as const
             ).map(([tabKey, Icon, label]) => {
               const isActive = activeTab === tabKey;
@@ -660,6 +663,11 @@ export function CRM() {
           <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
             <EnquiryControlCenter canManage={canManage} />
           </div>
+        )}
+
+        {/* 5. DOCUMENT BANK DESTINATION */}
+        {activeTab === 'documents' && (
+          <ProductDocumentsPanel />
         )}
 
         {/* Contextual Inquiry Drawer (Overlay) */}

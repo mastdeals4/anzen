@@ -18,6 +18,10 @@ export interface ParsedSourceRow {
   source_price: number | null;
   source_currency: string;
   quantity: string | null;
+  pack?: string | null;
+  delivery?: string | null;
+  ex_location?: string | null;
+  gst?: boolean | string | null;
   availability: 'available' | 'partial' | 'na';
   document_status: 'pending' | 'received' | 'not_required' | 'partial';
   lead_time: string | null;
@@ -108,6 +112,10 @@ export async function saveSourceReplyRow(args: SaveSourceReplyArgs): Promise<{ o
   const extraBits = [
     row.remark,
     row.lead_time ? `Lead time: ${row.lead_time}` : null,
+    row.pack ? `Pack: ${row.pack}` : null,
+    row.delivery ? `Delivery: ${row.delivery}` : null,
+    row.ex_location ? `Ex: ${row.ex_location}` : null,
+    row.gst ? '+GST' : null,
     row.grade ? `Grade: ${row.grade}` : null,
     row.cas ? `CAS: ${row.cas}` : null,
     row.unit ? `Unit: ${row.unit}` : null,
@@ -565,3 +573,6 @@ export async function findInquiryCandidates(hint: {
     cas: hint.cas,
   });
 }
+
+export { isProductMatch } from '../utils/productMatcher';
+

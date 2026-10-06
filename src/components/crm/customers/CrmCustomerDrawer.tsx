@@ -254,13 +254,13 @@ export function CrmCustomerDrawer({
       if (inqIds.length > 0) {
         const { data: prodDocs } = await supabase
           .from('crm_product_documents')
-          .select('id, file_name, document_type, storage_path, created_at')
+          .select('id, original_file_name, display_file_name, document_type, storage_path, created_at')
           .in('inquiry_id', inqIds);
 
         (prodDocs || []).forEach((d: any) => {
           docItems.push({
             id: d.id,
-            filename: d.file_name,
+            filename: d.display_file_name || d.original_file_name || 'document',
             documentType: d.document_type || 'DOCUMENT',
             storagePath: d.storage_path,
             created_at: d.created_at,

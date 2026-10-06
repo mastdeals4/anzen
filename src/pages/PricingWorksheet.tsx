@@ -67,10 +67,14 @@ export type PricingRowStatus =
   | 'Completed'
   | 'Archived';
 
+import { isProductMatch } from '../services/sourceReplyParser';
+export { isProductMatch };
+
 export interface UnifiedPricingRow {
   id: string; // unique row id (inquiry id or ai review id)
   aiReviewId?: string | null;
   inquiryId?: string | null;
+  pricingOptionId?: string | null;
   inquiryNumber: string;
   aceerpNo: string;
   customerName: string;
@@ -133,6 +137,10 @@ export interface UnifiedPricingRow {
     status: 'MATCHED' | 'REVIEW' | 'AMBIGUOUS' | 'MISSING';
   }>;
   docActionNotice?: string | null;
+
+  // Preserved atomic extraction rows from source email
+  rawExtractionRows?: any[];
+  allPricingOptions?: any[];
 
   evidence?: {
     hasRealGmail: boolean;
@@ -439,7 +447,7 @@ export function PricingWorksheet() {
         throw new Error(`Storage upload failed: ${uploadErr.message}`);
       }
 
-      // 2. Insert record into crm_product_documents
+      // 2. Insert record into crm_product_documents (marked permanent since manually uploaded/banked)
       const displayFileName = `${row.productName || 'Product'}_${uploadDocType}.${ext}`;
       const { data: newDoc, error: insertErr } = await supabase
         .from('crm_product_documents')
@@ -448,17 +456,28 @@ export function PricingWorksheet() {
           product_name: row.productName,
           make: row.offeredMake || row.requestedMake || null,
           document_type: uploadDocType,
+          specification: row.specification || null,
+          pricing_option_id: row.pricingOptionId || null,
+          is_permanent: true,
           original_file_name: uploadDocFile.name,
           display_file_name: displayFileName,
           storage_bucket: 'crm-documents',
           storage_path: storagePath,
           uploaded_by: profile?.id || null,
         })
-        .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make')
+        .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make, specification, pricing_option_id, is_permanent')
         .single();
 
       if (insertErr) {
         throw new Error(`Database record creation failed: ${insertErr.message}`);
+      }
+
+      // If document is COA, update parent inquiry document_status to 'received'
+      if (uploadDocType === 'COA') {
+        await supabase
+          .from('crm_inquiries')
+          .update({ document_status: 'received', updated_at: new Date().toISOString() })
+          .eq('id', row.inquiryId);
       }
 
       // 3. Immediately update row documents in state
@@ -469,6 +488,10 @@ export function PricingWorksheet() {
         storagePath: storagePath,
         storageBucket: 'crm-documents',
         status: 'MATCHED' as const,
+        make: newDoc.make,
+        specification: newDoc.specification,
+        pricingOptionId: newDoc.pricing_option_id,
+        isPermanent: true,
       };
 
       const nextDocs = [...row.documents.filter(d => d.filename !== addedDoc.filename), addedDoc];
@@ -481,8 +504,8 @@ export function PricingWorksheet() {
 
       showToast({
         type: 'success',
-        title: 'Document Uploaded',
-        message: `${uploadDocType} document (${uploadDocFile.name}) attached successfully.`,
+        title: 'Document Uploaded & Banked',
+        message: `${uploadDocType} document (${uploadDocFile.name}) attached and banked successfully.`,
       });
 
       // Reset upload form
@@ -719,7 +742,7 @@ export function PricingWorksheet() {
       // 5. Fetch ALL Documents to reconcile real storage vs detected AI attachments (Requirement #5)
       const { data: allDocsData } = await supabase
         .from('crm_product_documents')
-        .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make, source_gmail_message_id');
+        .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make, specification, pricing_option_id, is_permanent, source_gmail_message_id');
 
       const docsMap: Record<string, any[]> = {};
       const docsByMessageId: Record<string, any[]> = {};
@@ -734,6 +757,10 @@ export function PricingWorksheet() {
           storageBucket: doc.storage_bucket || 'crm-documents',
           status: (doc.storage_path ? 'MATCHED' : 'FILE NOT STORED / NEEDS RE-SYNC') as any,
           isStored: Boolean(doc.storage_path),
+          make: doc.make,
+          specification: doc.specification,
+          pricingOptionId: doc.pricing_option_id,
+          isPermanent: doc.is_permanent,
         };
 
         if (doc.inquiry_id) {
@@ -860,11 +887,12 @@ export function PricingWorksheet() {
         unifiedMap.set(inq.id, {
           id: inq.id,
           inquiryId: inq.id,
+          pricingOptionId: selectedOpt?.id || null,
           inquiryNumber: inq.inquiry_number,
           aceerpNo: inq.aceerp_no || '-',
           customerName: inq.company_name,
           productName: inq.product_name,
-          specification: inq.specification || '',
+          specification: selectedOpt?.specification || inq.specification || '',
           quantity: inq.quantity || '1,000 kg',
           requestedMake,
           offeredMake,
@@ -930,6 +958,8 @@ export function PricingWorksheet() {
             })),
           },
           sourceType: (selectedOpt?.source_type as any) || 'india',
+          rawExtractionRows: [],
+          allPricingOptions: inqOpts,
         });
       }
 
@@ -938,16 +968,23 @@ export function PricingWorksheet() {
         const raw = rev.raw_result || {};
         if (raw.fastFiltered) continue;
 
-        const matchedInqId = rev.matched_inquiry_id || raw.suggestedInquiryId;
-        const targetRow = matchedInqId ? unifiedMap.get(matchedInqId) : null;
+        // Collect all extracted product blocks from raw_result or rev
+        const allRawRows: any[] = Array.isArray(raw.extractionRows) && raw.extractionRows.length > 0
+          ? raw.extractionRows
+          : (Array.isArray(raw.pricing_rows) && raw.pricing_rows.length > 0
+              ? raw.pricing_rows
+              : (rev.product_name || rev.source_price != null
+                  ? [{
+                      product_name: rev.product_name || '',
+                      offered_make: rev.offered_make || '',
+                      source_price: rev.source_price ?? null,
+                      source_currency: rev.source_currency || 'INR',
+                      unit: 'KG',
+                      matched_inquiry_id: rev.matched_inquiry_id || raw.suggestedInquiryId || null,
+                    }]
+                  : []));
 
-        const extractionRow = raw.extractionRows?.[0] || {};
-        const extractedPrice = extractionRow.source_price ?? rev.source_price ?? null;
-        const extractedCurrency: 'INR' | 'USD' =
-          (extractionRow.source_currency || rev.source_currency) === 'USD' ? 'USD' : 'INR';
-        const extractedMake = extractionRow.offered_make || rev.offered_make || '';
         const detectedDocs = raw.detectedDocuments || [];
-
         const sourceEmail = raw.sourceEmail || {};
         const realMessageId = rev.gmail_message_id || sourceEmail.messageId || null;
         const realThreadId = rev.gmail_thread_id || sourceEmail.threadId || null;
@@ -976,6 +1013,20 @@ export function PricingWorksheet() {
             isUnavailable,
           };
         });
+
+        // Determine Document Action Notice
+        let docActionNotice: string | null = null;
+        const hasAmbiguousDoc = detectedDocs.some((d: any) => d.matchStatus === 'AMBIGUOUS');
+        const hasReviewDoc = detectedDocs.some((d: any) => d.matchStatus === 'REVIEW');
+        const hasUnstoredDoc = reconciledDocs.some((d: any) => !d.isStored && !d.isUnavailable);
+        const hasUnavailableDoc = reconciledDocs.some((d: any) => d.isUnavailable);
+        if (hasAmbiguousDoc) {
+          docActionNotice = 'Document match ambiguous';
+        } else if (hasReviewDoc || hasUnavailableDoc) {
+          docActionNotice = 'COA needs review';
+        } else if (hasUnstoredDoc) {
+          docActionNotice = 'Attachment needs re-sync';
+        }
 
         const evidenceObj = {
           hasRealGmail,
@@ -1006,101 +1057,121 @@ export function PricingWorksheet() {
                   storagePath: realPath,
                 };
               })
-            : (reconciledDocs.length > 0 ? reconciledDocs : targetRow?.evidence?.attachments || []),
+            : (reconciledDocs.length > 0 ? reconciledDocs : []),
         };
 
-        // Determine Document Action Notice
-        let docActionNotice: string | null = null;
-        const hasAmbiguousDoc = detectedDocs.some((d: any) => d.matchStatus === 'AMBIGUOUS');
-        const hasReviewDoc = detectedDocs.some((d: any) => d.matchStatus === 'REVIEW');
-        const hasUnstoredDoc = reconciledDocs.some((d: any) => !d.isStored && !d.isUnavailable);
-        const hasUnavailableDoc = reconciledDocs.some((d: any) => d.isUnavailable);
-        if (hasAmbiguousDoc) {
-          docActionNotice = 'Document match ambiguous';
-        } else if (hasReviewDoc || hasUnavailableDoc) {
-          docActionNotice = 'COA needs review';
-        } else if (hasUnstoredDoc) {
-          docActionNotice = 'Attachment needs re-sync';
-        }
+        const matchedIndices = new Set<number>();
 
-        if (targetRow) {
-          // Enrich inquiry row with live AI extraction
-          targetRow.aiReviewId = rev.id;
-          targetRow.isAiPrepared = true;
-          targetRow.rowClassification = 'inquiry_enriched';
-          targetRow.actionStatus = rev.action_status;
-          targetRow.emailDate = rev.email_date;
-
-          if (hasRealGmail || !targetRow.evidence) {
-            targetRow.evidence = evidenceObj;
+        // Try to match each extracted block to active inquiries in unifiedMap
+        allRawRows.forEach((block, idx) => {
+          let targetInqId = block.matched_inquiry_id || null;
+          if (!targetInqId && (rev.matched_inquiry_id || raw.suggestedInquiryId)) {
+            const candidate = unifiedMap.get(rev.matched_inquiry_id || raw.suggestedInquiryId);
+            if (candidate && isProductMatch(candidate.productName, block.product_name)) {
+              targetInqId = candidate.id;
+            }
           }
-
-          // Rule 5: Do not use AI Gmail extraction to overwrite a manually entered supplier value.
-          const hasManualSourcePrice = targetRow.sourcePrice !== null && targetRow.sourcePrice > 0;
-          if (extractedPrice && !hasManualSourcePrice) {
-            targetRow.sourcePrice = extractedPrice;
-            targetRow.sourceCurrency = extractedCurrency;
-            const calc = calculateCanonicalPricing(
-              extractedPrice,
-              extractedCurrency,
-              targetRow.quantity,
-              loadedConfig,
-              {
-                containerType: targetRow.containerType,
-                packingType: targetRow.packingType,
-                effectiveInrRate: targetRow.effectiveInrRate,
-                indiaMarginPct: targetRow.indiaMarginPct,
-                freightUsdPerKg: targetRow.freightUsdPerKg,
-                dutyPct: targetRow.dutyPct,
-                insurancePct: targetRow.insurancePct,
-                clearanceUsd: targetRow.clearanceUsd,
-                indonesiaMarginPct: targetRow.indonesiaMarginPct,
-                quotePriceOverride: targetRow.quotePrice,
-              },
-            );
-            targetRow.purchasePriceUsdPerKg = calc.purchasePriceUsdPerKg;
-            targetRow.landedCostUsd = calc.landedCostUsd;
-            targetRow.suggestedQuoteUsd = calc.suggestedQuoteUsd;
-            targetRow.quotePrice = calc.quotePrice;
-            targetRow.totalQuoteAmount = calc.totalQuoteAmount;
-            targetRow.calcBreakdown = calc.calcBreakdown;
-          }
-
-          if (extractedMake && !targetRow.offeredMake) {
-            targetRow.offeredMake = extractedMake;
-          }
-          if (raw.alternativeMake?.detected) {
-            targetRow.alternativeMakeDetected = true;
-          }
-          if (reconciledDocs.length > 0) {
-            targetRow.documents = [
-              ...targetRow.documents,
-              ...reconciledDocs,
-            ];
-            if (docActionNotice) {
-              targetRow.docActionNotice = docActionNotice;
+          if (!targetInqId) {
+            for (const [inqId, row] of unifiedMap.entries()) {
+              if (row.inquiryId && isProductMatch(row.productName, block.product_name)) {
+                targetInqId = inqId;
+                break;
+              }
             }
           }
 
-          // Transition to action statuses ONLY if the review is pending review and row is not Completed
-          const isPendingReview = rev.action_status === 'pending_review' || rev.action_status === 'needs_manual_link';
-          if (isPendingReview && targetRow.status !== 'Completed') {
-            targetRow.status = 'Needs Review';
-            if (raw.needsManualLink) {
-              targetRow.needsManualLink = true;
-              targetRow.actionReason = 'Inquiry match ambiguous';
-            } else if (raw.alternativeMake?.detected) {
-              targetRow.actionReason = 'Confirm make';
-            } else if (docActionNotice) {
-              targetRow.actionReason = docActionNotice;
-            } else {
-              targetRow.actionReason = 'Supplier price received - pending quote';
+          if (targetInqId && unifiedMap.has(targetInqId)) {
+            matchedIndices.add(idx);
+            const targetRow = unifiedMap.get(targetInqId)!;
+            targetRow.aiReviewId = rev.id;
+            targetRow.isAiPrepared = true;
+            targetRow.rowClassification = 'inquiry_enriched';
+            targetRow.actionStatus = rev.action_status;
+            targetRow.emailDate = rev.email_date;
+            targetRow.rawExtractionRows = allRawRows;
+
+            if (hasRealGmail || !targetRow.evidence) {
+              targetRow.evidence = evidenceObj;
+            }
+
+            const extractedPrice = block.source_price ?? null;
+            const extractedCurrency: 'INR' | 'USD' = block.source_currency === 'USD' ? 'USD' : 'INR';
+            const extractedMake = block.offered_make || '';
+
+            // Rule 5: Do not use AI Gmail extraction to overwrite a manually entered supplier value.
+            const hasManualSourcePrice = targetRow.sourcePrice !== null && targetRow.sourcePrice > 0;
+            if (extractedPrice !== null && !hasManualSourcePrice) {
+              targetRow.sourcePrice = extractedPrice;
+              targetRow.sourceCurrency = extractedCurrency;
+              const calc = calculateCanonicalPricing(
+                extractedPrice,
+                extractedCurrency,
+                targetRow.quantity,
+                loadedConfig,
+                {
+                  containerType: targetRow.containerType,
+                  packingType: targetRow.packingType,
+                  effectiveInrRate: targetRow.effectiveInrRate,
+                  indiaMarginPct: targetRow.indiaMarginPct,
+                  freightUsdPerKg: targetRow.freightUsdPerKg,
+                  dutyPct: targetRow.dutyPct,
+                  insurancePct: targetRow.insurancePct,
+                  clearanceUsd: targetRow.clearanceUsd,
+                  indonesiaMarginPct: targetRow.indonesiaMarginPct,
+                  quotePriceOverride: targetRow.quotePrice,
+                },
+              );
+              targetRow.purchasePriceUsdPerKg = calc.purchasePriceUsdPerKg;
+              targetRow.landedCostUsd = calc.landedCostUsd;
+              targetRow.suggestedQuoteUsd = calc.suggestedQuoteUsd;
+              targetRow.quotePrice = calc.quotePrice;
+              targetRow.totalQuoteAmount = calc.totalQuoteAmount;
+              targetRow.calcBreakdown = calc.calcBreakdown;
+            }
+
+            if (extractedMake && !targetRow.offeredMake) {
+              targetRow.offeredMake = extractedMake;
+            }
+            if (raw.alternativeMake?.detected) {
+              targetRow.alternativeMakeDetected = true;
+            }
+            if (reconciledDocs.length > 0) {
+              targetRow.documents = [
+                ...targetRow.documents,
+                ...reconciledDocs,
+              ];
+              if (docActionNotice) {
+                targetRow.docActionNotice = docActionNotice;
+              }
+            }
+
+            const isPendingReview = rev.action_status === 'pending_review' || rev.action_status === 'needs_manual_link';
+            if (isPendingReview && targetRow.status !== 'Completed') {
+              targetRow.status = 'Needs Review';
+              if (raw.needsManualLink) {
+                targetRow.needsManualLink = true;
+                targetRow.actionReason = 'Inquiry match ambiguous';
+              } else if (raw.alternativeMake?.detected) {
+                targetRow.actionReason = 'Confirm make';
+              } else if (docActionNotice) {
+                targetRow.actionReason = docActionNotice;
+              } else {
+                targetRow.actionReason = 'Supplier price received - pending quote';
+              }
             }
           }
-        } else {
-          // Unlinked AI Review -> Categorize distinctly so nothing is lost (Requirement #2 & #3)
+        });
+
+        // Unmatched blocks or non-pricing reviews -> create unlinked rows
+        const unmatchedBlocks = allRawRows.filter((_, idx) => !matchedIndices.has(idx));
+        const blocksToEmit = unmatchedBlocks.length > 0 ? unmatchedBlocks : (allRawRows.length === 0 ? [{}] : []);
+
+        blocksToEmit.forEach((block: any, uIdx: number) => {
           const isNoAction = rev.action_status === 'no_action' || rev.ai_type === 'No Action' || rev.ai_type === 'NO ACTION';
           const isAltMake = rev.ai_type === 'ALTERNATIVE MAKE' || Boolean(raw.alternativeMake?.detected);
+          const extractedPrice = block.source_price ?? rev.source_price ?? null;
+          const extractedCurrency: 'INR' | 'USD' = (block.source_currency || rev.source_currency) === 'USD' ? 'USD' : 'INR';
+          const extractedMake = block.offered_make || rev.offered_make || '';
           const isDocOnly = (rev.ai_type === 'DOCUMENT RECEIVED' || (reconciledDocs.length > 0 && extractedPrice === null)) && !isNoAction;
           const isNewPrice = extractedPrice !== null && !isNoAction;
 
@@ -1126,7 +1197,7 @@ export function PricingWorksheet() {
             actionReason = 'New supplier pricing';
           }
 
-          const fallbackId = `ai-${rev.id}`;
+          const fallbackId = blocksToEmit.length > 1 ? `ai-${rev.id}-${uIdx}` : `ai-${rev.id}`;
           const calc = calculateCanonicalPricing(
             extractedPrice,
             extractedCurrency,
@@ -1152,18 +1223,18 @@ export function PricingWorksheet() {
             inquiryNumber: raw.matchedInquiryNumber || 'UNLINKED',
             aceerpNo: raw.aceerpNo || '-',
             customerName: isNoAction ? 'Archived Mail' : 'Pending Link',
-            productName: rev.product_name || extractionRow.product_name || 'Chemical Item',
-            specification: extractionRow.specification || '',
-            quantity: extractionRow.quantity || '1,000 kg',
-            requestedMake: extractionRow.preferred_manufacturer || '',
+            productName: block.product_name || rev.product_name || 'Chemical Item',
+            specification: block.specification || '',
+            quantity: block.quantity ? `${block.quantity} ${block.unit || 'kg'}` : '1,000 kg',
+            requestedMake: block.preferred_manufacturer || '',
             offeredMake: extractedMake,
             supplierName: rev.from_email || '',
             sourcePrice: extractedPrice,
             sourceCurrency: extractedCurrency,
-            unit: extractionRow.unit || 'KG',
-            moq: extractionRow.quantity || '500 kg',
-            availability: extractionRow.availability || 'available',
-            leadTime: extractionRow.lead_time || '2 weeks',
+            unit: block.unit || 'KG',
+            moq: block.quantity ? `${block.quantity} ${block.unit || 'kg'}` : '500 kg',
+            availability: block.availability || block.delivery || 'available',
+            leadTime: block.lead_time || '2 weeks',
             remarks: rev.summary || '',
             containerType: '20ft',
             packingType: 'mixed',
@@ -1195,8 +1266,10 @@ export function PricingWorksheet() {
             docActionNotice: docActionNotice || (reconciledDocs.some((d: any) => !d.isStored) ? 'Attachment needs re-sync' : null),
             evidence: evidenceObj,
             sourceType: 'india',
+            rawExtractionRows: allRawRows,
+            allPricingOptions: [],
           });
-        }
+        });
       }
 
       setRows(Array.from(unifiedMap.values()));
@@ -1693,6 +1766,107 @@ export function PricingWorksheet() {
     );
   };
 
+  // Helper to delete temporary AI documents belonging to an exact source/option
+  const deleteTemporaryDocumentsForSource = async (opts: {
+    inquiryId?: string | null;
+    pricingOptionId?: string | null;
+    make?: string | null;
+  }) => {
+    try {
+      let query = supabase
+        .from('crm_product_documents')
+        .select('id, storage_bucket, storage_path, is_permanent')
+        .eq('is_permanent', false);
+
+      if (opts.pricingOptionId) {
+        query = query.eq('pricing_option_id', opts.pricingOptionId);
+      } else if (opts.inquiryId && opts.make) {
+        query = query.eq('inquiry_id', opts.inquiryId).ilike('make', opts.make);
+      } else {
+        return;
+      }
+
+      const { data: tempDocs, error } = await query;
+      if (error || !tempDocs || tempDocs.length === 0) return;
+
+      for (const d of tempDocs) {
+        if (d.storage_path) {
+          await supabase.storage
+            .from(d.storage_bucket || 'crm-documents')
+            .remove([d.storage_path]);
+        }
+        await supabase.from('crm_product_documents').delete().eq('id', d.id);
+      }
+    } catch (err) {
+      console.warn('Failed to delete temporary documents:', err);
+    }
+  };
+
+  // Switch alternate source option for an inquiry
+  const handleSwitchPricingOption = (row: UnifiedPricingRow, opt: any) => {
+    const nextPrice = opt.source_price != null ? Number(opt.source_price) : null;
+    const nextCurrency: 'INR' | 'USD' = opt.source_currency === 'USD' ? 'USD' : 'INR';
+    const nextMake = opt.offered_make || row.requestedMake || '';
+    const nextSupplier = opt.supplier || '';
+    const nextMoq = opt.moq || row.moq;
+    const nextLeadTime = opt.lead_time || row.leadTime;
+    const nextSpec = opt.specification || row.specification;
+    const nextAvailability = (opt.availability as any) || row.availability;
+
+    // Recalculate canonical pricing for new source
+    let calc = {
+      purchasePriceUsdPerKg: null as number | null,
+      landedCostUsd: null as number | null,
+      suggestedQuoteUsd: null as number | null,
+      quotePrice: row.quotePrice,
+      totalQuoteAmount: null as number | null,
+      calcBreakdown: null as Record<string, number> | null,
+    };
+
+    if (nextPrice !== null && nextPrice > 0) {
+      calc = calculateCanonicalPricing(
+        nextPrice,
+        nextCurrency,
+        row.quantity,
+        config,
+        {
+          containerType: row.containerType,
+          packingType: row.packingType,
+          effectiveInrRate: row.effectiveInrRate,
+          indiaMarginPct: row.indiaMarginPct,
+          freightUsdPerKg: row.freightUsdPerKg,
+          dutyPct: row.dutyPct,
+          insurancePct: row.insurancePct,
+          clearanceUsd: row.clearanceUsd,
+          indonesiaMarginPct: row.indonesiaMarginPct,
+          quotePriceOverride: row.quotePrice,
+        },
+      );
+    }
+
+    setPriceDrafts(prev => ({
+      ...prev,
+      [row.id]: { ...prev[row.id], sourcePrice: nextPrice !== null ? String(nextPrice) : '' },
+    }));
+
+    updateRow(row.id, {
+      pricingOptionId: opt.id || null,
+      offeredMake: nextMake,
+      sourcePrice: nextPrice,
+      sourceCurrency: nextCurrency,
+      supplierName: nextSupplier,
+      moq: nextMoq,
+      leadTime: nextLeadTime,
+      specification: nextSpec,
+      availability: nextAvailability,
+      purchasePriceUsdPerKg: calc.purchasePriceUsdPerKg,
+      landedCostUsd: calc.landedCostUsd,
+      suggestedQuoteUsd: calc.suggestedQuoteUsd,
+      totalQuoteAmount: calc.totalQuoteAmount,
+      calcBreakdown: calc.calcBreakdown,
+    });
+  };
+
   // DELETE / IGNORE FROM NEED ACTION (Requirement #4)
   const handleIgnoreRow = async (row: UnifiedPricingRow) => {
     setIgnoringId(row.id);
@@ -1709,6 +1883,15 @@ export function PricingWorksheet() {
         if (error) console.warn('Ignore review update warning:', error);
       }
 
+      // Delete temporary documents belonging ONLY to this exact AI row
+      if (row.id.startsWith('review-') || row.aiReviewId) {
+        await deleteTemporaryDocumentsForSource({
+          inquiryId: row.inquiryId,
+          pricingOptionId: row.pricingOptionId,
+          make: row.offeredMake || row.requestedMake,
+        });
+      }
+
       // If unlinked review fallback row, remove it completely from rows
       if (row.id.startsWith('review-')) {
         setRows(prev => prev.filter(r => r.id !== row.id));
@@ -1722,7 +1905,7 @@ export function PricingWorksheet() {
           status: nextStatus,
           needsManualLink: false,
           actionReason: null,
-                  });
+        });
       }
 
       showToast({ type: 'info', title: 'Removed', message: `Item removed from Need Action.` });
@@ -1746,36 +1929,58 @@ export function PricingWorksheet() {
 
       const now = new Date().toISOString();
 
-      // 1. Upsert pricing option
-      const { data: optionData, error: optErr } = await supabase
-        .from('crm_inquiry_pricing_options')
-        .upsert(
-          {
-            inquiry_id: targetInquiryId,
-            source_type: row.sourceType || 'india',
-            offered_make: row.offeredMake || row.requestedMake,
-            source_price: row.sourcePrice,
-            source_currency: row.sourceCurrency,
-            availability: row.availability,
-            document_status: row.documents.length > 0 ? 'received' : 'pending',
-            supplier: row.supplierName,
-            moq: row.moq,
-            lead_time: row.leadTime,
-            margin_pct: row.indonesiaMarginPct,
-            selling_price: row.quotePrice,
-            selling_currency: row.quoteCurrency,
-            is_selected: true,
-            updated_at: now,
-          },
-          { onConflict: 'inquiry_id' },
-        )
-        .select('id')
-        .maybeSingle();
+      // 1. Save pricing option correctly without invalid onConflict constraint
+      let optionId = row.pricingOptionId;
+      const optionPayload = {
+        inquiry_id: targetInquiryId,
+        source_type: row.sourceType || 'india',
+        offered_make: row.offeredMake || row.requestedMake,
+        source_price: row.sourcePrice,
+        source_currency: row.sourceCurrency,
+        specification: row.specification || null,
+        availability: row.availability,
+        document_status: row.documents.length > 0 ? 'received' : 'pending',
+        supplier: row.supplierName,
+        moq: row.moq,
+        lead_time: row.leadTime,
+        margin_pct: row.indonesiaMarginPct,
+        selling_price: row.quotePrice,
+        selling_currency: row.quoteCurrency,
+        is_selected: true,
+        updated_at: now,
+      };
 
-      if (optErr) console.warn('Pricing option upsert warning:', optErr);
+      // Unselect siblings under the same inquiry
+      await supabase
+        .from('crm_inquiry_pricing_options')
+        .update({ is_selected: false })
+        .eq('inquiry_id', targetInquiryId);
+
+      if (optionId) {
+        const { error: optUpdateErr } = await supabase
+          .from('crm_inquiry_pricing_options')
+          .update(optionPayload)
+          .eq('id', optionId);
+        if (optUpdateErr) console.warn('Pricing option update warning:', optUpdateErr);
+      } else {
+        const { data: newOpt, error: optInsertErr } = await supabase
+          .from('crm_inquiry_pricing_options')
+          .insert({
+            ...optionPayload,
+            created_by: profile?.id || null,
+          })
+          .select('id')
+          .single();
+        if (optInsertErr) console.warn('Pricing option insert warning:', optInsertErr);
+        if (newOpt) {
+          optionId = newOpt.id;
+          updateRow(row.id, { pricingOptionId: optionId });
+        }
+      }
 
       // 2. Update CRM Inquiry with validated landed cost and quote price
       const isQuoteEntered = Boolean(row.quotePrice && row.quotePrice > 0);
+      const hasCoaDoc = row.documents.some(d => d.documentType?.toUpperCase() === 'COA');
       const { error: inqErr } = await supabase
         .from('crm_inquiries')
         .update({
@@ -1789,6 +1994,7 @@ export function PricingWorksheet() {
           supplier_name: row.offeredMake || row.requestedMake,
           remarks: row.remarks || null,
           source_status: row.sourcePrice ? 'received' : 'waiting',
+          document_status: hasCoaDoc ? 'received' : (row.documents.length > 0 ? 'received' : 'pending'),
           updated_at: now,
         })
         .eq('id', targetInquiryId);
@@ -1811,7 +2017,7 @@ export function PricingWorksheet() {
           final_quoted_price: row.quotePrice,
           final_quote_currency: row.quoteCurrency,
           kunal_remark: row.remarks || null,
-          final_selected_option_id: optionData?.id || null,
+          final_selected_option_id: optionId || null,
           quoted_by: profile?.id || null,
           created_by: profile?.id || null,
           quote_date: now,
@@ -2584,6 +2790,39 @@ export function PricingWorksheet() {
                                       )}
                                     </div>
 
+                                    {/* Alternate Sourcing Options (Multiple Sources under SAME CRM Inquiry) */}
+                                    {row.allPricingOptions && row.allPricingOptions.length > 0 && (
+                                      <div className="bg-blue-50/60 border border-blue-200 rounded p-1.5 space-y-1">
+                                        <div className="text-[10px] font-bold text-blue-900 flex items-center justify-between">
+                                          <span>Sourcing Options ({row.allPricingOptions.length}):</span>
+                                          <span className="text-[9px] text-blue-600 font-normal">Click to switch active price & source</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {row.allPricingOptions.map((opt: any) => {
+                                            const isCurrent = opt.id
+                                              ? opt.id === row.pricingOptionId
+                                              : (opt.offered_make === row.offeredMake && Number(opt.source_price) === Number(row.sourcePrice));
+                                            return (
+                                              <button
+                                                key={opt.id || `${opt.offered_make}-${opt.source_price}`}
+                                                type="button"
+                                                onClick={() => handleSwitchPricingOption(row, opt)}
+                                                className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all ${
+                                                  isCurrent
+                                                    ? 'bg-blue-600 text-white border-blue-700 shadow-2xs font-semibold'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 hover:border-gray-400'
+                                                }`}
+                                              >
+                                                {opt.offered_make || 'Unknown'} • {opt.source_currency || 'INR'} {Number(opt.source_price || 0).toLocaleString()}
+                                                {opt.specification ? ` (${opt.specification})` : ''}
+                                                {isCurrent ? ' ✓ Active' : ''}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
+
                                     {/* Alternative Make Alert Banner */}
                                     {row.alternativeMakeDetected && (
                                       <div className="bg-purple-50 border border-purple-200 p-2 rounded text-xs space-y-1">
@@ -2755,6 +2994,14 @@ export function PricingWorksheet() {
                                             </button>
                                           </div>
 
+                                          {/* Auto-associated context notice */}
+                                          <div className="bg-white/90 border border-blue-200 rounded px-2 py-1 text-[10px] text-gray-700 flex flex-wrap gap-x-3 gap-y-0.5 shadow-2xs">
+                                            <span><strong className="text-gray-900">Inquiry:</strong> {row.inquiryNumber}</span>
+                                            <span><strong className="text-gray-900">Product:</strong> {row.productName}</span>
+                                            <span><strong className="text-gray-900">Source:</strong> {row.offeredMake || row.requestedMake || 'General'}</span>
+                                            {row.specification && <span><strong className="text-gray-900">Spec:</strong> {row.specification}</span>}
+                                          </div>
+
                                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                             <div>
                                               <label className="text-[10px] text-gray-600 font-semibold block mb-0.5">Document Type</label>
@@ -2819,6 +3066,21 @@ export function PricingWorksheet() {
                                                   <span className="font-bold text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-1 rounded flex-shrink-0">
                                                     {doc.documentType}
                                                   </span>
+                                                  {(doc as any).make && (
+                                                    <span className="text-[9px] bg-gray-100 text-gray-700 border border-gray-200 px-1 rounded flex-shrink-0">
+                                                      {(doc as any).make}
+                                                    </span>
+                                                  )}
+                                                  {(doc as any).specification && (
+                                                    <span className="text-[9px] bg-purple-50 text-purple-700 border border-purple-200 px-1 rounded flex-shrink-0">
+                                                      {(doc as any).specification}
+                                                    </span>
+                                                  )}
+                                                  {(doc as any).isPermanent && (
+                                                    <span className="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1 rounded flex-shrink-0 font-medium">
+                                                      Banked
+                                                    </span>
+                                                  )}
                                                   <span className="truncate text-gray-800 font-medium" title={doc.filename}>
                                                     {doc.filename}
                                                   </span>

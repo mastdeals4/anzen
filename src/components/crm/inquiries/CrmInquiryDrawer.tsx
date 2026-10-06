@@ -91,6 +91,9 @@ interface InquiryDoc {
   id: string;
   filename: string;
   documentType: string;
+  make?: string | null;
+  specification?: string | null;
+  isPermanent?: boolean;
   storagePath?: string | null;
   created_at: string;
 }
@@ -331,14 +334,17 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
       // 3. Fetch Documents
       const { data: docs } = await supabase
         .from('crm_product_documents')
-        .select('id, file_name, display_file_name, document_type, storage_path, created_at')
+        .select('id, original_file_name, display_file_name, document_type, make, specification, is_permanent, storage_path, created_at')
         .eq('inquiry_id', inquiryId);
 
       setDocuments(
         (docs || []).map((d: any) => ({
           id: d.id,
-          filename: d.display_file_name || d.file_name,
+          filename: d.display_file_name || d.original_file_name || 'document',
           documentType: d.document_type || 'OTHER',
+          make: d.make || null,
+          specification: d.specification || null,
+          isPermanent: Boolean(d.is_permanent),
           storagePath: d.storage_path,
           created_at: d.created_at,
         }))
@@ -901,11 +907,24 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
                         <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
                         <div className="min-w-0">
                           <div className="font-medium text-xs text-gray-900 truncate">{doc.filename}</div>
-                          <div className="text-[10px] text-gray-500 flex items-center gap-2">
+                          <div className="text-[10px] text-gray-500 flex flex-wrap items-center gap-1.5 mt-0.5">
                             <span className="font-bold text-blue-700 bg-blue-50 px-1 rounded border border-blue-200">
                               {doc.documentType}
                             </span>
-                            <span>Uploaded: {new Date(doc.created_at).toLocaleDateString()}</span>
+                            {doc.make && (
+                              <span className="font-semibold text-purple-700 bg-purple-50 px-1 rounded border border-purple-200">
+                                Make: {doc.make}
+                              </span>
+                            )}
+                            {doc.specification && (
+                              <span className="font-semibold text-emerald-700 bg-emerald-50 px-1 rounded border border-emerald-200">
+                                {doc.specification}
+                              </span>
+                            )}
+                            <span className={`text-[9px] px-1 rounded font-medium border ${doc.isPermanent ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                              {doc.isPermanent ? 'Banked' : 'AI Temp'}
+                            </span>
+                            <span>{new Date(doc.created_at).toLocaleDateString()}</span>
                           </div>
                         </div>
                       </div>

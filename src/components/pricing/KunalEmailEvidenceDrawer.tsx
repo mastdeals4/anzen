@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../ToastNotification';
-import type { UnifiedPricingRow } from '../../pages/PricingWorksheet';
+import { isProductMatch, type UnifiedPricingRow } from '../../pages/PricingWorksheet';
 import { getSignedUrlCached } from '../../utils/signedUrlCache';
 import {
   X,
@@ -1086,6 +1086,105 @@ export function KunalEmailEvidenceDrawer({
                         <p className="text-gray-700 italic bg-gray-50 p-2 rounded border border-gray-200 text-[10.5px]">
                           "{evidence.why}"
                         </p>
+                      </div>
+                    )}
+
+                    {/* All Extracted Offers from Email (Preserving Atomic Product ↔ Offer Binding) */}
+                    {row.rawExtractionRows && row.rawExtractionRows.length > 0 && (
+                      <div className="mt-2.5 pt-2.5 border-t border-gray-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-bold text-gray-700 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-indigo-600" />
+                            Extracted Product Offers from Email ({row.rawExtractionRows.length})
+                          </span>
+                          <span className="text-[9px] text-gray-400 font-medium">Atomic Product Binding</span>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-[260px] overflow-y-auto">
+                          {row.rawExtractionRows.map((offer: any, oIdx: number) => {
+                            const isMatch = isProductMatch(offer.product_name, row.productName);
+                            const isActiveOffer = isMatch && (
+                              (offer.source_price != null && offer.source_price === row.sourcePrice) ||
+                              (offer.offered_make && offer.offered_make.toLowerCase() === (row.offeredMake || '').toLowerCase())
+                            );
+
+                            return (
+                              <div
+                                key={oIdx}
+                                className={`p-2 rounded border text-[11px] transition-colors ${
+                                  isActiveOffer
+                                    ? 'bg-blue-50/70 border-blue-400 ring-1 ring-blue-300'
+                                    : isMatch
+                                    ? 'bg-emerald-50/40 border-emerald-300'
+                                    : 'bg-gray-50 border-gray-200 opacity-75'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="font-bold text-gray-900 truncate">
+                                      {offer.product_name || 'Product'}
+                                    </span>
+                                    {isActiveOffer && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white flex-shrink-0">
+                                        ACTIVE SOURCE
+                                      </span>
+                                    )}
+                                    {!isActiveOffer && isMatch && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 flex-shrink-0">
+                                        MATCHED PRODUCT
+                                      </span>
+                                    )}
+                                    {!isMatch && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-gray-200 text-gray-600 flex-shrink-0">
+                                        OTHER PRODUCT
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-mono font-bold text-gray-900 flex-shrink-0">
+                                    {offer.source_price != null
+                                      ? `${offer.source_currency || 'INR'} ${offer.source_price} / ${offer.unit || 'KG'}`
+                                      : 'No price'}
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-0.5 text-[10px] text-gray-600">
+                                  <div>
+                                    <span className="text-gray-400">Make: </span>
+                                    <strong className="text-gray-800">{offer.offered_make || offer.make || '—'}</strong>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">Qty/MOQ: </span>
+                                    <span className="text-gray-800">{offer.quantity ? `${offer.quantity} ${offer.unit || 'kg'}` : '—'}</span>
+                                  </div>
+                                  {offer.pack && (
+                                    <div>
+                                      <span className="text-gray-400">Std Pack: </span>
+                                      <span className="text-gray-800">{offer.pack}</span>
+                                    </div>
+                                  )}
+                                  {(offer.delivery || offer.availability) && (
+                                    <div>
+                                      <span className="text-gray-400">Del/Avail: </span>
+                                      <span className="text-gray-800">{offer.delivery || offer.availability}</span>
+                                    </div>
+                                  )}
+                                  {offer.ex_location && (
+                                    <div>
+                                      <span className="text-gray-400">Ex: </span>
+                                      <span className="text-gray-800">{offer.ex_location}</span>
+                                    </div>
+                                  )}
+                                  {offer.gst != null && (
+                                    <div>
+                                      <span className="text-gray-400">GST: </span>
+                                      <span className="text-gray-800">{offer.gst ? '+ GST' : 'Excl/No'}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>

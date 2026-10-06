@@ -32,6 +32,10 @@ export interface ParsedPricingRow {
   source_price: number | null;
   source_currency: string;
   quantity: string | null;
+  pack?: string | null;
+  delivery?: string | null;
+  ex_location?: string | null;
+  gst?: boolean | string | null;
   availability: "available" | "partial" | "na";
   document_status: "pending" | "received" | "not_required" | "partial";
   lead_time: string | null;
@@ -44,6 +48,7 @@ export interface ParsedPricingRow {
   specification: string | null;
   preferred_manufacturer: string | null;
   required_origin: string | null;
+  matched_inquiry_id?: string | null;
 }
 
 export interface DetectedDocument {
@@ -652,6 +657,14 @@ EXTRACTION INVARIANTS:
 3. Clean numbers only: "INR 1,250/kg" -> source_price=1250, source_currency="INR".
 4. Verbatim excerpt: Include a 1-2 sentence verbatim excerpt from the email body as proof in raw_excerpt.
 5. Identify any ACE ERP number (e.g. "ACE ERP: 12345" or "ACE-12345") or Inquiry number ("INQ-26-0027").
+6. CRITICAL ATOMIC PRODUCT/OFFER ASSOCIATION:
+   - Each product block is an independent structured record in "pricing_rows".
+   - PRODUCT ↔ MAKE ↔ PRICE ↔ QUANTITY ↔ PACKAGING ↔ DELIVERY ↔ AVAILABILITY must remain strictly associated within their own product block.
+   - NEVER take a make from one block and attach it to a product from another block.
+   - NEVER take a price from one block and attach it to a product from another block.
+   - If an email lists multiple products, return multiple independent items in "pricing_rows".
+   - If the same product has multiple makes/prices, return multiple items in "pricing_rows" with that exact product_name.
+   - If information (e.g. make or price) is missing in a block, leave that field null. Do NOT borrow it from another block.
 
 Return STRICT JSON:
 {
@@ -679,6 +692,10 @@ Return STRICT JSON:
       "source_price": number | null,
       "source_currency": "INR" | "USD" | "CNY" | "IDR" | "EUR",
       "quantity": string | null,
+      "pack": string | null,
+      "delivery": string | null,
+      "ex_location": string | null,
+      "gst": boolean | string | null,
       "availability": "available" | "partial" | "na",
       "document_status": "pending" | "received" | "not_required" | "partial",
       "lead_time": string | null,
@@ -745,22 +762,26 @@ Analyze and return JSON.`;
 
   const rawRows = Array.isArray(parsed.pricing_rows) ? parsed.pricing_rows : [];
   const pricingRows: ParsedPricingRow[] = rawRows.map((r: any) => ({
-    product_name: String(r.product_name || parsed.extracted_product || "").slice(0, 200),
-    inquiry_number: parsed.extracted_inquiry_num || null,
-    aceerp_no: parsed.extracted_aceerp || null,
+    product_name: String(r.product_name || (rawRows.length === 1 ? parsed.extracted_product : "") || "").slice(0, 200),
+    inquiry_number: r.inquiry_number || parsed.extracted_inquiry_num || null,
+    aceerp_no: r.aceerp_no || parsed.extracted_aceerp || null,
     offered_make: r.offered_make ? String(r.offered_make).slice(0, 120) : null,
-    source_price: typeof r.source_price === "number" ? r.source_price : null,
-    source_currency: ["INR", "USD", "CNY", "IDR", "EUR"].includes(r.source_currency) ? r.source_currency : "INR",
-    quantity: r.quantity ? String(r.quantity).slice(0, 60) : null,
+    source_price: typeof r.source_price === "number" ? r.source_price : (typeof r.price === "number" ? r.price : null),
+    source_currency: ["INR", "USD", "CNY", "IDR", "EUR", "GBP"].includes(r.source_currency) ? r.source_currency : (["INR", "USD", "CNY", "IDR", "EUR", "GBP"].includes(r.currency) ? r.currency : "INR"),
+    quantity: r.quantity ? String(r.quantity).slice(0, 60) : (r.moq ? String(r.moq).slice(0, 60) : null),
+    pack: r.pack ? String(r.pack).slice(0, 80) : null,
+    delivery: r.delivery ? String(r.delivery).slice(0, 120) : null,
+    ex_location: r.ex_location ? String(r.ex_location).slice(0, 120) : null,
+    gst: typeof r.gst === "boolean" ? r.gst : (r.gst ? String(r.gst).slice(0, 40) : null),
     availability: ["available", "partial", "na"].includes(r.availability) ? r.availability : "available",
     document_status: ["pending", "received", "not_required", "partial"].includes(r.document_status) ? r.document_status : "pending",
-    lead_time: r.lead_time ? String(r.lead_time).slice(0, 120) : null,
+    lead_time: r.lead_time ? String(r.lead_time).slice(0, 120) : (r.delivery ? String(r.delivery).slice(0, 120) : null),
     remark: r.remark ? String(r.remark).slice(0, 300) : null,
     confidence: typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : (parsed.confidence || 0.8),
     raw_excerpt: String(r.raw_excerpt || parsed.raw_excerpt || "").slice(0, 400),
     grade: r.grade ? String(r.grade).slice(0, 80) : null,
     cas: r.cas ? String(r.cas).slice(0, 30) : null,
-    unit: r.unit ? String(r.unit).slice(0, 30) : null,
+    unit: r.unit ? String(r.unit).slice(0, 30) : "KG",
     specification: r.specification ? String(r.specification).slice(0, 200) : null,
     preferred_manufacturer: r.preferred_manufacturer ? String(r.preferred_manufacturer).slice(0, 120) : null,
     required_origin: r.required_origin ? String(r.required_origin).slice(0, 80) : null,
@@ -809,13 +830,21 @@ Analyze and return JSON.`;
     };
   });
 
+  const firstRow = pricingRows[0] || null;
   const altMakeObj = parsed.alternative_make?.detected ? {
     detected: true,
     requestedMake: parsed.alternative_make.requested_make || null,
-    offeredMake: parsed.alternative_make.offered_make || parsed.extracted_make || null,
-    price: parsed.extracted_price || (pricingRows[0]?.source_price ?? null),
-    currency: parsed.extracted_currency || (pricingRows[0]?.source_currency ?? "INR"),
+    offeredMake: parsed.alternative_make.offered_make || firstRow?.offered_make || parsed.extracted_make || null,
+    price: firstRow ? firstRow.source_price : (typeof parsed.extracted_price === "number" ? parsed.extracted_price : null),
+    currency: firstRow ? firstRow.source_currency : (parsed.extracted_currency || "INR"),
   } : null;
+
+  // CRITICAL: Top-level fields MUST be derived atomically from firstRow.
+  // NEVER combine a product from one block with a make or price from another!
+  const atomicProduct = firstRow ? firstRow.product_name : (parsed.extracted_product || null);
+  const atomicMake = firstRow ? firstRow.offered_make : (parsed.extracted_make || null);
+  const atomicPrice = firstRow ? firstRow.source_price : (typeof parsed.extracted_price === "number" ? parsed.extracted_price : null);
+  const atomicCurrency = firstRow ? firstRow.source_currency : (parsed.extracted_currency || "INR");
 
   return {
     direction,
@@ -823,10 +852,16 @@ Analyze and return JSON.`;
     summary: String(parsed.summary || "Supplier email processed.").slice(0, 200),
     suggestedAction: String(parsed.suggested_action || "Review pricing and document options.").slice(0, 200),
     confidence: typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0.8,
-    product: parsed.extracted_product || (pricingRows[0]?.product_name ?? null),
-    make: parsed.extracted_make || (pricingRows[0]?.offered_make ?? null),
-    price: typeof parsed.extracted_price === "number" ? parsed.extracted_price : (pricingRows[0]?.source_price ?? null),
-    currency: parsed.extracted_currency || (pricingRows[0]?.source_currency ?? "INR"),
+    product: atomicProduct,
+    make: atomicMake,
+    price: atomicPrice,
+    currency: atomicCurrency,
+    unit: firstRow?.unit || "KG",
+    quantity: firstRow?.quantity || null,
+    pack: firstRow?.pack || null,
+    delivery: firstRow?.delivery || null,
+    exLocation: firstRow?.ex_location || null,
+    gst: firstRow?.gst ?? null,
     extractedAceErp: parsed.extracted_aceerp || null,
     extractedInquiryNum: parsed.extracted_inquiry_num || null,
     pricingRows,
@@ -1704,15 +1739,41 @@ Deno.serve(async (req: Request) => {
                           .eq("display_file_name", doc.filename)
                           .maybeSingle();
 
-                        let docDbSuccess = false;
+                        // Match document to specific product row if multiple rows exist
+                        let docTargetInqId: string | null = matchResult.suggestedInquiryId || null;
+                        let docProductName = aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item";
+                        let docMake = aiExtracted.make || fromName;
+                        let docSpec: string | null = null;
+
+                        const upperFname = doc.filename.toUpperCase();
+                        if (upperFname.includes("USP")) docSpec = "USP";
+                        else if (upperFname.includes("BP")) docSpec = "BP";
+                        else if (upperFname.includes("EP")) docSpec = "EP";
+                        else if (upperFname.includes("IP")) docSpec = "IP";
+
+                        const matchingPRow = (aiExtracted.pricingRows || []).find((pr: any) => {
+                          const pWords = (pr.product_name || "").toLowerCase().split(/\s+/).filter((w: string) => w.length >= 3);
+                          const mkWords = (pr.offered_make || "").toLowerCase().split(/\s+/).filter((w: string) => w.length >= 2);
+                          const fLower = doc.filename.toLowerCase();
+                          return pWords.some((w: string) => fLower.includes(w)) || mkWords.some((w: string) => fLower.includes(w));
+                        });
+
+                        if (matchingPRow) {
+                          if (matchingPRow.matched_inquiry_id) docTargetInqId = matchingPRow.matched_inquiry_id;
+                          docProductName = matchingPRow.product_name || docProductName;
+                          if (matchingPRow.offered_make) docMake = matchingPRow.offered_make;
+                        }
+
                         if (existingDocRow) {
                           const { error: pDocErr } = await adminClient
                             .from("crm_product_documents")
                             .update({
-                              inquiry_id: matchResult.suggestedInquiryId || null,
-                              product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
-                              make: aiExtracted.make || fromName,
+                              inquiry_id: docTargetInqId,
+                              product_name: docProductName,
+                              make: docMake,
                               document_type: docType,
+                              specification: docSpec,
+                              is_permanent: false,
                               storage_bucket: "crm-documents",
                               storage_path: storagePath,
                               uploaded_by: callingUserId || connection.user_id,
@@ -1728,10 +1789,12 @@ Deno.serve(async (req: Request) => {
                           const { error: pDocErr } = await adminClient
                             .from("crm_product_documents")
                             .insert({
-                              inquiry_id: matchResult.suggestedInquiryId || null,
-                              product_name: aiExtracted.product || matchResult.candidates[0]?.product_name || "Chemical Item",
-                              make: aiExtracted.make || fromName,
+                              inquiry_id: docTargetInqId,
+                              product_name: docProductName,
+                              make: docMake,
                               document_type: docType,
+                              specification: docSpec,
+                              is_permanent: false,
                               display_file_name: doc.filename,
                               original_file_name: doc.filename,
                               storage_bucket: "crm-documents",
@@ -1747,6 +1810,13 @@ Deno.serve(async (req: Request) => {
                             console.warn(`[sapj-gmail-agent] persistence warning (crm_product_documents insert ${doc.filename}):`, pDocErr);
                             persistenceErrors.push(`crm_product_documents (${doc.filename}): ${pDocErr.message || JSON.stringify(pDocErr)}`);
                           }
+                        }
+
+                        if (docDbSuccess && docType === "COA" && docTargetInqId) {
+                          await adminClient
+                            .from("crm_inquiries")
+                            .update({ document_status: "received" })
+                            .eq("id", docTargetInqId);
                         }
 
                         // Requirement 4: Docs Stored may ONLY increment after Storage upload succeeds AND crm_product_documents succeeds
@@ -1784,6 +1854,35 @@ Deno.serve(async (req: Request) => {
                 (doc as any).isUploaded = false;
               }
             }
+          }
+
+          // 9b. Match each pricing row to inquiry context independently without conflating products
+          for (const pRow of aiExtracted.pricingRows) {
+            let rowInqId: string | null = null;
+            // Check ANY candidate in matchResult.candidates that matches pRow.product_name
+            const candMatch = (matchResult.candidates || []).find((c: any) =>
+              c.product_name && (productsMatch(pRow.product_name, c.product_name).fuzzy || productsMatch(pRow.product_name, c.product_name).exact)
+            );
+            if (candMatch) {
+              rowInqId = candMatch.id;
+            } else {
+              const pTerm = (pRow.product_name || "").split(/\s+/).slice(0, 2).join(" ");
+              if (pTerm.length >= 3) {
+                const { data: matchedInqs } = await adminClient
+                  .from("crm_inquiries")
+                  .select("id, product_name")
+                  .ilike("product_name", `%${pTerm}%`)
+                  .in("pipeline_status", ["new", "in_progress", "follow_up"])
+                  .order("created_at", { ascending: false })
+                  .limit(5);
+                const best = (matchedInqs || []).find((m: any) =>
+                  productsMatch(pRow.product_name, m.product_name).fuzzy ||
+                  productsMatch(pRow.product_name, m.product_name).exact
+                );
+                if (best) rowInqId = best.id;
+              }
+            }
+            pRow.matched_inquiry_id = rowInqId;
           }
 
           // Document-only email with no price: do NOT create fake Price Received or unnecessary Need Action
@@ -1874,52 +1973,111 @@ Deno.serve(async (req: Request) => {
           }
 
           // 11. Historical Backfill & Pricing Option Enrichment
-          if (matchResult.suggestedInquiryId) {
-            inquiriesMatchedCount += 1;
-            if (aiExtracted.price !== null && (finalCategory === "PRICE RECEIVED" || finalCategory === "ALTERNATIVE MAKE")) {
-              const { data: existingOpts } = await adminClient
-                .from("crm_inquiry_pricing_options")
-                .select("id, source_price, source_currency, offered_make, supplier, is_selected, remark")
-                .eq("inquiry_id", matchResult.suggestedInquiryId);
+          // Store multiple supplier offers under their corresponding inquiry without creating duplicate inquiries
+          const rowsToEnrich = aiExtracted.pricingRows.length > 0
+            ? aiExtracted.pricingRows
+            : (aiExtracted.price !== null ? [{
+                product_name: aiExtracted.product || "",
+                offered_make: aiExtracted.make,
+                source_price: aiExtracted.price,
+                source_currency: aiExtracted.currency,
+                quantity: aiExtracted.quantity,
+                pack: aiExtracted.pack,
+                delivery: aiExtracted.delivery,
+                ex_location: aiExtracted.exLocation,
+                gst: aiExtracted.gst,
+                availability: "available" as const,
+                document_status: aiExtracted.detectedDocuments.length > 0 ? ("received" as const) : ("pending" as const),
+                lead_time: null,
+                remark: null,
+                confidence: matchResult.confidence,
+                raw_excerpt: aiExtracted.rawExcerpt,
+                grade: null,
+                cas: null,
+                unit: aiExtracted.unit,
+                specification: null,
+                preferred_manufacturer: null,
+                required_origin: null,
+                matched_inquiry_id: matchResult.suggestedInquiryId,
+                inquiry_number: null,
+                aceerp_no: null,
+              }] : []);
 
-              const hasManualPrice = (existingOpts || []).some(
-                (o: any) => o.is_selected && o.source_price !== null && !String(o.remark || '').includes('[Historical Backfill]') && !String(o.remark || '').includes('[AI Agent]')
+          if (finalCategory === "PRICE RECEIVED" || finalCategory === "ALTERNATIVE MAKE") {
+            for (const pRow of rowsToEnrich) {
+              const targetInqId = pRow.matched_inquiry_id || (
+                matchResult.suggestedInquiryId && matchResult.candidates[0]?.product_name &&
+                (productsMatch(pRow.product_name, matchResult.candidates[0].product_name).fuzzy ||
+                 productsMatch(pRow.product_name, matchResult.candidates[0].product_name).exact)
+                  ? matchResult.suggestedInquiryId
+                  : null
               );
-
-              const isDuplicate = (existingOpts || []).some(
-                (o: any) => String(o.remark || '').includes(ref.id) ||
-                  (Number(o.source_price) === Number(aiExtracted.price) && o.source_currency === aiExtracted.currency && o.offered_make === aiExtracted.make)
-              );
-
-              if (!isDuplicate) {
-                const isSelected = (!existingOpts || existingOpts.length === 0) && !hasManualPrice;
-                const remarkText = `[Historical Backfill] MsgID: ${ref.id} | Date: ${dateStr.slice(0, 10)} | ${aiExtracted.summary || ''}`.slice(0, 300);
-
-                const { error: optErr } = await adminClient
+              if (targetInqId && pRow.source_price !== null) {
+                inquiriesMatchedCount += 1;
+                const { data: existingOpts } = await adminClient
                   .from("crm_inquiry_pricing_options")
-                  .insert({
-                    inquiry_id: matchResult.suggestedInquiryId,
-                    source_type: "india",
-                    offered_make: aiExtracted.make || null,
-                    source_price: aiExtracted.price,
-                    source_currency: aiExtracted.currency || "USD",
-                    availability: "available",
-                    document_status: aiExtracted.detectedDocuments.length > 0 ? "received" : "pending",
-                    supplier: fromName || fromEmail,
-                    moq: aiExtracted.pricingRows[0]?.quantity || null,
-                    lead_time: aiExtracted.pricingRows[0]?.lead_time || null,
-                    remark: remarkText,
-                    is_selected: isSelected,
-                    confidence: matchResult.confidence,
-                    created_by: callingUserId || connection.user_id,
-                  });
+                  .select("id, source_price, source_currency, offered_make, supplier, is_selected, remark")
+                  .eq("inquiry_id", targetInqId);
 
-                if (!optErr) {
-                  if (isSelected) pricingRecordsEnrichedCount += 1;
-                  else pricingRecordsCreatedCount += 1;
+                const hasManualPrice = (existingOpts || []).some(
+                  (o: any) => o.is_selected && o.source_price !== null && !String(o.remark || '').includes('[Historical Backfill]') && !String(o.remark || '').includes('[AI Extraction]') && !String(o.remark || '').includes('[AI Agent]')
+                );
+
+                const isDuplicate = (existingOpts || []).some(
+                  (o: any) => (String(o.remark || '').includes(ref.id) && o.offered_make === pRow.offered_make) ||
+                    (Number(o.source_price) === Number(pRow.source_price) && o.source_currency === pRow.source_currency && o.offered_make === pRow.offered_make)
+                );
+
+                if (!isDuplicate) {
+                  const isSelected = (!existingOpts || existingOpts.length === 0) && !hasManualPrice;
+                  const details = [
+                    pRow.pack ? `Pack: ${pRow.pack}` : null,
+                    pRow.delivery ? `Del: ${pRow.delivery}` : null,
+                    pRow.ex_location ? `Ex: ${pRow.ex_location}` : null,
+                    pRow.gst ? "+GST" : null,
+                  ].filter(Boolean).join(" · ");
+                  const remarkText = `[AI Extraction] MsgID: ${ref.id} | Date: ${dateStr.slice(0, 10)}${details ? ` | ${details}` : ''} | ${pRow.raw_excerpt || aiExtracted.summary || ''}`.slice(0, 300);
+
+                  const { data: insertedOpt, error: optErr } = await adminClient
+                    .from("crm_inquiry_pricing_options")
+                    .insert({
+                      inquiry_id: targetInqId,
+                      source_type: "india",
+                      offered_make: pRow.offered_make || null,
+                      source_price: pRow.source_price,
+                      source_currency: pRow.source_currency || "INR",
+                      specification: pRow.specification || null,
+                      availability: pRow.availability || "available",
+                      document_status: aiExtracted.detectedDocuments.length > 0 ? "received" : "pending",
+                      supplier: fromName || fromEmail,
+                      moq: pRow.quantity || null,
+                      packing: pRow.pack || null,
+                      lead_time: pRow.delivery || pRow.lead_time || null,
+                      remark: remarkText,
+                      is_selected: isSelected,
+                      confidence: pRow.confidence || matchResult.confidence,
+                      created_by: callingUserId || connection.user_id,
+                    })
+                    .select("id")
+                    .maybeSingle();
+
+                  if (!optErr) {
+                    if (isSelected) pricingRecordsEnrichedCount += 1;
+                    else pricingRecordsCreatedCount += 1;
+
+                    // Link documents matching this make to this pricing option
+                    if (insertedOpt?.id && pRow.offered_make) {
+                      await adminClient
+                        .from("crm_product_documents")
+                        .update({ pricing_option_id: insertedOpt.id })
+                        .eq("source_gmail_message_id", ref.id)
+                        .eq("inquiry_id", targetInqId)
+                        .ilike("make", pRow.offered_make);
+                    }
+                  }
+                } else {
+                  skippedDuplicatesCount += 1;
                 }
-              } else {
-                skippedDuplicatesCount += 1;
               }
             }
           }

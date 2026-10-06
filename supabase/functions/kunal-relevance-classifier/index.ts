@@ -268,6 +268,7 @@ Rules:
 - actionable=false when category is No Action.
 - If you set category="Needs Review", you MUST justify a real pricing signal in reason; otherwise pick No Action instead.
 - Do not invent product names, prices, or makes. Extract only what is explicitly in the email.
+- CRITICAL: If multiple products or offers exist in the email, extracted_product, extracted_price, and extracted_make must strictly come from the SAME first coherent offer block. NEVER pair a product name from one block with a make or price from another block.
 - Keep reason under 220 characters.`;
 
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {

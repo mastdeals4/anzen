@@ -114,6 +114,10 @@ interface InquiryDocument {
   id: string;
   inquiry_id: string | null;
   document_type: string;
+  make?: string | null;
+  product_name?: string | null;
+  specification?: string | null;
+  is_permanent?: boolean;
   display_file_name?: string | null;
   original_file_name?: string | null;
   storage_path: string;
@@ -505,7 +509,26 @@ export function InquiryTableExcel({
 
   const getInquiryDocs = (inquiryId: string) => inquiryDocuments.get(inquiryId) || [];
 
-  const hasInquiryDocs = (inquiry: Inquiry) => getInquiryDocs(inquiry.id).length > 0;
+  const hasValidCoa = (inquiry: Inquiry) => {
+    const docs = getInquiryDocs(inquiry.id);
+    return docs.some(d => {
+      const isCoa = d.document_type?.toUpperCase() === 'COA';
+      if (!isCoa) return false;
+      if (inquiry.supplier_name && d.make) {
+        const sup = inquiry.supplier_name.toLowerCase().trim();
+        const mk = d.make.toLowerCase().trim();
+        return sup.includes(mk) || mk.includes(sup) || sup === 'any' || sup === 'any, india';
+      }
+      return true;
+    });
+  };
+
+  const hasInquiryDocs = (inquiry: Inquiry) => {
+    if (inquiry.coa_required) {
+      return hasValidCoa(inquiry);
+    }
+    return getInquiryDocs(inquiry.id).length > 0;
+  };
 
   const getInquiryDocTypeLabels = (inquiry: Inquiry) => Array.from(new Set(getInquiryDocs(inquiry.id).map(doc => normalizeDocumentTypeLabel(doc.document_type))));
 
@@ -518,7 +541,7 @@ export function InquiryTableExcel({
     try {
       const { data, error } = await supabase
         .from('crm_product_documents')
-        .select('id,inquiry_id,document_type,display_file_name,original_file_name,storage_path')
+        .select('id,inquiry_id,document_type,make,product_name,specification,is_permanent,display_file_name,original_file_name,storage_path')
         .in('inquiry_id', ids);
       if (error) throw error;
       const map = new Map<string, InquiryDocument[]>();
@@ -618,15 +641,22 @@ export function InquiryTableExcel({
     // 2. If price is ready/prepared but quote has not been sent:
     if (isPriceReady || hasOPrice) {
       if (coaReq && !coaSent) {
-        return { label: 'Price ready — COA pending', tone: 'warning' };
+        if (!hasValidCoa(inquiry)) {
+          return { label: 'Price ready — COA pending', tone: 'warning' };
+        }
+        return { label: 'Price & COA ready — quote not sent', tone: 'success' };
       }
       return { label: 'Price ready — quote not sent', tone: 'warning' };
     }
 
     // 3. If supplier price is not yet available:
     if (!hasPPrice) {
-      if (coaReq && !coaSent) {
+      const coaAvailable = hasValidCoa(inquiry);
+      if (coaReq && !coaSent && !coaAvailable) {
         return { label: 'Supplier price & COA pending', tone: 'warning' };
+      }
+      if (coaAvailable) {
+        return { label: 'COA ready — supplier price pending', tone: 'info' };
       }
       return { label: 'Supplier price pending', tone: 'warning' };
     }

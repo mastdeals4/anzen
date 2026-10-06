@@ -35,6 +35,10 @@ interface ParsedRow {
   source_price: number | null;
   source_currency: string;
   quantity: string | null;
+  pack: string | null;
+  delivery: string | null;
+  ex_location: string | null;
+  gst: boolean | string | null;
   availability: "available" | "partial" | "na";
   document_status: "pending" | "received" | "not_required" | "partial";
   lead_time: string | null;
@@ -79,6 +83,10 @@ Return STRICT JSON with this shape only:
       "source_price": number | null,     // numeric only, no symbol
       "source_currency": "INR" | "USD" | "CNY" | "IDR" | "EUR" | "GBP",
       "quantity": string | null,
+      "pack": string | null,             // standard pack, e.g. "25 kg", "drum"
+      "delivery": string | null,         // delivery term, e.g. "Ready", "Ready Stock", "2-3 weeks"
+      "ex_location": string | null,      // dispatch location, e.g. "Bhiwandi", "Ex-factory"
+      "gst": boolean | string | null,    // true if "+ GST" or tax indicated
       "availability": "available" | "partial" | "na",
       "document_status": "pending" | "received" | "not_required" | "partial",
       "lead_time": string | null,
@@ -96,7 +104,15 @@ Return STRICT JSON with this shape only:
 }
 
 EXTRACTION RULES:
-- One row PER (product × offered make). If a supplier offers two makes for one product, return two rows.
+- CRITICAL INVARIANT: NEVER combine fields from different product blocks.
+  PRODUCT ↔ MAKE ↔ PRICE ↔ QUANTITY ↔ PACKAGING ↔ DELIVERY ↔ AVAILABILITY
+  must all belong strictly to the SAME product block.
+- A Make belongs to the nearest/associated product block.
+- A Price belongs to the product block in which it appears.
+- Do NOT take the first price/make in the email and attach it to another product.
+- If information is missing in a block, leave that field null. Do NOT borrow the value from another product block.
+- One row PER (product × offered make). If a supplier offers two makes for one product, return two rows with the same product_name.
+- If the email lists multiple different products, extract multiple separate product records in "rows".
 - If the supplier replies "NA" / "not available" / "no offer" for a product, still return a row with availability="na" and source_price=null.
 - Source currency defaults to INR if the supplier is in India, CNY for China, USD otherwise. Override only when explicit.
 - Strip currency symbols and commas from numbers ("₹ 1,250" → 1250).
@@ -161,9 +177,13 @@ Return ONLY the JSON object described in the system prompt.`;
       source_price:     typeof r.source_price === "number" ? r.source_price : null,
       source_currency:  ["INR","USD","CNY","IDR","EUR","GBP"].includes(r.source_currency) ? r.source_currency : "INR",
       quantity:         r.quantity ? String(r.quantity).slice(0, 60) : null,
+      pack:             r.pack ? String(r.pack).slice(0, 80) : null,
+      delivery:         r.delivery ? String(r.delivery).slice(0, 120) : null,
+      ex_location:      r.ex_location ? String(r.ex_location).slice(0, 120) : null,
+      gst:              typeof r.gst === "boolean" ? r.gst : (r.gst ? String(r.gst).slice(0, 40) : null),
       availability:     ["available","partial","na"].includes(r.availability) ? r.availability : "available",
       document_status:  ["pending","received","not_required","partial"].includes(r.document_status) ? r.document_status : "pending",
-      lead_time:        r.lead_time ? String(r.lead_time).slice(0, 120) : null,
+      lead_time:        r.lead_time ? String(r.lead_time).slice(0, 120) : (r.delivery ? String(r.delivery).slice(0, 120) : null),
       remark:           r.remark ? String(r.remark).slice(0, 500) : null,
       confidence:       typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : 0.5,
       raw_excerpt:      r.raw_excerpt ? String(r.raw_excerpt).slice(0, 600) : "",
