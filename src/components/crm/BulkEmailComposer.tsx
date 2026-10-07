@@ -226,12 +226,17 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
       const { data: gmailConnection } = await supabase
         .from('gmail_connections')
         .select('*')
-        .eq('user_id', user.id)
+        .ilike('email_address', 'sales@sapharmajaya.co.id')
         .eq('is_connected', true)
+        .limit(1)
         .maybeSingle();
 
       if (!gmailConnection) {
-        showToast({ type: 'error', title: 'Gmail Not Connected', message: 'Please connect Gmail in Settings first.' });
+        showToast({
+          type: 'error',
+          title: 'CRM Sales Gmail Not Connected',
+          message: 'sales@sapharmajaya.co.id is not connected. Please connect it in Gmail Settings.',
+        });
         setSending(false);
         setStep('compose');
         return;
@@ -349,6 +354,9 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
       <div className="flex items-center justify-between px-5 py-3 bg-gray-800 rounded-t-lg flex-shrink-0">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-white text-sm">New Message</span>
+          <span className="px-2 py-0.5 bg-gray-700 text-gray-200 text-xs rounded font-mono select-none">
+            Sending from: sales@sapharmajaya.co.id
+          </span>
           <span className="px-2 py-0.5 bg-blue-500 text-white text-xs rounded-full font-medium flex items-center gap-1">
             <Users className="w-3 h-3" />
             {selectedCustomers.length} recipients — sent individually

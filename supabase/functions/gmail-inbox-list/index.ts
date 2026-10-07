@@ -123,15 +123,66 @@ Deno.serve(async (req: Request) => {
     const user = await getAuthUser(req, supabaseUrl, anonKey);
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    const connection = await getConnection(supabase, user.id);
-    if (!connection) return json({ success: false, code: "NO_GMAIL_CONNECTED", messages: [] }, 200);
-
-    const accessToken = await getValidAccessToken(supabase, connection);
     const url = new URL(req.url);
     let params: Record<string, unknown> = {};
     if (req.method === "POST") {
       params = await req.json().catch(() => ({}));
     }
+
+    const CRM_SALES_EMAIL = "sales@sapharmajaya.co.id";
+    const KUNAL_PRICING_EMAIL = "kunal@avira.co.id";
+
+    const requestedEmail = String(
+      params.emailAddress ||
+      params.requiredSenderEmail ||
+      url.searchParams.get("emailAddress") ||
+      ""
+    ).toLowerCase().trim();
+
+    const account = String(
+      params.account ||
+      params.mailbox ||
+      url.searchParams.get("account") ||
+      url.searchParams.get("mailbox") ||
+      ""
+    ).toLowerCase().trim();
+
+    let targetEmail: string;
+    if (requestedEmail) {
+      targetEmail = requestedEmail;
+    } else if (account === "pricing") {
+      targetEmail = KUNAL_PRICING_EMAIL;
+    } else {
+      // Default mailbox for CRM Inbox is always CRM Sales Email
+      targetEmail = CRM_SALES_EMAIL;
+    }
+
+    // Explicitly query connected Gmail account for targetEmail
+    const { data: connRow } = await supabase
+      .from("gmail_connections")
+      .select("id, email_address")
+      .ilike("email_address", targetEmail)
+      .eq("is_connected", true)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let connection: GmailConnection | null = null;
+    if (connRow?.id) {
+      connection = await getGmailConnectionSecret(supabase, { connectionId: connRow.id }) as GmailConnection | null;
+    }
+
+    if (!connection) {
+      return json({
+        success: false,
+        code: "NO_GMAIL_CONNECTED",
+        error: `Mailbox (${targetEmail}) is not connected. Connect in Gmail Settings.`,
+        emailAddress: targetEmail,
+        messages: [],
+      }, 200);
+    }
+
+    const accessToken = await getValidAccessToken(supabase, connection);
 
     const query = String(params.query || url.searchParams.get("query") || "in:inbox");
     const pageToken = String(params.pageToken || url.searchParams.get("pageToken") || "");

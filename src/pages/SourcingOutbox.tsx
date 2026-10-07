@@ -31,6 +31,8 @@ import { MoneyInput } from '../components/MoneyInput';
 import { aiImproveEmail, extractProtectedTokens } from '../services/aiEmailAssistant';
 import { buildIndiaRfqEmail, buildIndiaRfqSubject } from '../utils/emailFormatting';
 import { FALLBACK_COMPANY, type CompanySnapshot } from '../types/company';
+import { GmailLikeComposer } from '../components/crm/GmailLikeComposer';
+import { deriveSourcingRoute, getOperationalStatus, calculateSourcingAging } from '../utils/sourcingWorkflowStatus';
 import {
   findInquiryCandidates,
   parseSourceReplyEmail,
@@ -365,6 +367,13 @@ export function SourcingOutbox() {
   });
   const [savingDefaults, setSavingDefaults] = useState<SourcingRoute | null>(null);
 
+  // CRM-consistent Gmail-like composer state for India / China actions
+  const [crmComposerOpen, setCrmComposerOpen] = useState(false);
+  const [crmComposerMode, setCrmComposerMode] = useState<'india' | 'china'>('india');
+  const [crmComposerRows, setCrmComposerRows] = useState<Inquiry[]>([]);
+  const [crmComposerDefaultTo, setCrmComposerDefaultTo] = useState('');
+  const [crmComposerDefaultCc, setCrmComposerDefaultCc] = useState('');
+
   useEffect(() => {
     supabase
       .from('company_profiles')
@@ -430,9 +439,9 @@ export function SourcingOutbox() {
 
   useEffect(() => {
     (async () => {
-      if (profile?.id) setHasGmail(await userHasConnectedGmail(profile.id));
+      setHasGmail(await userHasConnectedGmail('sales@sapharmajaya.co.id'));
     })();
-  }, [profile?.id]);
+  }, []);
 
   const customerOptions = useMemo(() => {
     return Array.from(new Set(inquiries.map(i => i.company_name).filter(Boolean))).sort();
@@ -553,13 +562,15 @@ export function SourcingOutbox() {
     try {
       const { data: listData, error: listError } = await supabase.functions.invoke('gmail-inbox-list', {
         body: {
+          account: 'crm',
+          emailAddress: 'sales@sapharmajaya.co.id',
           query: gmailQuery.trim() || 'newer_than:30d',
           maxResults: gmailScanLimit,
         },
       });
       if (listError || !listData?.success) {
         const code = listData?.code || '';
-        if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect Gmail in Settings first.');
+        if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect sales@sapharmajaya.co.id in Settings first.');
         throw new Error(listData?.error || listError?.message || 'Could not scan Gmail.');
       }
 
@@ -572,7 +583,11 @@ export function SourcingOutbox() {
 
       const messagesRaw = await Promise.all(listMessages.map(async message => {
         const { data } = await supabase.functions.invoke('gmail-inbox-message', {
-          body: { messageId: message.messageId },
+          body: {
+            messageId: message.messageId,
+            account: 'crm',
+            emailAddress: 'sales@sapharmajaya.co.id',
+          },
         });
         return {
           ...message,
@@ -1047,6 +1062,8 @@ export function SourcingOutbox() {
 
     const result = await sendPricingWorkflowEmail({
       workflowType: hasNew ? 'sourcing_request' : 'sourcing_reminder',
+      module: 'crm',
+      requiredSenderEmail: 'sales@sapharmajaya.co.id',
       sourceType: route,
       to: recips.to,
       cc: recips.cc,
@@ -1181,6 +1198,52 @@ export function SourcingOutbox() {
       showToast({ type: 'success', title: 'Sourcing email sent', message: summary || 'Nothing to send.' });
     }
     await load();
+  };
+
+  const handleSendToIndiaFromOutbox = async () => {
+    const selected = selectedRows;
+    if (selected.length === 0) {
+      showToast({ type: 'error', title: 'No Selection', message: 'Select at least one inquiry row.' });
+      return;
+    }
+    const indiaSelected = selected.filter(i => deriveSourcingRoute(i) === 'india');
+    if (indiaSelected.length === 0) {
+      showToast({ type: 'error', title: 'No India Route', message: 'None of the selected inquiries are routed to India.' });
+      return;
+    }
+    const recipients = (await loadAllRouteRecipients()).india;
+    if (recipients.to.length === 0) {
+      showToast({ type: 'error', title: 'Send To India unavailable', message: recipientConfigurationError('india') });
+      return;
+    }
+    setCrmComposerRows(indiaSelected);
+    setCrmComposerDefaultTo(recipients.to.join(', '));
+    setCrmComposerDefaultCc(recipients.cc.length > 0 ? recipients.cc.join(', ') : 'devansh@shubham.co.in');
+    setCrmComposerMode('india');
+    setCrmComposerOpen(true);
+  };
+
+  const handleSendToChinaFromOutbox = async () => {
+    const selected = selectedRows;
+    if (selected.length === 0) {
+      showToast({ type: 'error', title: 'No Selection', message: 'Select at least one inquiry row.' });
+      return;
+    }
+    const chinaSelected = selected.filter(i => deriveSourcingRoute(i) === 'china');
+    if (chinaSelected.length === 0) {
+      showToast({ type: 'error', title: 'No China Route', message: 'None of the selected inquiries are routed to China.' });
+      return;
+    }
+    const recipients = (await loadAllRouteRecipients()).china;
+    if (recipients.to.length === 0) {
+      showToast({ type: 'error', title: 'Send To China Team unavailable', message: recipientConfigurationError('china') });
+      return;
+    }
+    setCrmComposerRows(chinaSelected);
+    setCrmComposerDefaultTo(recipients.to.join(', '));
+    setCrmComposerDefaultCc(recipients.cc.join(', '));
+    setCrmComposerMode('china');
+    setCrmComposerOpen(true);
   };
 
   const markSelectedForKunal = async () => {
@@ -1707,11 +1770,26 @@ export function SourcingOutbox() {
                 className="px-3 py-1.5 text-xs border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-50">
                 Notify Kunal Review
               </button>
+              <button
+                onClick={handleSendToIndiaFromOutbox}
+                disabled={!isManager || selectedRows.length === 0}
+                title="Open CRM email composer for selected India rows"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 font-medium">
+                <Send className="w-3.5 h-3.5" />
+                Send Email to India
+              </button>
+              <button
+                onClick={handleSendToChinaFromOutbox}
+                disabled={!isManager || selectedRows.length === 0}
+                title="Open CRM email composer for selected China rows"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 font-medium">
+                <Send className="w-3.5 h-3.5" />
+                Send Email to China Team
+              </button>
               <button onClick={() => setPreviewOpen(true)} disabled={sending || !isManager || sendableRows.length === 0}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50">
                 <Mail className="w-3.5 h-3.5" />
                 Preview & Send
-                <Send className="w-3 h-3" />
               </button>
             </div>
           </div>
@@ -1760,20 +1838,59 @@ export function SourcingOutbox() {
                         {table.isVisible('route') && <td style={table.getCellStyle('route')} className="px-2 py-1 border-r border-gray-200">
                           <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${route === 'india' ? 'bg-orange-100 text-orange-700' : route === 'china' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{route || '-'}</span>
                         </td>}
-                        {table.isVisible('status') && <td style={table.getCellStyle('status')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">{row.source_status}</td>}
+                        {table.isVisible('status') && (() => {
+                          const op = getOperationalStatus(row as any);
+                          return (
+                            <td style={table.getCellStyle('status')} className="px-2 py-1 text-xs whitespace-nowrap border-r border-gray-200">
+                              <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold border ${op.badgeClass}`}>
+                                {op.label}
+                              </span>
+                            </td>
+                          );
+                        })()}
                         {table.isVisible('pending') && <td style={table.getCellStyle('pending')} className="px-2 py-1 text-xs text-gray-600 border-r border-gray-200">
-                          <div className="whitespace-nowrap">{pendingLabel(row)}</div>
-                          {intelligenceBadges(row).length > 0 && (
-                            <div className="mt-0.5 flex flex-wrap gap-1">
-                              {intelligenceBadges(row).map(badge => (
-                                <span key={badge} className="inline-flex px-1.5 py-0.5 rounded bg-slate-100 text-[10px] text-slate-600">
-                                  {badge}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          {(() => {
+                            const op = getOperationalStatus(row as any);
+                            return (
+                              <div>
+                                <div className="whitespace-nowrap font-medium text-gray-800">{pendingLabel(row)}</div>
+                                {(op.priceBadge || op.coaBadge) && (
+                                  <div className="mt-0.5 flex flex-wrap gap-1">
+                                    {op.priceBadge && (
+                                      <span className={`inline-flex px-1.5 py-0.2 rounded text-[10px] font-medium border ${op.priceBadge.className}`}>
+                                        {op.priceBadge.label}
+                                      </span>
+                                    )}
+                                    {op.coaBadge && (
+                                      <span className={`inline-flex px-1.5 py-0.2 rounded text-[10px] font-medium border ${op.coaBadge.className}`}>
+                                        {op.coaBadge.label}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {intelligenceBadges(row).length > 0 && (
+                                  <div className="mt-0.5 flex flex-wrap gap-1">
+                                    {intelligenceBadges(row).map(badge => (
+                                      <span key={badge} className="inline-flex px-1.5 py-0.5 rounded bg-slate-100 text-[10px] text-slate-600">
+                                        {badge}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>}
-                        {table.isVisible('aging') && <td style={table.getCellStyle('aging')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">{lastContactAge(row)}d</td>}
+                        {table.isVisible('aging') && (() => {
+                          const aging = calculateSourcingAging(row as any);
+                          return (
+                            <td style={table.getCellStyle('aging')} className="px-2 py-1 text-xs font-semibold whitespace-nowrap border-r border-gray-200">
+                              <span className={aging.days > 7 ? 'text-red-600' : aging.days > 3 ? 'text-amber-600' : 'text-emerald-700'}>
+                                {aging.formattedAging}
+                              </span>
+                            </td>
+                          );
+                        })()}
                         {table.isVisible('reminder') && <td style={table.getCellStyle('reminder')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">#{(row.reminder_count ?? 0) + 1}</td>}
                         {table.isVisible('lastSent') && <td style={table.getCellStyle('lastSent')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">{formatDate(lastSent)}</td>}
                         {table.isVisible('created') && <td style={table.getCellStyle('created')} className="px-2 py-1 text-xs text-gray-600 whitespace-nowrap border-r border-gray-200">{formatDate(row.created_at)}</td>}
@@ -1807,7 +1924,10 @@ export function SourcingOutbox() {
             <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
               <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-semibold text-gray-900">Email Preview</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-gray-900">Email Preview</h2>
+                    <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@sapharmajaya.co.id</span>
+                  </div>
                   <p className="text-[11px] text-gray-500">Completed rows and local rows are skipped. Blank routes default to India. India and China send separately.</p>
                 </div>
                 <button onClick={() => setPreviewOpen(false)} className="p-1 rounded hover:bg-gray-100"><X className="w-4 h-4" /></button>
@@ -1899,8 +2019,7 @@ export function SourcingOutbox() {
               </div>
               <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50">
                 <div className="text-[11px] text-gray-600 flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5" />
-                  {hasGmail ? 'Will send from connected Gmail.' : 'Fallback sender will be used.'}
+                  <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@sapharmajaya.co.id</span>
                 </div>
                 <button
                   onClick={confirmSend}
@@ -2171,6 +2290,23 @@ export function SourcingOutbox() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* CRM-consistent Gmail-like Email Composer Modal for India / China */}
+        {crmComposerOpen && crmComposerRows.length > 0 && (
+          <GmailLikeComposer
+            isOpen={crmComposerOpen}
+            onClose={() => {
+              setCrmComposerOpen(false);
+              setCrmComposerRows([]);
+              load();
+            }}
+            inquiry={crmComposerRows[0] as any}
+            inquiries={crmComposerRows as any}
+            mode={crmComposerMode}
+            defaultTo={crmComposerDefaultTo}
+            defaultCc={crmComposerDefaultCc}
+          />
         )}
       </div>
     </Layout>

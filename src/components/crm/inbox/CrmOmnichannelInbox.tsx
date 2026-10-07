@@ -138,10 +138,10 @@ export function CrmOmnichannelInbox({
     try {
       const items: InboxConversation[] = [];
 
-      // 1. Fetch Email conversations from Gmail API via edge function
+      // 1. Fetch Email conversations from Gmail API via edge function (CRM Mailbox: sales@sapharmajaya.co.id)
       try {
         const { data: gmailData, error: gmailError } = await supabase.functions.invoke('gmail-inbox-list', {
-          body: { query: 'in:inbox', maxResults: 40 },
+          body: { account: 'crm', emailAddress: 'sales@sapharmajaya.co.id', query: 'in:inbox', maxResults: 40 },
         });
 
         if (!gmailError && gmailData?.success && Array.isArray(gmailData.messages)) {
@@ -361,9 +361,11 @@ export function CrmOmnichannelInbox({
 
       try {
         if (selectedConversation.channel === 'email') {
-          // Use verified gmail-inbox-message edge function
+          // Use verified gmail-inbox-message edge function scoped to CRM Mailbox
           const { data, error } = await supabase.functions.invoke('gmail-inbox-message', {
             body: {
+              account: 'crm',
+              emailAddress: 'sales@sapharmajaya.co.id',
               threadId: selectedConversation.gmailThreadId,
               messageId: selectedConversation.gmailMessageId,
               includeThread: true,
@@ -467,8 +469,32 @@ export function CrmOmnichannelInbox({
         showToast({ type: 'success', title: 'WhatsApp Sent', message: 'Reply sent successfully.' });
         setReplyText('');
       } else {
-        // Email reply via send-bulk-email or direct edge function
-        showToast({ type: 'success', title: 'Reply Queued', message: `Reply sent to ${selectedConversation.senderAddress}` });
+        // Email reply via send-bulk-email from official sales mailbox
+        if (!selectedConversation.senderAddress) {
+          throw new Error('No recipient email address found for this conversation');
+        }
+        const replySubj = replySubject || (selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
+          body: {
+            requiredSenderEmail: 'sales@sapharmajaya.co.id',
+            replyTo: 'sales@sapharmajaya.co.id',
+            workflowType: 'crm_bulk_email',
+            toEmails: [selectedConversation.senderAddress],
+            subject: replySubj,
+            body: replyText.trim().replace(/\n/g, '<br/>'),
+            isHtml: true,
+            threadId: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId || undefined,
+            inReplyTo: selectedConversation.gmailMessageId || undefined,
+            inquiryId: selectedConversation.inquiryId || undefined,
+          },
+        });
+
+        if (fnErr || !fnData?.success) {
+          throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
+        }
+
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from sales@sapharmajaya.co.id to ${selectedConversation.senderAddress}` });
         setReplyText('');
       }
     } catch (err: any) {
@@ -1064,19 +1090,22 @@ export function CrmOmnichannelInbox({
               {/* Bottom Quick Reply Composer */}
               <div className="p-3 border-t border-gray-200 bg-white space-y-2">
                 <div className="flex items-center justify-between text-xs text-gray-600">
-                  <span className="font-semibold flex items-center gap-1">
-                    {selectedConversation.channel === 'whatsapp' ? (
-                      <>
-                        <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                        Reply via WhatsApp to {selectedConversation.senderAddress}
-                      </>
-                    ) : (
-                      <>
-                        <Mail className="w-3.5 h-3.5 text-blue-600" />
-                        Reply via Email to {selectedConversation.senderAddress}
-                      </>
-                    )}
-                  </span>
+                    <span className="font-semibold flex items-center gap-1.5 flex-wrap">
+                      {selectedConversation.channel === 'whatsapp' ? (
+                        <>
+                          <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                          Reply via WhatsApp to {selectedConversation.senderAddress}
+                        </>
+                      ) : (
+                        <>
+                          <Mail className="w-3.5 h-3.5 text-blue-600" />
+                          Reply via Email to {selectedConversation.senderAddress}
+                          <span className="text-[10.5px] font-mono bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 select-none">
+                            Sending from: sales@sapharmajaya.co.id
+                          </span>
+                        </>
+                      )}
+                    </span>
 
                   {selectedConversation.channel === 'whatsapp' && selectedConversation.suggestedReply && (
                     <button

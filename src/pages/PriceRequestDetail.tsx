@@ -368,6 +368,8 @@ function SourcingRequestModal({
       // email_thread_map (incl. messageId/threadId) on success.
       const result = await sendPricingWorkflowEmail({
         workflowType: 'sourcing_request',
+        module: 'pricing',
+        requiredSenderEmail: 'kunal@avira.co.id',
         priceRequestId: pr.id,
         itemIds: groupItems.map(i => i.id),
         sourceType: group.sourceType,
@@ -530,7 +532,10 @@ function SourcingRequestModal({
         {error && <div className="mx-5 mb-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
 
         <div className="px-5 py-3 border-t border-gray-200 flex items-center justify-between">
-          <p className="text-xs text-gray-500">{selectedIds.size} item(s) selected</p>
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-gray-500">{selectedIds.size} item(s) selected</p>
+            <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: kunal@avira.co.id</span>
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
             <button onClick={send} disabled={sending || selectedIds.size === 0}
@@ -821,6 +826,8 @@ Best regards`;
     const cc = ccEmail.split(',').map(s => s.trim()).filter(Boolean);
     const result = await sendPricingWorkflowEmail({
       workflowType: 'customer_quote',
+      module: 'crm',
+      requiredSenderEmail: 'sales@sapharmajaya.co.id',
       priceRequestId: pr.id,
       itemIds: quotedItems.map(i => i.id),
       to: [toEmail.trim()],
@@ -917,8 +924,8 @@ Best regards`;
               Quote sent {sentInfo.mode === 'fallback' ? 'via company fallback sender' : 'from your connected Gmail'}.
             </div>
           )}
-          <div className={`text-[11px] rounded px-2.5 py-1.5 border ${hasGmail ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-            {hasGmail === null ? 'Checking sender…' : hasGmail ? 'Sending from your connected Gmail.' : 'Using company fallback sender (no Gmail connected for your account).'}
+          <div className="text-[11px] rounded px-2.5 py-1.5 border bg-blue-50 border-blue-200 text-blue-800 font-medium">
+            Sending from: sales@sapharmajaya.co.id
           </div>
           <p className="text-[10px] text-gray-400">"Log Draft" only writes a timeline entry. "Send Quote" actually delivers the email.</p>
         </div>
@@ -1059,6 +1066,8 @@ Thanks & regards`;
 
     const result = await sendPricingWorkflowEmail({
       workflowType: 'sourcing_reminder',
+      module: 'pricing',
+      requiredSenderEmail: 'kunal@avira.co.id',
       priceRequestId: pr.id,
       itemIds: groupItems.map(i => i.id),
       sourceType: activeGroup,
@@ -1169,8 +1178,8 @@ Thanks & regards`;
               Reminder sent {sentInfo.mode === 'fallback' ? 'via company fallback sender' : 'from your connected Gmail'}.
             </div>
           )}
-          <div className={`mt-2 text-[11px] rounded px-2.5 py-1.5 border ${hasGmail ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-            {hasGmail === null ? 'Checking sender…' : hasGmail ? 'Sending from your connected Gmail.' : 'Using company fallback sender (no Gmail connected for your account).'}
+          <div className="mt-2 text-[11px] rounded px-2.5 py-1.5 border bg-blue-50 border-blue-200 text-blue-800 font-medium">
+            Sending from: kunal@avira.co.id
           </div>
           <p className="mt-1 text-[10px] text-gray-400">"Log Reminder" only writes a timeline entry. "Send Reminder" delivers the email to the configured {activeGroup || 'sourcing'} recipients.</p>
         </div>

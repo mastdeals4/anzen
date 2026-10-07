@@ -215,11 +215,13 @@ function buildEmailMime(opts: {
   cc?: string[];
   bcc?: string[];
   replyTo?: string;
+  inReplyTo?: string;
+  references?: string;
   subject: string;
   htmlBody: string;
   attachments: Attachment[];
 }): string {
-  const { fromEmail, fromName, toEmail, cc, bcc, replyTo, subject, htmlBody, attachments } = opts;
+  const { fromEmail, fromName, toEmail, cc, bcc, replyTo, inReplyTo, references, subject, htmlBody, attachments } = opts;
   const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const fromField = fromName ? `${encodeMimeWord(fromName)} <${fromEmail}>` : fromEmail;
   const encodedSubject = encodeMimeWord(subject);
@@ -233,6 +235,8 @@ function buildEmailMime(opts: {
     ccHeader ? `Cc: ${ccHeader}` : "",
     bccHeader ? `Bcc: ${bccHeader}` : "",
     replyTo ? `Reply-To: ${replyTo}` : "",
+    inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
+    references ? `References: ${references}` : "",
     `Subject: ${encodedSubject}`,
     `MIME-Version: 1.0`,
   ].filter(Boolean);
@@ -370,10 +374,10 @@ Deno.serve(async (req: Request) => {
     // ── 2. Parse body ─────────────────────────────────────────────────────
     const body = await req.json();
     const {
-      userId,                 // optional — must equal authUserId if present
-      allowFallback,          // boolean — true means fall through to fallback sender
+      userId,                 // optional
+      allowFallback,          // boolean
       workflowType,           // required when allowFallback=true; categorises the send
-      requiredSenderEmail,    // optional — bypass user lookup, send from this exact Gmail address
+      requiredSenderEmail,    // optional — explicit mailbox address
       toEmails,
       cc,
       bcc,
@@ -387,6 +391,10 @@ Deno.serve(async (req: Request) => {
       attachmentUrls,
       inquiryId,
       additionalInquiryIds,
+      threadId,               // preserve email threading
+      inReplyTo,              // MIME In-Reply-To header
+      references,             // MIME References header
+      module,                 // 'crm' | 'pricing'
     } = body as Record<string, any>;
 
     void contactId;
@@ -399,17 +407,18 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── 2b. Workflow / role gating ───────────────────────────────────────
-    // workflowType is required for fallback usage and gates the whole call.
-    // The allowlist below matches actual product flows. Unknown types are
-    // rejected outright.
     const APPROVED_WORKFLOWS: Record<string, { roles: string[]; fallback: boolean }> = {
-      pricing_sourcing : { roles: ["admin", "manager", "sales"], fallback: true },
-      pricing_reminder : { roles: ["admin", "manager", "sales"], fallback: true },
-      customer_quote   : { roles: ["admin", "manager", "sales"], fallback: true },
-      crm_bulk_email   : { roles: ["admin", "manager", "sales"], fallback: true },
-      stock_update     : { roles: ["admin", "manager", "sales"], fallback: true },
-      delivery_log     : { roles: ["admin", "manager", "sales"], fallback: true },
+      pricing_sourcing : { roles: ["admin", "manager", "sales"], fallback: false },
+      pricing_reminder : { roles: ["admin", "manager", "sales"], fallback: false },
       india_pricing    : { roles: ["admin", "manager", "sales"], fallback: false },
+      supplier_pricing : { roles: ["admin", "manager", "sales"], fallback: false },
+      customer_quote   : { roles: ["admin", "manager", "sales"], fallback: false },
+      crm_bulk_email   : { roles: ["admin", "manager", "sales"], fallback: false },
+      stock_update     : { roles: ["admin", "manager", "sales"], fallback: false },
+      delivery_log     : { roles: ["admin", "manager", "sales"], fallback: false },
+      crm_sourcing     : { roles: ["admin", "manager", "sales"], fallback: false },
+      crm_inquiry_reply: { roles: ["admin", "manager", "sales"], fallback: false },
+      crm_general      : { roles: ["admin", "manager", "sales"], fallback: false },
     };
 
     if (workflowType !== undefined && workflowType !== null) {
@@ -425,147 +434,139 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (allowFallback && !isInternalWorker) {
-      if (!workflowType) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "workflowType is required when allowFallback=true",
-            code: "WORKFLOW_TYPE_REQUIRED",
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const wf = APPROVED_WORKFLOWS[workflowType];
-      if (!wf.fallback) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: `workflowType ${workflowType} does not allow fallback sender`,
-            code: "FALLBACK_NOT_ALLOWED",
-          }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      // Verify the caller has one of the approved roles for this workflow.
-      const { data: profile } = await supabase
-        .from("user_profiles")
-        .select("role,is_active")
-        .eq("id", authUserId)
-        .maybeSingle();
-      if (!profile || profile.is_active === false || !wf.roles.includes(profile.role)) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Your role is not allowed to use fallback sender for this workflow",
-            code: "ROLE_NOT_ALLOWED",
-          }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    }
-
-    // Authorization rule:
-    //  - userId omitted → sender = auth user
-    //  - userId === authUserId → allowed
-    //  - userId !== authUserId → reject (unless caller explicitly opts into fallback,
-    //    in which case the userId is ignored and we resolve the fallback)
-    if (isInternalWorker && !userId) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Internal worker send requires userId" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    let intendedSenderUserId: string | null = isInternalWorker ? String(userId) : authUserId;
-    if (!isInternalWorker && userId && userId !== authUserId) {
-      if (!allowFallback) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Cannot send from another user's Gmail. Omit userId or set allowFallback=true with an approved workflowType.",
-          }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      intendedSenderUserId = null; // skip self lookup, go straight to fallback
-    }
-
-    // ── 3. Resolve sender connection (self → fallback if allowed) ─────────
+    // ── 3. Resolve sender connection by MODULE / PURPOSE ─────────────────
+    // MODULE PURPOSE → FIXED EMAIL ACCOUNT:
+    // CRM → sales@sapharmajaya.co.id
+    // Kunal Pricing → kunal@avira.co.id
+    // NEVER derive the CRM sender from the currently logged-in user's email/account.
     let senderMode: "connected_gmail" | "fallback" = "connected_gmail";
     let connection: GmailConnection | null = null;
 
-    // requiredSenderEmail bypasses the auth-user and fallback chains entirely.
-    // The exact mailbox must be connected — no silent fallback.
-    if (typeof requiredSenderEmail === "string" && requiredSenderEmail.trim()) {
-      const { data: connRow } = await supabase
-        .from("gmail_connections")
-        .select("id")
-        .eq("email_address", requiredSenderEmail.trim())
-        .eq("is_connected", true)
-        .maybeSingle();
+    const CRM_SALES_EMAIL = "sales@sapharmajaya.co.id";
+    const CRM_SALES_AVIRA_EMAIL = "sales@avira.co.id";
+    const KUNAL_PRICING_EMAIL = "kunal@avira.co.id";
 
-      if (!connRow?.id) {
+    const CRM_WORKFLOWS = [
+      "crm_bulk_email",
+      "customer_quote",
+      "stock_update",
+      "delivery_log",
+      "crm_sourcing",
+      "crm_inquiry_reply",
+      "crm_general",
+    ];
+    const PRICING_WORKFLOWS = [
+      "pricing_sourcing",
+      "pricing_reminder",
+      "india_pricing",
+      "supplier_pricing",
+    ];
+
+    // Determine target mailbox based on module / workflow purpose:
+    let targetEmail: string;
+
+    if (CRM_WORKFLOWS.includes(workflowType) || module === "crm") {
+      targetEmail = CRM_SALES_EMAIL;
+    } else if (PRICING_WORKFLOWS.includes(workflowType) || module === "pricing") {
+      targetEmail = KUNAL_PRICING_EMAIL;
+    } else if (typeof requiredSenderEmail === "string" && requiredSenderEmail.trim()) {
+      const reqEmail = requiredSenderEmail.toLowerCase().trim();
+      if (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_AVIRA_EMAIL) {
+        targetEmail = reqEmail;
+      } else if (reqEmail === KUNAL_PRICING_EMAIL) {
+        targetEmail = KUNAL_PRICING_EMAIL;
+      } else {
         return new Response(
           JSON.stringify({
             success: false,
-            error: `India Pricing Mailbox (${requiredSenderEmail}) is not connected. Please reconnect it in Gmail Settings.`,
-            code: "NO_CONNECTION",
+            error: `Invalid sender email: ${requiredSenderEmail}. Sender must be either ${CRM_SALES_EMAIL} or ${KUNAL_PRICING_EMAIL}.`,
+            code: "STRICT_ACCOUNT_ROLE_VIOLATION",
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-
-      const fetched = await getGmailConnectionSecret(supabase, { connectionId: connRow.id });
-      if (!fetched) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: `India Pricing Mailbox (${requiredSenderEmail}) credentials could not be retrieved. Please reconnect in Gmail Settings.`,
-            code: "NO_CONNECTION",
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      connection = fetched as GmailConnection;
     } else {
-      if (intendedSenderUserId) {
-        const data = await getGmailConnectionSecret(supabase, { userId: intendedSenderUserId });
-        if (data) connection = data as GmailConnection;
+      // Default to CRM Sales Email
+      targetEmail = CRM_SALES_EMAIL;
+    }
+
+    // Strict validation: enforce that CRM cannot send from Kunal Pricing and vice versa
+    if (requiredSenderEmail) {
+      const reqEmail = String(requiredSenderEmail).toLowerCase().trim();
+      if (CRM_WORKFLOWS.includes(workflowType) && reqEmail === KUNAL_PRICING_EMAIL) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `CRM / Bulk Email workflow cannot send from Kunal Pricing account (${KUNAL_PRICING_EMAIL}). Must send from ${CRM_SALES_EMAIL}.`,
+            code: "STRICT_ACCOUNT_ROLE_VIOLATION",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (PRICING_WORKFLOWS.includes(workflowType) && (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_AVIRA_EMAIL)) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Pricing workflow cannot send from CRM/Sales account (${CRM_SALES_EMAIL}). Must send from ${KUNAL_PRICING_EMAIL}.`,
+            code: "STRICT_ACCOUNT_ROLE_VIOLATION",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
     }
 
-    if (!connection && allowFallback) {
-      connection = await findFallbackConnection(supabase);
-      if (connection) senderMode = "fallback";
+    // Query connected Gmail account for targetEmail (or its alias if targetEmail is not yet connected)
+    let { data: connRow } = await supabase
+      .from("gmail_connections")
+      .select("id, email_address")
+      .ilike("email_address", targetEmail)
+      .eq("is_connected", true)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!connRow?.id && (targetEmail === CRM_SALES_EMAIL || targetEmail === CRM_SALES_AVIRA_EMAIL)) {
+      const altEmail = targetEmail === CRM_SALES_EMAIL ? CRM_SALES_AVIRA_EMAIL : CRM_SALES_EMAIL;
+      const { data: altConn } = await supabase
+        .from("gmail_connections")
+        .select("id, email_address")
+        .ilike("email_address", altEmail)
+        .eq("is_connected", true)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (altConn?.id) {
+        connRow = altConn;
+        targetEmail = altConn.email_address;
+      }
     }
 
-    if (!connection) {
+    if (!connRow?.id) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: allowFallback
-            ? "No connected Gmail available for sender or fallback. Connect Gmail in Settings."
-            : "Gmail not connected. Please connect Gmail in Settings.",
+          error: `Mailbox (${targetEmail}) is not connected. Please connect it in Gmail Settings.`,
           code: "NO_CONNECTION",
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // ── 3b. Enforce strict email account roles ─────────────────────────────
-    // CRM / Sales: sales@sapharmajaya.co.id
-    // Kunal Pricing: kunal@avira.co.id
-    // CRM/Bulk Email must send from sales@sapharmajaya.co.id.
-    // Kunal Pricing must send from kunal@avira.co.id.
-    // Never cross-use these accounts.
+    const fetched = await getGmailConnectionSecret(supabase, { connectionId: connRow.id });
+    if (!fetched) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Credentials for mailbox (${targetEmail}) could not be retrieved. Please reconnect in Gmail Settings.`,
+          code: "NO_CONNECTION",
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    connection = fetched as GmailConnection;
+
+    // Strict account role check on resolved connection
     const senderEmail = (connection.email_address || "").toLowerCase().trim();
-    const CRM_SALES_EMAIL = "sales@sapharmajaya.co.id";
-    const KUNAL_PRICING_EMAIL = "kunal@avira.co.id";
-
-    const CRM_WORKFLOWS = ["crm_bulk_email", "customer_quote", "stock_update", "delivery_log"];
-    const PRICING_WORKFLOWS = ["pricing_sourcing", "pricing_reminder", "india_pricing"];
-
     if (CRM_WORKFLOWS.includes(workflowType)) {
       if (senderEmail === KUNAL_PRICING_EMAIL) {
         return new Response(
@@ -670,6 +671,8 @@ Deno.serve(async (req: Request) => {
       cc: ccRecipients,
       bcc: bccRecipients,
       replyTo: typeof replyTo === "string" ? replyTo : undefined,
+      inReplyTo: typeof inReplyTo === "string" ? inReplyTo : undefined,
+      references: typeof references === "string" ? references : undefined,
       subject,
       htmlBody: htmlContent,
       attachments: fileAttachments,
@@ -680,8 +683,14 @@ Deno.serve(async (req: Request) => {
       finalGmailRecipientList: finalRecipientList,
       attachmentFilenames: fileAttachments.map(att => att.filename),
       encodedPayloadBytes: encodedEmail.length,
+      threadId: threadId || null,
       ...summarizeMime(mimeEmail),
     });
+
+    const sendPayload: Record<string, any> = { raw: encodedEmail };
+    if (threadId) {
+      sendPayload.threadId = threadId;
+    }
 
     const sendResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
@@ -689,7 +698,7 @@ Deno.serve(async (req: Request) => {
         "Authorization": `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ raw: encodedEmail }),
+      body: JSON.stringify(sendPayload),
     });
 
     if (!sendResponse.ok) {

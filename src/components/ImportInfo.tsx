@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   Upload, ChevronUp, ChevronDown,
-  ChevronsUpDown, X, RefreshCw, AlertCircle, FileSpreadsheet, Loader2, Plus, Trash2, Search,
+  ChevronsUpDown, X, RefreshCw, AlertCircle, FileSpreadsheet, Loader2, Plus, Trash2, Search, Calendar,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -82,7 +82,48 @@ export interface ImportInfoProps {
   onClose?: () => void;
 }
 
-const PAGE_SIZE = 200;
+const DEFAULT_PAGE_SIZE = 200;
+const PAGE_SIZE_OPTIONS = [100, 200, 500] as const;
+const YEARS = ['2026', '2025', '2024', '2023', '2022', '2021', '2020'];
+const MONTH_OPTIONS = [
+  { value: '01', label: 'January' },
+  { value: '02', label: 'February' },
+  { value: '03', label: 'March' },
+  { value: '04', label: 'April' },
+  { value: '05', label: 'May' },
+  { value: '06', label: 'June' },
+  { value: '07', label: 'July' },
+  { value: '08', label: 'August' },
+  { value: '09', label: 'September' },
+  { value: '10', label: 'October' },
+  { value: '11', label: 'November' },
+  { value: '12', label: 'December' },
+];
+
+function getMonthDays(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function formatDateDisplay(d: string | null): string {
+  if (!d) return '';
+  const [y, m, day] = d.split('-');
+  return `${day}/${m}/${y}`;
+}
+
+function formatDateRangeLabel(from: string | null, to: string | null, year: string, month: string): string {
+  if (!from && !to) return 'All Dates';
+  if (year && month && from === `${year}-${month}-01`) {
+    const monthLabel = MONTH_OPTIONS.find(m => m.value === month)?.label || month;
+    return `${monthLabel} ${year} (${formatDateDisplay(from)} → ${formatDateDisplay(to)})`;
+  }
+  if (year && !month && from === `${year}-01-01` && to === `${year}-12-31`) {
+    return `Full Year ${year} (${formatDateDisplay(from)} → ${formatDateDisplay(to)})`;
+  }
+  if (from && to) return `${formatDateDisplay(from)} → ${formatDateDisplay(to)}`;
+  if (from) return `From ${formatDateDisplay(from)}`;
+  if (to) return `Until ${formatDateDisplay(to)}`;
+  return 'Custom Date';
+}
 
 const TYPE_COLORS: Record<string, string> = {
   'API': 'bg-blue-100 text-blue-800',
@@ -149,7 +190,16 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
+
+  // Date filter state
+  const [datePreset, setDatePreset] = useState<'all' | '2026' | 'august_2026' | 'this_year' | 'this_month' | 'last_month' | 'custom'>('all');
+  const [filterYear, setFilterYear] = useState<string>('');
+  const [filterMonth, setFilterMonth] = useState<string>('');
+  const [customFrom, setCustomFrom] = useState<string>('');
+  const [customTo, setCustomTo] = useState<string>('');
+  const [appliedDateRange, setAppliedDateRange] = useState<{ from: string | null; to: string | null }>({ from: null, to: null });
 
   const [showAllColumns, setShowAllColumns] = useState(false);
   const isCompact = compactAnalysis && !showAllColumns;
@@ -197,7 +247,13 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
     });
   }, []);
 
-  const fetchPage = useCallback(async (pg: number, af: FilterRow[]) => {
+  const fetchPage = useCallback(async (
+    pg: number,
+    af: FilterRow[],
+    fromDate: string | null,
+    toDate: string | null,
+    ps: number
+  ) => {
     setLoading(true);
     try {
       let q = supabase
@@ -209,8 +265,15 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
         q = q.ilike(f.field as string, `%${f.value.trim()}%`);
       }
 
+      if (fromDate) {
+        q = q.gte('date', fromDate);
+      }
+      if (toDate) {
+        q = q.lte('date', toDate);
+      }
+
       q = q.order(sortField as string, { ascending: sortDir === 'asc' });
-      q = q.range(pg * PAGE_SIZE, (pg + 1) * PAGE_SIZE - 1);
+      q = q.range(pg * ps, (pg + 1) * ps - 1);
 
       const { data, count, error } = await q;
       if (error) throw error;
@@ -223,7 +286,130 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
     }
   }, [sortField, sortDir]);
 
-  useEffect(() => { fetchPage(page, activeFilters); }, [fetchPage, page, activeFilters]);
+  useEffect(() => {
+    fetchPage(page, activeFilters, appliedDateRange.from, appliedDateRange.to, pageSize);
+  }, [fetchPage, page, activeFilters, appliedDateRange.from, appliedDateRange.to, pageSize]);
+
+  function handlePageSizeChange(newSize: number) {
+    const validSize = Math.min(500, Math.max(100, newSize));
+    setPageSize(validSize);
+    setPage(0);
+  }
+
+  function handleDatePreset(preset: 'all' | '2026' | 'august_2026' | 'this_year' | 'this_month' | 'last_month') {
+    setDatePreset(preset);
+    if (preset === 'all') {
+      setFilterYear('');
+      setFilterMonth('');
+      setCustomFrom('');
+      setCustomTo('');
+      setAppliedDateRange({ from: null, to: null });
+    } else if (preset === '2026') {
+      setFilterYear('2026');
+      setFilterMonth('');
+      setCustomFrom('');
+      setCustomTo('');
+      setAppliedDateRange({ from: '2026-01-01', to: '2026-12-31' });
+    } else if (preset === 'august_2026') {
+      setFilterYear('2026');
+      setFilterMonth('08');
+      setCustomFrom('');
+      setCustomTo('');
+      setAppliedDateRange({ from: '2026-08-01', to: '2026-08-31' });
+    } else if (preset === 'this_year') {
+      const y = String(new Date().getFullYear());
+      setFilterYear(y);
+      setFilterMonth('');
+      setCustomFrom('');
+      setCustomTo('');
+      setAppliedDateRange({ from: `${y}-01-01`, to: `${y}-12-31` });
+    } else if (preset === 'this_month') {
+      const now = new Date();
+      const y = String(now.getFullYear());
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const lastDay = getMonthDays(Number(y), Number(m));
+      setFilterYear(y);
+      setFilterMonth(m);
+      setCustomFrom('');
+      setCustomTo('');
+      setAppliedDateRange({ from: `${y}-${m}-01`, to: `${y}-${m}-${String(lastDay).padStart(2, '0')}` });
+    } else if (preset === 'last_month') {
+      const now = new Date();
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const y = String(prev.getFullYear());
+      const m = String(prev.getMonth() + 1).padStart(2, '0');
+      const lastDay = getMonthDays(Number(y), Number(m));
+      setFilterYear(y);
+      setFilterMonth(m);
+      setCustomFrom('');
+      setCustomTo('');
+      setAppliedDateRange({ from: `${y}-${m}-01`, to: `${y}-${m}-${String(lastDay).padStart(2, '0')}` });
+    }
+    setPage(0);
+  }
+
+  function handleYearChange(year: string) {
+    setFilterYear(year);
+    setDatePreset('custom');
+    if (!year) {
+      if (!filterMonth) {
+        setAppliedDateRange({ from: null, to: null });
+      }
+      setPage(0);
+      return;
+    }
+    if (filterMonth) {
+      const m = Number(filterMonth);
+      const lastDay = getMonthDays(Number(year), m);
+      setAppliedDateRange({
+        from: `${year}-${filterMonth}-01`,
+        to: `${year}-${filterMonth}-${String(lastDay).padStart(2, '0')}`
+      });
+    } else {
+      setAppliedDateRange({
+        from: `${year}-01-01`,
+        to: `${year}-12-31`
+      });
+    }
+    setPage(0);
+  }
+
+  function handleMonthChange(month: string) {
+    setFilterMonth(month);
+    setDatePreset('custom');
+    const yearToUse = filterYear || '2026';
+    if (!filterYear) setFilterYear(yearToUse);
+
+    if (month) {
+      const m = Number(month);
+      const lastDay = getMonthDays(Number(yearToUse), m);
+      setAppliedDateRange({
+        from: `${yearToUse}-${month}-01`,
+        to: `${yearToUse}-${month}-${String(lastDay).padStart(2, '0')}`
+      });
+    } else {
+      setAppliedDateRange({
+        from: `${yearToUse}-01-01`,
+        to: `${yearToUse}-12-31`
+      });
+    }
+    setPage(0);
+  }
+
+  function handleApplyCustomDate() {
+    setDatePreset('custom');
+    setFilterYear('');
+    setFilterMonth('');
+    setAppliedDateRange({
+      from: customFrom || null,
+      to: customTo || null,
+    });
+    setPage(0);
+  }
+
+  function handleClearDate() {
+    handleDatePreset('all');
+  }
 
   function handleSearch() {
     setActiveFilters([...filters]);
@@ -234,6 +420,7 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
     const fresh = [newFilter('product_name')];
     setFilters(fresh);
     setActiveFilters([]);
+    handleDatePreset('all');
     setPage(0);
   }
 
@@ -331,8 +518,9 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
     setRows([]); setTotal(0); setShowClear(false);
   }
 
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasActiveFilters = activeFilters.some(f => f.value.trim() !== '');
+  const hasActiveDateFilter = Boolean(appliedDateRange.from || appliedDateRange.to);
   const tableW = useMemo(() => activeCols.reduce((s, c) => s + (colWidths[c.key] || c.defaultWidth), 0), [activeCols, colWidths]);
 
   return (
@@ -362,6 +550,157 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
         </div>
       )}
 
+      {/* ── Date Filter Bar ── */}
+      <div className="flex flex-col gap-2 mb-2 flex-shrink-0 bg-blue-50/60 border border-blue-200 rounded-lg p-2.5">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-800">
+            <Calendar className="w-4 h-4 text-blue-600" />
+            <span>Date Filter:</span>
+          </div>
+
+          {/* Quick presets */}
+          <div className="flex items-center gap-1 flex-wrap text-xs">
+            <button
+              type="button"
+              onClick={() => handleDatePreset('all')}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                datePreset === 'all' && !hasActiveDateFilter
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              All Dates
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDatePreset('2026')}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                datePreset === '2026'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              2026
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDatePreset('august_2026')}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                datePreset === 'august_2026'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              August 2026
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDatePreset('this_year')}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                datePreset === 'this_year'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              This Year
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDatePreset('this_month')}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                datePreset === 'this_month'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              This Month
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDatePreset('last_month')}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                datePreset === 'last_month'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              Last Month
+            </button>
+          </div>
+        </div>
+
+        {/* Year, Month and Custom Range selectors */}
+        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-blue-200/50 text-xs">
+          {/* Year selector */}
+          <div className="flex items-center gap-1">
+            <label className="text-[11px] text-gray-500 font-medium">Year:</label>
+            <select
+              value={filterYear}
+              onChange={e => handleYearChange(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-300 rounded bg-white text-gray-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+            >
+              <option value="">All Years</option>
+              {YEARS.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Month selector */}
+          <div className="flex items-center gap-1">
+            <label className="text-[11px] text-gray-500 font-medium">Month:</label>
+            <select
+              value={filterMonth}
+              onChange={e => handleMonthChange(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-300 rounded bg-white text-gray-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+            >
+              <option value="">All Months</option>
+              {MONTH_OPTIONS.map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Custom Date Range */}
+          <div className="flex items-center gap-1.5 ml-auto flex-wrap">
+            <span className="text-[11px] text-gray-500 font-medium">Custom Range:</span>
+            <input
+              type="date"
+              value={customFrom}
+              onChange={e => setCustomFrom(e.target.value)}
+              className="px-1.5 py-1 text-xs border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              title="From Date"
+            />
+            <span className="text-gray-400 text-xs">→</span>
+            <input
+              type="date"
+              value={customTo}
+              onChange={e => setCustomTo(e.target.value)}
+              className="px-1.5 py-1 text-xs border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              title="To Date"
+            />
+            <button
+              type="button"
+              onClick={handleApplyCustomDate}
+              disabled={!customFrom && !customTo}
+              className="px-2.5 py-1 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 transition-colors cursor-pointer"
+            >
+              Apply
+            </button>
+            {hasActiveDateFilter && (
+              <button
+                type="button"
+                onClick={handleClearDate}
+                className="px-2 py-1 text-xs text-gray-600 border border-gray-300 bg-white rounded hover:bg-gray-100 transition-colors cursor-pointer"
+                title="Clear date filter"
+              >
+                Clear Date
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── Filter Builder ── */}
       <div className="flex flex-col gap-1.5 mb-2 flex-shrink-0 bg-gray-50 border border-gray-200 rounded-lg p-2">
         {/* Filter rows */}
@@ -380,7 +719,7 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
             <span className="text-[10px] text-gray-400 select-none flex-shrink-0">contains</span>
 
             <div className="relative flex-1 min-w-0">
-              <input name="value" aria-label="{${FILTER_FIELDS.find(ff => ff.value === f.field)?.label ?? f.field}…}"
+              <input name="value" aria-label={`${FILTER_FIELDS.find(ff => ff.value === f.field)?.label ?? f.field}…`}
                 type="text"
                 value={f.value}
                 onChange={e => setFilterValue(f.id, e.target.value)}
@@ -398,7 +737,7 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
             <button
               onClick={() => removeFilter(f.id)}
               disabled={filters.length === 1}
-              className="p-0.5 text-gray-300 hover:text-red-400 disabled:opacity-0 transition-colors flex-shrink-0"
+              className="p-0.5 text-gray-300 hover:text-red-400 disabled:opacity-0 transition-colors flex-shrink-0 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -410,7 +749,7 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
           <button
             onClick={addFilter}
             disabled={filters.length >= FILTER_FIELDS.length}
-            className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-700 disabled:opacity-30"
+            className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-700 disabled:opacity-30 cursor-pointer"
           >
             <Plus className="w-3 h-3" />
             Add condition
@@ -420,14 +759,14 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
 
           <button
             onClick={handleSearch}
-            className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors cursor-pointer"
           >
             <Search className="w-3 h-3" />
             Search
           </button>
           <button
             onClick={handleReset}
-            className="px-3 py-1 text-xs font-medium border border-gray-300 bg-white text-gray-600 rounded hover:bg-gray-100 transition-colors"
+            className="px-3 py-1 text-xs font-medium border border-gray-300 bg-white text-gray-600 rounded hover:bg-gray-100 transition-colors cursor-pointer"
           >
             Reset
           </button>
@@ -437,7 +776,7 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
             <input name="file_upload" aria-label="Upload file" ref={fileRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleUpload} className="hidden" disabled={uploading} />
           </label>
           {(userRole === 'admin' || userRole === 'manager') && (
-            <button onClick={() => setShowClear(true)} className="p-1 text-red-400 hover:text-red-600 transition-colors" title="Clear all data">
+            <button onClick={() => setShowClear(true)} className="p-1 text-red-400 hover:text-red-600 transition-colors cursor-pointer" title="Clear all data">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
@@ -445,8 +784,23 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
       </div>
 
       {/* Active filter chips */}
-      {hasActiveFilters && (
-        <div className="flex flex-wrap gap-1.5 mb-2 flex-shrink-0">
+      {(hasActiveFilters || hasActiveDateFilter) && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-2 flex-shrink-0">
+          {hasActiveDateFilter && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[10.5px] bg-blue-100 text-blue-800 rounded-full border border-blue-300 font-medium">
+              <Calendar className="w-3 h-3 text-blue-600" />
+              <span>Date:</span>
+              <span className="font-semibold">{formatDateRangeLabel(appliedDateRange.from, appliedDateRange.to, filterYear, filterMonth)}</span>
+              <button
+                type="button"
+                onClick={handleClearDate}
+                className="text-blue-500 hover:text-blue-700 ml-0.5 cursor-pointer"
+                title="Remove date filter"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
           {activeFilters.filter(f => f.value.trim()).map(f => (
             <span key={f.id} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] bg-blue-100 text-blue-800 rounded-full border border-blue-200">
               <span className="font-semibold">{FILTER_FIELDS.find(ff => ff.value === f.field)?.label}</span>
@@ -454,8 +808,8 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
               {f.value}
             </span>
           ))}
-          <button onClick={handleReset} className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10.5px] bg-gray-100 text-gray-500 rounded-full hover:bg-gray-200 border border-gray-200">
-            <X className="w-2.5 h-2.5" /> Clear
+          <button onClick={handleReset} className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10.5px] bg-gray-100 text-gray-500 rounded-full hover:bg-gray-200 border border-gray-200 cursor-pointer">
+            <X className="w-2.5 h-2.5" /> Clear All
           </button>
         </div>
       )}
@@ -470,12 +824,27 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
       )}
 
       {/* Stats + pagination */}
-      <div className="flex items-center gap-3 mb-2 flex-shrink-0 text-xs text-gray-500">
+      <div className="flex items-center gap-3 mb-2 flex-shrink-0 text-xs text-gray-500 flex-wrap">
         <span>
-          <span className="font-semibold text-gray-700">{total.toLocaleString()}</span>
-          {hasActiveFilters ? ' matching' : ' total'} records
-          {total > PAGE_SIZE && <span className="text-gray-400"> · page {page + 1} of {totalPages}</span>}
+          Showing <span className="font-semibold text-gray-800">{total === 0 ? '0' : (page * pageSize + 1).toLocaleString()}–{Math.min((page + 1) * pageSize, total).toLocaleString()}</span> of{' '}
+          <span className="font-semibold text-gray-800">{total.toLocaleString()}</span> records
+          {totalPages > 1 && <span className="text-gray-400"> · page {page + 1} of {totalPages}</span>}
         </span>
+
+        {/* Page size selector */}
+        <div className="flex items-center gap-1 ml-1 text-xs">
+          <label className="text-gray-400 text-[11px]">Show:</label>
+          <select
+            value={pageSize}
+            onChange={e => handlePageSizeChange(Number(e.target.value))}
+            className="px-1.5 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-700 font-medium focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+          >
+            {PAGE_SIZE_OPTIONS.map(sz => (
+              <option key={sz} value={sz}>{sz} / page</option>
+            ))}
+          </select>
+        </div>
+
         {compactAnalysis && (
           <button
             type="button"
@@ -487,14 +856,14 @@ export function ImportInfo({ initialProduct, compactAnalysis = false, onClose }:
         )}
         {totalPages > 1 && (
           <div className="flex items-center gap-1 ml-2">
-            <button onClick={() => setPage(0)} disabled={page === 0} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50">«</button>
-            <button onClick={() => setPage(p => p - 1)} disabled={page === 0} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50">‹</button>
-            <span className="px-2 py-0.5 rounded bg-blue-600 text-white">{page + 1}</span>
-            <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50">›</button>
-            <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50">»</button>
+            <button onClick={() => setPage(0)} disabled={page === 0} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50 cursor-pointer" title="First page">«</button>
+            <button onClick={() => setPage(p => p - 1)} disabled={page === 0} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50 cursor-pointer" title="Previous page">‹</button>
+            <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-medium">{page + 1}</span>
+            <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50 cursor-pointer" title="Next page">›</button>
+            <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} className="px-1.5 py-0.5 rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50 cursor-pointer" title="Last page">»</button>
           </div>
         )}
-        <button onClick={() => fetchPage(page, activeFilters)} className="ml-auto flex items-center gap-1 hover:text-gray-700 text-gray-400">
+        <button onClick={() => fetchPage(page, activeFilters, appliedDateRange.from, appliedDateRange.to, pageSize)} className="ml-auto flex items-center gap-1 hover:text-gray-700 text-gray-400 cursor-pointer">
           <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>

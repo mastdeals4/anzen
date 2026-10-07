@@ -657,7 +657,11 @@ async function llmRelevanceClassify(messages: KunalGmailMessage[]): Promise<Map<
 
 async function readFullMessage(messageId: string, fallback: KunalGmailMessage): Promise<KunalGmailMessage> {
   const { data } = await supabase.functions.invoke('gmail-inbox-message', {
-    body: { messageId },
+    body: {
+      messageId,
+      account: 'pricing',
+      emailAddress: 'kunal@avira.co.id',
+    },
   });
   return {
     ...fallback,
@@ -748,11 +752,16 @@ export async function scanKunalIndiaInbox(opts: ScanOptions = {}): Promise<ScanR
 
   // 1. List messages
   const { data: listData, error: listErr } = await supabase.functions.invoke('gmail-inbox-list', {
-    body: { query, maxResults },
+    body: {
+      account: 'pricing',
+      emailAddress: 'kunal@avira.co.id',
+      query,
+      maxResults,
+    },
   });
   if (listErr || !listData?.success) {
     const code = listData?.code || '';
-    if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect Gmail in Settings first.');
+    if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected for Kunal Pricing. Connect kunal@avira.co.id in Settings first.');
     throw new Error(listData?.error || listErr?.message || 'Could not scan Gmail.');
   }
 
@@ -762,7 +771,11 @@ export async function scanKunalIndiaInbox(opts: ScanOptions = {}): Promise<ScanR
   // 2. Fetch full bodies in parallel
   const fullMessages = await Promise.all(list.map(async msg => {
     const { data } = await supabase.functions.invoke('gmail-inbox-message', {
-      body: { messageId: msg.messageId },
+      body: {
+        messageId: msg.messageId,
+        account: 'pricing',
+        emailAddress: 'kunal@avira.co.id',
+      },
     });
     return {
       ...msg,
@@ -1383,11 +1396,16 @@ export async function autoScanKunalInbox(opts: {
   }
 
   const { data: listData, error: listErr } = await supabase.functions.invoke('gmail-inbox-list', {
-    body: { query, maxResults },
+    body: {
+      account: 'pricing',
+      emailAddress: 'kunal@avira.co.id',
+      query,
+      maxResults,
+    },
   });
   if (listErr || !listData?.success) {
     const code = listData?.code || '';
-    if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect Gmail in Settings first.');
+    if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected for Kunal Pricing. Connect kunal@avira.co.id in Settings first.');
     throw new Error(listData?.error || listErr?.message || 'Could not scan Gmail.');
   }
   const list = ((listData.messages || []) as KunalGmailMessage[]).slice(0, maxResults);
@@ -1546,11 +1564,16 @@ export async function loadGmailMailbox(opts: {
   const maxResults = Math.max(1, Math.min(100, opts.maxResults || 50));
 
   const { data: listData, error: listErr } = await supabase.functions.invoke('gmail-inbox-list', {
-    body: { query, maxResults },
+    body: {
+      account: 'pricing',
+      emailAddress: 'kunal@avira.co.id',
+      query,
+      maxResults,
+    },
   });
   if (listErr) throw new Error(`gmail-inbox-list invoke failed: ${listErr.message || 'unknown'}`);
   if (!listData?.success) {
-    if (listData?.code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect Gmail in Settings first.');
+    if (listData?.code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected for Kunal Pricing. Connect kunal@avira.co.id in Settings first.');
     throw new Error(listData?.error || listData?.code || 'gmail-inbox-list failed');
   }
   const list = ((listData.messages || []) as KunalGmailMessage[]).slice(0, maxResults);

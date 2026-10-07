@@ -43,6 +43,8 @@ export interface PricingEmailRequest {
   attachmentUrls?: PricingEmailAttachment[];
   /** When true, write a row in email_thread_map for the sent message. Default: true. */
   recordThread?: boolean;
+  requiredSenderEmail?: string;
+  module?: 'crm' | 'pricing';
 }
 
 export interface PricingEmailResult {
@@ -76,21 +78,29 @@ export async function sendPricingWorkflowEmail(req: PricingEmailRequest): Promis
     };
   }
 
+  const isCrm = req.module === 'crm' || req.workflowType === 'customer_quote';
+  const targetSender = req.requiredSenderEmail || (isCrm ? 'sales@avira.co.id' : 'kunal@avira.co.id');
+  const targetWorkflow =
+    req.module === 'crm'
+      ? 'crm_sourcing'
+      : req.workflowType === 'customer_quote'
+        ? 'customer_quote'
+        : req.workflowType === 'sourcing_reminder'
+          ? 'pricing_reminder'
+          : req.workflowType === 'sourcing_request'
+            ? 'pricing_sourcing'
+            : 'pricing_sourcing';
+
   let resp: Response;
   try {
     resp = await fetch(`${supabaseUrl}/functions/v1/send-bulk-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.session.access_token}` },
       body: JSON.stringify({
-        // Omit userId — function defaults to auth user. The function will
-        // try fallback automatically if allowFallback is true and the workflow
-        // type is approved server-side.
         allowFallback: true,
-        workflowType:
-          req.workflowType === 'customer_quote' ? 'customer_quote' :
-          req.workflowType === 'sourcing_reminder' ? 'pricing_reminder' :
-          req.workflowType === 'sourcing_request' ? 'pricing_sourcing' :
-          'pricing_sourcing', // payment_reminder etc. fall back to a pricing scope; server will reject if not allowlisted
+        workflowType: targetWorkflow,
+        requiredSenderEmail: targetSender,
+        module: isCrm ? 'crm' : 'pricing',
         toEmails: req.to,
         cc: req.cc || [],
         bcc: req.bcc || [],
@@ -174,13 +184,19 @@ export async function sendPricingWorkflowEmail(req: PricingEmailRequest): Promis
   };
 }
 
-/** True iff the given user has a connected Gmail. */
-export async function userHasConnectedGmail(userId: string): Promise<boolean> {
-  const { data } = await supabase
+/** True iff the given user or email has an active connected Gmail. */
+export async function userHasConnectedGmail(userIdOrEmail: string): Promise<boolean> {
+  const query = supabase
     .from('gmail_connections')
     .select('id')
-    .eq('user_id', userId)
-    .eq('is_connected', true)
-    .maybeSingle();
+    .eq('is_connected', true);
+
+  if (userIdOrEmail.includes('@')) {
+    query.ilike('email_address', userIdOrEmail.trim());
+  } else {
+    query.eq('user_id', userIdOrEmail);
+  }
+
+  const { data } = await query.limit(1).maybeSingle();
   return !!data;
 }

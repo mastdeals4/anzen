@@ -229,11 +229,30 @@ Deno.serve(async (req: Request) => {
 
     if (!messageId && !threadId) return json({ success: false, code: "MISSING_MESSAGE_ID" }, 400);
 
+    const targetAccountEmail = String(
+      body.emailAddress ||
+      (body.account === "crm" || body.mailbox === "crm" ? "sales@sapharmajaya.co.id" : body.account === "pricing" || body.mailbox === "pricing" ? "kunal@avira.co.id" : "")
+    ).toLowerCase().trim();
+
     // 1. Gather candidate Gmail connections
     const candidateConnections: GmailConnectionSecret[] = [];
     if (explicitConnectionId) {
       const explicitConn = await getGmailConnectionSecret(supabase, { connectionId: explicitConnectionId });
       if (explicitConn && explicitConn.is_connected) candidateConnections.push(explicitConn);
+    }
+    if (targetAccountEmail) {
+      const { data: connRow } = await supabase
+        .from("gmail_connections")
+        .select("id")
+        .ilike("email_address", targetAccountEmail)
+        .eq("is_connected", true)
+        .maybeSingle();
+      if (connRow?.id) {
+        const connSecret = await getGmailConnectionSecret(supabase, { connectionId: connRow.id });
+        if (connSecret && connSecret.is_connected && !candidateConnections.some(x => x.id === connSecret.id)) {
+          candidateConnections.push(connSecret);
+        }
+      }
     }
     if (user?.id) {
       const userConn = await getConnection(supabase, user.id);

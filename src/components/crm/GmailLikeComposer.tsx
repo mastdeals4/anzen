@@ -7,7 +7,7 @@ import DOMPurify from 'dompurify';
 import { openGmailReconnectPopup } from './gmailReconnect';
 import { applyEmailTemplateVariables, getDisplayContactName, getSalutation } from '../../utils/crmEmailPersonalization';
 import { buildNormalizedBaseKey, buildUniqueDocumentNames } from '../../utils/documentNaming';
-import { escapeHtml, buildCompanySignature, buildIndiaRfqEmail, buildIndiaRfqSubject } from '../../utils/emailFormatting';
+import { escapeHtml, buildCompanySignature, buildIndiaRfqEmail, buildIndiaRfqSubject, buildChinaRfqEmail, buildChinaRfqSubject } from '../../utils/emailFormatting';
 import { type CompanySnapshot, FALLBACK_COMPANY } from '../../types/company';
 
 interface Inquiry {
@@ -62,14 +62,15 @@ interface GmailLikeComposerProps {
   onClose: () => void;
   inquiry: Inquiry;
   inquiries?: Inquiry[]; // multiple for multi-product email
-  mode?: 'price' | 'coa' | 'general' | 'india';
-  defaultTo?: string;   // overrides inquiry.contact_email (used by india mode)
+  mode?: 'price' | 'coa' | 'general' | 'india' | 'china';
+  defaultTo?: string;   // overrides inquiry.contact_email (used by india / china mode)
   defaultCc?: string;   // pre-fills CC field (used by india mode)
   replyTo?: {
     email_id: string;
     subject: string;
     from_email: string;
     body: string;
+    threadId?: string;
   };
 }
 
@@ -116,7 +117,7 @@ function isCoaDocument(doc: CrmDoc): boolean {
   return haystack.includes('coa');
 }
 
-function inferDocumentType(fileName: string, mode: 'price' | 'coa' | 'general' | 'india'): 'COA' | 'MSDS' | 'MHD' | 'TDS' | 'SPEC' | 'OTHER' {
+function inferDocumentType(fileName: string, mode: 'price' | 'coa' | 'general' | 'india' | 'china'): 'COA' | 'MSDS' | 'MHD' | 'TDS' | 'SPEC' | 'OTHER' {
   const normalized = fileName.toLowerCase();
   if (normalized.includes('coa')) return 'COA';
   if (normalized.includes('msds') || normalized.includes('sds')) return 'MSDS';
@@ -269,6 +270,8 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
 
     if (mode === 'india') {
       setSubject(buildIndiaRfqSubject(allInquiries));
+    } else if (mode === 'china') {
+      setSubject(buildChinaRfqSubject(allInquiries));
     } else {
       setSubject(buildSubject(inquiry, mode, replyTo));
     }
@@ -290,7 +293,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
   useEffect(() => {
     if (!isOpen || !body) return;
     window.setTimeout(() => {
-      const isHtmlSurface = mode === 'price' || mode === 'india';
+      const isHtmlSurface = mode === 'price' || mode === 'india' || mode === 'china';
       const insertedHtml = isHtmlSurface
         ? htmlPreviewRef.current?.innerHTML || ''
         : quillWrapRef.current?.querySelector('.ql-editor')?.innerHTML || '';
@@ -306,9 +309,11 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return '';
+      const isSupplierRoute = mode === 'india' || mode === 'china';
+      const targetMailbox = isSupplierRoute ? 'kunal@avira.co.id' : 'sales@avira.co.id';
       const [profileRes, gmailRes] = await Promise.all([
         supabase.from('user_profiles').select('full_name').eq('id', user.id).maybeSingle(),
-        supabase.from('gmail_connections').select('id').eq('user_id', user.id).eq('is_connected', true).maybeSingle(),
+        supabase.from('gmail_connections').select('id').ilike('email_address', targetMailbox).eq('is_connected', true).limit(1).maybeSingle(),
       ]);
       const fullName = profileRes.data?.full_name || '';
       setCurrentUserName(fullName);
@@ -331,7 +336,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       .order('created_at', { ascending: false });
     const docs = (data || []) as unknown as CrmDoc[];
     setCrmDocs(docs);
-    if (mode === 'price' || mode === 'coa' || mode === 'india') {
+    if (mode === 'price' || mode === 'coa' || mode === 'india' || mode === 'china') {
       setSelectedCrmDocs(new Set(docs.map(doc => doc.id)));
     }
     setCrmDocsLoading(false);
@@ -347,13 +352,20 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     }
   };
 
-  const generateBody = (emailMode: 'price' | 'coa' | 'general' | 'india', userName = currentUserName, docs: CrmDoc[] = crmDocs) => {
+  const generateBody = (emailMode: 'price' | 'coa' | 'general' | 'india' | 'china', userName = currentUserName, docs: CrmDoc[] = crmDocs) => {
     const salutation = `<p>${escapeHtml(getSalutation(inquiry.contact_person))}</p>`;
     const signature = buildCompanySignature(userName, companyCo);
 
     if (emailMode === 'india') {
       const html = buildIndiaRfqEmail(allInquiries, companyCo);
       logEmailHtmlEvidence('Generated India email HTML', html, { mode: emailMode, inquiryIds: allInquiries.map(i => i.id) });
+      setBody(html);
+      return;
+    }
+
+    if (emailMode === 'china') {
+      const html = buildChinaRfqEmail(allInquiries, companyCo);
+      logEmailHtmlEvidence('Generated China email HTML', html, { mode: emailMode, inquiryIds: allInquiries.map(i => i.id) });
       setBody(html);
       return;
     }
@@ -545,22 +557,23 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
         selectedCrmDocIds: selectedDocList.map(doc => doc.id),
       });
 
-      // 3. Send via Gmail
-      const isIndiaMode = mode === 'india';
+      // 3. Send via Gmail — fixed sender based on module purpose:
+      // Customer: sales@avira.co.id (with sales@sapharmajaya.co.id supported)
+      // Supplier: kunal@avira.co.id
+      const isSupplierRoute = mode === 'india' || mode === 'china';
+      const senderMailbox = isSupplierRoute ? 'kunal@avira.co.id' : 'sales@avira.co.id';
       const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
         body: {
-          ...(isIndiaMode
+          ...(isSupplierRoute
             ? {
                 requiredSenderEmail: 'kunal@avira.co.id',
                 replyTo: 'kunal@avira.co.id',
-                workflowType: 'india_pricing',
+                workflowType: mode === 'india' ? 'india_pricing' : 'supplier_pricing',
               }
             : {
-                userId: user.id,
-                requiredSenderEmail: 'sales@sapharmajaya.co.id',
-                replyTo: 'sales@sapharmajaya.co.id',
+                requiredSenderEmail: 'sales@avira.co.id',
+                replyTo: 'sales@avira.co.id',
                 workflowType: mode === 'price' ? 'customer_quote' : 'crm_bulk_email',
-                allowFallback: true,
               }),
           toEmails: toList,
           cc: ccList,
@@ -570,6 +583,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
           isHtml: true,
           senderName: currentUserName,
           attachmentUrls,
+          threadId: replyTo?.threadId || undefined,
         },
       });
 
@@ -621,7 +635,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
         const { data: activityData, error: activityError } = await supabase.from('crm_email_activities').insert([{
           inquiry_id: inq.id,
           email_type: 'sent',
-          from_email: isIndiaMode ? 'kunal@avira.co.id' : 'sales@sapharmajaya.co.id',
+          from_email: senderMailbox,
           to_email: toList,
           cc_email: ccList.length > 0 ? ccList : null,
           bcc_email: bccList.length > 0 ? bccList : null,
@@ -663,7 +677,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       const timelineRows = allInquiries.map(inq => ({
         inquiry_id: inq.id,
         event_type: 'email_sent',
-        event_title: mode === 'price' ? 'Quotation email sent' : mode === 'coa' ? 'COA/MSDS email sent' : mode === 'india' ? 'Sent To India' : 'Email sent',
+        event_title: mode === 'price' ? 'Quotation email sent' : mode === 'coa' ? 'COA/MSDS email sent' : mode === 'india' ? 'Sent To India' : mode === 'china' ? 'Sent To China Team' : 'Email sent',
         event_description: `Subject: ${subject}`,
         old_value: beforeWorkflowRows.find(row => row.id === inq.id)?.quote_status || 'not_sent',
         new_value: mode === 'price' ? 'sent' : null,
@@ -677,7 +691,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       const activityLogRows = allInquiries.map(inq => ({
         inquiry_id: inq.id,
         activity_type: 'email_sent',
-        activity_title: mode === 'price' ? 'Quotation email sent' : mode === 'coa' ? 'COA/MSDS email sent' : mode === 'india' ? 'Sent To India' : 'Email sent',
+        activity_title: mode === 'price' ? 'Quotation email sent' : mode === 'coa' ? 'COA/MSDS email sent' : mode === 'india' ? 'Sent To India' : mode === 'china' ? 'Sent To China Team' : 'Email sent',
         activity_description: `Subject: ${subject}`,
         activity_date: quoteSentAt,
         attachments: allAttachmentPaths.length > 0 ? allAttachmentPaths : null,
@@ -704,6 +718,14 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
           updateData.sent_to_india = true;
           updateData.sent_to_india_at = quoteSentAt;
           updateData.sent_to_india_by = user.id;
+          updateData.last_sourcing_sent_at = quoteSentAt;
+          updateData.source_status = 'waiting_supplier';
+        } else if (mode === 'china') {
+          updateData.sent_to_china = true;
+          updateData.sent_to_china_at = quoteSentAt;
+          updateData.sent_to_china_by = user.id;
+          updateData.last_sourcing_sent_at = quoteSentAt;
+          updateData.source_status = 'waiting_supplier';
         }
         if (shouldMarkCoaSent) {
           updateData.coa_sent = true;
@@ -738,7 +760,18 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
   if (!isOpen) return null;
 
   const isMulti = allInquiries.length > 1;
-  const modeLabel = mode === 'price' ? 'Send Price Quotation' : mode === 'coa' ? 'Send COA / MSDS' : mode === 'india' ? 'Send To India' : 'New Message';
+  const modeLabel =
+    mode === 'price'
+      ? 'Send Price Quotation'
+      : mode === 'coa'
+      ? 'Send COA / MSDS'
+      : mode === 'india'
+      ? 'Send Email to India'
+      : mode === 'china'
+      ? 'Send Email to China Team'
+      : 'New Message';
+  const isSupplierMode = mode === 'india' || mode === 'china';
+  const displaySender = isSupplierMode ? 'kunal@avira.co.id' : 'sales@avira.co.id';
   const windowCls = fullscreen
     ? 'fixed inset-4 z-50 flex flex-col bg-white rounded-xl shadow-2xl border border-gray-200'
     : 'fixed bottom-0 right-6 z-50 flex flex-col bg-white rounded-t-xl shadow-2xl border border-gray-200 w-[620px]';
@@ -822,6 +855,14 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
                 </div>
               </div>
             )}
+
+            {/* Sender identity indicator (non-editable) */}
+            <div className="flex items-center justify-between px-4 py-1.5 bg-gray-50/80 border-b border-gray-100 text-xs">
+              <span className="text-gray-500 font-medium">From:</span>
+              <span className="font-mono text-gray-700 bg-white border border-gray-200 px-2 py-0.5 rounded select-none text-[11px]">
+                Sending from: {displaySender}
+              </span>
+            </div>
 
             {/* Fields */}
             <div className="border-b border-gray-100">

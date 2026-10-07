@@ -196,7 +196,7 @@ Deno.serve(async (req: Request) => {
               "X-Bulk-Email-Worker-Secret": workerSecret,
             },
             body: JSON.stringify({
-              userId: campaign.created_by,
+              requiredSenderEmail: "sales@sapharmajaya.co.id",
               toEmails,
               subject,
               body: htmlBody,

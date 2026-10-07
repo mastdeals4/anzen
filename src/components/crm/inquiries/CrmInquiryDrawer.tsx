@@ -398,7 +398,25 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
         if (!res.success) throw new Error(res.error || 'Failed to dispatch WhatsApp');
         showToast({ type: 'success', title: 'WhatsApp Sent', message: 'Reply sent via WhatsApp' });
       } else {
-        showToast({ type: 'success', title: 'Email Sent', message: `Reply dispatched to ${inquiry.contact_email || inquiry.company_name}` });
+        if (!inquiry.contact_email) {
+          throw new Error('Inquiry has no contact email to reply to.');
+        }
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
+          body: {
+            requiredSenderEmail: 'sales@sapharmajaya.co.id',
+            replyTo: 'sales@sapharmajaya.co.id',
+            workflowType: 'customer_quote',
+            toEmails: [inquiry.contact_email],
+            subject: `Re: Inquiry ${inquiry.inquiry_number} - ${inquiry.product_name || ''}`,
+            body: replyText.trim().replace(/\n/g, '<br/>'),
+            isHtml: true,
+            inquiryId: inquiry.id,
+          },
+        });
+        if (fnErr || !fnData?.success) {
+          throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
+        }
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply dispatched from sales@sapharmajaya.co.id to ${inquiry.contact_email}` });
       }
       setReplyText('');
       loadInquiryDetails(inquiry.id);
@@ -841,7 +859,12 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
               <div className="bg-white border border-gray-200 rounded-lg p-3 space-y-2 mt-4">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-xs text-gray-900">Reply to Inquiry</span>
-                  <div className="flex items-center gap-1 text-[11px]">
+                  <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                    {replyChannel === 'email' && (
+                      <span className="text-[10px] font-mono text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded select-none">
+                        Sending from: sales@sapharmajaya.co.id
+                      </span>
+                    )}
                     <button
                       onClick={() => setReplyChannel('email')}
                       className={`px-2 py-0.5 rounded cursor-pointer ${replyChannel === 'email' ? 'bg-blue-600 text-white font-bold' : 'text-gray-600 hover:bg-gray-100'}`}

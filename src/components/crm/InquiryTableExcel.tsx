@@ -20,6 +20,7 @@ import { showToast } from '../ToastNotification';
 import { MoneyInput } from '../MoneyInput';
 import { showConfirm } from '../ConfirmDialog';
 import { loadAllRouteRecipients, recipientConfigurationError } from '../../services/sourcingRecipients';
+import { deriveSourcingRoute, getOperationalStatus, calculateSourcingAging } from '../../utils/sourcingWorkflowStatus';
 
 interface InquiryItem {
   id: string;
@@ -175,7 +176,7 @@ export function InquiryTableExcel({
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [selectedInquiryForEmail, setSelectedInquiryForEmail] = useState<Inquiry | null>(null);
   const [selectedInquiriesForEmail, setSelectedInquiriesForEmail] = useState<Inquiry[]>([]);
-  const [emailMode, setEmailMode] = useState<'price' | 'coa' | 'general' | 'india'>('general');
+  const [emailMode, setEmailMode] = useState<'price' | 'coa' | 'general' | 'india' | 'china'>('general');
   const [indiaDefaultTo, setIndiaDefaultTo] = useState('');
   const [indiaDefaultCc, setIndiaDefaultCc] = useState('');
   const [logCallModalOpen, setLogCallModalOpen] = useState(false);
@@ -1494,38 +1495,23 @@ export function InquiryTableExcel({
     setEmailModalOpen(true);
   };
 
-  const handleSendToIndia = async () => {
-    const selected = filteredData.filter(i => selectedRows.has(i.id));
-    if (!selected.length) return;
-
-    const missing = selected.filter(i => !i.aceerp_no);
-    if (missing.length > 0) {
-      showToast({
-        type: 'error',
-        title: 'Missing ACE ERP Reference',
-        message: `ACE ERP Reference Number is required for: ${missing.map(i => i.inquiry_number).join(', ')}`,
-      });
-      return;
-    }
-
-    // Expand multi-product inquiries into flat product rows for the email table.
+  const expandInquiriesForEmail = async (items: Inquiry[]): Promise<Inquiry[]> => {
     const expandedRows: Inquiry[] = [];
-    for (const inq of selected) {
+    for (const inq of items) {
       if (inq.has_items) {
-        let items = inquiryItems.get(inq.id);
-        if (!items) {
+        let childItems = inquiryItems.get(inq.id);
+        if (!childItems) {
           const { data } = await supabase
             .from('crm_inquiry_items')
             .select('*')
             .eq('parent_inquiry_id', inq.id)
             .order('inquiry_number', { ascending: true });
-          items = data || [];
+          childItems = data || [];
         }
-        if (items.length > 0) {
-          for (const item of items) {
+        if (childItems.length > 0) {
+          for (const item of childItems) {
             expandedRows.push({
               ...inq,
-              // Override product-level fields from the child item
               product_name: item.product_name,
               specification: item.specification ?? inq.specification,
               quantity: item.quantity,
@@ -1542,7 +1528,35 @@ export function InquiryTableExcel({
         expandedRows.push(inq);
       }
     }
+    return expandedRows;
+  };
 
+  const handleSendToIndia = async () => {
+    const selected = filteredData.filter(i => selectedRows.has(i.id));
+    if (!selected.length) return;
+
+    // Filter to only India-route inquiries
+    const indiaSelected = selected.filter(i => deriveSourcingRoute(i) === 'india');
+    if (indiaSelected.length === 0) {
+      showToast({
+        type: 'error',
+        title: 'No India Route Selected',
+        message: 'None of the selected inquiries are routed to India.',
+      });
+      return;
+    }
+
+    const missing = indiaSelected.filter(i => !i.aceerp_no);
+    if (missing.length > 0) {
+      showToast({
+        type: 'error',
+        title: 'Missing ACE ERP Reference',
+        message: `ACE ERP Reference Number is required for: ${missing.map(i => i.inquiry_number).join(', ')}`,
+      });
+      return;
+    }
+
+    const expandedRows = await expandInquiriesForEmail(indiaSelected);
     const recipients = (await loadAllRouteRecipients()).india;
     if (recipients.to.length === 0) {
       showToast({
@@ -1552,11 +1566,56 @@ export function InquiryTableExcel({
       });
       return;
     }
-    setSelectedInquiryForEmail(selected[0]);
+
+    setSelectedInquiryForEmail(indiaSelected[0]);
+    setSelectedInquiriesForEmail(expandedRows);
+    setIndiaDefaultTo(recipients.to.join(', '));
+    setIndiaDefaultCc(recipients.cc.length > 0 ? recipients.cc.join(', ') : 'devansh@shubham.co.in');
+    setEmailMode('india');
+    setEmailModalOpen(true);
+  };
+
+  const handleSendToChina = async () => {
+    const selected = filteredData.filter(i => selectedRows.has(i.id));
+    if (!selected.length) return;
+
+    // Filter to only China-route inquiries
+    const chinaSelected = selected.filter(i => deriveSourcingRoute(i) === 'china');
+    if (chinaSelected.length === 0) {
+      showToast({
+        type: 'error',
+        title: 'No China Route Selected',
+        message: 'None of the selected inquiries are routed to China.',
+      });
+      return;
+    }
+
+    const missing = chinaSelected.filter(i => !i.aceerp_no);
+    if (missing.length > 0) {
+      showToast({
+        type: 'error',
+        title: 'Missing ACE ERP Reference',
+        message: `ACE ERP Reference Number is required for: ${missing.map(i => i.inquiry_number).join(', ')}`,
+      });
+      return;
+    }
+
+    const expandedRows = await expandInquiriesForEmail(chinaSelected);
+    const recipients = (await loadAllRouteRecipients()).china;
+    if (recipients.to.length === 0) {
+      showToast({
+        type: 'error',
+        title: 'Send To China Team unavailable',
+        message: recipientConfigurationError('china'),
+      });
+      return;
+    }
+
+    setSelectedInquiryForEmail(chinaSelected[0]);
     setSelectedInquiriesForEmail(expandedRows);
     setIndiaDefaultTo(recipients.to.join(', '));
     setIndiaDefaultCc(recipients.cc.join(', '));
-    setEmailMode('india');
+    setEmailMode('china');
     setEmailModalOpen(true);
   };
 
@@ -1969,10 +2028,18 @@ export function InquiryTableExcel({
               <button
                 onClick={handleSendToIndia}
                 disabled={!allHaveAceRef}
-                title={allHaveAceRef ? 'Send To India' : 'ACE ERP Reference Number required'}
+                title={allHaveAceRef ? 'Send Email to India' : 'ACE ERP Reference Number required'}
                 className={`${btn} ${allHaveAceRef ? 'text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100' : 'text-gray-400 bg-gray-50 border-gray-200 cursor-not-allowed opacity-60'}`}
               >
-                <Upload className="w-3 h-3" /> To India
+                <Upload className="w-3 h-3" /> Send Email to India
+              </button>
+              <button
+                onClick={handleSendToChina}
+                disabled={!allHaveAceRef}
+                title={allHaveAceRef ? 'Send Email to China Team' : 'ACE ERP Reference Number required'}
+                className={`${btn} ${allHaveAceRef ? 'text-red-700 bg-red-50 border-red-200 hover:bg-red-100' : 'text-gray-400 bg-gray-50 border-gray-200 cursor-not-allowed opacity-60'}`}
+              >
+                <Upload className="w-3 h-3" /> Send Email to China Team
               </button>
               <button onClick={handleLogCall} title="Log Call"
                 className={`${btn} text-gray-700 bg-white border-gray-300 hover:bg-gray-50`}>
@@ -2756,15 +2823,38 @@ export function InquiryTableExcel({
                     {/* Pending / Next Action */}
                     {isColumnVisible('status_next') && <td className="px-3 py-1.5 border-r border-gray-200">
                       {(() => {
+                        const opStatus = getOperationalStatus(inquiry as any);
+                        const aging = calculateSourcingAging(inquiry as any);
                         const pending = getPendingAction(inquiry);
                         const docTypes = getInquiryDocTypeLabels(inquiry);
                         return (
                           <div className="space-y-1" title={workflowTooltip(inquiry)}>
-                            <span
-                              className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 whitespace-nowrap ${getToneBadgeClass(pending.tone)}`}
-                            >
-                              {pending.label}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span
+                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-4 whitespace-nowrap ${opStatus.badgeClass}`}
+                              >
+                                {opStatus.label}
+                              </span>
+                              {aging.hasStarted && (
+                                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border ${
+                                  aging.isOverdue ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'
+                                }`}>
+                                  {aging.formattedAging}
+                                </span>
+                              )}
+                            </div>
+                            {opStatus.priceBadge && (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className={`inline-flex items-center rounded px-1.5 py-0.2 text-[10px] font-medium border ${opStatus.priceBadge.className}`}>
+                                  {opStatus.priceBadge.label}
+                                </span>
+                                {opStatus.coaBadge && (
+                                  <span className={`inline-flex items-center rounded px-1.5 py-0.2 text-[10px] font-medium border ${opStatus.coaBadge.className}`}>
+                                    {opStatus.coaBadge.label}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                             {docTypes.length > 0 && (
                               <div className="flex flex-wrap gap-1">
                                 {docTypes.map(type => (
@@ -2979,12 +3069,12 @@ export function InquiryTableExcel({
           }}
           inquiry={selectedInquiryForEmail}
           inquiries={
-            emailMode === 'india'
+            emailMode === 'india' || emailMode === 'china'
               ? (selectedInquiriesForEmail.length > 0 ? selectedInquiriesForEmail : undefined)
               : (selectedInquiriesForEmail.length > 1 ? selectedInquiriesForEmail : undefined)
           }
           mode={emailMode}
-          defaultTo={emailMode === 'india' ? indiaDefaultTo : undefined}
+          defaultTo={(emailMode === 'india' || emailMode === 'china') ? indiaDefaultTo : undefined}
           defaultCc={emailMode === 'india' ? indiaDefaultCc : undefined}
         />
       )}

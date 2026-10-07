@@ -12,6 +12,12 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
+import { isHistoricalInquiry, getOperationalStatus, WORKFLOW_CUTOVER_DATE } from '../../../utils/sourcingWorkflowStatus';
+import { CustomerFollowUpModal } from '../CustomerFollowUpModal';
+import { BarChart3, Archive, Send, CheckCircle2, History } from 'lucide-react';
+
+export type StageTab = 'active' | 'price_submitted' | 'closed' | 'archive';
+
 export type InquiryFilter =
   | 'all'
   | 'needs_action'
@@ -204,10 +210,78 @@ export function CrmInquiriesWorkspace({
     }
   };
 
+  const [stageTab, setStageTab] = useState<StageTab>('active');
+  const [followUpInquiry, setFollowUpInquiry] = useState<InquiryRow | null>(null);
+
+  // Historical Analytics (for inquiries created before 20 September 2026)
+  const historicalMetrics = useMemo(() => {
+    const hist = inquiries.filter(i => isHistoricalInquiry(i as any));
+    const uniqueProducts = new Set(hist.map(i => (i.product_name || '').trim().toLowerCase()).filter(Boolean));
+    const uniqueCustomers = new Set(hist.map(i => (i.company_name || '').trim().toLowerCase()).filter(Boolean));
+    const quotedCount = hist.filter(i => Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted').length;
+    return {
+      total: hist.length,
+      productsCount: uniqueProducts.size,
+      customersCount: uniqueCustomers.size,
+      quotedCount,
+    };
+  }, [inquiries]);
+
+  // Stage tab item counts
+  const stageCounts = useMemo(() => {
+    let active = 0;
+    let priceSubmitted = 0;
+    let closed = 0;
+    let archive = 0;
+
+    for (const inq of inquiries) {
+      if (isHistoricalInquiry(inq as any)) {
+        archive++;
+        continue;
+      }
+      const stage = (inq.pipeline_status || inq.status || '').toLowerCase();
+      if (stage === 'won' || stage === 'lost' || stage === 'closed') {
+        closed++;
+      } else if (stage === 'quoted' || stage === 'price_submitted' || Boolean(inq.quote_sent_at)) {
+        priceSubmitted++;
+      } else {
+        active++;
+      }
+    }
+    return { active, priceSubmitted, closed, archive };
+  }, [inquiries]);
+
   const filteredInquiries = useMemo(() => {
     let list = inquiries;
 
-    // Search query
+    // 1. Stage tab partition
+    if (stageTab === 'archive') {
+      list = list.filter(i => isHistoricalInquiry(i as any));
+    } else if (stageTab === 'active') {
+      list = list.filter(i => {
+        if (isHistoricalInquiry(i as any)) return false;
+        const stage = (i.pipeline_status || i.status || '').toLowerCase();
+        const isQuoted = stage === 'quoted' || stage === 'price_submitted' || Boolean(i.quote_sent_at);
+        const isClosed = stage === 'won' || stage === 'lost' || stage === 'closed';
+        return !isQuoted && !isClosed;
+      });
+    } else if (stageTab === 'price_submitted') {
+      list = list.filter(i => {
+        if (isHistoricalInquiry(i as any)) return false;
+        const stage = (i.pipeline_status || i.status || '').toLowerCase();
+        const isQuoted = stage === 'quoted' || stage === 'price_submitted' || Boolean(i.quote_sent_at);
+        const isClosed = stage === 'won' || stage === 'lost' || stage === 'closed';
+        return isQuoted && !isClosed;
+      });
+    } else if (stageTab === 'closed') {
+      list = list.filter(i => {
+        if (isHistoricalInquiry(i as any)) return false;
+        const stage = (i.pipeline_status || i.status || '').toLowerCase();
+        return stage === 'won' || stage === 'lost' || stage === 'closed';
+      });
+    }
+
+    // 2. Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       list = list.filter(
@@ -220,21 +294,20 @@ export function CrmInquiriesWorkspace({
       );
     }
 
-    // Quick filters
+    // 3. Quick filters (within stage)
     switch (quickFilter) {
       case 'needs_action':
         list = list.filter((i) => i.genuinelyNeedsAction);
         break;
       case 'waiting_customer':
-        list = list.filter((i) => i.waitingFor === 'Customer' && !i.is_archived);
+        list = list.filter((i) => i.waitingFor === 'Customer');
         break;
       case 'waiting_supplier':
-        list = list.filter((i) => i.waitingFor === 'Supplier' && !i.is_archived);
+        list = list.filter((i) => i.waitingFor === 'Supplier');
         break;
       case 'needs_sourcing':
         list = list.filter(
           (i) =>
-            !i.is_archived &&
             ((i.pipeline_status || i.status || '').toLowerCase() === 'new' ||
               i.source_status === 'needs_sourcing' ||
               (!i.supplier_name && !i.purchase_price))
@@ -242,23 +315,17 @@ export function CrmInquiriesWorkspace({
         break;
       case 'price_ready':
         list = list.filter(
-          (i) =>
-            !i.is_archived &&
-            (i.price_ready === true || i.kunal_price_status === 'price_received')
+          (i) => i.price_ready === true || i.kunal_price_status === 'price_received'
         );
         break;
       case 'quote_sent':
         list = list.filter(
-          (i) =>
-            !i.is_archived &&
-            (Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted')
+          (i) => Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted'
         );
         break;
       case 'needs_review':
         list = list.filter(
-          (i) =>
-            !i.is_archived &&
-            (i.kunal_price_status === 'needs_review' || i.status === 'needs_review')
+          (i) => i.kunal_price_status === 'needs_review' || i.status === 'needs_review'
         );
         break;
       case 'archived':
@@ -266,13 +333,11 @@ export function CrmInquiriesWorkspace({
         break;
       case 'all':
       default:
-        // Do not show archived in 'all' by default unless explicit filter
-        list = list.filter((i) => !i.is_archived);
         break;
     }
 
     return list;
-  }, [inquiries, searchQuery, quickFilter]);
+  }, [inquiries, searchQuery, quickFilter, stageTab]);
 
   const handleOpenInquiryDrawer = (inq: any) => {
     const fullInq = inquiries.find((i) => i.id === inq.id) || inq;
@@ -347,19 +412,121 @@ export function CrmInquiriesWorkspace({
         </div>
       </div>
 
+      {/* Stage-Based Workflow Navigation Tabs */}
+      <div className="flex items-center gap-1.5 border-b border-gray-200 pb-2 text-xs font-medium">
+        <button
+          onClick={() => setStageTab('active')}
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
+            stageTab === 'active'
+              ? 'bg-blue-600 text-white shadow-sm font-semibold'
+              : 'text-gray-700 hover:bg-gray-100'
+          }`}
+        >
+          <span>Active Inquiries</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+            stageTab === 'active' ? 'bg-blue-800 text-white' : 'bg-gray-200 text-gray-700'
+          }`}>
+            {stageCounts.active}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setStageTab('price_submitted')}
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
+            stageTab === 'price_submitted'
+              ? 'bg-emerald-600 text-white shadow-sm font-semibold'
+              : 'text-gray-700 hover:bg-gray-100'
+          }`}
+        >
+          <Send className="w-3.5 h-3.5" />
+          <span>Price Submitted (Customer Follow-up)</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+            stageTab === 'price_submitted' ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800'
+          }`}>
+            {stageCounts.priceSubmitted}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setStageTab('closed')}
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
+            stageTab === 'closed'
+              ? 'bg-gray-800 text-white shadow-sm font-semibold'
+              : 'text-gray-700 hover:bg-gray-100'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>Closed (Won / Lost)</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+            stageTab === 'closed' ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-700'
+          }`}>
+            {stageCounts.closed}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setStageTab('archive')}
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
+            stageTab === 'archive'
+              ? 'bg-amber-700 text-white shadow-sm font-semibold'
+              : 'text-amber-800 hover:bg-amber-50'
+          }`}
+        >
+          <Archive className="w-3.5 h-3.5" />
+          <span>Archive / Historical Inquiries (&lt; 20 Sep 2026)</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+            stageTab === 'archive' ? 'bg-amber-900 text-white' : 'bg-amber-100 text-amber-800'
+          }`}>
+            {stageCounts.archive}
+          </span>
+        </button>
+      </div>
+
+      {/* Historical Inquiries Analysis Banner (when Archive tab is selected) */}
+      {stageTab === 'archive' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-amber-900 font-semibold">
+              <History className="w-4 h-4 text-amber-700" />
+              <span>Historical Inquiries Archive (Preserved Prior to 20 September 2026)</span>
+            </div>
+            <span className="text-[11px] text-amber-700 bg-white px-2 py-0.5 rounded border border-amber-200">
+              Cutover Date: 20 Sep 2026 · Immutable Historical Archive
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+            <div className="bg-white p-2 rounded border border-amber-200">
+              <div className="text-[10px] text-gray-500 uppercase font-medium">Total Historical Records</div>
+              <div className="text-base font-bold text-gray-900">{historicalMetrics.total}</div>
+            </div>
+            <div className="bg-white p-2 rounded border border-amber-200">
+              <div className="text-[10px] text-gray-500 uppercase font-medium">Unique Products</div>
+              <div className="text-base font-bold text-amber-800">{historicalMetrics.productsCount}</div>
+            </div>
+            <div className="bg-white p-2 rounded border border-amber-200">
+              <div className="text-[10px] text-gray-500 uppercase font-medium">Unique Customers</div>
+              <div className="text-base font-bold text-blue-800">{historicalMetrics.customersCount}</div>
+            </div>
+            <div className="bg-white p-2 rounded border border-amber-200">
+              <div className="text-[10px] text-gray-500 uppercase font-medium">Prices Submitted</div>
+              <div className="text-base font-bold text-emerald-800">{historicalMetrics.quotedCount}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Quick Filters */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
         {(
           [
-            ['all', `All (${inquiries.filter((i) => !i.is_archived).length})`],
-            ['needs_action', `⚡ Needs Action (${inquiries.filter((i) => i.genuinelyNeedsAction).length})`],
-            ['waiting_customer', `Waiting Customer (${inquiries.filter((i) => i.waitingFor === 'Customer' && !i.is_archived).length})`],
-            ['waiting_supplier', `Waiting Supplier (${inquiries.filter((i) => i.waitingFor === 'Supplier' && !i.is_archived).length})`],
-            ['needs_sourcing', `Needs Sourcing (${inquiries.filter((i) => !i.is_archived && ((i.pipeline_status || i.status || '').toLowerCase() === 'new' || i.source_status === 'needs_sourcing' || (!i.supplier_name && !i.purchase_price))).length})`],
-            ['price_ready', `Price Ready (${inquiries.filter((i) => !i.is_archived && (i.price_ready === true || i.kunal_price_status === 'price_received')).length})`],
-            ['quote_sent', `Quote Sent (${inquiries.filter((i) => !i.is_archived && (Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted')).length})`],
-            ['needs_review', `Needs Review (${inquiries.filter((i) => !i.is_archived && (i.kunal_price_status === 'needs_review' || i.status === 'needs_review')).length})`],
-            ['archived', `Archived (${inquiries.filter((i) => i.is_archived).length})`],
+            ['all', `All in Stage (${filteredInquiries.length})`],
+            ['needs_action', `⚡ Needs Action (${filteredInquiries.filter((i) => i.genuinelyNeedsAction).length})`],
+            ['waiting_customer', `Waiting Customer (${filteredInquiries.filter((i) => i.waitingFor === 'Customer').length})`],
+            ['waiting_supplier', `Waiting Supplier (${filteredInquiries.filter((i) => i.waitingFor === 'Supplier').length})`],
+            ['needs_sourcing', `Needs Sourcing (${filteredInquiries.filter((i) => ((i.pipeline_status || i.status || '').toLowerCase() === 'new' || i.source_status === 'needs_sourcing' || (!i.supplier_name && !i.purchase_price))).length})`],
+            ['price_ready', `Price Ready (${filteredInquiries.filter((i) => (i.price_ready === true || i.kunal_price_status === 'price_received')).length})`],
+            ['quote_sent', `Quote Sent (${filteredInquiries.filter((i) => (Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted')).length})`],
+            ['needs_review', `Needs Review (${filteredInquiries.filter((i) => (i.kunal_price_status === 'needs_review' || i.status === 'needs_review')).length})`],
           ] as const
         ).map(([key, label]) => {
           const isSelected = quickFilter === key;
@@ -422,6 +589,16 @@ export function CrmInquiriesWorkspace({
           onOpenCustomer?.(cid);
         }}
       />
+
+      {/* Customer Follow-up Modal for Price Submitted stage */}
+      {followUpInquiry && (
+        <CustomerFollowUpModal
+          isOpen={Boolean(followUpInquiry)}
+          onClose={() => setFollowUpInquiry(null)}
+          inquiry={followUpInquiry as any}
+          onRefresh={loadInquiries}
+        />
+      )}
     </div>
   );
 }
