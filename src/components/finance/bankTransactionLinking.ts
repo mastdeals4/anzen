@@ -69,6 +69,7 @@ export function bankStatementLineAmount(debit?: number | null, credit?: number |
 
 /**
  * Linked / partial / unlinked from bank_statement_allocations or direct confirmed recorded entry.
+ * Legacy matched_* FKs, reconciliation_status, and manually_unlinked are ignored.
  */
 export function canonicalBankReconciliationStatus(
   bankAmount: number,

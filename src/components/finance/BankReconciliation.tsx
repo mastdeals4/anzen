@@ -146,13 +146,10 @@ export function BankReconciliation({ canManage }: BankReconciliationProps) {
             created_by: user?.id,
           }));
 
-          // Insert transactions, skip duplicates based on transaction_hash
+          // Insert statement transactions safely
           const { data: inserted, error } = await supabase
             .from('bank_statement_lines')
-            .upsert(insertData, {
-              onConflict: 'transaction_hash',
-              ignoreDuplicates: true
-            })
+            .insert(insertData)
             .select();
 
           if (error) {

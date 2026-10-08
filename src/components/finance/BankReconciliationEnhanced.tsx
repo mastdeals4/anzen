@@ -64,6 +64,8 @@ interface BankAccount {
   account_number: string;
   currency: string;
   alias: string | null;
+  opening_balance?: number;
+  opening_balance_date?: string | null;
 }
 
 interface DirectorLoanLedgerAccount {
@@ -284,6 +286,11 @@ export function BankReconciliationEnhanced({
     try { return localStorage.getItem('bank_recon_selected_bank') || ''; } catch { return ''; }
   });
   const [selectedAccount, setSelectedAccount] = useState<BankAccount | null>(null);
+  const [accountBalances, setAccountBalances] = useState<{
+    statementBalance: number;
+    bookBalance: number;
+    difference: number;
+  } | null>(null);
   const [statementLines, setStatementLines] = useState<StatementLine[]>([]);
   const [loading, setLoading] = useState(false);
   // Keep a failed read distinct from a successful empty result.  Collapsing
@@ -611,6 +618,7 @@ export function BankReconciliationEnhanced({
     if (selectedBank) {
       const account = bankAccounts.find(b => b.id === selectedBank);
       setSelectedAccount(account || null);
+      void loadAccountBalances();
     }
   }, [selectedBank, bankAccounts]);
 
@@ -620,12 +628,36 @@ export function BankReconciliationEnhanced({
     }
   }, [selectedBank, financeDateRange]);
 
+  const loadAccountBalances = async () => {
+    if (!selectedBank) return;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data, error } = await supabase
+        .rpc('get_bank_account_balances', { p_as_of_date: today });
+      if (!error && data) {
+        const row = (data as any[]).find((b: any) => b.bank_account_id === selectedBank);
+        if (row) {
+          const stmtBal = Number(row.statement_balance ?? 0);
+          const bookBal = Number(row.book_balance ?? 0);
+          setAccountBalances({
+            statementBalance: stmtBal,
+            bookBalance: bookBal,
+            difference: stmtBal - bookBal,
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching bank account balances:', err);
+    }
+  };
+
   const loadBankAccounts = async () => {
     setStatementLoadError(null);
     try {
       const { data, error } = await supabase
         .from('bank_accounts')
-        .select('id, account_name, bank_name, account_number, currency, alias')
+        .select('id, account_name, bank_name, account_number, currency, alias, opening_balance, opening_balance_date')
         .eq('is_active', true)
         .order('account_name');
       if (error) throw error;
@@ -785,7 +817,7 @@ export function BankReconciliationEnhanced({
       ])];
       const taxPaymentIds = idsFor('tax_payment', data.map(r => r.matched_tax_payment_id));
 
-      // Batch load all expenses with optimized projections:
+      // Batch load all expenses with optimized projections: loadBankReconciliationRowsInBatches<any>(expenseIds
       // Rich relations are only loaded for suggested matches (for review modal),
       // while bulk historical matches load lightweight fields.
       const expenseMap = new Map();
@@ -913,7 +945,10 @@ export function BankReconciliationEnhanced({
           ? 'suggested'
           : isDirectRecorded
             ? 'recorded'
-            : canonicalBankReconciliationStatus(bankAmount, allocatedAmount);
+            : (() => {
+                const status = canonicalBankReconciliationStatus(bankAmount, allocatedAmount);
+                return status;
+              })();
         const firstExpense = allocations.find(a => a.document_type === 'expense');
         const firstReceipt = allocations.find(a => a.document_type === 'receipt');
         const firstPayment = allocations.find(a => a.document_type === 'payment');
@@ -1031,6 +1066,7 @@ export function BankReconciliationEnhanced({
 
       if (currentRequestId === loadingRequestIdRef.current) {
         setStatementLines(lines);
+        void loadAccountBalances();
       }
     } catch (err: any) {
       if (currentRequestId === loadingRequestIdRef.current) {
@@ -1289,27 +1325,27 @@ export function BankReconciliationEnhanced({
             created_by: user?.id,
           }));
 
-          // Check for existing transactions using hash-equivalent matching (date + amounts + normalized description)
+          // Check for existing transactions using hash-equivalent matching (date + amounts + normalized full description + reference)
           const normalizeDesc = (desc: string) =>
-            desc.toLowerCase().replace(/\s+/g, ' ').trim().substring(0, 100);
+            desc.toLowerCase().replace(/\s+/g, ' ').trim();
 
           const { data: existingLines } = await supabase
             .from('bank_statement_lines')
-            .select('transaction_date, description, debit_amount, credit_amount')
+            .select('transaction_date, description, reference, debit_amount, credit_amount')
             .eq('bank_account_id', selectedBank);
 
           // Build keys with occurrence count to detect which exact occurrence already exists in DB
           // e.g. if "BIF BIAYA TXN 2500" appears 3x in DB, we skip the first 3 from CSV
           const dbKeyCounts = new Map<string, number>();
           (existingLines || []).forEach(e => {
-            const k = `${e.transaction_date}|${Number(e.debit_amount)||0}|${Number(e.credit_amount)||0}|${normalizeDesc(e.description||'')}`;
+            const k = `${e.transaction_date}|${Number(e.debit_amount)||0}|${Number(e.credit_amount)||0}|${(e.reference || '').trim().toLowerCase()}|${normalizeDesc(e.description||'')}`;
             dbKeyCounts.set(k, (dbKeyCounts.get(k) || 0) + 1);
           });
 
           const csvKeyCounts = new Map<string, number>();
           const skippedEntries: typeof insertData = [];
           const finalInsertData = insertData.filter(line => {
-            const key = `${line.transaction_date}|${Number(line.debit_amount)||0}|${Number(line.credit_amount)||0}|${normalizeDesc(line.description||'')}`;
+            const key = `${line.transaction_date}|${Number(line.debit_amount)||0}|${Number(line.credit_amount)||0}|${(line.reference || '').trim().toLowerCase()}|${normalizeDesc(line.description||'')}`;
             const csvOccurrence = csvKeyCounts.get(key) || 0;
             csvKeyCounts.set(key, csvOccurrence + 1);
             const dbCount = dbKeyCounts.get(key) || 0;
@@ -1330,13 +1366,12 @@ export function BankReconciliationEnhanced({
             return;
           }
 
-          // Stage 3: Insert statement lines
+          // Stage 3: Insert statement lines directly to preserve all legitimate lines
           let insertedCount = 0;
           try {
-            // Use upsert with ignoreDuplicates to safely handle any remaining hash collisions
             const { data: inserted, error: insertError } = await supabase
               .from('bank_statement_lines')
-              .upsert(finalInsertData, { onConflict: 'transaction_hash', ignoreDuplicates: true })
+              .insert(finalInsertData)
               .select();
 
             if (insertError) throw insertError;
@@ -1928,8 +1963,54 @@ export function BankReconciliationEnhanced({
         balance = parseIndonesianNumber(row[balanceCol]);
       }
 
-      const description = descCol >= 0 ? String(row[descCol] || '').trim() : '';
+      // Collect multi-column description and details (e.g. BCA statements where col 1 has
+      // generic "TRSF E-BANKING DB" and subsequent unassigned column has beneficiary/salary details)
+      const descParts: string[] = [];
+      if (descCol >= 0 && row[descCol] !== undefined && row[descCol] !== null) {
+        const primary = String(row[descCol] || '').trim();
+        if (primary) descParts.push(primary);
+      }
+
+      let extraRef = '';
+      for (let c = 0; c < row.length; c++) {
+        if (
+          c === descCol ||
+          c === dateCol ||
+          c === branchCol ||
+          c === debitCol ||
+          c === creditCol ||
+          c === amountCol ||
+          c === balanceCol
+        ) {
+          continue;
+        }
+
+        const cellVal = String(row[c] || '').trim();
+        if (!cellVal) continue;
+
+        // Skip standalone CR or DB indicator columns
+        if (/^(CR|DB)$/i.test(cellVal)) continue;
+
+        // Capture slip or account ref format (e.g. "0516990-0") if present
+        if (/^\d{6,10}-\d+$/.test(cellVal) && !extraRef) {
+          extraRef = cellVal;
+        }
+
+        descParts.push(cellVal);
+      }
+
+      const rawDescription = descParts.join(' ').replace(/\s+/g, ' ').trim();
       const branch = branchCol >= 0 ? String(row[branchCol] || '').trim() : '';
+
+      let reference = branch || extraRef;
+      if (!reference) {
+        const refMatch = rawDescription.match(/\b(\d{4}\/[A-Z0-9]+\/[A-Z0-9]+)\b/);
+        if (refMatch) {
+          reference = refMatch[1];
+        }
+      }
+
+      const description = rawDescription;
 
       const numDebit = Number(debit) || 0;
       const numCredit = Number(credit) || 0;
@@ -1945,7 +2026,7 @@ export function BankReconciliationEnhanced({
         id: `temp-${i}`,
         date: parsedDate,
         description,
-        reference: branch,
+        reference,
         debit: numDebit,
         credit: numCredit,
         balance,
@@ -2173,6 +2254,7 @@ export function BankReconciliationEnhanced({
       }
       const forceData = importResult.skippedEntries.map(entry => ({
         ...entry,
+        transaction_hash: `${(entry as any).transaction_hash || crypto.randomUUID()}_override_${Date.now()}`,
         notes: 'Force imported (duplicate override)',
       }));
       const { data: inserted, error } = await supabase
@@ -3626,7 +3708,7 @@ export function BankReconciliationEnhanced({
                 {selectedAccount.alias ? `${selectedAccount.alias} (${selectedAccount.account_number})` : `${selectedAccount.bank_name} - ${selectedAccount.account_number}`}
               </span>
             )}
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap items-center">
               <div className="bg-white/20 rounded px-2.5 py-1">
                 <div className="text-slate-200 text-[9px] leading-tight">Matched</div>
                 <div className="text-xs font-bold text-green-400">{stats.matched}</div>
@@ -3635,6 +3717,28 @@ export function BankReconciliationEnhanced({
                 <div className="text-slate-200 text-[9px] leading-tight">Unmatched</div>
                 <div className="text-xs font-bold text-red-400">{stats.unmatched}</div>
               </div>
+              {accountBalances && (
+                <>
+                  <div className="bg-white/20 rounded px-2.5 py-1" title="All imported bank statement transactions + opening balance">
+                    <div className="text-slate-200 text-[9px] leading-tight">Statement Balance</div>
+                    <div className="text-xs font-bold text-sky-300">
+                      {formatCurrency(accountBalances.statementBalance, selectedAccount?.currency)}
+                    </div>
+                  </div>
+                  <div className="bg-white/20 rounded px-2.5 py-1" title="General Ledger Book Balance">
+                    <div className="text-slate-200 text-[9px] leading-tight">Book Balance</div>
+                    <div className="text-xs font-bold text-slate-100">
+                      {formatCurrency(accountBalances.bookBalance, selectedAccount?.currency)}
+                    </div>
+                  </div>
+                  <div className={`rounded px-2.5 py-1 ${Math.abs(accountBalances.difference) < 0.01 ? 'bg-green-600/30 text-green-300' : 'bg-amber-600/30 text-amber-300'}`} title="Statement Balance minus Book Balance">
+                    <div className="text-slate-200 text-[9px] leading-tight">Difference</div>
+                    <div className="text-xs font-bold">
+                      {formatCurrency(accountBalances.difference, selectedAccount?.currency)}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-1.5">

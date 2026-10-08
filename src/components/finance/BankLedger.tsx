@@ -201,9 +201,9 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
         .lt('transaction_date', endDateStr)
         .order('transaction_date');
 
-      // transaction_hash is canonical for duplicate-upload suppression.  A
-      // statement transaction must appear once even when imported repeatedly.
-      const bankLines = Array.from(new Map((rawBankLines || []).map((line: any) => [line.transaction_hash || line.id, line])).values());
+      // bank_statement_lines has primary key id. Ensure distinct lines by id so legitimate
+      // repeated transactions (e.g. identical salary payments or fees) are never collapsed.
+      const bankLines = Array.from(new Map((rawBankLines || []).map((line: any) => [line.id, line])).values());
       if (bankLines) {
         bankLines.forEach(line => {
           entries.push({
