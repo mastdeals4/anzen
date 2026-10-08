@@ -1,5 +1,6 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { X, Printer, Download } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import { useLanguage } from '../contexts/LanguageContext';
 import { type CompanySnapshot } from '../types/company';
 import { useResolvedCompanyLogo, waitForImages } from '../utils/companyLogoUrl';
@@ -70,6 +71,42 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
   const { t, language } = useLanguage();
   const companySnapshot = companyProfile ?? invoice.company_snapshot;
   const { ready: logoReady } = useResolvedCompanyLogo(companySnapshot?.company_logo_url);
+
+  const [traceability, setTraceability] = useState<{
+    fakturPajakNumber: string | null;
+    materialReturns: Array<{ id: string; return_number: string; status: string; return_date: string }>;
+    creditNotes: Array<{ id: string; credit_note_number: string; status: string; total_amount: number }>;
+    notaReturs: Array<{ id: string; nota_retur_number: string; status: string; total_amount: number; coretax_status: string | null }>;
+  }>({
+    fakturPajakNumber: null,
+    materialReturns: [],
+    creditNotes: [],
+    notaReturs: [],
+  });
+
+  useEffect(() => {
+    if (!invoice?.id) return;
+    async function loadTraceability() {
+      try {
+        const [invRes, mrRes, cnRes, nrRes] = await Promise.all([
+          supabase.from('sales_invoices').select('faktur_pajak_number').eq('id', invoice.id).maybeSingle(),
+          supabase.from('material_returns').select('id, return_number, status, return_date').eq('original_invoice_id', invoice.id),
+          supabase.from('credit_notes').select('id, credit_note_number, status, total_amount').eq('original_invoice_id', invoice.id),
+          supabase.from('nota_retur').select('id, nota_retur_number, status, total_amount, coretax_status').eq('sales_invoice_id', invoice.id),
+        ]);
+
+        setTraceability({
+          fakturPajakNumber: invRes.data?.faktur_pajak_number || null,
+          materialReturns: (mrRes.data as any[]) || [],
+          creditNotes: (cnRes.data as any[]) || [],
+          notaReturs: (nrRes.data as any[]) || [],
+        });
+      } catch (e) {
+        console.error('Failed to load invoice traceability:', e);
+      }
+    }
+    void loadTraceability();
+  }, [invoice?.id]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -612,6 +649,85 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
                   <div className="text-xl font-bold text-green-900">{formatCurrency(invoice.subtotal - 0)}</div>
                   <div className="text-xs text-green-600 mt-1">
                     Margin: {(invoice.subtotal > 0 ? ((invoice.subtotal - 0) / invoice.subtotal * 100) : 0).toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Document Lifecycle & Return Traceability Flow */}
+              <div className="mt-5 bg-slate-50 border border-slate-200 rounded-lg p-3.5">
+                <div className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-2.5 flex items-center justify-between">
+                  <span>Document Lifecycle & Return Traceability</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Indonesian PPN / Coretax Compliance Chain</span>
+                </div>
+
+                <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 text-xs">
+                  {/* Original Invoice */}
+                  <div className="flex-1 bg-white border border-slate-300 rounded p-2 shadow-2xs">
+                    <div className="text-[10px] text-slate-500 uppercase font-semibold">1. Original Invoice</div>
+                    <div className="font-mono font-bold text-slate-900 mt-0.5">{invoice.invoice_number}</div>
+                    <div className="text-[11px] text-slate-600 mt-0.5">{formatCurrency(invoice.total_amount)}</div>
+                  </div>
+
+                  <div className="text-slate-400 font-bold self-center">→</div>
+
+                  {/* Faktur Pajak */}
+                  <div className="flex-1 bg-white border border-slate-300 rounded p-2 shadow-2xs">
+                    <div className="text-[10px] text-slate-500 uppercase font-semibold">2. Faktur Pajak</div>
+                    <div className="font-mono font-bold text-slate-900 mt-0.5">
+                      {traceability.fakturPajakNumber || 'Belum Terbit'}
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-0.5">PPN: {formatCurrency(invoice.tax_amount)}</div>
+                  </div>
+
+                  <div className="text-slate-400 font-bold self-center">→</div>
+
+                  {/* Material Return */}
+                  <div className="flex-1 bg-white border border-slate-300 rounded p-2 shadow-2xs">
+                    <div className="text-[10px] text-slate-500 uppercase font-semibold">3. Material Return</div>
+                    {traceability.materialReturns.length > 0 ? (
+                      traceability.materialReturns.map(mr => (
+                        <div key={mr.id} className="mt-0.5">
+                          <span className="font-mono font-bold text-slate-900">{mr.return_number}</span>
+                          <span className="ml-1 text-[10px] px-1 rounded bg-amber-100 text-amber-800 capitalize">{mr.status}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-slate-400 mt-0.5 italic text-[11px]">No return event</div>
+                    )}
+                  </div>
+
+                  <div className="text-slate-400 font-bold self-center">→</div>
+
+                  {/* Credit Note */}
+                  <div className="flex-1 bg-white border border-slate-300 rounded p-2 shadow-2xs">
+                    <div className="text-[10px] text-slate-500 uppercase font-semibold">4. Credit Note</div>
+                    {traceability.creditNotes.length > 0 ? (
+                      traceability.creditNotes.map(cn => (
+                        <div key={cn.id} className="mt-0.5">
+                          <span className="font-mono font-bold text-slate-900">{cn.credit_note_number}</span>
+                          <div className="text-[11px] text-slate-600">{formatCurrency(cn.total_amount)}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-slate-400 mt-0.5 italic text-[11px]">No commercial CN</div>
+                    )}
+                  </div>
+
+                  <div className="text-slate-400 font-bold self-center">→</div>
+
+                  {/* Nota Retur */}
+                  <div className="flex-1 bg-white border border-slate-300 rounded p-2 shadow-2xs">
+                    <div className="text-[10px] text-slate-500 uppercase font-semibold">5. Nota Retur</div>
+                    {traceability.notaReturs.length > 0 ? (
+                      traceability.notaReturs.map(nr => (
+                        <div key={nr.id} className="mt-0.5">
+                          <span className="font-mono font-bold text-emerald-800">{nr.nota_retur_number}</span>
+                          <div className="text-[10px] text-emerald-700">Coretax: {nr.coretax_status || nr.status}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-slate-400 mt-0.5 italic text-[11px]">No tax return doc</div>
+                    )}
                   </div>
                 </div>
               </div>

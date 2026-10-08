@@ -33,7 +33,7 @@ interface InputLine {
 }
 
 interface OutputLine {
-  source: 'sales_invoice' | 'credit_note';
+  source: 'sales_invoice' | 'credit_note' | 'nota_retur';
   doc_number: string;
   doc_date: string;
   customer: string;
@@ -56,16 +56,16 @@ function fmtDate(s: string) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Mirror compute_period_ppn (20260714190000) EXACTLY so the listed documents
+// Mirror compute_period_ppn EXACTLY so the listed documents
 // sum to the engine's input_ppn_total / output_ppn_total. Attribution is by
 // tax_period_id (the same key the engine uses), NOT by date. Input PPN =
 // purchase_invoices + finance_expenses.ppn_amount (rows WITHOUT broker PPN) +
 // broker_items[].ppn_amount + pib_ppn_amount. Output PPN = sales_invoices −
-// approved credit_notes.
+// approved credit_notes − approved/submitted nota_retur (deduplicated against linked credit notes).
 async function loadDetail(row: Row): Promise<{ input: InputLine[]; output: OutputLine[] }> {
   const periodId = row.tax_period_id;
 
-  const [piRes, feRes, siRes, cnRes] = await Promise.all([
+  const [piRes, feRes, siRes, cnRes, nrRes] = await Promise.all([
     supabase
       .from('purchase_invoices')
       .select('id, invoice_number, invoice_date, tax_amount, suppliers:supplier_id(company_name), notes')
@@ -82,10 +82,16 @@ async function loadDetail(row: Row): Promise<{ input: InputLine[]; output: Outpu
       .gt('tax_amount', 0),
     supabase
       .from('credit_notes')
-      .select('id, credit_note_number, credit_note_date, tax_amount, customers:customer_id(company_name)')
+      .select('id, credit_note_number, credit_note_date, tax_amount, customers:customer_id(company_name), nota_retur_id')
       .eq('tax_period_id', periodId)
       .eq('status', 'approved')
       .gt('tax_amount', 0),
+    supabase
+      .from('nota_retur')
+      .select('id, nota_retur_number, return_date, ppn_amount, customer_name, customers:customer_id(company_name), original_faktur_pajak_number, credit_note_id')
+      .eq('tax_period_id', periodId)
+      .in('status', ['submitted', 'approved'])
+      .gt('ppn_amount', 0),
   ]);
 
   const input: InputLine[] = [
@@ -156,6 +162,8 @@ async function loadDetail(row: Row): Promise<{ input: InputLine[]; output: Outpu
     }
   }
 
+  const approvedNrCnIds = new Set(((nrRes.data ?? []) as any[]).map(nr => nr.credit_note_id).filter(Boolean));
+
   const output: OutputLine[] = [
     ...((siRes.data ?? []) as any[]).map(r => ({
       source: 'sales_invoice' as const,
@@ -166,16 +174,27 @@ async function loadDetail(row: Row): Promise<{ input: InputLine[]; output: Outpu
       ppn_amount: Number(r.tax_amount),
       faktur_number: r.faktur_pajak_number ?? null,
     })),
-    // Approved credit notes reduce Output PPN — shown as negative lines so the
-    // subtotal equals the engine's netted output_ppn_total.
-    ...((cnRes.data ?? []) as any[]).map(r => ({
-      source: 'credit_note' as const,
+    // Approved credit notes reduce Output PPN — deduplicated against linked Nota Retur
+    ...((cnRes.data ?? []) as any[])
+      .filter(r => !r.nota_retur_id && !approvedNrCnIds.has(r.id))
+      .map(r => ({
+        source: 'credit_note' as const,
+        id: r.id,
+        doc_number: r.credit_note_number ?? '—',
+        doc_date: r.credit_note_date,
+        customer: r.customers?.company_name || r.customers?.customer_name || '—',
+        ppn_amount: -Number(r.tax_amount),
+        faktur_number: null,
+      })),
+    // Approved/submitted Nota Retur reduces Output PPN
+    ...((nrRes.data ?? []) as any[]).map(r => ({
+      source: 'nota_retur' as const,
       id: r.id,
-      doc_number: r.credit_note_number ?? '—',
-      doc_date: r.credit_note_date,
-      customer: r.customers?.company_name || r.customers?.customer_name || '—',
-      ppn_amount: -Number(r.tax_amount),
-      faktur_number: null,
+      doc_number: r.nota_retur_number ?? '—',
+      doc_date: r.return_date,
+      customer: r.customer_name || r.customers?.company_name || '—',
+      ppn_amount: -Number(r.ppn_amount),
+      faktur_number: r.original_faktur_pajak_number ?? null,
     })),
   ];
 
@@ -271,15 +290,20 @@ export function TaxPeriodsPanel() {
 
   async function saveDocumentPeriod(source: InputLine['source'] | OutputLine['source'], id: string, taxPeriodId: string) {
     if (source === 'broker' || source === 'pib') return;
-    const pSource = source === 'expense' ? 'finance_expense_ppn' : source;
     setEditingDocumentId(id);
     try {
-      const { error } = await supabase.rpc('reassign_tax_document_period', {
-        p_source: pSource,
-        p_document_id: id,
-        p_tax_period_id: taxPeriodId,
-      });
-      if (error) throw error;
+      if (source === 'nota_retur') {
+        const { error } = await supabase.from('nota_retur').update({ tax_period_id: taxPeriodId }).eq('id', id);
+        if (error) throw error;
+      } else {
+        const pSource = source === 'expense' ? 'finance_expense_ppn' : source;
+        const { error } = await supabase.rpc('reassign_tax_document_period', {
+          p_source: pSource,
+          p_document_id: id,
+          p_tax_period_id: taxPeriodId,
+        });
+        if (error) throw error;
+      }
       await refresh();
       setExpandedId(null);
       setDetail(null);
@@ -463,6 +487,9 @@ export function TaxPeriodsPanel() {
                                             {l.source === 'credit_note' && (
                                               <span className="text-[10px] text-red-500 mr-1">CN</span>
                                             )}
+                                            {l.source === 'nota_retur' && (
+                                              <span className="text-[10px] text-amber-600 mr-1">NR</span>
+                                            )}
                                             {l.doc_number}
                                           </td>
                                           <td className="py-1 pr-2 whitespace-nowrap">{fmtDate(l.doc_date)}</td>
@@ -470,9 +497,11 @@ export function TaxPeriodsPanel() {
                                           <td className="py-1 pr-2">
                                             {l.source === 'credit_note'
                                               ? <span className="text-red-500 text-[10px]">Reversal</span>
-                                              : l.faktur_number
-                                                ? <span className="text-green-700 font-mono">{l.faktur_number}</span>
-                                                : <span className="text-orange-500 text-[10px]">Waiting for Faktur</span>}
+                                              : l.source === 'nota_retur'
+                                                ? <span className="text-amber-600 font-mono text-[10px]">{l.faktur_number ? `Retur FP: ${l.faktur_number}` : 'Nota Retur'}</span>
+                                                : l.faktur_number
+                                                  ? <span className="text-green-700 font-mono">{l.faktur_number}</span>
+                                                  : <span className="text-orange-500 text-[10px]">Waiting for Faktur</span>}
                                           </td>
                                           <td className="py-1 pr-2">{periodEditor(l.source, l.id, r.tax_period_id, r.status === 'closed' || r.status === 'filed' || r.filing_status === 'filed')}</td>
                                           <td className={`py-1 text-right font-mono ${l.ppn_amount < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmt(l.ppn_amount)}</td>

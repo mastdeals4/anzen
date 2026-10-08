@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNavigation } from '../contexts/NavigationContext';
-import { Plus, Eye, Trash2, PackageX, AlertTriangle, Edit, CheckCircle, XCircle, FileText, ArrowRight, RefreshCw } from 'lucide-react';
+import { Plus, Eye, Trash2, PackageX, AlertTriangle, Edit, CheckCircle, XCircle, FileText, ArrowRight, RefreshCw, RotateCcw } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { Modal } from '../components/Modal';
@@ -25,6 +26,13 @@ interface MaterialReturn {
   credit_note_issued?: boolean;
   credit_note_number?: string | null;
   credit_note_amount?: number | null;
+  nota_retur_id?: string | null;
+  nota_retur?: {
+    id: string;
+    nota_retur_number: string;
+    status: string;
+    coretax_status?: string | null;
+  } | null;
   notes?: string | null;
   financial_impact?: number;
   restocked?: boolean;
@@ -88,6 +96,7 @@ interface SalesInvoice {
 }
 
 export default function MaterialReturns() {
+  const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const { setCurrentPage } = useNavigation();
@@ -130,7 +139,8 @@ export default function MaterialReturns() {
           *,
           customers(company_name, address, city, phone),
           delivery_challans(challan_number),
-          sales_invoices(invoice_number)
+          sales_invoices(invoice_number),
+          nota_retur:nota_retur_id(id, nota_retur_number, status, coretax_status)
         `)
         .order('created_at', { ascending: false });
 
@@ -720,6 +730,48 @@ export default function MaterialReturns() {
               title="Issue Credit Note for this return"
             >
               <FileText className="w-3 h-3" /> Issue CN
+            </button>
+          );
+        }
+        return <span className="text-gray-400 text-xs">—</span>;
+      }
+    },
+    {
+      key: 'tax_linkage',
+      label: 'Tax (Nota Retur)',
+      render: (value: any, ret: MaterialReturn) => {
+        const nr = Array.isArray(ret.nota_retur) ? ret.nota_retur[0] : ret.nota_retur;
+        if (nr) {
+          return (
+            <span
+              onClick={() => {
+                sessionStorage.setItem('anzen_originating_return_nr_id', ret.id);
+                navigate('/finance?tab=tax');
+              }}
+              className={`cursor-pointer inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-mono font-medium ${
+                nr.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                nr.status === 'submitted' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                'bg-amber-50 text-amber-700 border border-amber-200'
+              }`}
+              title="Click to view Nota Retur in Tax Compliance"
+            >
+              <RotateCcw className="w-3 h-3" />
+              {nr.nota_retur_number} ({nr.status})
+            </span>
+          );
+        }
+        if (ret.status === 'approved' || ret.status === 'completed') {
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.setItem('anzen_originating_return_nr_id', ret.id);
+                navigate('/finance?tab=tax');
+              }}
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-medium transition"
+              title="Create Nota Retur for Indonesian PPN / Coretax compliance"
+            >
+              <RotateCcw className="w-3 h-3" /> Issue NR
             </button>
           );
         }
