@@ -549,7 +549,7 @@ export function CreditNotes() {
     setModalOpen(true);
   }, [approvedReturns]);
 
-  const canManage = profile?.role === 'admin' || profile?.role === 'sales' || profile?.role === 'manager';
+  const canManage = profile?.role === 'admin' || profile?.role === 'sales' || profile?.role === 'warehouse' || profile?.role === 'manager';
   const isManager = profile?.role === 'admin' || profile?.role === 'manager';
 
   const columns = [
