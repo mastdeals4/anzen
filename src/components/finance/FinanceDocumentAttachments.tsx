@@ -117,13 +117,13 @@ export function FinanceDocumentAttachments({
             <div
               onDrop={(event) => { event.preventDefault(); addFiles(Array.from(event.dataTransfer.files)); }}
               onDragOver={(event) => event.preventDefault()}
-              className={`border-2 border-dashed border-gray-300 rounded text-center hover:border-blue-400 hover:bg-blue-50 ${compact ? 'p-2' : 'p-3'}`}
+              className={`border-2 border-dashed border-gray-300 rounded text-center hover:border-blue-400 hover:bg-blue-50 ${compact ? 'p-1.5' : 'p-3'}`}
             >
               <input id={inputId} type="file" multiple accept={ACCEPT} className="hidden"
                 onChange={(event) => { addFiles(Array.from(event.target.files || [])); event.target.value=''; }} />
-              <label htmlFor={inputId} className="cursor-pointer flex flex-col items-center gap-1">
-                <Upload className="w-5 h-5 text-gray-400" />
-                <span className="text-xs text-blue-600">Click, drag & drop, or Ctrl+V</span>
+              <label htmlFor={inputId} className="cursor-pointer flex flex-col items-center gap-0.5">
+                <Upload className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} text-gray-400`} />
+                <span className={`${compact ? 'text-[11px]' : 'text-xs'} text-blue-600`}>Click, drag & drop, or Ctrl+V</span>
               </label>
             </div>
           )}

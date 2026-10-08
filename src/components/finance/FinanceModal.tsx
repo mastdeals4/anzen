@@ -78,29 +78,29 @@ export function FinanceModal({
           aria-labelledby={titleId}
           className={`relative bg-white rounded-lg shadow-xl border border-gray-300 w-full ${widthClass} max-h-[92vh] flex flex-col`}
         >
-          <div className="flex min-h-12 items-center justify-between gap-4 px-4 py-2.5 border-b border-gray-200 bg-gray-50 flex-shrink-0">
+          <div className="flex min-h-10 items-center justify-between gap-4 px-3.5 py-2 border-b border-gray-200 bg-gray-50 flex-shrink-0">
             <div className="flex items-baseline gap-2 min-w-0">
-              <h3 id={titleId} className="text-[15px] font-semibold text-gray-900 truncate">{title}</h3>
-              {subtitle && <span className="text-[11px] text-gray-500 truncate">{subtitle}</span>}
+              <h3 id={titleId} className="text-sm font-semibold text-gray-900 truncate">{title}</h3>
+              {subtitle && <span className="text-[10px] text-gray-500 truncate">{subtitle}</span>}
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-gray-200"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-gray-200"
               title="Close"
               aria-label="Close"
             >
-              <X className="w-4 h-4 text-gray-500" />
+              <X className="w-3.5 h-3.5 text-gray-500" />
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-2.5">
             {children}
           </div>
 
           {/* Footer — pinned so Save / Cancel never scrolls off */}
           {footer && (
-            <div className="flex min-h-14 items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50 flex-shrink-0">
+            <div className="flex min-h-11 items-center justify-end gap-2 px-3.5 py-2 border-t border-gray-200 bg-gray-50 flex-shrink-0">
               {footer}
             </div>
           )}

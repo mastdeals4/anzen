@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
-import { FORM_LABEL, INPUT } from './uiTokens';
+import { FORM_LABEL } from './uiTokens';
 
-export const SAP_INPUT = INPUT;
+export const SAP_INPUT = 'w-full h-7 px-2 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500';
 
 interface SapRowProps {
   children: ReactNode;
@@ -32,7 +32,7 @@ export function SapField({ label, children, span = 6, required, right }: SapFiel
     : span === 2 ? 'sm:col-span-2'
     : 'sm:col-span-1';
   return (
-    <div className={spanClass}>
+    <div className={`${spanClass} min-w-0 [&_button[aria-haspopup=listbox]]:!h-7 [&_button[aria-haspopup=listbox]]:!py-0 [&_button[aria-haspopup=listbox]]:!text-xs [&_button[aria-haspopup=listbox]]:!rounded`}>
       <label className={`${FORM_LABEL} flex items-center justify-between`}>
         <span>
           {label}

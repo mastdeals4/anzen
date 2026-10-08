@@ -199,7 +199,7 @@ export function BankTransactionLinkField({
         type="button"
         onClick={() => void openDialog()}
         disabled={!bankAccountId || disabled}
-        className="w-full px-2.5 py-1.5 border border-gray-300 rounded text-xs text-left bg-white hover:bg-gray-50 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center justify-between gap-2"
+        className="w-full h-7 px-2 border border-gray-300 rounded text-xs text-left bg-white hover:bg-gray-50 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center justify-between gap-2"
       >
         <span className="flex items-center gap-1.5 truncate">
           <Link2 className="w-3 h-3 shrink-0" />

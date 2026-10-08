@@ -3234,8 +3234,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
               const supportsPpn = !!category && !isPib && category.taxBehavior !== 'advance' && category.taxBehavior !== 'salary';
               const supportsPph = !!category && !isPib && category.taxBehavior !== 'advance';
               return (
-                <div className="pb-2 mb-1 border-b border-gray-200 flex flex-col gap-1">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Basic Information</p>
+                <div className="pb-1.5 mb-1 border-b border-gray-200 flex flex-col gap-1">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none mb-0.5">Basic Information</p>
                   {/* ── Row A: Date · Invoice No · Category · Supplier ── */}
                   <SapRow>
                     <SapField
@@ -3301,16 +3301,17 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       span={3}
                       right={
                         rules.providerTypeToggle ? (
-                          <div className="flex gap-1">
+                          <div className="inline-flex rounded border border-gray-200 bg-gray-100 p-0.5 text-[9px] font-medium shrink-0">
                             <button
                               type="button"
                               onClick={() => {
                                 setProviderType('corporate');
                                 setFormData(prev => ({ ...prev, payee_id: '' }));
                               }}
-                              className={`px-1.5 py-0.5 text-[9px] font-semibold rounded ${providerType === 'corporate' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                              className={`px-1.5 py-0.5 rounded transition ${providerType === 'corporate' ? 'bg-blue-600 text-white font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'}`}
+                              title="Corporate (Badan)"
                             >
-                              Corporate (Badan)
+                              Corporate
                             </button>
                             <button
                               type="button"
@@ -3319,9 +3320,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                 setFormData(prev => ({ ...prev, supplier_id: '' }));
                                 setSelectedSupplier(null);
                               }}
-                              className={`px-1.5 py-0.5 text-[9px] font-semibold rounded ${providerType === 'individual' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                              className={`px-1.5 py-0.5 rounded transition ${providerType === 'individual' ? 'bg-blue-600 text-white font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'}`}
+                              title="Individual (Orang Pribadi)"
                             >
-                              Individual (Orang Pribadi)
+                              Individual
                             </button>
                           </div>
                         ) : selectedSupplier && rules.staff !== 'show' && rules.utility !== 'show' && rules.payee !== 'show' ? (
@@ -4149,31 +4151,31 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                             { label: 'PPh Withheld',          value: parentPph,           valueColor: 'text-orange-700' },
                           ];
                           return (
-                            <div className="mt-2">
-                              <div className="flex items-stretch border border-gray-200 rounded-lg bg-white overflow-hidden">
+                            <div className="mt-1.5">
+                              <div className="flex items-stretch border border-gray-200 rounded-lg bg-white overflow-x-auto">
                                 {cells.map((cell, i) => (
                                   <div key={cell.label} className="flex items-stretch min-w-0">
-                                    <div className={`flex flex-col justify-center px-3 py-2 min-w-[90px] ${i < cells.length - 1 ? 'border-r border-gray-200' : ''}`}>
+                                    <div className={`flex flex-col justify-center px-2.5 py-1 min-w-[75px] ${i < cells.length - 1 ? 'border-r border-gray-200' : ''}`}>
                                       <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap">{cell.label}</span>
-                                      <span className={`text-xs font-bold font-mono mt-0.5 ${cell.valueColor}`}>{fmt(cell.value)}</span>
+                                      <span className={`text-[11px] font-bold font-mono mt-0.5 ${cell.valueColor}`}>{fmt(cell.value)}</span>
                                     </div>
                                     {cell.op && (
-                                      <div className="flex items-center px-1.5 text-xs font-bold text-gray-400 border-r border-gray-200 bg-gray-50 select-none">{cell.op}</div>
+                                      <div className="flex items-center px-1 text-[11px] font-bold text-gray-400 border-r border-gray-200 bg-gray-50 select-none">{cell.op}</div>
                                     )}
                                   </div>
                                 ))}
-                                <div className="flex items-center px-1.5 text-xs font-bold text-gray-400 bg-gray-50 select-none">=</div>
-                                <div className="flex flex-col justify-center px-4 py-2 bg-emerald-50 border-l-2 border-emerald-400 min-w-[110px]">
+                                <div className="flex items-center px-1 text-[11px] font-bold text-gray-400 bg-gray-50 select-none">=</div>
+                                <div className="flex flex-col justify-center px-3 py-1 bg-emerald-50 border-l-2 border-emerald-400 min-w-[100px]">
                                   <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide">FINAL CASH PAYABLE</span>
-                                  <span className="text-sm font-bold font-mono text-emerald-900 mt-0.5">{fmt(brokerTotals.finalCashPayable)}</span>
+                                  <span className="text-xs font-bold font-mono text-emerald-900 mt-0.5">{fmt(brokerTotals.finalCashPayable)}</span>
                                 </div>
-                                <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                                <div className="flex flex-col justify-center px-2.5 py-1 border-l border-gray-200 min-w-[85px]">
                                   <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">PAID</span>
-                                  <span className="text-sm font-bold font-mono text-gray-900 mt-0.5">{fmt(alreadyPaid)}</span>
+                                  <span className="text-xs font-bold font-mono text-gray-900 mt-0.5">{fmt(alreadyPaid)}</span>
                                 </div>
-                                <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                                <div className="flex flex-col justify-center px-2.5 py-1 border-l border-gray-200 min-w-[85px]">
                                   <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">BALANCE</span>
-                                  <span className={`text-sm font-bold font-mono mt-0.5 ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{fmt(balance)}</span>
+                                  <span className={`text-xs font-bold font-mono mt-0.5 ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{fmt(balance)}</span>
                                 </div>
                               </div>
                             </div>
@@ -4206,36 +4208,36 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       { label: 'Stamp Duty', value: formData.stamp_duty_amount || 0, valueColor: 'text-gray-900', op: '+', show: (formData.stamp_duty_amount || 0) > 0 },
                     ].filter(c => c.show);
                     return (
-                      <div className="mt-2 flex items-stretch border border-gray-200 rounded-lg bg-white overflow-hidden">
+                      <div className="mt-1.5 flex items-stretch border border-gray-200 rounded-lg bg-white overflow-x-auto">
                         {cells.map((cell, i) => (
                           <div key={cell.label} className="flex items-stretch min-w-0">
-                            <div className={`flex flex-col justify-center px-3 py-2 min-w-[90px] ${i < cells.length - 1 ? 'border-r border-gray-200' : ''}`}>
+                            <div className={`flex flex-col justify-center px-2.5 py-1 min-w-[75px] ${i < cells.length - 1 ? 'border-r border-gray-200' : ''}`}>
                               <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap">{cell.label}</span>
-                              <span className={`text-xs font-bold font-mono mt-0.5 ${cell.valueColor}`}>{fmt(cell.value)}</span>
+                              <span className={`text-[11px] font-bold font-mono mt-0.5 ${cell.valueColor}`}>{fmt(cell.value)}</span>
                             </div>
                             {cell.op && i < cells.length - 1 && (
-                              <div className="flex items-center px-1.5 text-xs font-bold text-gray-400 border-r border-gray-200 bg-gray-50 select-none">{cell.op}</div>
+                              <div className="flex items-center px-1 text-[11px] font-bold text-gray-400 border-r border-gray-200 bg-gray-50 select-none">{cell.op}</div>
                             )}
                           </div>
                         ))}
-                        <div className="flex items-center px-1.5 text-xs font-bold text-gray-400 bg-gray-50 select-none">=</div>
-                        <div className="flex flex-col justify-center px-4 py-2 bg-emerald-50 border-l-2 border-emerald-400 min-w-[110px]">
+                        <div className="flex items-center px-1 text-[11px] font-bold text-gray-400 bg-gray-50 select-none">=</div>
+                        <div className="flex flex-col justify-center px-3 py-1 bg-emerald-50 border-l-2 border-emerald-400 min-w-[100px]">
                           <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide">NET PAYABLE</span>
-                          <span className="text-sm font-bold font-mono text-emerald-900 mt-0.5">{fmt(payable)}</span>
+                          <span className="text-xs font-bold font-mono text-emerald-900 mt-0.5">{fmt(payable)}</span>
                         </div>
                         {bc > 0 && (
-                          <div className="flex flex-col justify-center px-4 py-2 bg-blue-50 border-l-2 border-blue-400 min-w-[130px]">
+                          <div className="flex flex-col justify-center px-2.5 py-1 bg-blue-50 border-l-2 border-blue-400 min-w-[110px]">
                             <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wide">ACTUAL BANK SETTLEMENT</span>
-                            <span className="text-sm font-bold font-mono text-blue-900 mt-0.5">{fmt(settlementAmount)}</span>
+                            <span className="text-xs font-bold font-mono text-blue-900 mt-0.5">{fmt(settlementAmount)}</span>
                           </div>
                         )}
-                        <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                        <div className="flex flex-col justify-center px-2.5 py-1 border-l border-gray-200 min-w-[85px]">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">PAID</span>
-                          <span className="text-sm font-bold font-mono text-gray-900 mt-0.5">{fmt(alreadyPaid)}</span>
+                          <span className="text-xs font-bold font-mono text-gray-900 mt-0.5">{fmt(alreadyPaid)}</span>
                         </div>
-                        <div className="flex flex-col justify-center px-4 py-2 border-l border-gray-200 min-w-[100px]">
+                        <div className="flex flex-col justify-center px-2.5 py-1 border-l border-gray-200 min-w-[85px]">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">BALANCE</span>
-                          <span className={`text-sm font-bold font-mono mt-0.5 ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{fmt(balance)}</span>
+                          <span className={`text-xs font-bold font-mono mt-0.5 ${balance > 0.01 ? 'text-amber-700' : 'text-green-700'}`}>{fmt(balance)}</span>
                         </div>
                       </div>
                     );
@@ -4261,7 +4263,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         setSelectedBankAllocationAmount(undefined);
                       }
                     }}
-                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded text-xs" required>
+                    className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required>
                     <option value="bank_transfer">🏦 Bank Transfer</option>
                     <option value="check">📝 Cheque</option>
                     <option value="giro">📋 Giro</option>
@@ -4285,7 +4287,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         setSelectedBankTransactionId('');
                         setSelectedBankAllocationAmount(undefined);
                       }}
-                      className="w-full px-2.5 py-1.5 border border-gray-300 rounded text-xs" required={formData.payment_method !== null}>
+                      className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required={formData.payment_method !== null}>
                       <option value="">Select account</option>
                       {bankAccounts.map(bank => <option key={bank.id} value={bank.id}>{bank.bank_name} — {bank.alias || bank.account_number}</option>)}
                     </select>
@@ -4299,7 +4301,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       onChange={(e) => setFormData({ ...formData,
                         transaction_currency: e.target.value as 'IDR' | 'USD',
                         exchange_rate: e.target.value === 'IDR' ? 1 : formData.exchange_rate })}
-                      className="w-full px-2.5 py-1.5 border border-gray-300 rounded text-xs">
+                      className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white">
                       <option value="IDR">IDR</option>
                       <option value="USD">USD</option>
                     </select>
