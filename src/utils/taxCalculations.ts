@@ -683,6 +683,123 @@ export function calculateOutstanding(exp: OutstandingInput): Outstanding {
   };
 }
 
+export interface ExpenseReconciliationInput extends ExpenseTotalsInput, BrokerExpenseTotalsInput {
+  paid_amount?: number | null;
+  payment_method?: string | null;
+  approval_status?: string | null;
+  effective_posting_state?: string | null;
+  bank_statement_lines?: Array<{
+    allocation_amount?: number | null;
+    debit_amount?: number | null;
+    credit_amount?: number | null;
+  }> | null;
+  salary_advance_applications?: Array<{
+    applied_amount?: number | null;
+  }> | null;
+  voucher_allocations?: Array<{
+    allocated_amount?: number | null;
+    payment_vouchers?: {
+      payment_purpose?: string | null;
+    } | null;
+  }> | null;
+}
+
+export interface ExpenseReconciliationResult {
+  reconciledAmount: number;
+  grossCashPayable: number;
+  salaryAdvanceApplied: number;
+  netCashPayable: number;
+  isFullyReconciled: boolean;
+  isPartiallyReconciled: boolean;
+  statusLabel: 'Paid / Reconciled' | 'Paid / Reconciliation Pending' | 'Partially Paid / Reconciled' | 'Partially Paid / Reconciliation Pending' | 'Outstanding' | 'Petty Cash' | 'Cancelled';
+}
+
+/**
+ * Authoritative bank reconciliation calculation for an expense.
+ *
+ * For salary expenses, bank reconciliation completion is determined using the
+ * net cash payable after valid salary advances (and applicable deductions), NOT
+ * by comparing bank payments only against gross salary.
+ */
+export function calculateExpenseReconciliation(
+  expense: ExpenseReconciliationInput,
+  additionalAdvanceApplications?: Array<{ applied_amount?: number | null }> | null,
+): ExpenseReconciliationResult {
+  const reconciledAmount = (expense.bank_statement_lines || []).reduce(
+    (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+    0,
+  );
+
+  const grossCashPayable = calculateCanonicalCashPayable(expense);
+
+  let salaryAdvanceApplied = 0;
+  if (expense.expense_category === 'salary') {
+    if (additionalAdvanceApplications && additionalAdvanceApplications.length > 0) {
+      salaryAdvanceApplied = additionalAdvanceApplications.reduce(
+        (sum, app) => sum + Number(app.applied_amount || 0),
+        0,
+      );
+    } else if (Array.isArray(expense.salary_advance_applications) && expense.salary_advance_applications.length > 0) {
+      salaryAdvanceApplied = expense.salary_advance_applications.reduce(
+        (sum, app) => sum + Number(app.applied_amount || 0),
+        0,
+      );
+    } else if (Array.isArray(expense.voucher_allocations) && expense.voucher_allocations.length > 0) {
+      const settlementAllocs = expense.voucher_allocations.filter(
+        va => va.payment_vouchers?.payment_purpose === 'salary_advance_settlement'
+      );
+      if (settlementAllocs.length > 0) {
+        salaryAdvanceApplied = settlementAllocs.reduce(
+          (sum, va) => sum + Number(va.allocated_amount || 0),
+          0,
+        );
+      }
+    }
+  }
+
+  // Authoritative net cash payable to be matched against bank statement lines
+  const netCashPayable = Math.max(0, grossCashPayable - salaryAdvanceApplied);
+
+  const isFullyReconciled = netCashPayable <= 0.01
+    ? ((expense.paid_amount ?? 0) >= grossCashPayable - 0.01)
+    : (reconciledAmount >= netCashPayable - 0.01);
+
+  const isPartiallyReconciled = !isFullyReconciled && (reconciledAmount > 0.01 && reconciledAmount < netCashPayable - 0.01);
+
+  // Authoritative payment status
+  const billBalance = grossCashPayable - (expense.paid_amount ?? 0);
+  let paymentStatus = 'Paid';
+  if (billBalance > 0.01 && (expense.paid_amount ?? 0) > 0.01) paymentStatus = 'Partially Paid';
+  else if (billBalance > 0.01) paymentStatus = 'Outstanding';
+
+  let statusLabel: ExpenseReconciliationResult['statusLabel'] = 'Paid / Reconciled';
+  if (expense.approval_status === 'cancelled' || expense.effective_posting_state === 'REVERSED') {
+    statusLabel = 'Cancelled';
+  } else if (expense.payment_method === 'cash') {
+    statusLabel = 'Petty Cash';
+  } else if (paymentStatus === 'Outstanding') {
+    statusLabel = 'Outstanding';
+  } else if (paymentStatus === 'Partially Paid') {
+    statusLabel = (isPartiallyReconciled || isFullyReconciled)
+      ? 'Partially Paid / Reconciled'
+      : 'Partially Paid / Reconciliation Pending';
+  } else if (isFullyReconciled) {
+    statusLabel = 'Paid / Reconciled';
+  } else {
+    statusLabel = 'Paid / Reconciliation Pending';
+  }
+
+  return {
+    reconciledAmount,
+    grossCashPayable,
+    salaryAdvanceApplied,
+    netCashPayable,
+    isFullyReconciled,
+    isPartiallyReconciled,
+    statusLabel,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Date utilities
 // ---------------------------------------------------------------------------

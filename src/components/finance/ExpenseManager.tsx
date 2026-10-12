@@ -122,6 +122,7 @@ import {
   calculateExpenseTotals,
   calculateCanonicalExpenseTotal,
   calculateCanonicalCashPayable,
+  calculateExpenseReconciliation,
   calculateBrokerExpenseTotals,
   brokerLineTotal,
   computeBrokerLinePpn,
@@ -210,7 +211,13 @@ interface FinanceExpense {
     id: string;
     allocated_amount: number;
     payment_kind?: string | null;
-    payment_vouchers?: { voucher_number: string; payment_date: string } | null;
+    payment_vouchers?: { voucher_number: string; voucher_date?: string; payment_date?: string; payment_purpose?: string | null } | null;
+  }> | null;
+  salary_advance_applications?: Array<{
+    id: string;
+    applied_amount: number;
+    advance_payment_voucher_id?: string | null;
+    settlement_payment_voucher_id?: string | null;
   }> | null;
   suppliers?: { id: string; company_name: string } | null;
   payees?: { id: string; payee_code: string; full_name: string; business_role: string; tax_classification: string; nik: string | null; npwp: string | null } | null;
@@ -1099,6 +1106,18 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             credit_amount,
             bank_account_id,
             bank_accounts(bank_name, account_number, alias, currency)
+          ),
+          salary_advance_applications(
+            id,
+            applied_amount,
+            advance_payment_voucher_id,
+            settlement_payment_voucher_id
+          ),
+          voucher_allocations(
+            id,
+            allocated_amount,
+            payment_kind,
+            payment_vouchers(voucher_number, voucher_date, payment_purpose)
           )
         `)
         .eq('id', initialViewExpenseId)
@@ -1106,6 +1125,13 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
       if (!error && data) {
         const [hydrated] = await hydrateExpensePostingLifecycle([data as FinanceExpense]);
+        if (hydrated.expense_category === 'salary' && (!hydrated.salary_advance_applications || hydrated.salary_advance_applications.length === 0)) {
+          const { data: apps } = await supabase
+            .from('salary_advance_applications')
+            .select('id, salary_expense_id, applied_amount, advance_payment_voucher_id, settlement_payment_voucher_id')
+            .eq('salary_expense_id', hydrated.id);
+          if (apps && apps.length > 0) hydrated.salary_advance_applications = apps;
+        }
         setViewingExpense(hydrated);
         setViewModalOpen(true);
       }
@@ -1136,6 +1162,18 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             credit_amount,
             bank_account_id,
             bank_accounts(bank_name, account_number, alias, currency)
+          ),
+          salary_advance_applications(
+            id,
+            applied_amount,
+            advance_payment_voucher_id,
+            settlement_payment_voucher_id
+          ),
+          voucher_allocations(
+            id,
+            allocated_amount,
+            payment_kind,
+            payment_vouchers(voucher_number, voucher_date, payment_purpose)
           )
         `)
         .order('expense_date', { ascending: false })
@@ -1175,6 +1213,31 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
       if (expensesRes.error) throw expensesRes.error;
       const loadedExpenses = await hydrateExpensePostingLifecycle((expensesRes.data || []) as FinanceExpense[]);
+
+      // Ensure salary advance applications are hydrated for all salary expenses
+      const salaryExpensesWithoutApps = loadedExpenses.filter(
+        e => e.expense_category === 'salary' && (!e.salary_advance_applications || e.salary_advance_applications.length === 0)
+      );
+      if (salaryExpensesWithoutApps.length > 0) {
+        const { data: advanceApps } = await supabase
+          .from('salary_advance_applications')
+          .select('id, salary_expense_id, applied_amount, advance_payment_voucher_id, settlement_payment_voucher_id')
+          .in('salary_expense_id', salaryExpensesWithoutApps.map(e => e.id));
+        if (advanceApps && advanceApps.length > 0) {
+          const appsByExpId = new Map<string, any[]>();
+          advanceApps.forEach(app => {
+            const list = appsByExpId.get(app.salary_expense_id) || [];
+            list.push(app);
+            appsByExpId.set(app.salary_expense_id, list);
+          });
+          loadedExpenses.forEach(exp => {
+            if (appsByExpId.has(exp.id)) {
+              exp.salary_advance_applications = appsByExpId.get(exp.id);
+            }
+          });
+        }
+      }
+
       setExpenses(loadedExpenses);
       // Legacy matched_* joins intentionally disappear for split allocations;
       // hydrate the canonical allocation relationships for payment breakdowns.
@@ -1604,6 +1667,18 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
               credit_amount,
               bank_account_id,
               bank_accounts (bank_name, account_number)
+            ),
+            salary_advance_applications (
+              id,
+              applied_amount,
+              advance_payment_voucher_id,
+              settlement_payment_voucher_id
+            ),
+            voucher_allocations (
+              id,
+              allocated_amount,
+              payment_kind,
+              payment_vouchers (voucher_number, voucher_date, payment_purpose)
             )
           `)
           .eq('id', editingExpense.id)
@@ -1662,6 +1737,18 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
               credit_amount,
               bank_account_id,
               bank_accounts (bank_name, account_number)
+            ),
+            salary_advance_applications (
+              id,
+              applied_amount,
+              advance_payment_voucher_id,
+              settlement_payment_voucher_id
+            ),
+            voucher_allocations (
+              id,
+              allocated_amount,
+              payment_kind,
+              payment_vouchers (voucher_number, voucher_date, payment_purpose)
             )
           `;
 
@@ -2317,9 +2404,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
     // Filter by reconciliation / payment status
     if (reconFilter === 'reconciled') {
-      if (!reconciledExpenseIds.has(exp.id) || exp.payment_method === 'cash' || exp.approval_status === 'cancelled') return false;
+      const recon = calculateExpenseReconciliation(exp);
+      if (!recon.isFullyReconciled || exp.payment_method === 'cash' || exp.approval_status === 'cancelled') return false;
     } else if (reconFilter === 'pending_recon') {
-      const isReconciled = reconciledExpenseIds.has(exp.id);
+      const recon = calculateExpenseReconciliation(exp);
+      const isReconciled = recon.isFullyReconciled;
       const isCancelled = exp.approval_status === 'cancelled';
       const isCash = exp.payment_method === 'cash';
       const isPaid = (exp.payment_method !== null && exp.payment_method !== 'cash') || ((exp.paid_amount ?? 0) > 0.01);
@@ -2371,7 +2460,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   // Accountant-priority sort: Pending Approval → Approved+Outstanding → Partial → Paid+Pending Recon → Paid+Reconciled → Petty Cash → Cancelled
   // Only applies when no explicit user sort is active.
   const accountantPriorityRank = (exp: FinanceExpense): number => {
-    const isReconciled = exp.bank_statement_lines && exp.bank_statement_lines.length > 0;
+    const recon = calculateExpenseReconciliation(exp);
+    const isReconciled = recon.isFullyReconciled;
     if (exp.approval_status === 'pending_approval') return 0;
     if (exp.approval_status === 'rejected') return 1;
     if (exp.approval_status === 'cancelled') return 6;
@@ -2415,8 +2505,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       bValue = (b.payment_method || 'unknown').toLowerCase();
     } else if (key === 'reconciliation') {
       // Sort by reconciliation status
-      const aReconciled = a.bank_statement_lines && a.bank_statement_lines.length > 0;
-      const bReconciled = b.bank_statement_lines && b.bank_statement_lines.length > 0;
+      const aReconciled = calculateExpenseReconciliation(a).isFullyReconciled;
+      const bReconciled = calculateExpenseReconciliation(b).isFullyReconciled;
       aValue = aReconciled ? 1 : 0;
       bValue = bReconciled ? 1 : 0;
     } else if (key === 'payment_status') {
@@ -2499,26 +2589,9 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       if (balance > 0.01 && (exp.paid_amount ?? 0) > 0.01) paymentStatus = 'Partially Paid';
       else if (balance > 0.01) paymentStatus = 'Outstanding';
 
-      // Recon status (distinguishing Reconciled, Pending Recon, Petty Cash, and Outstanding)
-      const reconciledAmount = (exp.bank_statement_lines || []).reduce(
-        (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
-        0,
-      );
-      const reconciliationTotal = calculateCanonicalCashPayable(exp);
-      const isPartiallyReconciled = reconciledAmount > 0.01 && reconciledAmount < reconciliationTotal - 0.01;
-      const isReconciled = reconciledAmount >= reconciliationTotal - 0.01;
-
-      let reconStatus = 'Paid / Reconciled';
-      if (exp.approval_status === 'cancelled' || exp.effective_posting_state === 'REVERSED') reconStatus = 'Cancelled';
-      else if (exp.payment_method === 'cash') reconStatus = 'Petty Cash';
-      else if (paymentStatus === 'Outstanding') reconStatus = 'Outstanding';
-      else if (paymentStatus === 'Partially Paid') {
-        reconStatus = (isPartiallyReconciled || isReconciled) ? 'Partially Paid / Reconciled' : 'Partially Paid / Reconciliation Pending';
-      } else if (isReconciled) {
-        reconStatus = 'Paid / Reconciled';
-      } else {
-        reconStatus = 'Paid / Reconciliation Pending';
-      }
+      // Recon status (authoritative calculation shared across ERP)
+      const recon = calculateExpenseReconciliation(exp);
+      const reconStatus = recon.statusLabel;
       const account = exportAccounts[exp.id];
       const journal = postedJournals.get(exp.id);
       const totals = calculateExpenseTotals(exp);
@@ -2904,15 +2977,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 const postingState = expense.effective_posting_state || 'AMBIGUOUS';
                 const isCancelledPosting = postingState === 'REVERSED';
 
-                // Reconciliation state is amount-based: a single allocation does
-                // not imply that the expense is fully settled.
-                const reconciledAmount = (expense.bank_statement_lines || []).reduce(
-                  (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
-                  0,
-                );
-                const reconciliationTotal = calculateCanonicalCashPayable(expense);
-                const isPartiallyReconciled = reconciledAmount > 0.01 && reconciledAmount < reconciliationTotal - 0.01;
-                const isReconciled = reconciledAmount >= reconciliationTotal - 0.01;
+                // Reconciliation state is authoritative: includes valid salary advances
+                // and amount-based allocations.
+                const recon = calculateExpenseReconciliation(expense);
+                const isPartiallyReconciled = recon.isPartiallyReconciled;
+                const isReconciled = recon.isFullyReconciled;
 
                 return (
                   <tr key={expense.id} className="hover:bg-blue-50/50 transition-colors">
@@ -5074,7 +5143,34 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
               {/* Bank Reconciliation */}
               <div className="px-4 py-2 bg-gray-50/50">
-                <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Bank Reconciliation</h3>
+                <div className="flex items-center justify-between mb-1.5">
+                  <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Bank Reconciliation</h3>
+                  {(() => {
+                    const recon = calculateExpenseReconciliation(viewingExpense, salaryAdvanceApplications);
+                    if (recon.isFullyReconciled) {
+                      return (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200">
+                          <CheckCircle className="w-2.5 h-2.5" /> Reconciled
+                        </span>
+                      );
+                    }
+                    if (recon.isPartiallyReconciled) {
+                      return (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          <Clock className="w-2.5 h-2.5" /> Partially Reconciled
+                        </span>
+                      );
+                    }
+                    if (bslLines.length > 0) {
+                      return (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          <Clock className="w-2.5 h-2.5" /> Pending Reconciliation
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
                 {bslLines.length > 0 ? (
                   <div className="space-y-1">
                     {bslLines.map((line) => {
