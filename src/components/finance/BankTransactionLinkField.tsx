@@ -18,7 +18,7 @@ interface BankTransactionLinkFieldProps {
   disabled?: boolean;
   disabledMessage?: string;
   canUnlink?: boolean;
-  onSelect: (transaction: BankTransactionLine) => void | Promise<void>;
+  onSelect: (transaction: BankTransactionLine, allocationAmount?: number) => void | Promise<void>;
   onUnlink?: () => void | Promise<void>;
   onUnlinkTransaction?: (transaction: BankTransactionLine) => void | Promise<void>;
   direction?: 'debit' | 'credit' | 'both';
@@ -147,10 +147,10 @@ export function BankTransactionLinkField({
     await commitSelect(transaction);
   };
 
-  const commitSelect = async (transaction: BankTransactionLine) => {
+  const commitSelect = async (transaction: BankTransactionLine, allocationAmount?: number) => {
     setSubmittingId(transaction.id);
     try {
-      await onSelect(transaction);
+      await onSelect(transaction, allocationAmount);
       setDialogOpen(false);
       setSearchTerm('');
     } finally {
@@ -290,8 +290,9 @@ export function BankTransactionLinkField({
           <button type="button" onClick={() => {
             if (!pendingTransaction) return;
             const selected = pendingTransaction;
+            const confirmedAllocation = pendingAllocation;
             setPendingTransaction(null);
-            void commitSelect(selected);
+            void commitSelect(selected, confirmedAllocation);
           }} disabled={pendingAllocation <= 0.01} className="px-3 py-2 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
             {pendingBankAfter > 0.01 || pendingDocumentAfter > 0.01
               ? `Yes, Link ${formatCurrency(pendingAllocation, pendingTransaction?.bank_accounts?.currency || 'IDR')}`

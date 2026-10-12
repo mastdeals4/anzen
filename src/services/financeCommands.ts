@@ -136,7 +136,7 @@ export const editApprovedFinanceExpense = (
   p_expense_id: expenseId,
   p_payload: payload,
   p_bank_statement_line_id: bankStatementLineId || null,
-  p_allocation_amount: allocationAmount ?? null,
+  p_allocation_amount: allocationAmount && allocationAmount > 0.01 ? allocationAmount : null,
 });
 
 export const approveFinanceExpense = (expenseId: string, approvedBy?: string | null) =>

@@ -1634,7 +1634,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             editingExpense.id,
             expenseData,
             selectedBankTransactionId || null,
-            selectedBankAllocationAmount,
+            selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01 ? selectedBankAllocationAmount : undefined,
           );
         } else {
           await saveFinanceExpense(editingExpense.id, expenseData);
@@ -4426,30 +4426,35 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                     disabled={editingExpense?.approval_status !== 'approved'}
                     disabledMessage="Bank transaction linking is available after expense approval."
                     canUnlink={canManage}
-                    onSelect={async (transaction) => {
+                    onSelect={async (transaction, confirmedAmount) => {
                       const existingLines = editingBankLines;
                       if (editingExpense && existingLines.length > 0 && !existingLines.some((line) => ((line as any).raw_line_id || line.id) === transaction.id)) {
                         const existingTotal = existingLines.reduce((sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0), 0);
                         const outstanding = Math.max(0, calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems }) - existingTotal);
-                        const amount = Math.min(Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0), outstanding);
+                        const amount = confirmedAmount !== undefined && confirmedAmount > 0.01
+                          ? confirmedAmount
+                          : Math.min(Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0), outstanding);
                         await linkBankTransaction({ bankStatementLineId: transaction.id, matchedExpenseId: editingExpense.id, allocationAmount: amount });
                         await syncExpenseBankLinks([editingExpense.id]);
                         notifyFinanceReconciliationRefresh();
                         return;
                       }
                       setSelectedBankTransactionId(transaction.id);
-                      setSelectedBankAllocationAmount(Math.min(
-                        Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0),
-                        Math.max(
+                      if (confirmedAmount !== undefined && confirmedAmount > 0.01) {
+                        setSelectedBankAllocationAmount(confirmedAmount);
+                      } else {
+                        const bankRemaining = Number(transaction.remainingAmount ?? transaction.debit_amount ?? transaction.credit_amount ?? 0);
+                        const cashPayable = calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems });
+                        const existingLinkedTotal = existingLines.reduce(
+                          (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
                           0,
-                          calculateCanonicalCashPayable({ ...formData, broker_items: brokerItems })
-                            - Number(editingExpense?.paid_amount || 0)
-                            + Number(editingBankLines.reduce(
-                              (sum, line) => sum + Number(line.payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
-                              0,
-                            ) || 0),
-                        ),
-                      ));
+                        );
+                        const docRemaining = existingLines.length > 0
+                          ? Math.max(0, cashPayable - existingLinkedTotal)
+                          : cashPayable;
+                        const calcAmount = Math.min(bankRemaining, docRemaining);
+                        setSelectedBankAllocationAmount(calcAmount > 0.01 ? calcAmount : undefined);
+                      }
                     }}
                     onUnlink={() => handleUnlinkFromBankStatement(editingExpense!.id)}
                     onUnlinkTransaction={async (line) => {
@@ -4464,6 +4469,42 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                         await unlinkBankTransaction(lineId);
                         await syncExpenseBankLinks([editingExpense.id]);
                         notifyFinanceReconciliationRefresh();
+                      }
+                      const { data: updatedExp } = await supabase
+                        .from('finance_expenses')
+                        .select(`
+                          *,
+                          batches (batch_number),
+                          import_containers (container_ref),
+                          delivery_challans (challan_number),
+                          bank_accounts (bank_name, account_number),
+                          bank_statement_lines!bsl_matched_expense_fk (
+                            id,
+                            transaction_date,
+                            description,
+                            debit_amount,
+                            credit_amount,
+                            bank_account_id,
+                            bank_accounts (bank_name, account_number)
+                          ),
+                          salary_advance_applications (
+                            id,
+                            applied_amount,
+                            advance_payment_voucher_id,
+                            settlement_payment_voucher_id
+                          ),
+                          voucher_allocations (
+                            id,
+                            allocated_amount,
+                            payment_kind,
+                            payment_vouchers (voucher_number, voucher_date, payment_purpose)
+                          )
+                        `)
+                        .eq('id', editingExpense.id)
+                        .single();
+                      if (updatedExp) {
+                        setEditingExpense(updatedExp);
+                        setExpenses(prev => prev.map(exp => exp.id === editingExpense.id ? updatedExp : exp));
                       }
                     }}
                   />
