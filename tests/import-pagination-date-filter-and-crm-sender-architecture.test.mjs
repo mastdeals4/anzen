@@ -153,7 +153,7 @@ test('2. Import Data — Database-Level Date Filter (Year, Month, Custom, Combin
 test('3. CRM Sender Architecture — Strict Purpose-Based Separation & Fallback Prevention', () => {
   // send-bulk-email backend
   assert.ok(
-    sendBulkEmailSrc.includes('CRM_SALES_EMAIL = "sales@sapharmajaya.co.id"') &&
+    sendBulkEmailSrc.includes('CRM_SALES_EMAIL = "sales@avira.co.id"') &&
     sendBulkEmailSrc.includes('KUNAL_PRICING_EMAIL = "kunal@avira.co.id"'),
     'send-bulk-email must define fixed email identities'
   );
@@ -167,7 +167,7 @@ test('3. CRM Sender Architecture — Strict Purpose-Based Separation & Fallback 
   assert.ok(
     sendBulkEmailSrc.includes('if (CRM_WORKFLOWS.includes(workflowType) || module === "crm")') &&
     sendBulkEmailSrc.includes('targetEmail = CRM_SALES_EMAIL;'),
-    'CRM workflows must strictly target sales@sapharmajaya.co.id'
+    'CRM workflows must strictly target sales@avira.co.id'
   );
 
   assert.ok(
@@ -185,18 +185,18 @@ test('3. CRM Sender Architecture — Strict Purpose-Based Separation & Fallback 
 
   // Bulk campaign processor uses CRM sales email
   assert.ok(
-    processCampaignSrc.includes('sales@sapharmajaya.co.id'),
-    'process-bulk-email-campaign must explicitly use sales@sapharmajaya.co.id'
+    processCampaignSrc.includes('sales@avira.co.id'),
+    'process-bulk-email-campaign must explicitly use sales@avira.co.id'
   );
 
   // Gmail Inbox endpoints route by account
   assert.ok(
-    gmailInboxListSrc.includes('sales@sapharmajaya.co.id') &&
+    gmailInboxListSrc.includes('sales@avira.co.id') &&
     gmailInboxListSrc.includes('kunal@avira.co.id'),
     'gmail-inbox-list must separate CRM and Pricing mailboxes'
   );
   assert.ok(
-    gmailInboxMessageSrc.includes('sales@sapharmajaya.co.id') &&
+    gmailInboxMessageSrc.includes('sales@avira.co.id') &&
     gmailInboxMessageSrc.includes('kunal@avira.co.id'),
     'gmail-inbox-message must separate CRM and Pricing mailboxes'
   );
@@ -205,72 +205,72 @@ test('3. CRM Sender Architecture — Strict Purpose-Based Separation & Fallback 
 test('4. CRM Frontend Senders & Non-Editable UI Indicators', () => {
   // Bulk Email Composer & Campaign Processor
   assert.ok(
-    bulkComposerSrc.includes('Sending from: sales@sapharmajaya.co.id'),
-    'BulkEmailComposer must show non-editable indicator for sales@sapharmajaya.co.id'
+    bulkComposerSrc.includes('Sending from: sales@avira.co.id'),
+    'BulkEmailComposer must show non-editable indicator for sales@avira.co.id'
   );
   assert.ok(
-    bulkComposerSrc.includes("ilike('email_address', 'sales@sapharmajaya.co.id')"),
-    'BulkEmailComposer must verify connection to sales@sapharmajaya.co.id'
+    bulkComposerSrc.includes("ilike('email_address', 'sales@avira.co.id')"),
+    'BulkEmailComposer must verify connection to sales@avira.co.id'
   );
   assert.ok(
-    processCampaignSrc.includes('requiredSenderEmail: "sales@sapharmajaya.co.id"'),
-    'process-bulk-email-campaign must explicitly send from sales@sapharmajaya.co.id'
+    processCampaignSrc.includes('requiredSenderEmail: "sales@avira.co.id"'),
+    'process-bulk-email-campaign must explicitly send from sales@avira.co.id'
   );
 
   // Omnichannel CRM Inbox
   assert.ok(
-    omnichannelInboxSrc.includes('Sending from: sales@sapharmajaya.co.id'),
-    'CrmOmnichannelInbox must show non-editable indicator for sales@sapharmajaya.co.id'
+    omnichannelInboxSrc.includes('Sending from: sales@avira.co.id'),
+    'CrmOmnichannelInbox must show non-editable indicator for sales@avira.co.id'
   );
   assert.ok(
-    omnichannelInboxSrc.includes("requiredSenderEmail: 'sales@sapharmajaya.co.id'"),
-    'CrmOmnichannelInbox replies must send from sales@sapharmajaya.co.id'
+    omnichannelInboxSrc.includes("requiredSenderEmail: 'sales@avira.co.id'"),
+    'CrmOmnichannelInbox replies must send from sales@avira.co.id'
   );
 
   // Gmail-like Composer
   assert.ok(
-    gmailLikeComposerSrc.includes('sales@sapharmajaya.co.id'),
-    'GmailLikeComposer must use sales@sapharmajaya.co.id for CRM'
+    gmailLikeComposerSrc.includes('sales@avira.co.id'),
+    'GmailLikeComposer must use sales@avira.co.id for CRM'
   );
 
   // CRM Inquiry Drawer
   assert.ok(
-    inquiryDrawerSrc.includes('Sending from: sales@sapharmajaya.co.id'),
-    'CrmInquiryDrawer must show indicator for sales@sapharmajaya.co.id'
+    inquiryDrawerSrc.includes('Sending from: sales@avira.co.id'),
+    'CrmInquiryDrawer must show indicator for sales@avira.co.id'
   );
   assert.ok(
-    inquiryDrawerSrc.includes("requiredSenderEmail: 'sales@sapharmajaya.co.id'"),
-    'CrmInquiryDrawer must send from sales@sapharmajaya.co.id'
+    inquiryDrawerSrc.includes("requiredSenderEmail: 'sales@avira.co.id'"),
+    'CrmInquiryDrawer must send from sales@avira.co.id'
   );
 
   // Kunal Internal Reply Modal
   assert.ok(
-    internalReplyModalSrc.includes('Sending from: sales@sapharmajaya.co.id'),
-    'KunalInternalReplyModal must show indicator for sales@sapharmajaya.co.id'
+    internalReplyModalSrc.includes('Sending from: sales@avira.co.id'),
+    'KunalInternalReplyModal must show indicator for sales@avira.co.id'
   );
   assert.ok(
-    internalReplyModalSrc.includes("requiredSenderEmail: 'sales@sapharmajaya.co.id'"),
-    'KunalInternalReplyModal must send from sales@sapharmajaya.co.id'
+    internalReplyModalSrc.includes("requiredSenderEmail: 'sales@avira.co.id'"),
+    'KunalInternalReplyModal must send from sales@avira.co.id'
   );
 
   // CRM Sourcing Outbox
   assert.ok(
-    sourcingOutboxSrc.includes('Sending from: sales@sapharmajaya.co.id'),
-    'SourcingOutbox must show indicator for sales@sapharmajaya.co.id'
+    sourcingOutboxSrc.includes('Sending from: sales@avira.co.id'),
+    'SourcingOutbox must show indicator for sales@avira.co.id'
   );
   assert.ok(
-    sourcingOutboxSrc.includes("requiredSenderEmail: 'sales@sapharmajaya.co.id'"),
-    'SourcingOutbox must send from sales@sapharmajaya.co.id'
+    sourcingOutboxSrc.includes("requiredSenderEmail: 'sales@avira.co.id'"),
+    'SourcingOutbox must send from sales@avira.co.id'
   );
 
   // Customer Quote Modal
   assert.ok(
-    customerQuoteModalSrc.includes('Sending from: sales@sapharmajaya.co.id'),
-    'KunalCustomerQuoteModal must show indicator for sales@sapharmajaya.co.id'
+    customerQuoteModalSrc.includes('Sending from: sales@avira.co.id'),
+    'KunalCustomerQuoteModal must show indicator for sales@avira.co.id'
   );
   assert.ok(
-    customerQuoteModalSrc.includes("requiredSenderEmail: 'sales@sapharmajaya.co.id'"),
-    'KunalCustomerQuoteModal must send from sales@sapharmajaya.co.id'
+    customerQuoteModalSrc.includes("requiredSenderEmail: 'sales@avira.co.id'"),
+    'KunalCustomerQuoteModal must send from sales@avira.co.id'
   );
 });
 
@@ -285,8 +285,8 @@ test('5. Kunal Pricing Sender Architecture & Inbox Isolation', () => {
     'PriceRequestDetail must explicitly pass kunal@avira.co.id for sourcing requests and reminders'
   );
   assert.ok(
-    priceRequestDetailSrc.includes("requiredSenderEmail: 'sales@sapharmajaya.co.id'"),
-    'PriceRequestDetail customer quotes must use sales@sapharmajaya.co.id'
+    priceRequestDetailSrc.includes("requiredSenderEmail: 'sales@avira.co.id'"),
+    'PriceRequestDetail customer quotes must use sales@avira.co.id'
   );
 
   // Kunal India Pricing service inbox isolation
@@ -298,7 +298,7 @@ test('5. Kunal Pricing Sender Architecture & Inbox Isolation', () => {
 
   // pricingEmail service
   assert.ok(
-    pricingEmailSrc.includes("targetSender = req.requiredSenderEmail || (isCrm ? 'sales@sapharmajaya.co.id' : 'kunal@avira.co.id')"),
-    'pricingEmail must route to sales@sapharmajaya.co.id for CRM/customer quote and kunal@avira.co.id for pricing'
+    pricingEmailSrc.includes("targetSender = req.requiredSenderEmail || (isCrm ? 'sales@avira.co.id' : 'kunal@avira.co.id')"),
+    'pricingEmail must route to sales@avira.co.id for CRM/customer quote and kunal@avira.co.id for pricing'
   );
 });

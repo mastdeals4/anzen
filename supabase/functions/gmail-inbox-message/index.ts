@@ -222,17 +222,58 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
-    const messageId = String(body.messageId || url.searchParams.get("messageId") || "");
-    const threadId = String(body.threadId || url.searchParams.get("threadId") || "");
+    let messageId = String(body.messageId || url.searchParams.get("messageId") || "");
+    let threadId = String(body.threadId || url.searchParams.get("threadId") || "");
+    const conversationId = String(body.conversationId || url.searchParams.get("conversationId") || "");
+    const inquiryId = String(body.inquiryId || url.searchParams.get("inquiryId") || "");
     const includeThread = body.includeThread === true || url.searchParams.get("includeThread") === "true";
     const explicitConnectionId = String(body.connectionId || url.searchParams.get("connectionId") || "");
 
-    if (!messageId && !threadId) return json({ success: false, code: "MISSING_MESSAGE_ID" }, 400);
+    if (!messageId && !threadId && conversationId) {
+      const { data: convMsg } = await supabase
+        .from("enquiry_conversation_messages")
+        .select("external_message_id, metadata")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (convMsg?.external_message_id) {
+        messageId = convMsg.external_message_id;
+      }
+      if (convMsg?.metadata && typeof convMsg.metadata === "object") {
+        const meta = convMsg.metadata as Record<string, unknown>;
+        if (typeof meta.gmail_thread_id === "string") threadId = meta.gmail_thread_id;
+        if (!messageId && typeof meta.gmail_message_id === "string") messageId = meta.gmail_message_id;
+      }
+    }
 
-    const targetAccountEmail = String(
+    if (!messageId && !threadId && inquiryId) {
+      const { data: mapRow } = await supabase
+        .from("email_thread_map")
+        .select("gmail_message_id, gmail_thread_id")
+        .eq("enquiry_id", inquiryId)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (mapRow) {
+        if (mapRow.gmail_message_id) messageId = mapRow.gmail_message_id;
+        if (mapRow.gmail_thread_id) threadId = mapRow.gmail_thread_id;
+      }
+    }
+
+    if (!messageId && !threadId && !conversationId) {
+      return json({ success: false, code: "MISSING_MESSAGE_ID", error: "Missing messageId or threadId" }, 400);
+    }
+
+    let targetAccountEmail = String(
       body.emailAddress ||
-      (body.account === "crm" || body.mailbox === "crm" ? "sales@sapharmajaya.co.id" : body.account === "pricing" || body.mailbox === "pricing" ? "kunal@avira.co.id" : "")
+      (body.account === "crm" || body.mailbox === "crm" ? "sales@avira.co.id" : body.account === "pricing" || body.mailbox === "pricing" ? "kunal@avira.co.id" : "")
     ).toLowerCase().trim();
+
+    // Map legacy sales@sapharmajaya.co.id to sales@avira.co.id
+    if (targetAccountEmail === "sales@sapharmajaya.co.id") {
+      targetAccountEmail = "sales@avira.co.id";
+    }
 
     // 1. Gather candidate Gmail connections
     const candidateConnections: GmailConnectionSecret[] = [];
@@ -317,6 +358,40 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!foundData || !activeConnection) {
+      if (conversationId) {
+        const { data: dbMsgs } = await supabase
+          .from("enquiry_conversation_messages")
+          .select("id, external_message_id, sender_address, recipient_addresses, subject, body_text, body_html, direction, created_at, metadata")
+          .eq("conversation_id", conversationId)
+          .order("created_at", { ascending: true });
+        if (dbMsgs && dbMsgs.length > 0) {
+          const fallbackThread = dbMsgs.map(m => {
+            const meta = (m.metadata || {}) as Record<string, unknown>;
+            return {
+              messageId: m.external_message_id || m.id,
+              threadId: (meta.gmail_thread_id as string) || "",
+              from: m.sender_address || "",
+              to: (m.recipient_addresses || []).join(", "),
+              subject: m.subject || "",
+              date: m.created_at,
+              body: m.body_text || m.body_html || "",
+              bodyHtml: m.body_html || undefined,
+              attachments: [] as any[],
+              hasAttachments: false,
+              direction: m.direction,
+            };
+          });
+          const primaryMsg = fallbackThread[fallbackThread.length - 1];
+          return json({
+            success: true,
+            isThread: true,
+            message: primaryMsg,
+            thread: fallbackThread,
+            source: "database_fallback",
+            mailbox: targetAccountEmail || "sales@avira.co.id",
+          });
+        }
+      }
       return json({
         success: false,
         code: "MESSAGE_NOT_FOUND",

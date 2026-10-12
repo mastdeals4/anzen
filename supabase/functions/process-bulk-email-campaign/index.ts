@@ -196,7 +196,7 @@ Deno.serve(async (req: Request) => {
               "X-Bulk-Email-Worker-Secret": workerSecret,
             },
             body: JSON.stringify({
-              requiredSenderEmail: "sales@sapharmajaya.co.id",
+              requiredSenderEmail: "sales@avira.co.id",
               toEmails,
               subject,
               body: htmlBody,

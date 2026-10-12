@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { showToast } from '../../ToastNotification';
@@ -54,6 +54,7 @@ export interface InboxConversation {
   customerName?: string | null;
   customerId?: string | null;
   ownerName?: string | null;
+  direction?: 'inbound' | 'outbound';
   // Specific payload IDs
   gmailMessageId?: string;
   gmailThreadId?: string;
@@ -78,6 +79,7 @@ export interface ThreadMessage {
   date: string | null;
   subject?: string;
   body: string;
+  bodyHtml?: string;
   snippet?: string;
   attachments?: Array<{
     filename: string;
@@ -138,10 +140,10 @@ export function CrmOmnichannelInbox({
     try {
       const items: InboxConversation[] = [];
 
-      // 1. Fetch Email conversations from Gmail API via edge function (CRM Mailbox: sales@sapharmajaya.co.id)
+      // 1. Fetch Email conversations from Gmail API via edge function (CRM Mailbox: sales@avira.co.id)
       try {
         const { data: gmailData, error: gmailError } = await supabase.functions.invoke('gmail-inbox-list', {
-          body: { account: 'crm', emailAddress: 'sales@sapharmajaya.co.id', query: 'in:inbox', maxResults: 40 },
+          body: { account: 'crm', emailAddress: 'sales@avira.co.id', query: 'in:inbox', maxResults: 40 },
         });
 
         if (!gmailError && gmailData?.success && Array.isArray(gmailData.messages)) {
@@ -163,10 +165,14 @@ export function CrmOmnichannelInbox({
             const fromMatch = (msg.from || '').match(/^(.*?)\s*<(.+?)>$/);
             const senderName = fromMatch ? fromMatch[1].replace(/^"|"$/g, '').trim() : msg.from;
             const senderAddress = fromMatch ? fromMatch[2].trim() : msg.from;
+            const isOutbound = ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+              (senderAddress || '').toLowerCase().includes(internal)
+            );
 
             items.push({
               id: `email-${msg.messageId}`,
               channel: 'email',
+              direction: isOutbound ? 'outbound' : 'inbound',
               senderName: senderName || 'Unknown Sender',
               senderAddress: senderAddress || msg.from,
               recipientAddress: msg.to,
@@ -181,7 +187,7 @@ export function CrmOmnichannelInbox({
               productName: review?.product_name || inq?.product_name || null,
               customerName: inq?.company_name || null,
               gmailMessageId: msg.messageId,
-              gmailThreadId: msg.threadId,
+              gmailThreadId: msg.threadId || msg.messageId,
             });
           }
         }
@@ -252,11 +258,20 @@ export function CrmOmnichannelInbox({
             const customerName = inq?.company_name || cust?.company_name || null;
             const suggestedReply = meta.suggested_reply || intel?.suggested_reply || null;
 
+            const isOutbound = lastMsg?.direction === 'outbound' || ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+              (lastMsg?.sender_address || '').toLowerCase().includes(internal)
+            );
+            const recipAddr = Array.isArray(lastMsg?.recipient_addresses) ? lastMsg.recipient_addresses[0] : (lastMsg?.recipient_addresses || '');
+            const extMsgId = lastMsg?.external_message_id || meta.gmail_message_id || meta.message_id || null;
+            const extThreadId = meta.gmail_thread_id || meta.thread_id || extMsgId || null;
+
             items.push({
               id: `wa-${c.id}`,
               channel: c.channel === 'whatsapp' ? 'whatsapp' : 'email',
-              senderName: customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer',
+              direction: isOutbound ? 'outbound' : 'inbound',
+              senderName: isOutbound ? (recipAddr || customerName || c.title || 'Contact') : (customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer'),
               senderAddress: lastMsg?.sender_address || '',
+              recipientAddress: recipAddr,
               subject: topic,
               snippet: latestSummary || lastMsg?.body_text || '(No messages)',
               timestamp: c.last_message_at || lastMsg?.received_or_sent_at || new Date().toISOString(),
@@ -269,6 +284,8 @@ export function CrmOmnichannelInbox({
               customerName,
               customerId: c.customer_id || null,
               whatsAppConversationId: c.id,
+              gmailMessageId: extMsgId,
+              gmailThreadId: extThreadId,
               language,
               languageLabel: language === 'id' ? 'Indonesian' : (language === 'en' ? 'English' : 'Mixed ID/EN'),
               intent,
@@ -347,111 +364,199 @@ export function CrmOmnichannelInbox({
   }, [conversations, selectedId]);
 
   // Load selected conversation thread
-  useEffect(() => {
+  const loadThread = useCallback(async () => {
     if (!selectedConversation) {
       setThreadMessages([]);
       return;
     }
 
-    const loadThread = async () => {
-      setLoadingDetail(true);
-      setDetailError(null);
-      setReplyText('');
-      setReplySubject(selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+    setLoadingDetail(true);
+    setDetailError(null);
+    setReplyText('');
+    setReplySubject(selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
 
-      try {
-        if (selectedConversation.channel === 'email') {
-          // Use verified gmail-inbox-message edge function scoped to CRM Mailbox
-          const { data, error } = await supabase.functions.invoke('gmail-inbox-message', {
-            body: {
-              account: 'crm',
-              emailAddress: 'sales@sapharmajaya.co.id',
-              threadId: selectedConversation.gmailThreadId,
-              messageId: selectedConversation.gmailMessageId,
-              includeThread: true,
-            },
-          });
+    try {
+      if (selectedConversation.channel === 'email') {
+        let fetchedMsgs: ThreadMessage[] = [];
+        let fetchError: string | null = null;
 
-          if (error) throw new Error(error.message || 'Failed to retrieve Gmail thread');
-          if (!data?.success) throw new Error(data?.error || data?.code || 'Gmail message not found');
+        // 1. Try live Gmail retrieval if threadId or messageId is present
+        if (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId) {
+          try {
+            const { data, error } = await supabase.functions.invoke('gmail-inbox-message', {
+              body: {
+                account: 'crm',
+                emailAddress: 'sales@avira.co.id',
+                threadId: selectedConversation.gmailThreadId,
+                messageId: selectedConversation.gmailMessageId,
+                includeThread: true,
+              },
+            });
 
-          const msgs: ThreadMessage[] = (data.thread_messages || []).map((m: any) => ({
-            id: m.messageId,
-            from: m.from,
-            to: m.to,
-            cc: m.cc,
-            date: m.date,
-            subject: m.subject,
-            body: m.bodyText || m.body || m.snippet || '(No body text)',
-            snippet: m.snippet,
-            attachments: m.attachments || [],
-            direction: 'inbound',
-          }));
-
-          setThreadMessages(msgs);
-
-          // Expand latest message by default
-          const exp: Record<string, boolean> = {};
-          if (msgs.length > 0) {
-            exp[msgs[msgs.length - 1].id] = true;
+            if (error) {
+              let errMsg = error.message;
+              if ('context' in error && error.context) {
+                try {
+                  const errBody = await (error.context as Response).clone().json();
+                  errMsg = errBody?.error || errBody?.code || errMsg;
+                } catch { /* ignore */ }
+              }
+              fetchError = errMsg;
+            } else if (!data?.success) {
+              fetchError = data?.error || data?.code || 'Gmail message not found';
+            } else if (Array.isArray(data.thread_messages) && data.thread_messages.length > 0) {
+              fetchedMsgs = data.thread_messages.map((m: any) => ({
+                id: m.messageId,
+                from: m.from,
+                to: m.to,
+                cc: m.cc,
+                date: m.date,
+                subject: m.subject,
+                body: m.bodyText || m.body || m.snippet || '(No body text)',
+                bodyHtml: m.bodyHtml,
+                snippet: m.snippet,
+                attachments: m.attachments || [],
+                direction: ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+                  (m.from || '').toLowerCase().includes(internal)
+                ) ? 'outbound' : 'inbound',
+              }));
+            }
+          } catch (invokeErr: any) {
+            fetchError = invokeErr.message || 'Error connecting to Gmail service';
           }
+        }
+
+        // 2. If Gmail didn't return messages, fall back to canonical database tables
+        if (fetchedMsgs.length === 0) {
+          // Check enquiry_conversation_messages
+          if (selectedConversation.whatsAppConversationId) {
+            const { data: convMsgs } = await supabase
+              .from('enquiry_conversation_messages')
+              .select('*')
+              .eq('conversation_id', selectedConversation.whatsAppConversationId)
+              .order('received_or_sent_at', { ascending: true });
+
+            if (Array.isArray(convMsgs) && convMsgs.length > 0) {
+              fetchedMsgs = convMsgs.map((m: any) => ({
+                id: m.id,
+                from: m.sender_name ? `${m.sender_name} <${m.sender_address}>` : m.sender_address,
+                to: Array.isArray(m.recipient_addresses) ? m.recipient_addresses.join(', ') : m.recipient_addresses,
+                date: m.received_or_sent_at,
+                subject: m.subject || selectedConversation.subject,
+                body: m.body_text || m.body_html || '(No body text)',
+                bodyHtml: m.body_html,
+                direction: m.direction || 'inbound',
+                attachments: m.attachments || [],
+              }));
+            }
+          }
+
+          // Also check crm_email_inbox for matching thread or message ID
+          if (fetchedMsgs.length === 0 && (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId)) {
+            let q = supabase.from('crm_email_inbox').select('*');
+            if (selectedConversation.gmailThreadId) {
+              q = q.eq('thread_id', selectedConversation.gmailThreadId);
+            } else {
+              q = q.eq('message_id', selectedConversation.gmailMessageId);
+            }
+            const { data: inboxRows } = await q.order('received_date', { ascending: true });
+            if (Array.isArray(inboxRows) && inboxRows.length > 0) {
+              fetchedMsgs = inboxRows.map((r: any) => ({
+                id: r.message_id || r.id,
+                from: r.from_name ? `${r.from_name} <${r.from_email}>` : r.from_email,
+                to: r.to_email,
+                date: r.received_date,
+                subject: r.subject,
+                body: r.body || r.body_html || '(No body text)',
+                bodyHtml: r.body_html,
+                direction: ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+                  (r.from_email || '').toLowerCase().includes(internal)
+                ) ? 'outbound' : 'inbound',
+                attachments: [],
+              }));
+            }
+          }
+        }
+
+        if (fetchedMsgs.length > 0) {
+          setThreadMessages(fetchedMsgs);
+          const exp: Record<string, boolean> = {};
+          exp[fetchedMsgs[fetchedMsgs.length - 1].id] = true;
           setExpandedMsgIds(exp);
         } else {
-          // WhatsApp conversation from canonical tables
-          const { data: waMsgs, error: waError } = await supabase
-            .from('enquiry_conversation_messages')
-            .select('*')
-            .eq('conversation_id', selectedConversation.whatsAppConversationId)
-            .order('received_or_sent_at', { ascending: true });
-
-          if (waError) throw waError;
-
-          const msgs: ThreadMessage[] = (waMsgs || []).map((m: any) => {
-            let intel = m.ai_proposal || null;
-            if (!intel && m.body_text) {
-              intel = analyzeWhatsAppMessage(m.body_text, {
-                senderName: m.sender_name,
-                senderPhone: m.sender_address,
-                hasAttachments: m.attachments?.length > 0,
-              });
-            }
-
-            return {
-              id: m.id,
-              from: m.sender_name || m.sender_address,
-              to: m.recipient_addresses?.[0],
-              date: m.received_or_sent_at,
-              body: m.body_text || '(No text)',
-              direction: m.direction || 'inbound',
-              attachments: m.attachments || [],
-              language: intel?.language,
-              englishTranslation: intel?.english_translation,
-              entities: intel?.entities,
-              intent: intel?.intent,
-              aiSummary: intel?.running_summary || m.ai_summary,
-              aiProposal: intel,
-            };
-          });
-
-          setThreadMessages(msgs);
-
-          // Expand latest message by default
-          const exp: Record<string, boolean> = {};
-          if (msgs.length > 0) {
-            exp[msgs[msgs.length - 1].id] = true;
-          }
-          setExpandedMsgIds(exp);
+          setThreadMessages([]);
+          setDetailError(fetchError || 'Conversation messages could not be retrieved from Gmail or local records.');
         }
-      } catch (err: any) {
-        console.error('[CrmOmnichannelInbox] Thread load error:', err);
-        setDetailError(err.message || 'Could not load complete conversation thread');
-      } finally {
-        setLoadingDetail(false);
-      }
-    };
+      } else {
+        // WhatsApp conversation from canonical tables
+        const { data: waMsgs, error: waError } = await supabase
+          .from('enquiry_conversation_messages')
+          .select('*')
+          .eq('conversation_id', selectedConversation.whatsAppConversationId)
+          .order('received_or_sent_at', { ascending: true });
 
+        if (waError) throw waError;
+
+        const msgs: ThreadMessage[] = (waMsgs || []).map((m: any) => {
+          let intel = m.ai_proposal || null;
+          if (!intel && m.body_text) {
+            intel = analyzeWhatsAppMessage(m.body_text, {
+              senderName: m.sender_name,
+              senderPhone: m.sender_address,
+              hasAttachments: m.attachments?.length > 0,
+            });
+          }
+
+          return {
+            id: m.id,
+            from: m.sender_name || m.sender_address,
+            to: m.recipient_addresses?.[0],
+            date: m.received_or_sent_at,
+            body: m.body_text || m.body_html || '(No text)',
+            bodyHtml: m.body_html,
+            direction: m.direction || 'inbound',
+            attachments: m.attachments || [],
+            language: intel?.language,
+            englishTranslation: intel?.english_translation,
+            entities: intel?.entities,
+            intent: intel?.intent,
+            aiSummary: intel?.running_summary || m.ai_summary,
+            aiProposal: intel,
+          };
+        });
+
+        setThreadMessages(msgs);
+
+        // Expand latest message by default
+        const exp: Record<string, boolean> = {};
+        if (msgs.length > 0) {
+          exp[msgs[msgs.length - 1].id] = true;
+        }
+        setExpandedMsgIds(exp);
+      }
+    } catch (err: any) {
+      console.error('[CrmOmnichannelInbox] Thread load error:', err);
+      setDetailError(err.message || 'Could not load complete conversation thread');
+    } finally {
+      setLoadingDetail(false);
+    }
+  }, [selectedConversation]);
+
+  useEffect(() => {
     loadThread();
-  }, [selectedConversation?.id]);
+  }, [loadThread]);
+
+  const getReplyRecipient = () => {
+    if (!selectedConversation) return '';
+    const isOutbound = selectedConversation.direction === 'outbound' ||
+      ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+        (selectedConversation.senderAddress || '').toLowerCase().includes(internal)
+      );
+    if (isOutbound && selectedConversation.recipientAddress) {
+      return selectedConversation.recipientAddress;
+    }
+    return selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
+  };
 
   // Handle Send Reply
   const handleSendReply = async () => {
@@ -470,22 +575,24 @@ export function CrmOmnichannelInbox({
         setReplyText('');
       } else {
         // Email reply via send-bulk-email from official sales mailbox
-        if (!selectedConversation.senderAddress) {
+        const replyRecipient = getReplyRecipient();
+        if (!replyRecipient) {
           throw new Error('No recipient email address found for this conversation');
         }
         const replySubj = replySubject || (selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
 
         const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
           body: {
-            requiredSenderEmail: 'sales@sapharmajaya.co.id',
-            replyTo: 'sales@sapharmajaya.co.id',
+            requiredSenderEmail: 'sales@avira.co.id',
+            replyTo: 'sales@avira.co.id',
             workflowType: 'crm_bulk_email',
-            toEmails: [selectedConversation.senderAddress],
+            toEmails: [replyRecipient],
             subject: replySubj,
             body: replyText.trim().replace(/\n/g, '<br/>'),
             isHtml: true,
             threadId: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId || undefined,
             inReplyTo: selectedConversation.gmailMessageId || undefined,
+            references: selectedConversation.gmailMessageId || undefined,
             inquiryId: selectedConversation.inquiryId || undefined,
           },
         });
@@ -494,7 +601,7 @@ export function CrmOmnichannelInbox({
           throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
         }
 
-        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from sales@sapharmajaya.co.id to ${selectedConversation.senderAddress}` });
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from sales@avira.co.id to ${replyRecipient}` });
         setReplyText('');
       }
     } catch (err: any) {
@@ -943,9 +1050,18 @@ export function CrmOmnichannelInbox({
                 )}
 
                 {detailError && (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                    <div className="font-bold mb-1">Thread Retrieval Notice</div>
-                    <div>{detailError}</div>
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-bold mb-1">Thread Retrieval Notice</div>
+                      <div>{detailError}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadThread()}
+                      className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-medium flex items-center gap-1 cursor-pointer flex-shrink-0"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Retry
+                    </button>
                   </div>
                 )}
 
@@ -1002,9 +1118,16 @@ export function CrmOmnichannelInbox({
                           )}
 
                           {/* Original Message Body */}
-                          <div className="text-xs leading-relaxed text-gray-800 whitespace-pre-wrap font-sans selection:bg-blue-100">
-                            {msg.body}
-                          </div>
+                          {msg.bodyHtml ? (
+                            <div
+                              className="text-xs leading-relaxed text-gray-800 font-sans selection:bg-blue-100 overflow-x-auto"
+                              dangerouslySetInnerHTML={{ __html: msg.bodyHtml }}
+                            />
+                          ) : (
+                            <div className="text-xs leading-relaxed text-gray-800 whitespace-pre-wrap font-sans selection:bg-blue-100">
+                              {msg.body}
+                            </div>
+                          )}
 
                           {/* English Translation Box for Inbound WhatsApp */}
                           {selectedConversation.channel === 'whatsapp' && msg.direction === 'inbound' && msg.englishTranslation && (
@@ -1099,9 +1222,9 @@ export function CrmOmnichannelInbox({
                       ) : (
                         <>
                           <Mail className="w-3.5 h-3.5 text-blue-600" />
-                          Reply via Email to {selectedConversation.senderAddress}
+                          Reply via Email to {getReplyRecipient()}
                           <span className="text-[10.5px] font-mono bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 select-none">
-                            Sending from: sales@sapharmajaya.co.id
+                            Sending from: sales@avira.co.id
                           </span>
                         </>
                       )}

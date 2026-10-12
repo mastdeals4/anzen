@@ -129,15 +129,20 @@ Deno.serve(async (req: Request) => {
       params = await req.json().catch(() => ({}));
     }
 
-    const CRM_SALES_EMAIL = "sales@sapharmajaya.co.id";
+    const CRM_SALES_EMAIL = "sales@avira.co.id";
+    const CRM_SALES_LEGACY_EMAIL = "sales@sapharmajaya.co.id";
     const KUNAL_PRICING_EMAIL = "kunal@avira.co.id";
 
-    const requestedEmail = String(
+    let requestedEmail = String(
       params.emailAddress ||
       params.requiredSenderEmail ||
       url.searchParams.get("emailAddress") ||
       ""
     ).toLowerCase().trim();
+
+    if (requestedEmail === CRM_SALES_LEGACY_EMAIL) {
+      requestedEmail = CRM_SALES_EMAIL;
+    }
 
     const account = String(
       params.account ||

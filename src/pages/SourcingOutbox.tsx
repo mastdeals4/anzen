@@ -283,7 +283,7 @@ function sourcingPriority(message: GmailReviewMessage): number {
   const haystack = `${message.from} ${message.to || ''} ${message.subject} ${message.snippet} ${message.body || ''}`.toLowerCase();
   let score = 0;
   [
-    'sonal', 'aanvi', 'anvi', 'kunal', 'sales@sapharmajaya.co.id',
+    'sonal', 'aanvi', 'anvi', 'kunal', 'sales@avira.co.id', 'sales@sapharmajaya.co.id',
   ].forEach(term => { if (haystack.includes(term)) score += 5; });
   [
     'sourcing', 'permintaan', 'npd', 'alt', 'reform', 'inquiry',
@@ -439,7 +439,7 @@ export function SourcingOutbox() {
 
   useEffect(() => {
     (async () => {
-      setHasGmail(await userHasConnectedGmail('sales@sapharmajaya.co.id'));
+      setHasGmail(await userHasConnectedGmail('sales@avira.co.id'));
     })();
   }, []);
 
@@ -563,14 +563,14 @@ export function SourcingOutbox() {
       const { data: listData, error: listError } = await supabase.functions.invoke('gmail-inbox-list', {
         body: {
           account: 'crm',
-          emailAddress: 'sales@sapharmajaya.co.id',
+          emailAddress: 'sales@avira.co.id',
           query: gmailQuery.trim() || 'newer_than:30d',
           maxResults: gmailScanLimit,
         },
       });
       if (listError || !listData?.success) {
         const code = listData?.code || '';
-        if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect sales@sapharmajaya.co.id in Settings first.');
+        if (code === 'NO_GMAIL_CONNECTED') throw new Error('No Gmail connected. Connect sales@avira.co.id in Settings first.');
         throw new Error(listData?.error || listError?.message || 'Could not scan Gmail.');
       }
 
@@ -586,7 +586,7 @@ export function SourcingOutbox() {
           body: {
             messageId: message.messageId,
             account: 'crm',
-            emailAddress: 'sales@sapharmajaya.co.id',
+            emailAddress: 'sales@avira.co.id',
           },
         });
         return {
@@ -1063,7 +1063,7 @@ export function SourcingOutbox() {
     const result = await sendPricingWorkflowEmail({
       workflowType: hasNew ? 'sourcing_request' : 'sourcing_reminder',
       module: 'crm',
-      requiredSenderEmail: 'sales@sapharmajaya.co.id',
+      requiredSenderEmail: 'sales@avira.co.id',
       sourceType: route,
       to: recips.to,
       cc: recips.cc,
@@ -1926,7 +1926,7 @@ export function SourcingOutbox() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-semibold text-gray-900">Email Preview</h2>
-                    <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@sapharmajaya.co.id</span>
+                    <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@avira.co.id</span>
                   </div>
                   <p className="text-[11px] text-gray-500">Completed rows and local rows are skipped. Blank routes default to India. India and China send separately.</p>
                 </div>
@@ -2019,7 +2019,7 @@ export function SourcingOutbox() {
               </div>
               <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50">
                 <div className="text-[11px] text-gray-600 flex items-center gap-1.5">
-                  <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@sapharmajaya.co.id</span>
+                  <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@avira.co.id</span>
                 </div>
                 <button
                   onClick={confirmSend}

@@ -442,7 +442,8 @@ Deno.serve(async (req: Request) => {
     let senderMode: "connected_gmail" | "fallback" = "connected_gmail";
     let connection: GmailConnection | null = null;
 
-    const CRM_SALES_EMAIL = "sales@sapharmajaya.co.id";
+    const CRM_SALES_EMAIL = "sales@avira.co.id";
+    const CRM_SALES_LEGACY_EMAIL = "sales@sapharmajaya.co.id";
     const CRM_SALES_AVIRA_EMAIL = "sales@avira.co.id";
     const KUNAL_PRICING_EMAIL = "kunal@avira.co.id";
 
@@ -471,8 +472,8 @@ Deno.serve(async (req: Request) => {
       targetEmail = KUNAL_PRICING_EMAIL;
     } else if (typeof requiredSenderEmail === "string" && requiredSenderEmail.trim()) {
       const reqEmail = requiredSenderEmail.toLowerCase().trim();
-      if (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_AVIRA_EMAIL) {
-        targetEmail = reqEmail;
+      if (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_LEGACY_EMAIL) {
+        targetEmail = CRM_SALES_EMAIL;
       } else if (reqEmail === KUNAL_PRICING_EMAIL) {
         targetEmail = KUNAL_PRICING_EMAIL;
       } else {
@@ -503,7 +504,7 @@ Deno.serve(async (req: Request) => {
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (PRICING_WORKFLOWS.includes(workflowType) && (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_AVIRA_EMAIL)) {
+      if (PRICING_WORKFLOWS.includes(workflowType) && (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_LEGACY_EMAIL)) {
         return new Response(
           JSON.stringify({
             success: false,
@@ -525,8 +526,8 @@ Deno.serve(async (req: Request) => {
       .limit(1)
       .maybeSingle();
 
-    if (!connRow?.id && (targetEmail === CRM_SALES_EMAIL || targetEmail === CRM_SALES_AVIRA_EMAIL)) {
-      const altEmail = targetEmail === CRM_SALES_EMAIL ? CRM_SALES_AVIRA_EMAIL : CRM_SALES_EMAIL;
+    if (!connRow?.id && (targetEmail === CRM_SALES_EMAIL || targetEmail === CRM_SALES_LEGACY_EMAIL)) {
+      const altEmail = targetEmail === CRM_SALES_EMAIL ? CRM_SALES_LEGACY_EMAIL : CRM_SALES_EMAIL;
       const { data: altConn } = await supabase
         .from("gmail_connections")
         .select("id, email_address")

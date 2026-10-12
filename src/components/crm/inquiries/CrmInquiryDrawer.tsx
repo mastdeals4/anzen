@@ -234,7 +234,7 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
           direction: ea.email_type === 'sent' ? 'outbound' : 'inbound',
           title: ea.subject || 'Email Communication',
           subject: ea.subject,
-          sender: ea.from_email || 'sales@sapharmajaya.co.id',
+          sender: ea.from_email || 'sales@avira.co.id',
           recipient: toRecipients,
           cc: ccRecipients || undefined,
           timestamp: ea.sent_date || ea.created_at,
@@ -403,8 +403,8 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
         }
         const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
           body: {
-            requiredSenderEmail: 'sales@sapharmajaya.co.id',
-            replyTo: 'sales@sapharmajaya.co.id',
+            requiredSenderEmail: 'sales@avira.co.id',
+            replyTo: 'sales@avira.co.id',
             workflowType: 'customer_quote',
             toEmails: [inquiry.contact_email],
             subject: `Re: Inquiry ${inquiry.inquiry_number} - ${inquiry.product_name || ''}`,
@@ -416,7 +416,7 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
         if (fnErr || !fnData?.success) {
           throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
         }
-        showToast({ type: 'success', title: 'Email Sent', message: `Reply dispatched from sales@sapharmajaya.co.id to ${inquiry.contact_email}` });
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply dispatched from sales@avira.co.id to ${inquiry.contact_email}` });
       }
       setReplyText('');
       loadInquiryDetails(inquiry.id);
@@ -862,7 +862,7 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
                   <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
                     {replyChannel === 'email' && (
                       <span className="text-[10px] font-mono text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded select-none">
-                        Sending from: sales@sapharmajaya.co.id
+                        Sending from: sales@avira.co.id
                       </span>
                     )}
                     <button

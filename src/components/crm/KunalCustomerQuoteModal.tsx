@@ -201,7 +201,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
 
       const result = await sendPricingWorkflowEmail({
         workflowType: 'customer_quote',
-        requiredSenderEmail: 'sales@sapharmajaya.co.id',
+        requiredSenderEmail: 'sales@avira.co.id',
         module: 'crm',
         to: toList,
         cc: parseRecipients(ccEmail),
@@ -252,7 +252,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div className="flex items-center gap-2.5">
             <h3 className="text-lg font-semibold text-gray-900">Send Customer Quotation</h3>
-            <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@sapharmajaya.co.id</span>
+            <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full font-medium">Sending from: sales@avira.co.id</span>
           </div>
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded"><X className="w-5 h-5" /></button>
         </div>

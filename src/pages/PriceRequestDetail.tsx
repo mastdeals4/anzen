@@ -827,7 +827,7 @@ Best regards`;
     const result = await sendPricingWorkflowEmail({
       workflowType: 'customer_quote',
       module: 'crm',
-      requiredSenderEmail: 'sales@sapharmajaya.co.id',
+      requiredSenderEmail: 'sales@avira.co.id',
       priceRequestId: pr.id,
       itemIds: quotedItems.map(i => i.id),
       to: [toEmail.trim()],
@@ -925,7 +925,7 @@ Best regards`;
             </div>
           )}
           <div className="text-[11px] rounded px-2.5 py-1.5 border bg-blue-50 border-blue-200 text-blue-800 font-medium">
-            Sending from: sales@sapharmajaya.co.id
+            Sending from: sales@avira.co.id
           </div>
           <p className="text-[10px] text-gray-400">"Log Draft" only writes a timeline entry. "Send Quote" actually delivers the email.</p>
         </div>
