@@ -787,9 +787,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           ...previous,
           pph_amount: calculation.pph21_method === 'percentage' ? calculation.pph21_amount : previous.pph_amount,
           pph_code_id: calculation.pph21_applicable && pph21Code ? pph21Code.id : previous.pph_code_id,
-          payment_method: ['cash','bank_transfer'].includes(calculation.default_payment_method)
-            ? calculation.default_payment_method
-            : previous.payment_method,
+          payment_method: editingExpense
+            ? previous.payment_method
+            : (['cash','bank_transfer'].includes(calculation.default_payment_method)
+              ? calculation.default_payment_method
+              : previous.payment_method),
         }));
       }
     });
@@ -1549,6 +1551,14 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       console.log('=== EXPENSE DATA TO SAVE ===');
       console.log('document_urls:', expenseData.document_urls);
       console.log('Full expense data:', expenseData);
+
+      if (formData.expense_category === 'salary' && persistedSalaryAdvanceApplied > 0) {
+        const minRequired = persistedSalaryAdvanceApplied + (Number(formData.pph_amount) || 0);
+        if (Number(formData.amount || 0) < minRequired - 0.01) {
+          alert(`Cannot reduce gross salary to ${formatCurrency(formData.amount, expenseFormCurrency)}: ${formatCurrency(persistedSalaryAdvanceApplied, expenseFormCurrency)} is already applied in salary advances. Adjust or reverse the advance settlement first.`);
+          return;
+        }
+      }
 
       if (editingExpense) {
         // Regular update - bank expenses only (cash expenses go to Petty Cash Manager)
