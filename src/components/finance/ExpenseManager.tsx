@@ -5079,23 +5079,33 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                 <div className="space-y-0.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[9px] uppercase font-medium text-gray-400">Method</span>
-                    {viewingExpense.payment_method === null ? (
-                      <span className="px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded">A/P Outstanding</span>
+                    {viewingExpense.payment_method ? (
+                      <span className="text-[12px] font-medium text-gray-800 capitalize">{viewingExpense.payment_method.replace('_', ' ')}</span>
+                    ) : bslLines.length > 0 ? (
+                      <span className="text-[12px] font-medium text-gray-800 capitalize">Bank Transfer</span>
+                    ) : allocs.length > 0 && balance <= 0 ? (
+                      <span className="text-[12px] font-medium text-gray-800 capitalize">Voucher Settlement</span>
+                    ) : balance <= 0 ? (
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded">Settled</span>
                     ) : (
-                      <span className="text-[12px] font-medium text-gray-800 capitalize">{viewingExpense.payment_method?.replace('_', ' ')}</span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded">A/P Outstanding</span>
                     )}
                   </div>
-                  {viewingExpense.bank_accounts && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] uppercase font-medium text-gray-400">Bank</span>
-                      <span className="text-[11px] font-medium text-gray-800">
-                        {viewingExpense.bank_accounts.alias || viewingExpense.bank_accounts.bank_name} · {viewingExpense.bank_accounts.account_number}
-                        {viewingExpense.bank_accounts.currency && viewingExpense.bank_accounts.currency !== 'IDR' && (
-                          <span className="ml-1 text-[10px] text-gray-500 font-semibold">({viewingExpense.bank_accounts.currency})</span>
-                        )}
-                      </span>
-                    </div>
-                  )}
+                  {(() => {
+                    const bankAcc = viewingExpense.bank_accounts ?? bslLines[0]?.bank_accounts;
+                    if (!bankAcc) return null;
+                    return (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] uppercase font-medium text-gray-400">Bank</span>
+                        <span className="text-[11px] font-medium text-gray-800">
+                          {bankAcc.alias || bankAcc.bank_name} · {bankAcc.account_number}
+                          {bankAcc.currency && bankAcc.currency !== 'IDR' && (
+                            <span className="ml-1 text-[10px] text-gray-500 font-semibold">({bankAcc.currency})</span>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center justify-between">
                     <span className="text-[9px] uppercase font-medium text-gray-400">Paid</span>
                     <span className="text-[12px] font-medium font-mono text-gray-800">{fmtMoney(supplierPaid)}</span>
@@ -5138,7 +5148,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                               </div>
                             </div>
                           )}
-                          {(allocs.length + bslLines.length) > 1 && (
+                          {(allocs.length > 0 || (allocs.length + bslLines.length) > 1) && (
                             <div className="mt-1 overflow-x-auto">
                               <table className="w-full text-[10px]">
                                 <thead className="text-gray-500 text-[9px] uppercase">
@@ -5150,14 +5160,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {allocs.map((a) => (
-                                    <tr key={`va-${a.id}`} className="border-t border-gray-100">
-                                      <td className="py-0.5 text-gray-700">{a.payment_vouchers?.payment_date ? formatDate(a.payment_vouchers.payment_date) : '—'}</td>
-                                      <td className="py-0.5 text-gray-700 font-mono">{a.payment_vouchers?.voucher_number || 'PV'}</td>
-                                      <td className="py-0.5 text-right font-mono">{fmtMoney(a.allocated_amount)}</td>
-                                      <td className="py-0.5 text-right text-gray-500 capitalize">{a.payment_kind || 'supplier'}</td>
-                                    </tr>
-                                  ))}
+                                  {allocs.map((a) => {
+                                    const vDate = a.payment_vouchers?.voucher_date || a.payment_vouchers?.payment_date;
+                                    const isSettlement = a.payment_vouchers?.payment_purpose === 'salary_advance_settlement' || a.payment_kind === 'salary_advance_settlement';
+                                    const kindLabel = isSettlement ? 'Advance Recovery' : (a.payment_kind || 'supplier');
+                                    return (
+                                      <tr key={`va-${a.id}`} className="border-t border-gray-100">
+                                        <td className="py-0.5 text-gray-700">{vDate ? formatDate(vDate) : '—'}</td>
+                                        <td className="py-0.5 text-gray-700 font-mono">{a.payment_vouchers?.voucher_number || 'PV'}</td>
+                                        <td className="py-0.5 text-right font-mono">{fmtMoney(a.allocated_amount)}</td>
+                                        <td className="py-0.5 text-right text-gray-500 capitalize">{kindLabel}</td>
+                                      </tr>
+                                    );
+                                  })}
                                   {bslLines.map((b) => {
                                     const lineCurrency = b.bank_accounts?.currency ?? currency;
                                     const lineAmount = Number(b.allocation_amount ?? ((b.debit_amount || 0) + (b.credit_amount || 0)));
