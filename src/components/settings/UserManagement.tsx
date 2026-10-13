@@ -100,18 +100,32 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     }
   };
 
+  const getFreshSession = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+    const expiresAt = session.expires_at ?? 0;
+    if (expiresAt && expiresAt * 1000 - Date.now() < 60_000) {
+      const { data: refreshed, error } = await supabase.auth.refreshSession();
+      if (error || !refreshed.session) {
+        throw new Error('Your session has expired. Please log in again.');
+      }
+      return refreshed.session;
+    }
+    return session;
+  };
+
   const handleEditUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
+      const session = await getFreshSession();
 
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-update-user`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -146,29 +160,90 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
   const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     const action = currentStatus ? 'deactivate' : 'activate';
-    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to ${action} this user?`, variant: 'warning', confirmLabel: action.charAt(0).toUpperCase() + action.slice(1) })) return;
+    if (!await showConfirm({
+      title: 'Confirm',
+      message: `Are you sure you want to ${action} this user?`,
+      variant: 'warning',
+      confirmLabel: action.charAt(0).toUpperCase() + action.slice(1)
+    })) return;
 
+    setLoading(true);
     try {
-      const { error } = await supabase.from('user_profiles').update({ is_active: !currentStatus }).eq('id', userId);
+      await getFreshSession();
+
+      // Execute atomic toggle via RPC with explicit server confirmation
+      const { data, error } = await supabase.rpc('admin_toggle_user_status', {
+        p_user_id: userId,
+        p_is_active: !currentStatus,
+      });
+
       if (error) throw error;
-      showToast({ type: 'success', title: 'Success', message: `User ${currentStatus ? 'deactivated' : 'activated'} successfully!` });
+
+      const res = data as { success?: boolean; is_active?: boolean; username?: string } | null;
+      if (!res || typeof res.is_active !== 'boolean') {
+        throw new Error('Database did not return confirmation for the status update.');
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Success',
+        message: `User ${res.is_active ? 'activated' : 'deactivated'} successfully!`
+      });
       onRefresh();
-    } catch {
-      showToast({ type: 'error', title: 'Error', message: 'Failed to update user status.' });
+    } catch (error: any) {
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: error.message || 'Failed to update user status.'
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
   const deleteUser = async (userId: string, username: string) => {
-    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to permanently delete user "${username}"? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' })) return;
+    if (!await showConfirm({
+      title: 'Confirm',
+      message: `Are you sure you want to permanently delete user "${username}"? This cannot be undone.`,
+      variant: 'danger',
+      confirmLabel: 'Delete'
+    })) return;
 
+    setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
+      const session = await getFreshSession();
 
+      // Check and execute deletion via atomic RPC first
+      const { data: rpcData, error: rpcError } = await supabase.rpc('admin_delete_user', {
+        p_user_id: userId,
+      });
+
+      if (!rpcError && rpcData && (rpcData as any).success) {
+        showToast({ type: 'success', title: 'Success', message: `User "${username}" deleted successfully!` });
+        onRefresh();
+        return;
+      }
+
+      // If RPC rejected deletion due to historical records or admin protection, surface the exact reason
+      if (rpcError) {
+        const errorMsg = rpcError.message || '';
+        if (
+          errorMsg.includes('historical financial, business, or audit records') ||
+          errorMsg.includes('Cannot delete user') ||
+          errorMsg.includes('last active administrator') ||
+          errorMsg.includes('cannot delete your own account') ||
+          errorMsg.includes('Only active administrators')
+        ) {
+          throw new Error(errorMsg);
+        }
+      }
+
+      // Fallback: invoke admin-delete-user edge function with refreshed token and apikey header
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-delete-user`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ user_id: userId }),
@@ -177,10 +252,12 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to delete user');
 
-      showToast({ type: 'success', title: 'Success', message: 'User deleted successfully!' });
+      showToast({ type: 'success', title: 'Success', message: `User "${username}" deleted successfully!` });
       onRefresh();
     } catch (error: any) {
-      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to delete user.' });
+      showToast({ type: 'error', title: 'Delete Failed', message: error.message || 'Failed to delete user.' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -199,12 +276,15 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     }
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
+      const session = await getFreshSession();
 
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-update-password`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ user_id: passwordUser.id, new_password: newPassword }),
       });
 

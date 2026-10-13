@@ -83,10 +83,33 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Verify whether the target user is referenced in business or audit records
+    const { data: canDeleteData, error: canDeleteError } = await supabaseAdmin
+      .rpc('check_user_can_delete', { p_user_id: user_id });
+
+    if (!canDeleteError && canDeleteData && canDeleteData.length > 0) {
+      const checkResult = canDeleteData[0];
+      if (!checkResult.can_delete) {
+        return new Response(JSON.stringify({
+          error: checkResult.reason,
+          code: 'USER_HAS_HISTORICAL_RECORDS',
+          reference_count: checkResult.reference_count,
+        }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Clean up permission rows before deleting auth user
+    await supabaseAdmin.from('user_permissions').delete().eq('user_id', user_id);
+
     const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(user_id);
 
     if (deleteError) {
-      return new Response(JSON.stringify({ error: deleteError.message }), {
+      const msg = deleteError.message.includes('Database error') || deleteError.message.includes('foreign key')
+        ? 'Cannot delete user because they are associated with historical business or financial records. Deactivate the user instead.'
+        : deleteError.message;
+      return new Response(JSON.stringify({ error: msg }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
