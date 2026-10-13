@@ -101,7 +101,7 @@ test('2. Live database verification: September EXP/26/287 has Rp0 balance and no
     assert.equal(juneAdvRes.rows.length, 1);
     assert.equal(Number(juneAdvRes.rows[0].applied_amount), 500000);
 
-    // 6. Verify Journal integrity for all 4 months
+    // 6. Verify Expense amounts and zero outstanding balances for all 4 months
     const allMonthsRes = await client.query(
       `SELECT voucher_number, amount, paid_amount
        FROM finance_expenses
@@ -109,13 +109,35 @@ test('2. Live database verification: September EXP/26/287 has Rp0 balance and no
        ORDER BY voucher_number`
     );
     assert.equal(allMonthsRes.rows.length, 4);
+    const expsByVoucher = Object.fromEntries(allMonthsRes.rows.map(r => [r.voucher_number, r]));
 
+    // June: net entitlement Rp2,335,000, fully paid, balance Rp0
+    assert.equal(Number(expsByVoucher['EXP/26-26/087'].amount), 2335000);
+    assert.equal(Number(expsByVoucher['EXP/26-26/087'].paid_amount), 2335000);
+
+    // July: gross Rp2,500,000, fully paid, balance Rp0
+    assert.equal(Number(expsByVoucher['EXP/26-26/124'].amount), 2500000);
+    assert.equal(Number(expsByVoucher['EXP/26-26/124'].paid_amount), 2500000);
+
+    // August: gross Rp2,339,000, fully paid, balance Rp0
+    assert.equal(Number(expsByVoucher['EXP/26/209'].amount), 2339000);
+    assert.equal(Number(expsByVoucher['EXP/26/209'].paid_amount), 2339000);
+
+    // September: gross Rp2,500,000, fully paid, balance Rp0
+    assert.equal(Number(expsByVoucher['EXP/26/287'].amount), 2500000);
+    assert.equal(Number(expsByVoucher['EXP/26/287'].paid_amount), 2500000);
+
+    // 7. Verify all active journals are posted and balanced
     const activeJournalsRes = await client.query(
       `SELECT id, entry_number, total_debit, total_credit, is_posted, is_reversed
        FROM journal_entries
        WHERE reference_number IN ('EXP/26-26/087', 'EXP/26-26/124', 'EXP/26/209', 'EXP/26/287',
                                   'PV/26-26/014', 'PV/26-26/022', 'PV/26-26/006', 'PV/26-26/007')
-         AND is_reversed = false`
+          OR reference_id IN (
+            SELECT id FROM finance_expenses
+            WHERE voucher_number IN ('EXP/26-26/087', 'EXP/26-26/124', 'EXP/26/209', 'EXP/26/287')
+          )
+       ORDER BY entry_number`
     );
     for (const row of activeJournalsRes.rows) {
       assert.equal(row.is_posted, true, `Journal ${row.entry_number} must be posted`);

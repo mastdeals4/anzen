@@ -104,8 +104,8 @@ test('4. Live database verification for EXP/26/287 bank linking and accounting i
       ['EXP/26-26/087']
     );
     assert.equal(juneRes.rows.length, 1);
-    assert.equal(Number(juneRes.rows[0].amount), 1835000);
-    assert.equal(Number(juneRes.rows[0].paid_amount), 1835000);
+    assert.equal(Number(juneRes.rows[0].amount), 2335000);
+    assert.equal(Number(juneRes.rows[0].paid_amount), 2335000);
 
     const juneAdv = await client.query(
       `SELECT * FROM salary_advance_applications WHERE salary_expense_id = $1`,
