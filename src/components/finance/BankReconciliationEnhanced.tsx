@@ -934,7 +934,13 @@ export function BankReconciliationEnhanced({
           !row.manually_unlinked &&
           Boolean(row.matched_entry_id) &&
           (row.matching_status === 'confirmed' || row.reconciliation_status === 'recorded');
-        const allocatedAmount = allocations.reduce((sum, allocation) => sum + allocation.allocation_amount, 0) + (isDirectRecorded && allocations.length === 0 ? bankAmount : 0);
+        const validAllocations = allocations.filter(allocation => {
+          if (!allocation.journal_entry_id) return false;
+          const journal = entryMap.get(allocation.journal_entry_id);
+          if (!journal || !journal.is_posted || journal.is_reversed) return false;
+          return true;
+        });
+        const allocatedAmount = validAllocations.reduce((sum, allocation) => sum + allocation.allocation_amount, 0) + (isDirectRecorded && allocations.length === 0 ? bankAmount : 0);
         const remainingAmount = Math.max(0, bankAmount - allocatedAmount);
         const isSuggested =
           (row.matching_status === 'suggested' ||

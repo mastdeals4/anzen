@@ -142,14 +142,18 @@ export async function loadUnmatchedDebitBankTransactions({
   const allocatedByLine = new Map<string, number>();
   const allocationCountByLine = new Map<string, number>();
   if (lineIds.length > 0) {
-    const allocations = await fetchInBatches<{ bank_statement_line_id: string; allocation_amount: number }>(
+    const allocations = await fetchInBatches<any>(
       lineIds,
       batchIds => supabase
         .from('bank_statement_allocations')
-        .select('bank_statement_line_id, allocation_amount')
+        .select('bank_statement_line_id, allocation_amount, journal_entries(is_posted, is_reversed)')
         .in('bank_statement_line_id', batchIds)
     );
     for (const allocation of allocations) {
+      const je = Array.isArray(allocation.journal_entries) ? allocation.journal_entries[0] : allocation.journal_entries;
+      if (je && (!je.is_posted || je.is_reversed)) {
+        continue;
+      }
       allocatedByLine.set(
         allocation.bank_statement_line_id,
         (allocatedByLine.get(allocation.bank_statement_line_id) || 0) + Number(allocation.allocation_amount || 0),
