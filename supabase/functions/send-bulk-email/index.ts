@@ -35,6 +35,12 @@ async function getValidAccessToken(
     return connection.access_token;
   }
 
+  if (!connection.refresh_token) {
+    const refreshError = new Error(`No refresh token available for mailbox (${connection.email_address}). Please reconnect in Gmail Settings.`);
+    (refreshError as any).code = "TOKEN_REFRESH_FAILED";
+    throw refreshError;
+  }
+
   const clientId = oauthClientCredentials.clientId
     || Deno.env.get("GOOGLE_CLIENT_ID")
     || Deno.env.get("GMAIL_CLIENT_ID")
@@ -60,8 +66,8 @@ async function getValidAccessToken(
   });
 
   if (!refreshResponse.ok) {
-    const errText = await refreshResponse.text();
-    const refreshError = new Error(`Failed to refresh access token: ${errText}`);
+    console.error(`Token refresh failed for ${connection.email_address}: status ${refreshResponse.status}`);
+    const refreshError = new Error(`Failed to refresh access token for ${connection.email_address}. Please reconnect in Gmail Settings.`);
     (refreshError as any).code = "TOKEN_REFRESH_FAILED";
     throw refreshError;
   }
@@ -399,7 +405,9 @@ Deno.serve(async (req: Request) => {
 
     void contactId;
 
-    if (!toEmails || !subject || !emailBody) {
+    const checkConnectionOnly = Boolean(body.checkConnectionOnly);
+
+    if (!checkConnectionOnly && (!toEmails || !subject || !emailBody)) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing required fields (toEmails, subject, body)" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -412,7 +420,9 @@ Deno.serve(async (req: Request) => {
       pricing_reminder : { roles: ["admin", "manager", "sales"], fallback: false },
       india_pricing    : { roles: ["admin", "manager", "sales"], fallback: false },
       supplier_pricing : { roles: ["admin", "manager", "sales"], fallback: false },
+      sourcing_inquiry : { roles: ["admin", "manager", "sales"], fallback: false },
       customer_quote   : { roles: ["admin", "manager", "sales"], fallback: false },
+      price_quotation  : { roles: ["admin", "manager", "sales"], fallback: false },
       crm_bulk_email   : { roles: ["admin", "manager", "sales"], fallback: false },
       stock_update     : { roles: ["admin", "manager", "sales"], fallback: false },
       delivery_log     : { roles: ["admin", "manager", "sales"], fallback: false },
@@ -436,7 +446,7 @@ Deno.serve(async (req: Request) => {
 
     // ── 3. Resolve sender connection by MODULE / PURPOSE ─────────────────
     // MODULE PURPOSE → FIXED EMAIL ACCOUNT:
-    // CRM → sales@sapharmajaya.co.id
+    // CRM → sales@avira.co.id
     // Kunal Pricing → kunal@avira.co.id
     // NEVER derive the CRM sender from the currently logged-in user's email/account.
     let senderMode: "connected_gmail" | "fallback" = "connected_gmail";
@@ -450,6 +460,7 @@ Deno.serve(async (req: Request) => {
     const CRM_WORKFLOWS = [
       "crm_bulk_email",
       "customer_quote",
+      "price_quotation",
       "stock_update",
       "delivery_log",
       "crm_sourcing",
@@ -461,40 +472,43 @@ Deno.serve(async (req: Request) => {
       "pricing_reminder",
       "india_pricing",
       "supplier_pricing",
+      "sourcing_inquiry",
     ];
+
+    const requestedSender = (typeof requiredSenderEmail === "string" && requiredSenderEmail.trim())
+      ? requiredSenderEmail.toLowerCase().trim()
+      : (typeof body.senderEmail === "string" && body.senderEmail.trim())
+      ? body.senderEmail.toLowerCase().trim()
+      : "";
 
     // Determine target mailbox based on module / workflow purpose:
     let targetEmail: string;
 
-    if (CRM_WORKFLOWS.includes(workflowType) || module === "crm") {
+    if (requestedSender === CRM_SALES_EMAIL || requestedSender === CRM_SALES_LEGACY_EMAIL) {
+      targetEmail = CRM_SALES_EMAIL;
+    } else if (requestedSender === KUNAL_PRICING_EMAIL) {
+      targetEmail = KUNAL_PRICING_EMAIL;
+    } else if (CRM_WORKFLOWS.includes(workflowType) || module === "crm") {
       targetEmail = CRM_SALES_EMAIL;
     } else if (PRICING_WORKFLOWS.includes(workflowType) || module === "pricing") {
       targetEmail = KUNAL_PRICING_EMAIL;
-    } else if (typeof requiredSenderEmail === "string" && requiredSenderEmail.trim()) {
-      const reqEmail = requiredSenderEmail.toLowerCase().trim();
-      if (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_LEGACY_EMAIL) {
-        targetEmail = CRM_SALES_EMAIL;
-      } else if (reqEmail === KUNAL_PRICING_EMAIL) {
-        targetEmail = KUNAL_PRICING_EMAIL;
-      } else {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: `Invalid sender email: ${requiredSenderEmail}. Sender must be either ${CRM_SALES_EMAIL} or ${KUNAL_PRICING_EMAIL}.`,
-            code: "STRICT_ACCOUNT_ROLE_VIOLATION",
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+    } else if (requestedSender) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Invalid sender email: ${requestedSender}. Sender must be either ${CRM_SALES_EMAIL} or ${KUNAL_PRICING_EMAIL}.`,
+          code: "STRICT_ACCOUNT_ROLE_VIOLATION",
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     } else {
       // Default to CRM Sales Email
       targetEmail = CRM_SALES_EMAIL;
     }
 
     // Strict validation: enforce that CRM cannot send from Kunal Pricing and vice versa
-    if (requiredSenderEmail) {
-      const reqEmail = String(requiredSenderEmail).toLowerCase().trim();
-      if (CRM_WORKFLOWS.includes(workflowType) && reqEmail === KUNAL_PRICING_EMAIL) {
+    if (requestedSender) {
+      if (CRM_WORKFLOWS.includes(workflowType) && requestedSender === KUNAL_PRICING_EMAIL) {
         return new Response(
           JSON.stringify({
             success: false,
@@ -504,7 +518,7 @@ Deno.serve(async (req: Request) => {
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (PRICING_WORKFLOWS.includes(workflowType) && (reqEmail === CRM_SALES_EMAIL || reqEmail === CRM_SALES_LEGACY_EMAIL)) {
+      if (PRICING_WORKFLOWS.includes(workflowType) && (requestedSender === CRM_SALES_EMAIL || requestedSender === CRM_SALES_LEGACY_EMAIL)) {
         return new Response(
           JSON.stringify({
             success: false,
@@ -525,22 +539,6 @@ Deno.serve(async (req: Request) => {
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-
-    if (!connRow?.id && (targetEmail === CRM_SALES_EMAIL || targetEmail === CRM_SALES_LEGACY_EMAIL)) {
-      const altEmail = targetEmail === CRM_SALES_EMAIL ? CRM_SALES_LEGACY_EMAIL : CRM_SALES_EMAIL;
-      const { data: altConn } = await supabase
-        .from("gmail_connections")
-        .select("id, email_address")
-        .ilike("email_address", altEmail)
-        .eq("is_connected", true)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (altConn?.id) {
-        connRow = altConn;
-        targetEmail = altConn.email_address;
-      }
-    }
 
     if (!connRow?.id) {
       return new Response(
@@ -566,6 +564,32 @@ Deno.serve(async (req: Request) => {
     }
     connection = fetched as GmailConnection;
 
+    if (checkConnectionOnly) {
+      try {
+        await getValidAccessToken(supabase, connection, {});
+        return new Response(
+          JSON.stringify({
+            success: true,
+            connected: true,
+            email: connection.email_address,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      } catch (refreshErr: any) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            connected: false,
+            email: connection.email_address,
+            error: refreshErr?.message || "Token refresh failed",
+            code: "TOKEN_REAUTH_REQUIRED",
+            reauthRequired: true,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // Strict account role check on resolved connection
     const senderEmail = (connection.email_address || "").toLowerCase().trim();
     if (CRM_WORKFLOWS.includes(workflowType)) {
@@ -588,6 +612,38 @@ Deno.serve(async (req: Request) => {
             code: "STRICT_ACCOUNT_ROLE_VIOLATION",
           }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    // ── 3b. Outbound deduplication safeguard ──────────────────────────────
+    // If the client retries after a network timeout, or if an identical message
+    // was already dispatched for this inquiry within the last 5 minutes, avoid duplicate Gmail dispatch.
+    if (inquiryId && !checkConnectionOnly) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: recentDispatches } = await supabase
+        .from("crm_email_activities")
+        .select("id, gmail_message_id, gmail_thread_id, sent_date")
+        .eq("inquiry_id", inquiryId)
+        .eq("from_email", connection.email_address)
+        .eq("subject", subject)
+        .gte("sent_date", fiveMinutesAgo)
+        .not("gmail_message_id", "is", null)
+        .order("sent_date", { ascending: false })
+        .limit(1);
+
+      if (recentDispatches && recentDispatches.length > 0 && recentDispatches[0].gmail_message_id) {
+        console.log(`[send-bulk-email] Deduplicating send for inquiry ${inquiryId}. Using existing messageId: ${recentDispatches[0].gmail_message_id}`);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            messageId: recentDispatches[0].gmail_message_id,
+            threadId: recentDispatches[0].gmail_thread_id || recentDispatches[0].gmail_message_id,
+            senderMode,
+            senderEmail: connection.email_address,
+            deduplicated: true,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
     }

@@ -641,7 +641,7 @@ export function PricingWorksheet() {
           price_ready: isQuoteReady,
           quote_status: 'not_sent',
           supplier_name: patch.offeredMake || targetRow.requestedMake,
-          source_status: finalSourcePrice ? 'received' : 'waiting',
+          source_status: finalSourcePrice ? 'received' : 'waiting_reply',
           updated_at: now,
         })
         .eq('id', updatedInqId);
@@ -1993,7 +1993,7 @@ export function PricingWorksheet() {
           quote_status: 'not_sent',
           supplier_name: row.offeredMake || row.requestedMake,
           remarks: row.remarks || null,
-          source_status: row.sourcePrice ? 'received' : 'waiting',
+          source_status: row.sourcePrice ? 'received' : 'waiting_reply',
           document_status: hasCoaDoc ? 'received' : (row.documents.length > 0 ? 'received' : 'pending'),
           updated_at: now,
         })

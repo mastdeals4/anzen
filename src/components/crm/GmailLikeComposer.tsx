@@ -34,6 +34,7 @@ interface Inquiry {
   sample_required?: boolean | null;
   agency_letter_required?: boolean | null;
   others_required?: boolean | null;
+  source_status?: string | null;
 }
 
 interface EmailTemplate {
@@ -43,6 +44,8 @@ interface EmailTemplate {
   body: string;
   category: string;
   variables: string[];
+  use_count?: number;
+  last_used?: string | null;
 }
 
 interface CrmDoc {
@@ -237,6 +240,12 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
   const [fullscreen, setFullscreen] = useState(false);
   const [currentUserName, setCurrentUserName] = useState('');
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  const [deliveryResult, setDeliveryResult] = useState<{
+    delivered: boolean;
+    sentAt: string;
+    messageId?: string | null;
+    threadId?: string | null;
+  } | null>(null);
   const [companyCo, setCompanyCo] = useState<CompanySnapshot>(FALLBACK_COMPANY);
 
   // CRM docs panel
@@ -268,6 +277,24 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     setSelectedCrmDocs(new Set());
     setAttachments([]);
 
+    // Check if an email was already delivered in this session for this inquiry/mode
+    const sessionDeliveryKey = `crm_delivery_${inquiry.id}_${mode || 'general'}`;
+    let restoredDelivery: { delivered: boolean; sentAt: string; messageId?: string | null; threadId?: string | null } | null = null;
+    try {
+      const cached = sessionStorage.getItem(sessionDeliveryKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.delivered && parsed?.sentAt && (Date.now() - new Date(parsed.sentAt).getTime() < 15 * 60 * 1000)) {
+          restoredDelivery = parsed;
+        } else {
+          sessionStorage.removeItem(sessionDeliveryKey);
+        }
+      }
+    } catch {
+      sessionStorage.removeItem(sessionDeliveryKey);
+    }
+    setDeliveryResult(restoredDelivery);
+
     if (mode === 'india') {
       setSubject(buildIndiaRfqSubject(allInquiries));
     } else if (mode === 'china') {
@@ -288,6 +315,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     };
 
     initialiseComposer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, inquiry.id, mode]);
 
   useEffect(() => {
@@ -311,13 +339,56 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       if (!user) return '';
       const isSupplierRoute = mode === 'india' || mode === 'china';
       const targetMailbox = isSupplierRoute ? 'kunal@avira.co.id' : 'sales@avira.co.id';
-      const [profileRes, gmailRes] = await Promise.all([
-        supabase.from('user_profiles').select('full_name').eq('id', user.id).maybeSingle(),
-        supabase.from('gmail_connections').select('id').ilike('email_address', targetMailbox).eq('is_connected', true).limit(1).maybeSingle(),
-      ]);
+
+      const profilePromise = supabase.from('user_profiles').select('full_name').eq('id', user.id).maybeSingle();
+
+      // Check connection status via backend edge function (which bypasses RLS securely)
+      // and fall back to direct query only for personal mailbox where RLS permits SELECT
+      let isConnected: boolean | null = null;
+      try {
+        const { data: statusData, error: statusErr } = await supabase.functions.invoke('send-bulk-email', {
+          body: {
+            checkConnectionOnly: true,
+            requiredSenderEmail: targetMailbox,
+            senderEmail: targetMailbox,
+            workflowType: isSupplierRoute ? 'india_pricing' : 'customer_quote',
+          },
+        });
+        if (!statusErr && statusData && typeof statusData.connected === 'boolean') {
+          isConnected = statusData.connected;
+        } else if (targetMailbox === user.email) {
+          const { data: directConn } = await supabase
+            .from('gmail_connections')
+            .select('id')
+            .ilike('email_address', targetMailbox)
+            .eq('is_connected', true)
+            .limit(1)
+            .maybeSingle();
+          isConnected = !!directConn;
+        } else {
+          // For shared company mailbox (sales@avira.co.id), RLS blocks direct client SELECT.
+          // If the edge function explicitly reported disconnected, record false; otherwise keep null.
+          if (statusData && statusData.connected === false) {
+            isConnected = false;
+          }
+        }
+      } catch {
+        if (targetMailbox === user.email) {
+          const { data: directConn } = await supabase
+            .from('gmail_connections')
+            .select('id')
+            .ilike('email_address', targetMailbox)
+            .eq('is_connected', true)
+            .limit(1)
+            .maybeSingle();
+          isConnected = !!directConn;
+        }
+      }
+
+      const profileRes = await profilePromise;
       const fullName = profileRes.data?.full_name || '';
       setCurrentUserName(fullName);
-      setGmailConnected(!!gmailRes.data);
+      setGmailConnected(isConnected);
       return fullName;
     } catch (err) {
       console.error('Error loading user info:', err);
@@ -416,8 +487,9 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     logEmailHtmlEvidence('Template HTML before inserting into editor', templatedBody, { templateName: template.template_name });
     setBody(templatedBody);
     setShowTemplates(false);
+    const currentUseCount = typeof template.use_count === 'number' ? template.use_count : 0;
     supabase.from('crm_email_templates')
-      .update({ use_count: (template as any).use_count + 1, last_used: new Date().toISOString() })
+      .update({ use_count: currentUseCount + 1, last_used: new Date().toISOString() })
       .eq('id', template.id).then(() => {});
   };
 
@@ -460,10 +532,8 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       alert('Please fill in To, Subject, and Body.');
       return;
     }
-    // For india mode the sender is Kunal's mailbox (resolved server-side via requiredSenderEmail).
-    // Skip the current-user Gmail check — the edge function enforces the correct sender.
-    if (mode !== 'india' && !gmailConnected) {
-      alert('Gmail is not connected. Please connect your Gmail account in Settings > Gmail Settings.');
+    if (gmailConnected === false) {
+      alert(`Gmail is not connected for ${displaySender}. Please connect ${displaySender} in Settings > Gmail Settings.`);
       return;
     }
 
@@ -540,7 +610,6 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       const ccList = parseEmailRecipients(ccEmail);
       const bccList = parseEmailRecipients(bccEmail);
       const finalRecipientList = [...toList, ...ccList, ...bccList];
-      const quoteSentAt = new Date().toISOString();
       const selectedContainsCoa = selectedDocList.some(isCoaDocument);
       const shouldMarkCoaSent = mode === 'coa' || selectedContainsCoa;
 
@@ -558,40 +627,80 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
       });
 
       // 3. Send via Gmail — fixed sender based on module purpose:
-      // Customer: sales@avira.co.id (with sales@sapharmajaya.co.id supported)
+      // Customer: sales@avira.co.id
       // Supplier: kunal@avira.co.id
       const isSupplierRoute = mode === 'india' || mode === 'china';
       const senderMailbox = isSupplierRoute ? 'kunal@avira.co.id' : 'sales@avira.co.id';
-      const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
-        body: {
-          ...(isSupplierRoute
-            ? {
-                requiredSenderEmail: 'kunal@avira.co.id',
-                replyTo: 'kunal@avira.co.id',
-                workflowType: mode === 'india' ? 'india_pricing' : 'supplier_pricing',
-              }
-            : {
-                requiredSenderEmail: 'sales@avira.co.id',
-                replyTo: 'sales@avira.co.id',
-                workflowType: mode === 'price' ? 'customer_quote' : 'crm_bulk_email',
-              }),
-          toEmails: toList,
-          cc: ccList,
-          bcc: bccList,
-          subject,
-          body,
-          isHtml: true,
-          senderName: currentUserName,
-          attachmentUrls,
-          threadId: replyTo?.threadId || undefined,
-        },
-      });
+      const sessionDeliveryKey = `crm_delivery_${inquiry.id}_${mode || 'general'}`;
 
-      if (fnErr || !fnData?.success) {
-        const composedError = fnData?.code
-          ? `${fnData.code}: ${fnData?.error || fnErr?.message || 'Failed to send email'}`
-          : (fnData?.error || fnErr?.message || 'Failed to send email');
-        throw new Error(composedError);
+      let activeDelivery = deliveryResult;
+      if (!activeDelivery) {
+        try {
+          const cached = sessionStorage.getItem(sessionDeliveryKey);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.delivered && parsed?.sentAt && (Date.now() - new Date(parsed.sentAt).getTime() < 15 * 60 * 1000)) {
+              activeDelivery = parsed;
+              setDeliveryResult(parsed);
+            }
+          }
+        } catch {
+          /* ignore storage read error */
+        }
+      }
+
+      let quoteSentAt = activeDelivery?.sentAt || new Date().toISOString();
+
+      if (!activeDelivery?.delivered) {
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
+          body: {
+            ...(isSupplierRoute
+              ? {
+                  requiredSenderEmail: 'kunal@avira.co.id',
+                  senderEmail: 'kunal@avira.co.id',
+                  replyTo: 'kunal@avira.co.id',
+                  workflowType: mode === 'india' ? 'india_pricing' : 'supplier_pricing',
+                }
+              : {
+                  requiredSenderEmail: 'sales@avira.co.id',
+                  senderEmail: 'sales@avira.co.id',
+                  replyTo: 'sales@avira.co.id',
+                  workflowType: mode === 'price' ? 'customer_quote' : 'crm_bulk_email',
+                }),
+            toEmails: toList,
+            cc: ccList,
+            bcc: bccList,
+            subject,
+            body,
+            isHtml: true,
+            inquiryId: inquiry.id,
+            senderName: currentUserName,
+            attachmentUrls,
+            threadId: replyTo?.threadId || undefined,
+          },
+        });
+
+        if (fnErr || !fnData?.success) {
+          const composedError = fnData?.code
+            ? `${fnData.code}: ${fnData?.error || fnErr?.message || 'Failed to send email'}`
+            : (fnData?.error || fnErr?.message || 'Failed to send email');
+          throw new Error(composedError);
+        }
+
+        quoteSentAt = new Date().toISOString();
+        const newDelivery = {
+          delivered: true,
+          sentAt: quoteSentAt,
+          messageId: fnData?.messageId || null,
+          threadId: fnData?.threadId || null,
+        };
+        setDeliveryResult(newDelivery);
+        activeDelivery = newDelivery;
+        try {
+          sessionStorage.setItem(sessionDeliveryKey, JSON.stringify(newDelivery));
+        } catch {
+          /* ignore storage write error */
+        }
       }
 
       // 4. Confirmed-delivery workflow completion: delivery log, CRM activity, and durable status fields.
@@ -715,17 +824,19 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
           updateData.coa_sent_date = new Date().toISOString().split('T')[0];
           updateData.coa_sent_at = quoteSentAt;
         } else if (mode === 'india') {
+          const isFirstSend = !inq.source_status || inq.source_status === 'not_sent';
           updateData.sent_to_india = true;
           updateData.sent_to_india_at = quoteSentAt;
           updateData.sent_to_india_by = user.id;
           updateData.last_sourcing_sent_at = quoteSentAt;
-          updateData.source_status = 'waiting_supplier';
+          updateData.source_status = isFirstSend ? 'sent' : 'waiting_reply';
         } else if (mode === 'china') {
+          const isFirstSend = !inq.source_status || inq.source_status === 'not_sent';
           updateData.sent_to_china = true;
           updateData.sent_to_china_at = quoteSentAt;
           updateData.sent_to_china_by = user.id;
           updateData.last_sourcing_sent_at = quoteSentAt;
-          updateData.source_status = 'waiting_supplier';
+          updateData.source_status = isFirstSend ? 'sent' : 'waiting_reply';
         }
         if (shouldMarkCoaSent) {
           updateData.coa_sent = true;
@@ -734,17 +845,25 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
         }
         if (Object.keys(updateData).length > 0) {
           const { error: updateError } = await supabase.from('crm_inquiries').update(updateData).eq('id', inq.id);
-          if (updateError) throw new Error(`Status update failed for ${inq.inquiry_number}: ${updateError.message}`);
+          if (updateError) {
+            throw new Error(`Email was delivered successfully (Message ID: ${activeDelivery?.messageId || 'sent'}), but updating status for inquiry ${inq.inquiry_number} failed: ${updateError.message}. Click Send to retry saving status.`);
+          }
         }
       }
 
+      try {
+        sessionStorage.removeItem(sessionDeliveryKey);
+      } catch {
+        /* ignore storage cleanup error */
+      }
+      setDeliveryResult(null);
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Email send error:', err);
-      const errorMessage = err.message || 'Failed to send email. Please try again.';
+      const errorMessage = err instanceof Error ? err.message : (typeof err === 'string' ? err : 'Failed to send email. Please try again.');
       const needsReauth = errorMessage.includes('TOKEN_REAUTH_REQUIRED') || errorMessage.includes('Failed to refresh access token');
       if (needsReauth) {
-        if (window.confirm('Your Gmail connection has expired. Reconnect Gmail now?')) openGmailReconnectPopup();
+        if (window.confirm(`Your Gmail connection for ${displaySender} has expired. Reconnect Gmail now?`)) openGmailReconnectPopup();
       } else {
         alert(errorMessage);
       }
@@ -828,7 +947,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
             {gmailConnected === false && (
               <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                Gmail not connected — go to Settings &gt; Gmail Settings to connect before sending.
+                Gmail not connected ({displaySender}) — go to Settings &gt; Gmail Settings to connect before sending.
               </div>
             )}
 
