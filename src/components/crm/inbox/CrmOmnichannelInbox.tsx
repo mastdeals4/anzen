@@ -35,6 +35,8 @@ import {
 import { analyzeWhatsAppMessage } from '../../../services/crm/whatsappIntelligenceService';
 
 export type ChannelFilter = 'all' | 'email' | 'whatsapp' | 'unlinked';
+export type ActiveMailbox = 'sales@avira.co.id' | 'kunal@avira.co.id';
+export type FolderFilter = 'inbox' | 'sent';
 
 export interface InboxConversation {
   id: string;
@@ -55,6 +57,7 @@ export interface InboxConversation {
   customerId?: string | null;
   ownerName?: string | null;
   direction?: 'inbound' | 'outbound';
+  mailboxAccount?: string;
   // Specific payload IDs
   gmailMessageId?: string;
   gmailThreadId?: string;
@@ -109,6 +112,8 @@ export function CrmOmnichannelInbox({
   onOpenCustomer,
   onCreateInquiryFromMessage,
 }: Props) {
+  const [activeMailbox, setActiveMailbox] = useState<ActiveMailbox>('sales@avira.co.id');
+  const [folderFilter, setFolderFilter] = useState<FolderFilter>('inbox');
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all');
   const [conversations, setConversations] = useState<InboxConversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -140,10 +145,16 @@ export function CrmOmnichannelInbox({
     try {
       const items: InboxConversation[] = [];
 
-      // 1. Fetch Email conversations from Gmail API via edge function (CRM Mailbox: sales@avira.co.id)
+      // 1. Fetch Email conversations from Gmail API via edge function based on activeMailbox & folder
       try {
+        const gmailQuery = folderFilter === 'sent' ? 'in:sent' : 'in:inbox';
         const { data: gmailData, error: gmailError } = await supabase.functions.invoke('gmail-inbox-list', {
-          body: { account: 'crm', emailAddress: 'sales@avira.co.id', query: 'in:inbox', maxResults: 40 },
+          body: {
+            account: activeMailbox === 'kunal@avira.co.id' ? 'pricing' : 'crm',
+            emailAddress: activeMailbox,
+            query: gmailQuery,
+            maxResults: 40,
+          },
         });
 
         if (!gmailError && gmailData?.success && Array.isArray(gmailData.messages)) {
@@ -173,6 +184,7 @@ export function CrmOmnichannelInbox({
               id: `email-${msg.messageId}`,
               channel: 'email',
               direction: isOutbound ? 'outbound' : 'inbound',
+              mailboxAccount: activeMailbox,
               senderName: senderName || 'Unknown Sender',
               senderAddress: senderAddress || msg.from,
               recipientAddress: msg.to,
@@ -204,6 +216,7 @@ export function CrmOmnichannelInbox({
             channel,
             title,
             metadata,
+            participant_identifiers,
             last_message_at,
             customer_id,
             customers(id, company_name),
@@ -265,10 +278,17 @@ export function CrmOmnichannelInbox({
             const extMsgId = lastMsg?.external_message_id || meta.gmail_message_id || meta.message_id || null;
             const extThreadId = meta.gmail_thread_id || meta.thread_id || extMsgId || null;
 
+            // Determine canonical conversation mailbox ownership
+            const allParticipants = [lastMsg?.sender_address, recipAddr, ...(c.participant_identifiers || [])].filter(Boolean).map((s: string) => s.toLowerCase());
+            const canonicalMailbox = allParticipants.some((p: string) => p.includes('kunal@avira.co.id'))
+              ? 'kunal@avira.co.id'
+              : 'sales@avira.co.id';
+
             items.push({
               id: `wa-${c.id}`,
               channel: c.channel === 'whatsapp' ? 'whatsapp' : 'email',
               direction: isOutbound ? 'outbound' : 'inbound',
+              mailboxAccount: canonicalMailbox,
               senderName: isOutbound ? (recipAddr || customerName || c.title || 'Contact') : (customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer'),
               senderAddress: lastMsg?.sender_address || '',
               recipientAddress: recipAddr,
@@ -319,7 +339,7 @@ export function CrmOmnichannelInbox({
 
   useEffect(() => {
     loadConversations();
-  }, []);
+  }, [activeMailbox, folderFilter]);
 
   // Pre-fetch inquiry list for quick linking
   useEffect(() => {
@@ -336,7 +356,18 @@ export function CrmOmnichannelInbox({
   // Filter conversations
   const filteredConversations = useMemo(() => {
     return conversations.filter(c => {
-      // Channel filter
+      // 1. Mailbox account filter: if item belongs to a specific mailbox, ensure it matches activeMailbox
+      if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) {
+        return false;
+      }
+
+      // 2. Folder filter: In Inbox, show inbound messages. In Sent, show outbound messages.
+      if (c.channel === 'email') {
+        if (folderFilter === 'inbox' && c.direction === 'outbound') return false;
+        if (folderFilter === 'sent' && c.direction !== 'outbound') return false;
+      }
+
+      // 3. Channel filter
       if (channelFilter === 'email' && c.channel !== 'email') return false;
       if (channelFilter === 'whatsapp' && c.channel !== 'whatsapp') return false;
       if (channelFilter === 'unlinked' && c.inquiryId) return false;
@@ -357,7 +388,7 @@ export function CrmOmnichannelInbox({
 
       return true;
     });
-  }, [conversations, channelFilter, searchQuery]);
+  }, [conversations, activeMailbox, folderFilter, channelFilter, searchQuery]);
 
   const selectedConversation = useMemo(() => {
     return conversations.find(c => c.id === selectedId) || null;
@@ -383,10 +414,11 @@ export function CrmOmnichannelInbox({
         // 1. Try live Gmail retrieval if threadId or messageId is present
         if (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId) {
           try {
+            const threadMailbox = selectedConversation.mailboxAccount || activeMailbox;
             const { data, error } = await supabase.functions.invoke('gmail-inbox-message', {
               body: {
-                account: 'crm',
-                emailAddress: 'sales@avira.co.id',
+                account: threadMailbox === 'kunal@avira.co.id' ? 'pricing' : 'crm',
+                emailAddress: threadMailbox,
                 threadId: selectedConversation.gmailThreadId,
                 messageId: selectedConversation.gmailMessageId,
                 includeThread: true,
@@ -574,18 +606,25 @@ export function CrmOmnichannelInbox({
         showToast({ type: 'success', title: 'WhatsApp Sent', message: 'Reply sent successfully.' });
         setReplyText('');
       } else {
-        // Email reply via send-bulk-email from official sales mailbox
+        // Email reply via send-bulk-email from appropriate mailbox (preserving sourcing vs quote rules)
         const replyRecipient = getReplyRecipient();
         if (!replyRecipient) {
           throw new Error('No recipient email address found for this conversation');
         }
         const replySubj = replySubject || (selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+        const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase();
+        const isPricingReply = replySender.includes('kunal@avira.co.id');
+        const resolvedSender = isPricingReply ? 'kunal@avira.co.id' : 'sales@avira.co.id';
+        const senderMailboxParam = isPricingReply
+          ? { requiredSenderEmail: 'kunal@avira.co.id' }
+          : { requiredSenderEmail: 'sales@avira.co.id' };
 
         const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
           body: {
-            requiredSenderEmail: 'sales@avira.co.id',
-            replyTo: 'sales@avira.co.id',
-            workflowType: 'crm_bulk_email',
+            ...senderMailboxParam,
+            senderEmail: resolvedSender,
+            replyTo: resolvedSender,
+            workflowType: isPricingReply ? 'pricing_sourcing' : 'crm_bulk_email',
             toEmails: [replyRecipient],
             subject: replySubj,
             body: replyText.trim().replace(/\n/g, '<br/>'),
@@ -601,7 +640,7 @@ export function CrmOmnichannelInbox({
           throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
         }
 
-        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from sales@avira.co.id to ${replyRecipient}` });
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from ${replySender} to ${replyRecipient}` });
         setReplyText('');
       }
     } catch (err: any) {
@@ -674,50 +713,97 @@ export function CrmOmnichannelInbox({
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)] min-h-[640px] bg-white border border-gray-200 rounded-lg overflow-hidden shadow-xs">
-      {/* Top Channel Filter Navigation */}
+      {/* Top Mailbox, Folder & Channel Filter Navigation */}
       <div className="border-b border-gray-200 bg-gray-50/80 px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-bold text-gray-800 uppercase tracking-wide mr-2 flex items-center gap-1">
-            <Inbox className="w-3.5 h-3.5 text-blue-600" />
-            Channel:
-          </span>
-          {(['all', 'email', 'whatsapp', 'unlinked'] as const).map(ch => {
-            const isActive = channelFilter === ch;
-            const count = conversations.filter(c => {
-              if (ch === 'all') return true;
-              if (ch === 'email') return c.channel === 'email';
-              if (ch === 'whatsapp') return c.channel === 'whatsapp';
-              if (ch === 'unlinked') return !c.inquiryId;
-              return true;
-            }).length;
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 1. Connected Mailbox Selector */}
+          <div className="flex items-center gap-1.5 border-r border-gray-200 pr-3">
+            <span className="text-xs font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1">
+              <Mail className="w-3.5 h-3.5 text-blue-600" />
+              Mailbox:
+            </span>
+            <select
+              aria-label="Active Mailbox"
+              value={activeMailbox}
+              onChange={e => setActiveMailbox(e.target.value as ActiveMailbox)}
+              className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500 shadow-2xs"
+            >
+              <option value="sales@avira.co.id">sales@avira.co.id (CRM / Quotes)</option>
+              <option value="kunal@avira.co.id">kunal@avira.co.id (Pricing / Sourcing)</option>
+            </select>
+          </div>
 
-            return (
-              <button
-                key={ch}
-                onClick={() => setChannelFilter(ch)}
-                className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-                  isActive
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                {ch === 'email' && <Mail className="w-3 h-3" />}
-                {ch === 'whatsapp' && <MessageSquare className="w-3 h-3 text-emerald-400" />}
-                {ch === 'unlinked' && <AlertTriangle className="w-3 h-3 text-amber-300" />}
-                <span className="capitalize">{ch}</span>
-                <span className={`text-[10px] px-1 py-0.2 rounded-full ${isActive ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+          {/* 2. Folder Selector: Inbox vs Sent */}
+          <div className="flex items-center gap-1 border-r border-gray-200 pr-3">
+            <button
+              onClick={() => setFolderFilter('inbox')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+                folderFilter === 'inbox'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Inbox className="w-3 h-3" />
+              <span>Inbox</span>
+            </button>
+            <button
+              onClick={() => setFolderFilter('sent')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+                folderFilter === 'sent'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Send className="w-3 h-3" />
+              <span>Sent</span>
+            </button>
+          </div>
+
+          {/* 3. Channel Filters */}
+          <div className="flex items-center gap-1.5">
+            {(['all', 'email', 'whatsapp', 'unlinked'] as const).map(ch => {
+              const isActive = channelFilter === ch;
+              const count = conversations.filter(c => {
+                if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) return false;
+                if (c.channel === 'email') {
+                  if (folderFilter === 'inbox' && c.direction === 'outbound') return false;
+                  if (folderFilter === 'sent' && c.direction !== 'outbound') return false;
+                }
+                if (ch === 'all') return true;
+                if (ch === 'email') return c.channel === 'email';
+                if (ch === 'whatsapp') return c.channel === 'whatsapp';
+                if (ch === 'unlinked') return !c.inquiryId;
+                return true;
+              }).length;
+
+              return (
+                <button
+                  key={ch}
+                  onClick={() => setChannelFilter(ch)}
+                  className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-2xs'
+                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {ch === 'email' && <Mail className="w-3 h-3" />}
+                  {ch === 'whatsapp' && <MessageSquare className="w-3 h-3 text-emerald-400" />}
+                  {ch === 'unlinked' && <AlertTriangle className="w-3 h-3 text-amber-300" />}
+                  <span className="capitalize">{ch}</span>
+                  <span className={`text-[10px] px-1 py-0.2 rounded-full ${isActive ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <button
           onClick={loadConversations}
           disabled={loadingList}
           className="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1 px-2.5 py-1 bg-white border border-gray-200 rounded cursor-pointer disabled:opacity-50"
-          title="Refresh Inbox"
+          title="Refresh Messages"
         >
           <RefreshCw className={`w-3 h-3 ${loadingList ? 'animate-spin' : ''}`} />
           <span>Sync</span>
@@ -1212,23 +1298,28 @@ export function CrmOmnichannelInbox({
 
               {/* Bottom Quick Reply Composer */}
               <div className="p-3 border-t border-gray-200 bg-white space-y-2">
-                <div className="flex items-center justify-between text-xs text-gray-600">
-                    <span className="font-semibold flex items-center gap-1.5 flex-wrap">
-                      {selectedConversation.channel === 'whatsapp' ? (
-                        <>
-                          <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                          Reply via WhatsApp to {selectedConversation.senderAddress}
-                        </>
-                      ) : (
-                        <>
-                          <Mail className="w-3.5 h-3.5 text-blue-600" />
-                          Reply via Email to {getReplyRecipient()}
-                          <span className="text-[10.5px] font-mono bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 select-none">
-                            Sending from: sales@avira.co.id
-                          </span>
-                        </>
-                      )}
-                    </span>
+                {(() => {
+                  const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase();
+                  const isPricingReply = replySender.includes('kunal@avira.co.id');
+                  return (
+                    <>
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <span className="font-semibold flex items-center gap-1.5 flex-wrap">
+                          {selectedConversation.channel === 'whatsapp' ? (
+                            <>
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                              Reply via WhatsApp to {selectedConversation.senderAddress}
+                            </>
+                          ) : (
+                            <>
+                              <Mail className="w-3.5 h-3.5 text-blue-600" />
+                              Reply via Email to {getReplyRecipient()}
+                              <span className="text-[10.5px] font-mono bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 select-none">
+                                {isPricingReply ? 'Sending from: kunal@avira.co.id' : 'Sending from: sales@avira.co.id'}
+                              </span>
+                            </>
+                          )}
+                        </span>
 
                   {selectedConversation.channel === 'whatsapp' && selectedConversation.suggestedReply && (
                     <button
@@ -1264,7 +1355,10 @@ export function CrmOmnichannelInbox({
                     <span>{sendingReply ? 'Sending...' : 'Send Reply'}</span>
                   </button>
                 </div>
-              </div>
+              </>
+            );
+          })()}
+        </div>
             </div>
           )}
         </div>

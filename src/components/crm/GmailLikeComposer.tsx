@@ -245,6 +245,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     sentAt: string;
     messageId?: string | null;
     threadId?: string | null;
+    activityId?: string | null;
   } | null>(null);
   const [companyCo, setCompanyCo] = useState<CompanySnapshot>(FALLBACK_COMPANY);
 
@@ -313,6 +314,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
               sentAt: recentAct.sent_date,
               messageId: recentAct.gmail_message_id,
               threadId: recentAct.gmail_thread_id,
+              activityId: recentAct.id,
             });
           }
         });
@@ -718,6 +720,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
           sentAt: quoteSentAt,
           messageId: fnData?.messageId || null,
           threadId: fnData?.threadId || null,
+          activityId: fnData?.activityId || null,
         };
         setDeliveryResult(newDelivery);
         activeDelivery = newDelivery;
@@ -766,28 +769,35 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
 
       const activityIds: string[] = [];
       for (const inq of allInquiries) {
-        // trg_crm_email_activities_dedup transparently suppresses duplicate activity insert
-        // when send-bulk-email has already recorded the outbound message, returning 0 rows.
-        // Using maybeSingle() avoids PGRST116 ("Cannot coerce the result to a single JSON object").
-        const { data: activityData, error: activityError } = await supabase.from('crm_email_activities').insert([{
-          inquiry_id: inq.id,
-          email_type: 'sent',
-          from_email: senderMailbox,
-          to_email: toList,
-          cc_email: ccList.length > 0 ? ccList : null,
-          bcc_email: bccList.length > 0 ? bccList : null,
-          subject,
-          body,
-          attachment_urls: allAttachmentPaths.length > 0 ? allAttachmentPaths : null,
-          sent_date: new Date().toISOString(),
-          created_by: user.id,
-        }]).select('id').maybeSingle();
+        let activityId = (activeDelivery as any)?.activityId || null;
 
-        if (activityError) {
-          throw new Error(`Email activity log failed for ${inq.inquiry_number}: ${activityError.message}`);
+        if (!activityId) {
+          // trg_crm_email_activities_dedup transparently suppresses duplicate activity insert
+          // when send-bulk-email has already recorded the outbound message, returning 0 rows.
+          // Using maybeSingle() avoids PGRST116 ("Cannot coerce the result to a single JSON object").
+          const { data: activityData, error: activityError } = await supabase.from('crm_email_activities').insert([{
+            inquiry_id: inq.id,
+            email_type: 'sent',
+            from_email: senderMailbox,
+            to_email: toList,
+            cc_email: ccList.length > 0 ? ccList : null,
+            bcc_email: bccList.length > 0 ? bccList : null,
+            subject,
+            body,
+            attachment_urls: allAttachmentPaths.length > 0 ? allAttachmentPaths : null,
+            sent_date: new Date().toISOString(),
+            created_by: user.id,
+            gmail_message_id: activeDelivery?.messageId || null,
+            gmail_thread_id: activeDelivery?.threadId || null,
+          }]).select('id').maybeSingle();
+
+          if (activityError) {
+            throw new Error(`Email activity log failed for ${inq.inquiry_number}: ${activityError.message}`);
+          }
+
+          activityId = activityData?.id || null;
         }
 
-        let activityId = activityData?.id || null;
         if (!activityId) {
           // If deduplication trigger suppressed the duplicate insert, look up the existing activity row
           const query = supabase.from('crm_email_activities').select('id');

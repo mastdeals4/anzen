@@ -395,13 +395,16 @@ Deno.serve(async (req: Request) => {
       isHtml,
       attachments,
       attachmentUrls,
-      inquiryId,
+      inquiryId: rawInquiryId,
+      inquiry_id: snakeInquiryId,
       additionalInquiryIds,
       threadId,               // preserve email threading
       inReplyTo,              // MIME In-Reply-To header
       references,             // MIME References header
       module,                 // 'crm' | 'pricing'
     } = body as Record<string, any>;
+
+    const inquiryId = rawInquiryId || snakeInquiryId || null;
 
     void contactId;
 
@@ -789,31 +792,43 @@ Deno.serve(async (req: Request) => {
       console.error("[Canonical Ingestion] Outbound mirror failed:", mirrorErr);
     }
 
-    // Mandatory Safeguard 1: If canonical mirror failed, ensure a durable legacy footprint exists in crm_email_activities
-    if (!mirrorSucceeded) {
-      try {
-        const fallbackSentDate = new Date().toISOString();
-        const fallbackAttachments = fileAttachments.map((a: any) => a.storagePath || a.filename).filter(Boolean);
-        await supabase
+    let activityId: string | null = null;
+    try {
+      const sentDate = new Date().toISOString();
+      const attUrls = fileAttachments.map((a: any) => a.storagePath || a.filename).filter(Boolean);
+      const { data: actRow } = await supabase
+        .from("crm_email_activities")
+        .insert({
+          inquiry_id: inquiryId || null,
+          email_type: "sent",
+          from_email: connection.email_address,
+          to_email: Array.isArray(toEmails) ? toEmails : [toEmails],
+          cc_email: Array.isArray(cc) ? cc : [],
+          bcc_email: Array.isArray(bcc) ? bcc : [],
+          subject,
+          body: emailBody,
+          attachment_urls: attUrls.length > 0 ? attUrls : null,
+          sent_date: sentDate,
+          created_by: authUserId || null,
+          gmail_message_id: result.id,
+          gmail_thread_id: result.threadId || result.id,
+        })
+        .select("id")
+        .maybeSingle();
+
+      activityId = actRow?.id || null;
+      if (!activityId) {
+        // Look up by gmail_message_id if trigger suppressed duplicate
+        const { data: existingAct } = await supabase
           .from("crm_email_activities")
-          .insert({
-            inquiry_id: inquiryId || null,
-            email_type: "sent",
-            from_email: connection.email_address,
-            to_email: Array.isArray(toEmails) ? toEmails : [toEmails],
-            cc_email: Array.isArray(cc) ? cc : [],
-            bcc_email: Array.isArray(bcc) ? bcc : [],
-            subject,
-            body: emailBody,
-            attachment_urls: fallbackAttachments.length > 0 ? fallbackAttachments : null,
-            sent_date: fallbackSentDate,
-            created_by: authUserId || null,
-            gmail_message_id: result.id,
-            gmail_thread_id: result.threadId || result.id,
-          });
-      } catch (fallbackErr) {
-        console.error("[Canonical Ingestion] Outbound legacy fallback activity logging failed:", fallbackErr);
+          .select("id")
+          .eq("gmail_message_id", result.id)
+          .limit(1)
+          .maybeSingle();
+        activityId = existingAct?.id || null;
       }
+    } catch (actErr) {
+      console.error("[send-bulk-email] crm_email_activities logging error:", actErr);
     }
 
     return new Response(
@@ -821,6 +836,8 @@ Deno.serve(async (req: Request) => {
         success: true,
         messageId: result.id || null,
         threadId: result.threadId || null,
+        conversationId: mirrorRes?.conversationId || null,
+        activityId,
         senderMode,
         senderEmail: connection.email_address,
         actualRecipientsSent: finalRecipientList,

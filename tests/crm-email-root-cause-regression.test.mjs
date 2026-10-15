@@ -362,3 +362,61 @@ test('INDIA ROUTE: Recipients Configuration & devansh@shubham.co.in Inclusion', 
     'DEFAULT_INDIA_TO must include sonal, jayesh, aanvi, and devansh'
   );
 });
+
+test('ARCH AUDIT 1: Outbound Ingestion Inquiry Linking & Snake Case Support', () => {
+  // send-bulk-email must extract both inquiryId and inquiry_id to guarantee inquiry linking
+  assert.ok(
+    sendBulkEmailSrc.includes('inquiryId: rawInquiryId') &&
+    sendBulkEmailSrc.includes('inquiry_id: snakeInquiryId') &&
+    sendBulkEmailSrc.includes('rawInquiryId || snakeInquiryId'),
+    'send-bulk-email must support both camelCase and snake_case inquiryId'
+  );
+
+  // send-bulk-email must return activityId and conversationId
+  assert.ok(
+    sendBulkEmailSrc.includes('activityId') &&
+    sendBulkEmailSrc.includes('conversationId: mirrorRes?.conversationId'),
+    'send-bulk-email must return activityId and conversationId'
+  );
+});
+
+test('ARCH AUDIT 2: CRM Omnichannel Inbox & Sent Mailbox Separation', () => {
+  const inboxSrc = readFileSync(
+    resolve('src/components/crm/inbox/CrmOmnichannelInbox.tsx'),
+    'utf-8'
+  );
+
+  // Must have activeMailbox and folderFilter state
+  assert.ok(
+    inboxSrc.includes("const [activeMailbox, setActiveMailbox] = useState<ActiveMailbox>('sales@avira.co.id')") &&
+    inboxSrc.includes("const [folderFilter, setFolderFilter] = useState<FolderFilter>('inbox')"),
+    'CrmOmnichannelInbox must declare activeMailbox and folderFilter states'
+  );
+
+  // Must query Gmail API using dynamic folder ('in:sent' vs 'in:inbox')
+  assert.ok(
+    inboxSrc.includes("folderFilter === 'sent' ? 'in:sent' : 'in:inbox'"),
+    'CrmOmnichannelInbox must switch Gmail query based on folderFilter'
+  );
+
+  // Must separate Inbox from Sent in filtered conversations
+  assert.ok(
+    inboxSrc.includes("folderFilter === 'inbox' && c.direction === 'outbound'") &&
+    inboxSrc.includes("folderFilter === 'sent' && c.direction !== 'outbound'"),
+    'CrmOmnichannelInbox must filter outbound emails out of Inbox into Sent'
+  );
+
+  // Must filter by activeMailbox
+  assert.ok(
+    inboxSrc.includes('c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()'),
+    'CrmOmnichannelInbox must filter by activeMailbox'
+  );
+
+  // Reply sender must not be hardcoded to sales@avira.co.id
+  assert.ok(
+    !inboxSrc.includes("requiredSenderEmail: 'sales@avira.co.id',") ||
+    inboxSrc.includes('const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase()'),
+    'Reply sender in CrmOmnichannelInbox must match selected conversation mailbox'
+  );
+});
+
