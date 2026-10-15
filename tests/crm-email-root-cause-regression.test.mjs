@@ -16,6 +16,10 @@ const sendBulkEmailSrc = readFileSync(
   resolve('supabase/functions/send-bulk-email/index.ts'),
   'utf-8'
 );
+const sourcingRecipientsSrc = readFileSync(
+  resolve('src/services/sourcingRecipients.ts'),
+  'utf-8'
+);
 
 // ── Canonical Database Constraint Definition ─────────────────────────────
 const ALLOWED_SOURCE_STATUSES = new Set([
@@ -317,5 +321,44 @@ test('BUG 2: Credential & Token Privacy (No Secret Exposure)', () => {
   assert.ok(
     sendBulkEmailSrc.includes('Failed to refresh access token for ${connection.email_address}'),
     'Safe error message identifying mailbox must be used'
+  );
+});
+
+test('BUG 1 FIX: Activity Logging Deduplication Trigger Immunity (maybeSingle vs single)', () => {
+  // GmailLikeComposer must NOT use .single() on crm_email_activities insert
+  assert.ok(
+    !gmailLikeComposerSrc.includes(".from('crm_email_activities').insert([") ||
+    !gmailLikeComposerSrc.includes("}]).select('id').single()"),
+    'GmailLikeComposer must NOT call .single() on crm_email_activities insert because trigger suppresses duplicates to 0 rows'
+  );
+
+  // Must use .maybeSingle()
+  assert.ok(
+    gmailLikeComposerSrc.includes("}]).select('id').maybeSingle()"),
+    'GmailLikeComposer must use .maybeSingle() so suppressed duplicate inserts return null without throwing PGRST116'
+  );
+
+  // Must resolve existing activityId if suppressed
+  assert.ok(
+    gmailLikeComposerSrc.includes("if (!activityId) {") &&
+    gmailLikeComposerSrc.includes("query.eq('gmail_message_id', activeDelivery.messageId)"),
+    'GmailLikeComposer must resolve activityId from existing record when duplicate insert is suppressed'
+  );
+});
+
+test('INDIA ROUTE: Recipients Configuration & devansh@shubham.co.in Inclusion', () => {
+  // Sourcing recipients must define devansh@shubham.co.in
+  assert.ok(
+    sourcingRecipientsSrc.includes('devansh@shubham.co.in'),
+    'sourcingRecipients.ts must include devansh@shubham.co.in'
+  );
+
+  assert.ok(
+    sourcingRecipientsSrc.includes('DEFAULT_INDIA_TO') &&
+    sourcingRecipientsSrc.includes('sonal@shubham.co.in') &&
+    sourcingRecipientsSrc.includes('jayesh.shirke@shubham.co.in') &&
+    sourcingRecipientsSrc.includes('aanvi@anzen.co.in') &&
+    sourcingRecipientsSrc.includes('devansh@shubham.co.in'),
+    'DEFAULT_INDIA_TO must include sonal, jayesh, aanvi, and devansh'
   );
 });

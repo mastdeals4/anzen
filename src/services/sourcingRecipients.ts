@@ -24,7 +24,17 @@ export function recipientConfigurationError(route: SourcingRoute): string {
   return `${routeLabel} sourcing recipients are not configured. Ask an admin or manager to configure them in Sourcing Outbox.`;
 }
 
+export const DEFAULT_INDIA_TO = [
+  'sonal@shubham.co.in',
+  'jayesh.shirke@shubham.co.in',
+  'aanvi@anzen.co.in',
+  'devansh@shubham.co.in',
+];
+
 function emptyRecipients(route: SourcingRoute): RouteRecipients {
+  if (route === 'india') {
+    return { route: 'india', to: [...DEFAULT_INDIA_TO], cc: [], bcc: [] };
+  }
   return { route, to: [], cc: [], bcc: [] };
 }
 
@@ -41,9 +51,17 @@ export async function loadAllRouteRecipients(): Promise<Record<SourcingRoute, Ro
     if (error || !data) return blank;
     for (const r of data as Array<{ route: SourcingRoute; to_emails: string[] | null; cc_emails: string[] | null; bcc_emails: string[] | null }>) {
       if (r.route === 'india' || r.route === 'china' || r.route === 'local') {
+        const toList = (r.to_emails || []).filter(isValidEmail);
+        if (r.route === 'india') {
+          for (const email of DEFAULT_INDIA_TO) {
+            if (!toList.some(e => e.toLowerCase() === email.toLowerCase())) {
+              toList.push(email);
+            }
+          }
+        }
         blank[r.route] = {
           route: r.route,
-          to: (r.to_emails || []).filter(isValidEmail),
+          to: toList,
           cc: (r.cc_emails || []).filter(isValidEmail),
           bcc: (r.bcc_emails || []).filter(isValidEmail),
         };

@@ -293,6 +293,31 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
     } catch {
       sessionStorage.removeItem(sessionDeliveryKey);
     }
+
+    if (!restoredDelivery) {
+      // Check database to see if send-bulk-email already confirmed delivery in the last 15 minutes
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      supabase
+        .from('crm_email_activities')
+        .select('id, gmail_message_id, gmail_thread_id, sent_date')
+        .eq('inquiry_id', inquiry.id)
+        .not('gmail_message_id', 'is', null)
+        .gte('sent_date', fifteenMinutesAgo)
+        .order('sent_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then(({ data: recentAct }) => {
+          if (recentAct?.gmail_message_id) {
+            setDeliveryResult({
+              delivered: true,
+              sentAt: recentAct.sent_date,
+              messageId: recentAct.gmail_message_id,
+              threadId: recentAct.gmail_thread_id,
+            });
+          }
+        });
+    }
+
     setDeliveryResult(restoredDelivery);
 
     if (mode === 'india') {
@@ -741,6 +766,9 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
 
       const activityIds: string[] = [];
       for (const inq of allInquiries) {
+        // trg_crm_email_activities_dedup transparently suppresses duplicate activity insert
+        // when send-bulk-email has already recorded the outbound message, returning 0 rows.
+        // Using maybeSingle() avoids PGRST116 ("Cannot coerce the result to a single JSON object").
         const { data: activityData, error: activityError } = await supabase.from('crm_email_activities').insert([{
           inquiry_id: inq.id,
           email_type: 'sent',
@@ -753,12 +781,25 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
           attachment_urls: allAttachmentPaths.length > 0 ? allAttachmentPaths : null,
           sent_date: new Date().toISOString(),
           created_by: user.id,
-        }]).select('id').single();
+        }]).select('id').maybeSingle();
 
         if (activityError) {
           throw new Error(`Email activity log failed for ${inq.inquiry_number}: ${activityError.message}`);
         }
-        if (activityData?.id) activityIds.push(activityData.id);
+
+        let activityId = activityData?.id || null;
+        if (!activityId) {
+          // If deduplication trigger suppressed the duplicate insert, look up the existing activity row
+          const query = supabase.from('crm_email_activities').select('id');
+          if (activeDelivery?.messageId) {
+            query.eq('gmail_message_id', activeDelivery.messageId);
+          } else {
+            query.eq('inquiry_id', inq.id).eq('subject', subject).order('sent_date', { ascending: false });
+          }
+          const { data: existingAct } = await query.limit(1).maybeSingle();
+          activityId = existingAct?.id || null;
+        }
+        if (activityId) activityIds.push(activityId);
 
         // 5. Record newly uploaded files in crm_product_documents
         if (uploadedFiles.length > 0) {
