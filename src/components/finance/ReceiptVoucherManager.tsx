@@ -19,7 +19,7 @@ import { supabaseErrorMessage } from '../../utils/supabaseError';
 import { type CompanySnapshot } from '../../types/company';
 import { waitForImages } from '../../utils/companyLogoUrl';
 import { formatCurrency } from '../../utils/currency';
-import { getReportingUsdRate, saveReceiptVoucher } from '../../services/financeCommands';
+import { getReportingUsdRate, saveReceiptVoucher, applySettlementAdjustment } from '../../services/financeCommands';
 import { useFinance } from '../../contexts/FinanceContext';
 
 interface Customer {
@@ -78,6 +78,16 @@ interface ReceiptVoucher {
   allocated_to?: string;
   company_snapshot?: CompanySnapshot | null;
 }
+ 
+interface ReceiptAllocationItem {
+  targetId: string;
+  targetType: 'invoice' | 'salesorder';
+  amount: number;
+  roundOffAmount?: number;
+  discountAmount?: number;
+  adjustmentType?: 'rounding' | 'discount' | 'write_off';
+  adjustmentReason?: string;
+}
 
 interface ReceiptVoucherManagerProps {
   canManage: boolean;
@@ -108,8 +118,9 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
   const [receiptBankLines, setReceiptBankLines] = useState<any[]>([]);
   const [receiptJournalLines, setReceiptJournalLines] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [allocations, setAllocations] = useState<{ targetId: string; targetType: 'invoice' | 'salesorder'; amount: number }[]>([]);
+  const [allocations, setAllocations] = useState<ReceiptAllocationItem[]>([]);
   const [roundingTolerance, setRoundingTolerance] = useState(100);
+  const [receiptAdjustments, setReceiptAdjustments] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     voucher_date: new Date().toISOString().split('T')[0],
@@ -309,38 +320,87 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
     }
   };
 
-  const handleAllocationChange = (targetId: string, targetType: 'invoice' | 'salesorder', amount: number) => {
+  const handleAllocationChange = (
+    targetId: string,
+    targetType: 'invoice' | 'salesorder',
+    amount: number,
+    patch?: {
+      roundOffAmount?: number;
+      discountAmount?: number;
+      adjustmentType?: 'rounding' | 'discount' | 'write_off';
+      adjustmentReason?: string;
+    }
+  ) => {
+    const target = allocationTargets.find(t => t.id === targetId);
+    const balance = target
+      ? (target.type === 'invoice' ? (target as SalesInvoice & { type: 'invoice' }).balance_amount : (target as SalesOrder & { type: 'salesorder' }).balance_due)
+      : amount;
+
     setAllocations(prev => {
       const existing = prev.find(a => a.targetId === targetId);
-      if (existing) {
-        if (amount <= 0) {
-          return prev.filter(a => a.targetId !== targetId);
+      const allocated = amount;
+      let roundOff = patch?.roundOffAmount !== undefined ? patch.roundOffAmount : (existing?.roundOffAmount || 0);
+      let discount = patch?.discountAmount !== undefined ? patch.discountAmount : (existing?.discountAmount || 0);
+      let adjType = patch?.adjustmentType !== undefined ? patch.adjustmentType : (existing?.adjustmentType || 'rounding');
+      const adjReason = patch?.adjustmentReason !== undefined ? patch.adjustmentReason : (existing?.adjustmentReason || '');
+
+      if (targetType === 'invoice' && patch?.roundOffAmount === undefined && patch?.discountAmount === undefined) {
+        const residual = Math.round((balance - allocated) * 100) / 100;
+        if (allocated > 0 && Math.abs(residual) > 0 && Math.abs(residual) <= roundingTolerance && discount === 0) {
+          roundOff = residual;
+          adjType = 'rounding';
+        } else if (residual === 0) {
+          roundOff = 0;
+          discount = 0;
         }
-        return prev.map(a => a.targetId === targetId ? { ...a, amount } : a);
       }
-      if (amount > 0) {
-        return [...prev, { targetId, targetType, amount }];
+
+      if (allocated <= 0 && roundOff <= 0 && discount <= 0) {
+        return prev.filter(a => a.targetId !== targetId);
       }
-      return prev;
+
+      const item: ReceiptAllocationItem = {
+        targetId,
+        targetType,
+        amount: allocated,
+        roundOffAmount: roundOff,
+        discountAmount: discount,
+        adjustmentType: adjType,
+        adjustmentReason: adjReason,
+      };
+
+      if (existing) {
+        return prev.map(a => a.targetId === targetId ? item : a);
+      }
+      return [...prev, item];
     });
   };
 
   const totalAllocated = allocations.reduce((sum, a) => sum + a.amount, 0);
+  const totalRoundOff = allocations.reduce((sum, a) => sum + (a.roundOffAmount || 0), 0);
+  const totalDiscount = allocations.reduce((sum, a) => sum + (a.discountAmount || 0), 0);
   const formCurrency = bankAccounts.find(bank => bank.id === formData.bank_account_id)?.currency || 'IDR';
   const voucherCurrency = (voucher: ReceiptVoucher) => voucher.bank_accounts?.currency || 'IDR';
 
   const getInvoiceAllocationPreview = (target: AllocationTarget) => {
     if (target.type !== 'invoice') {
-      return { roundingAdjustment: 0, invoiceClosed: false };
+      return { roundingAdjustment: 0, discountAdjustment: 0, finalBalance: 0, invoiceClosed: false };
     }
 
-    const allocated = allocations.find(a => a.targetId === target.id)?.amount || 0;
-    const residual = target.balance_amount - allocated;
+    const alloc = allocations.find(a => a.targetId === target.id);
+    const allocated = alloc?.amount || 0;
+    const roundOff = alloc?.roundOffAmount || 0;
+    const discount = alloc?.discountAmount || 0;
+    const residual = Math.round((target.balance_amount - allocated) * 100) / 100;
     const withinTolerance = allocated > 0 && Math.abs(residual) > 0 && Math.abs(residual) <= roundingTolerance;
+    const effectiveRoundOff = alloc ? roundOff : (withinTolerance ? residual : 0);
+    const finalBalance = Math.max(0, Math.round((target.balance_amount - allocated - effectiveRoundOff - discount) * 100) / 100);
 
     return {
-      roundingAdjustment: withinTolerance ? residual : 0,
-      invoiceClosed: withinTolerance || Math.abs(residual) === 0,
+      roundingAdjustment: effectiveRoundOff,
+      discountAdjustment: discount,
+      finalBalance,
+      invoiceClosed: finalBalance === 0 && (allocated > 0 || effectiveRoundOff > 0 || discount > 0),
     };
   };
 
@@ -380,6 +440,12 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       return;
     }
 
+    const missingReason = allocations.find(a => (a.discountAmount || 0) > 0 && !a.adjustmentReason?.trim());
+    if (missingReason) {
+      showToast({ type: 'error', title: 'Reason Required', message: 'A valid reason is required for discount or write-off settlement adjustments.' });
+      return;
+    }
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
@@ -393,7 +459,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       const exchangeRate = currency === 'IDR'
         ? 1
         : (formData.exchange_rate > 1 ? formData.exchange_rate : await getReportingUsdRate());
-      await saveReceiptVoucher(
+      const savedVoucherId = await saveReceiptVoucher(
         editMode && selectedVoucher ? selectedVoucher.id : null,
         {
           voucher_date: formData.voucher_date,
@@ -413,6 +479,29 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
           amount: alloc.amount,
         })),
       );
+
+      // Persist settlement round-off or commercial discount adjustments
+      for (const alloc of allocations) {
+        if (alloc.targetType === 'invoice') {
+          const roundOff = alloc.roundOffAmount || 0;
+          const discount = alloc.discountAmount || 0;
+          const totalAdj = Math.round((roundOff + discount) * 100) / 100;
+          if (totalAdj > 0) {
+            const adjType = discount > 0 ? (alloc.adjustmentType || 'discount') : 'rounding';
+            const reason = discount > 0
+              ? (alloc.adjustmentReason?.trim() || 'Commercial discount')
+              : 'invoice_rounding_tolerance';
+            await applySettlementAdjustment({
+              documentType: 'sales',
+              invoiceId: alloc.targetId,
+              voucherId: savedVoucherId,
+              amount: totalAdj,
+              adjustmentType: adjType,
+              reason,
+            });
+          }
+        }
+      }
 
       setModalOpen(false);
       resetForm();
@@ -493,7 +582,7 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
 
     // Detail presentation uses the same canonical linked records as Bank
     // Reconciliation and GL; this is read-only UI enrichment.
-    const [{ data: allocs }, { data: bankLines }, { data: canonicalBankAllocations }, { data: journalLines }] = await Promise.all([
+    const [{ data: allocs }, { data: bankLines }, { data: canonicalBankAllocations }, { data: journalLines }, { data: adjustments }] = await Promise.all([
       supabase
       .from('voucher_allocations')
       .select(`
@@ -512,9 +601,13 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       voucher.journal_entry_id
         ? supabase.from('journal_entry_lines').select('line_number, debit, credit, description, chart_of_accounts(code, name)').eq('journal_entry_id', voucher.journal_entry_id).order('line_number')
         : Promise.resolve({ data: [] as any[] }),
+      supabase.from('invoice_rounding_adjustments')
+        .select('id, sales_invoice_id, adjustment_amount, adjustment_type, reason, journal_entry_id')
+        .eq('receipt_voucher_id', voucher.id),
     ]);
 
     setVoucherAllocations(allocs || []);
+    setReceiptAdjustments(adjustments || []);
     const canonicalLines = (canonicalBankAllocations || []).map((allocation: any) => {
       const line = Array.isArray(allocation.bank_statement_lines)
         ? allocation.bank_statement_lines[0]
@@ -604,11 +697,33 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       .eq('receipt_voucher_id', voucher.id);
 
     if (allocs) {
-      const existingAllocs = allocs.map(a => ({
-        targetId: a.sales_invoice_id || a.sales_order_id,
-        targetType: (a.sales_invoice_id ? 'invoice' : 'salesorder') as 'invoice' | 'salesorder',
-        amount: Number(a.allocated_amount)
-      }));
+      const invoiceIds = allocs.filter(a => a.sales_invoice_id).map(a => a.sales_invoice_id!);
+      const adjustmentsMap = new Map<string, any>();
+      if (invoiceIds.length > 0) {
+        const { data: adjs } = await supabase
+          .from('invoice_rounding_adjustments')
+          .select('sales_invoice_id, adjustment_amount, adjustment_type, reason')
+          .in('sales_invoice_id', invoiceIds);
+        if (adjs) {
+          for (const adj of adjs) {
+            if (adj.sales_invoice_id) adjustmentsMap.set(adj.sales_invoice_id, adj);
+          }
+        }
+      }
+
+      const existingAllocs: ReceiptAllocationItem[] = allocs.map(a => {
+        const adj = a.sales_invoice_id ? adjustmentsMap.get(a.sales_invoice_id) : undefined;
+        const isDiscount = adj && (adj.adjustment_type === 'discount' || adj.adjustment_type === 'write_off');
+        return {
+          targetId: a.sales_invoice_id || a.sales_order_id,
+          targetType: (a.sales_invoice_id ? 'invoice' : 'salesorder') as 'invoice' | 'salesorder',
+          amount: Number(a.allocated_amount),
+          roundOffAmount: adj && !isDiscount ? Number(adj.adjustment_amount) : 0,
+          discountAmount: adj && isDiscount ? Number(adj.adjustment_amount) : 0,
+          adjustmentType: adj?.adjustment_type || 'rounding',
+          adjustmentReason: adj?.reason || '',
+        };
+      });
       setAllocations(existingAllocs);
     }
 
@@ -874,16 +989,17 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                 </ul>
               </div>
               {allocationTargets.length > 0 ? (
-                <div className="max-h-64 overflow-y-auto border rounded-lg">
-                  <table className="w-full text-sm">
+                <div className="max-h-72 overflow-y-auto border rounded-lg">
+                  <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
-                        <th className="px-3 py-2 text-left">Document</th>
-                        <th className="px-3 py-2 text-center">Type</th>
-                        <th className="px-3 py-2 text-right">Balance Due</th>
-                        <th className="px-3 py-2 text-right">Receipt Amount</th>
-                        <th className="px-3 py-2 text-right">Rounding Adjustment</th>
-                        <th className="px-3 py-2 text-center">Invoice Closed</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Document</th>
+                        <th className="px-2 py-2 text-center font-medium text-gray-500">Type</th>
+                        <th className="px-3 py-2 text-right font-medium text-gray-500">Balance Due</th>
+                        <th className="px-3 py-2 text-right font-medium text-gray-500">Receipt Amount</th>
+                        <th className="px-2 py-2 text-right font-medium text-gray-500">Round-Off</th>
+                        <th className="px-2 py-2 text-right font-medium text-gray-500">Discount</th>
+                        <th className="px-3 py-2 text-right font-medium text-gray-500">Final Balance</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -898,16 +1014,21 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                         ? (target as SalesInvoice & { type: 'invoice' }).invoice_date
                         : (target as SalesOrder & { type: 'salesorder' }).so_date;
                       const preview = getInvoiceAllocationPreview(target);
-                      const roundingAdjustment = preview.roundingAdjustment;
+                      const thisAlloc = allocations.find(a => a.targetId === target.id);
+                      const allocatedAmount = thisAlloc?.amount || 0;
+                      const roundOff = thisAlloc?.roundOffAmount || 0;
+                      const discount = thisAlloc?.discountAmount || 0;
+                      const finalBalance = preview.finalBalance;
+                      const isSettled = preview.invoiceClosed;
 
                       return (
-                        <tr key={`${target.type}-${target.id}`}>
+                        <tr key={`${target.type}-${target.id}`} className="hover:bg-gray-50/50">
                           <td className="px-3 py-2">
                             <div className="font-mono text-xs">{docNumber}</div>
-                            <div className="text-gray-500 text-xs">{new Date(docDate).toLocaleDateString('id-ID')}</div>
+                            <div className="text-gray-500 text-[10px]">{new Date(docDate).toLocaleDateString('id-ID')}</div>
                           </td>
-                          <td className="px-3 py-2 text-center">
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          <td className="px-2 py-2 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
                               target.type === 'salesorder'
                                 ? 'bg-purple-100 text-purple-700'
                                 : 'bg-blue-100 text-blue-700'
@@ -918,41 +1039,81 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                           <td className="px-3 py-2 text-right text-red-600 font-medium">
                             {formatCurrency(balance, formCurrency)}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 text-right">
                             <MoneyInput
                               decimal
                               min={0}
                               max={balance}
-                              value={allocations.find(a => a.targetId === target.id)?.amount || 0}
+                              value={allocatedAmount}
                               onChange={(n) => handleAllocationChange(target.id, target.type, Math.min(n, balance))}
-                              className="w-28 px-2 py-1 border rounded text-right text-xs"
+                              className="w-24 px-2 py-1 border rounded text-right text-xs"
                               placeholder="0"
                             />
                           </td>
-                          <td className="px-3 py-2 text-right text-xs font-medium">
+                          <td className="px-2 py-2 text-right">
                             {target.type === 'invoice' ? (
-                              <span className={roundingAdjustment === 0 ? 'text-gray-400' : 'text-amber-700'}>
-                                {formatCurrency(roundingAdjustment, formCurrency)}
-                              </span>
+                              <MoneyInput
+                                decimal
+                                min={0}
+                                max={Math.min(roundingTolerance, Math.max(0, balance - allocatedAmount))}
+                                value={roundOff}
+                                onChange={(r) => handleAllocationChange(target.id, target.type, allocatedAmount, { roundOffAmount: r, adjustmentType: 'rounding' })}
+                                className="w-20 px-1.5 py-1 border rounded text-right text-xs text-amber-700 bg-amber-50/30"
+                                placeholder="0"
+                              />
                             ) : (
-                              <span className="text-gray-400">-</span>
+                              <span className="text-gray-400 text-xs">-</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-center text-xs font-medium">
+                          <td className="px-2 py-2 text-right">
                             {target.type === 'invoice' ? (
-                              <span className={`px-2 py-0.5 rounded ${preview.invoiceClosed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                {preview.invoiceClosed ? 'Yes' : 'No'}
-                              </span>
+                              <div className="flex flex-col items-end gap-1">
+                                <MoneyInput
+                                  decimal
+                                  min={0}
+                                  max={Math.max(0, balance - allocatedAmount - roundOff)}
+                                  value={discount}
+                                  onChange={(d) => handleAllocationChange(target.id, target.type, allocatedAmount, { discountAmount: d, adjustmentType: 'discount' })}
+                                  className="w-20 px-1.5 py-1 border rounded text-right text-xs text-purple-700 bg-purple-50/30"
+                                  placeholder="0"
+                                />
+                                {discount > 0 && (
+                                  <input
+                                    type="text"
+                                    placeholder="Reason (req)*"
+                                    value={thisAlloc?.adjustmentReason || ''}
+                                    onChange={(e) => handleAllocationChange(target.id, target.type, allocatedAmount, { adjustmentReason: e.target.value })}
+                                    className="w-28 text-[10px] px-1 py-0.5 border border-purple-300 rounded bg-white text-gray-800"
+                                    title="Approved reason for commercial discount/write-off"
+                                  />
+                                )}
+                              </div>
                             ) : (
-                              <span className="text-gray-400">-</span>
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {target.type === 'invoice' ? (
+                              <div>
+                                <div className={`font-semibold text-xs ${finalBalance === 0 ? 'text-green-700' : 'text-gray-700'}`}>
+                                  {formatCurrency(finalBalance, formCurrency)}
+                                </div>
+                                <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-medium ${isSettled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                  {isSettled ? 'Settled' : 'Partial'}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="text-xs text-gray-700 font-medium">
+                                {formatCurrency(Math.max(0, balance - allocatedAmount), formCurrency)}
+                              </div>
                             )}
                           </td>
                         </tr>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <div className="border rounded-lg p-4 text-center text-gray-500 text-sm">
                   <p>No unpaid invoices or sales orders found for this customer.</p>
@@ -961,16 +1122,18 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                   )}
                 </div>
               )}
-              <div className="mt-3 flex justify-between items-center text-sm">
-                <div className="text-gray-600">
-                  <span className="font-medium">{allocations.length}</span> allocation(s)
+              <div className="mt-3 flex flex-wrap justify-between items-center text-sm gap-2">
+                <div className="flex gap-3 text-xs text-gray-600">
+                  <span><strong className="text-gray-900">{allocations.length}</strong> allocation(s)</span>
+                  {totalRoundOff > 0 && <span>Round-off: <strong className="text-amber-700">{formatCurrency(totalRoundOff, formCurrency)}</strong></span>}
+                  {totalDiscount > 0 && <span>Discount: <strong className="text-purple-700">{formatCurrency(totalDiscount, formCurrency)}</strong></span>}
                 </div>
                 <div className="text-right">
-                  <span className="text-gray-500">Total Allocated:</span>
-                  <span className={`ml-2 font-bold text-lg ${totalAllocated > formData.amount ? 'text-red-600' : 'text-green-600'}`}>
+                  <span className="text-gray-500 text-xs">Total Allocated:</span>
+                  <span className={`ml-2 font-bold text-base ${totalAllocated > formData.amount ? 'text-red-600' : 'text-green-600'}`}>
                     {formatCurrency(totalAllocated, formCurrency)}
                   </span>
-                  <span className="text-gray-400 ml-1">/ {formatCurrency(formData.amount, formCurrency)}</span>
+                  <span className="text-gray-400 ml-1 text-xs">/ {formatCurrency(formData.amount, formCurrency)}</span>
                 </div>
               </div>
               <div className="mt-2 text-xs text-gray-500">
@@ -1041,7 +1204,9 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {voucherAllocations.map((alloc, idx) => (
+                      {voucherAllocations.map((alloc, idx) => {
+                        const adj = receiptAdjustments.find(a => a.sales_invoice_id === alloc.sales_invoice_id);
+                        return (
                         <tr key={idx}>
                           <td className="px-3 py-2 font-mono text-xs">
                             <div>{alloc.sales_invoices ? alloc.sales_invoices.invoice_number : alloc.sales_orders?.so_number}</div>
@@ -1057,10 +1222,16 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right font-medium">
-                            {formatCurrency(alloc.allocated_amount, voucherCurrency(selectedVoucher))}
+                            <div>{formatCurrency(alloc.allocated_amount, voucherCurrency(selectedVoucher))}</div>
+                            {adj && (
+                              <div className="text-[10px] text-amber-700">
+                                + {formatCurrency(adj.adjustment_amount, voucherCurrency(selectedVoucher))} ({adj.adjustment_type})
+                              </div>
+                            )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

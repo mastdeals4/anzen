@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Search, FileText, X, AlertCircle, CreditCard, PackageCheck } from 'lucide-react';
+import { Plus, Search, FileText, X, AlertCircle, CreditCard, PackageCheck, CheckCircle } from 'lucide-react';
 import { showConfirm } from '../ConfirmDialog';
 import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
@@ -17,6 +17,7 @@ import { formatCurrency } from '../../utils/currency';
 import { useFinance } from '../../contexts/FinanceContext';
 import { useNavigation } from '../../contexts/NavigationContext';
 import { extractPurchaseInvoicePdf, ExtractedPurchaseInvoice } from '../../utils/purchaseInvoicePdfExtractor';
+import { applySettlementAdjustment } from '../../services/financeCommands';
 
 interface Supplier {
   id: string;
@@ -132,6 +133,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModal, setViewModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
+  const [invoiceAdjustment, setInvoiceAdjustment] = useState<any | null>(null);
+  const [roundingTolerance, setRoundingTolerance] = useState<number>(100);
+  const [settlingAdjustment, setSettlingAdjustment] = useState(false);
   const [viewLineItems, setViewLineItems] = useState<PurchaseInvoiceItem[]>([]);
   const [viewLoading, setViewLoading] = useState(false);
   const [viewBlobUrl, setViewBlobUrl] = useState<string | null>(null);
@@ -248,6 +252,19 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     setModalOpen(true);
     clearNavigationData();
   }, [navigationData, clearNavigationData]);
+
+  useEffect(() => {
+    supabase
+      .from('app_settings')
+      .select('rounding_tolerance_amount')
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.rounding_tolerance_amount) {
+          setRoundingTolerance(Number(data.rounding_tolerance_amount));
+        }
+      });
+  }, []);
 
   useEffect(() => {
     if (!initialViewInvoiceId || loading) return;
@@ -565,8 +582,22 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     setSelectedInvoice(invoice);
     setViewModal(true);
     setViewBlobUrl(null);
+    setInvoiceAdjustment(null);
     await loadViewLineItems(invoice.id);
     await loadReceivingAllocations(invoice.id);
+
+    try {
+      const { data: adjData } = await supabase
+        .from('invoice_rounding_adjustments')
+        .select('id, adjustment_amount, adjustment_type, reason, created_at, journal_entries(entry_number)')
+        .eq('purchase_invoice_id', invoice.id)
+        .maybeSingle();
+      setInvoiceAdjustment(adjData || null);
+    } catch (adjErr) {
+      console.error('Error fetching settlement adjustment for purchase invoice:', adjErr);
+      setInvoiceAdjustment(null);
+    }
+
     if (invoice.document_urls && invoice.document_urls.length > 0) {
       setViewBlobLoading(true);
       try {
@@ -593,6 +624,43 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       } finally {
         setViewBlobLoading(false);
       }
+    }
+  };
+
+  const handleSettleResidualRoundOff = async () => {
+    if (!selectedInvoice) return;
+    const balance = Number(selectedInvoice.balance_amount);
+    if (balance <= 0) return;
+
+    if (!await showConfirm({
+      title: 'Settle Round-Off Adjustment',
+      message: `Post residual round-off adjustment of ${formatCurrency(balance, selectedInvoice.currency)} to close purchase invoice ${selectedInvoice.invoice_number}? This will debit Accounts Payable and credit Round-Off Gain.`,
+      confirmLabel: 'Settle Round-Off'
+    })) return;
+
+    setSettlingAdjustment(true);
+    try {
+      await applySettlementAdjustment({
+        documentType: 'purchase',
+        invoiceId: selectedInvoice.id,
+        adjustmentType: 'rounding',
+        reason: 'invoice_rounding_tolerance',
+      });
+      showToast({ type: 'success', title: 'Settled', message: `Round-off adjustment of ${formatCurrency(balance, selectedInvoice.currency)} posted.` });
+      await loadInvoices();
+      const { data: updatedInv } = await supabase.from('purchase_invoices').select('*, suppliers(company_name, pkp_status)').eq('id', selectedInvoice.id).single();
+      if (updatedInv) setSelectedInvoice(updatedInv as any);
+      await loadViewLineItems(selectedInvoice.id);
+      const { data: adjData } = await supabase
+        .from('invoice_rounding_adjustments')
+        .select('id, adjustment_amount, adjustment_type, reason, created_at, journal_entries(entry_number)')
+        .eq('purchase_invoice_id', selectedInvoice.id)
+        .maybeSingle();
+      setInvoiceAdjustment(adjData || null);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: 'Failed to settle: ' + err.message });
+    } finally {
+      setSettlingAdjustment(false);
     }
   };
 
@@ -1805,8 +1873,35 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Balance Due</p>
                 <p className="font-bold text-lg text-blue-700">{formatCurrency(selectedInvoice.balance_amount, selectedInvoice.currency)}</p>
+                {selectedInvoice.status === 'partial' && Number(selectedInvoice.balance_amount) > 0 && Number(selectedInvoice.balance_amount) <= roundingTolerance && canManage && (
+                  <button
+                    type="button"
+                    disabled={settlingAdjustment}
+                    onClick={handleSettleResidualRoundOff}
+                    className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-amber-600 text-white rounded hover:bg-amber-700 shadow-sm transition-colors"
+                    title={`Post round-off adjustment of ${formatCurrency(selectedInvoice.balance_amount, selectedInvoice.currency)} to close this invoice`}
+                  >
+                    <CheckCircle className="w-3 h-3" />
+                    {settlingAdjustment ? 'Settling...' : 'Settle Round-Off'}
+                  </button>
+                )}
               </div>
             </div>
+
+            {invoiceAdjustment && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold text-amber-900 capitalize">{invoiceAdjustment.adjustment_type} Adjustment: </span>
+                  <span className="font-bold text-amber-800">{formatCurrency(invoiceAdjustment.adjustment_amount, selectedInvoice.currency)}</span>
+                  <span className="text-amber-700 ml-2">({invoiceAdjustment.reason})</span>
+                </div>
+                {invoiceAdjustment.journal_entries?.entry_number && (
+                  <span className="font-mono text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-medium">
+                    GL #{invoiceAdjustment.journal_entries.entry_number}
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* Line Items */}
             <div>

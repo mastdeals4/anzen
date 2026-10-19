@@ -12,7 +12,7 @@ import { F_BTN_PRIMARY, F_BTN_SECONDARY } from './FinanceForm';
 import { SapRow, SapField, SAP_INPUT } from './SapLayout';
 import { supabaseErrorMessage } from '../../utils/supabaseError';
 import { formatCurrency } from '../../utils/currency';
-import { linkBankStatementLine, savePaymentVoucher } from '../../services/financeCommands';
+import { linkBankStatementLine, savePaymentVoucher, applySettlementAdjustment } from '../../services/financeCommands';
 import { BankTransactionLinkField } from './BankTransactionLinkField';
 import { FinanceActionButton, FinanceBadge } from './FinanceUI';
 import {
@@ -144,6 +144,17 @@ interface PaymentAllocationRow {
   finance_expenses?: { id: string; voucher_number: string | null } | null;
 }
 
+export interface InvoiceAllocationItem {
+  invoiceId: string;
+  amount: number;
+  currency: string;
+  roundOffAmount?: number;
+  discountAmount?: number;
+  adjustmentType?: 'rounding' | 'discount' | 'write_off';
+  adjustmentReason?: string;
+}
+
+
 interface ViewAllocationRow {
   allocated_amount: number | null;
   allocated_currency: string | null;
@@ -205,7 +216,8 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
   const [modalOpen, setModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [voucherView, setVoucherView] = useState<'payments' | 'settlements' | 'all'>('payments');
-  const [allocations, setAllocations] = useState<{ invoiceId: string; amount: number; currency: string }[]>([]);
+  const [allocations, setAllocations] = useState<InvoiceAllocationItem[]>([]);
+  const [roundingTolerance, setRoundingTolerance] = useState<number>(100);
   const [expenseBillAllocations, setExpenseBillAllocations] = useState<{ expenseId: string; amount: number }[]>([]);
   const [outstandingExpenseBills, setOutstandingExpenseBills] = useState<OutstandingExpenseBillForPV[]>([]);
   const [selectedBank, setSelectedBank] = useState<BankAccount | null>(null);
@@ -217,7 +229,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
   const [bankReconExpectedAmount, setBankReconExpectedAmount] = useState<number | null>(null);
   const [bankReconBankAccountId, setBankReconBankAccountId] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
-  const [viewAllocations, setViewAllocations] = useState<Array<{ invoice_id: string; invoice_number: string; invoice_date: string; allocated_amount: number; allocated_currency: string; is_expense_bill?: boolean; expense_id?: string; expense_category?: string; gross_salary?: number; advance_applied?: number; pph21?: number }>>([]);
+  const [viewAllocations, setViewAllocations] = useState<Array<{ invoice_id: string; invoice_number: string; invoice_date: string; allocated_amount: number; allocated_currency: string; is_expense_bill?: boolean; expense_id?: string; expense_category?: string; gross_salary?: number; advance_applied?: number; pph21?: number; settlement_adjustment?: number; adjustment_type?: string }>>([]);
 
   const [formData, setFormData] = useState({
     voucher_date: new Date().toISOString().split('T')[0],
@@ -247,6 +259,16 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     loadStaff();
     loadBankAccounts();
     loadTaxCodes();
+    supabase
+      .from('app_settings')
+      .select('rounding_tolerance_amount')
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && data.rounding_tolerance_amount !== undefined && data.rounding_tolerance_amount !== null) {
+          setRoundingTolerance(Number(data.rounding_tolerance_amount));
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -575,15 +597,57 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     });
   };
 
-  const handleAllocationChange = (invoice: PurchaseInvoice, amount: number) => {
+  const handleAllocationChange = (
+    invoice: PurchaseInvoice,
+    amount: number,
+    patch?: Partial<InvoiceAllocationItem>,
+  ) => {
     setAllocations(prev => {
       const existing = prev.find(a => a.invoiceId === invoice.id);
-      if (existing) {
-        if (amount <= 0) return prev.filter(a => a.invoiceId !== invoice.id);
-        return prev.map(a => a.invoiceId === invoice.id ? { ...a, amount } : a);
+      const safeAmount = Math.max(0, Math.round(amount * 100) / 100);
+      const availableBalance = editingVoucher
+        ? Math.round((invoice.balance_amount + (existing?.amount || 0)) * 100) / 100
+        : invoice.balance_amount;
+      const residual = Math.max(0, Math.round((availableBalance - safeAmount) * 100) / 100);
+
+      let roundOff = existing?.roundOffAmount ?? 0;
+      let discount = existing?.discountAmount ?? 0;
+      let adjType = existing?.adjustmentType || 'rounding';
+      let adjReason = existing?.adjustmentReason || '';
+
+      if (patch) {
+        if (patch.roundOffAmount !== undefined) roundOff = patch.roundOffAmount;
+        if (patch.discountAmount !== undefined) discount = patch.discountAmount;
+        if (patch.adjustmentType !== undefined) adjType = patch.adjustmentType;
+        if (patch.adjustmentReason !== undefined) adjReason = patch.adjustmentReason;
+      } else if (!existing || existing.discountAmount === undefined || existing.discountAmount === 0) {
+        if (safeAmount > 0 && residual > 0 && residual <= roundingTolerance) {
+          roundOff = residual;
+          adjType = 'rounding';
+          adjReason = 'invoice_rounding_tolerance';
+        } else if (residual > roundingTolerance && roundOff > 0) {
+          roundOff = 0;
+        }
       }
-      if (amount > 0) return [...prev, { invoiceId: invoice.id, amount, currency: invoice.currency || 'IDR' }];
-      return prev;
+
+      if (safeAmount <= 0 && roundOff <= 0 && discount <= 0) {
+        return prev.filter(a => a.invoiceId !== invoice.id);
+      }
+
+      const updated: InvoiceAllocationItem = {
+        invoiceId: invoice.id,
+        amount: safeAmount,
+        currency: invoice.currency || 'IDR',
+        roundOffAmount: roundOff,
+        discountAmount: discount,
+        adjustmentType: adjType,
+        adjustmentReason: adjReason,
+      };
+
+      if (existing) {
+        return prev.map(a => a.invoiceId === invoice.id ? updated : a);
+      }
+      return [...prev, updated];
     });
   };
 
@@ -608,6 +672,8 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
   const totalBankDebit = convertedPaymentAmount + bankCharge;
   const netBankDebit = totalBankDebit;
   const totalAllocated = allocations.reduce((sum, a) => sum + a.amount, 0);
+  const totalRoundOff = allocations.reduce((sum, a) => sum + (a.roundOffAmount || 0), 0);
+  const totalDiscount = allocations.reduce((sum, a) => sum + (a.discountAmount || 0), 0);
   const totalExpenseBillAllocated = expenseBillAllocations.reduce((sum, a) => sum + a.amount, 0);
 
   const resetForm = () => {
@@ -733,6 +799,22 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
       .from('voucher_allocations')
       .select('purchase_invoice_id, finance_expense_id, allocated_amount, allocated_currency')
       .eq('payment_voucher_id', v.id);
+
+    const { data: adjData } = await supabase
+      .from('invoice_rounding_adjustments')
+      .select('purchase_invoice_id, adjustment_amount, adjustment_type, reason')
+      .eq('payment_voucher_id', v.id);
+    const adjMap = (adjData || []).reduce<Record<string, { amount: number; type: 'rounding' | 'discount' | 'write_off'; reason: string }>>((acc, adj) => {
+      if (adj.purchase_invoice_id) {
+        acc[adj.purchase_invoice_id] = {
+          amount: Number(adj.adjustment_amount),
+          type: (adj.adjustment_type as 'rounding' | 'discount' | 'write_off') || 'rounding',
+          reason: adj.reason || '',
+        };
+      }
+      return acc;
+    }, {});
+
     setAllocations((allocs || []).filter(a => a.purchase_invoice_id).map(a => {
       // Always use invoice currency for allocation amounts.
       // If stored currency doesn't match the invoice currency (e.g. IDR bank debit was
@@ -745,10 +827,15 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
       const safeAmount = currencyMismatch
         ? Math.min(a.allocated_amount, matchedInv!.total_amount)
         : a.allocated_amount;
+      const adj = adjMap[a.purchase_invoice_id];
       return {
         invoiceId: a.purchase_invoice_id,
         amount: safeAmount,
         currency: invCurrency,
+        roundOffAmount: adj?.type === 'rounding' ? adj.amount : 0,
+        discountAmount: adj?.type === 'discount' || adj?.type === 'write_off' ? adj.amount : 0,
+        adjustmentType: adj?.type || 'rounding',
+        adjustmentReason: adj?.reason || '',
       };
     }));
     // Expense-bill allocations: restore them and show the payee's bills so
@@ -808,21 +895,42 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
       totals[application.salary_expense_id] = (totals[application.salary_expense_id] || 0) + Number(application.applied_amount || 0);
       return totals;
     }, {});
+    const { data: adjData } = await supabase
+      .from('invoice_rounding_adjustments')
+      .select('purchase_invoice_id, adjustment_amount, adjustment_type, reason')
+      .eq('payment_voucher_id', v.id);
+    const adjMap = (adjData || []).reduce<Record<string, { amount: number; type: string; reason: string }>>((acc, adj) => {
+      if (adj.purchase_invoice_id) {
+        acc[adj.purchase_invoice_id] = {
+          amount: Number(adj.adjustment_amount),
+          type: adj.adjustment_type || 'rounding',
+          reason: adj.reason || '',
+        };
+      }
+      return acc;
+    }, {});
+
     setViewAllocations(
-      ((data || []) as unknown as ViewAllocationRow[]).map((a) => ({
-        invoice_id: a.purchase_invoices?.id || a.finance_expenses?.id || '',
-        invoice_number: a.purchase_invoices?.invoice_number
-          || (a.finance_expenses ? `${a.finance_expenses.invoice_number || a.finance_expenses.voucher_number || 'Expense Bill'}` : '—'),
-        invoice_date: a.purchase_invoices?.invoice_date || a.finance_expenses?.expense_date || '',
-        allocated_amount: a.allocated_amount || 0,
-        allocated_currency: a.allocated_currency || 'IDR',
-        is_expense_bill: !!a.finance_expenses,
-        expense_id: a.finance_expenses?.id,
-        expense_category: a.finance_expenses?.expense_category,
-        gross_salary: a.finance_expenses?.amount,
-        advance_applied: a.finance_expenses ? (appliedBySalary[a.finance_expenses.id] || 0) : 0,
-        pph21: a.finance_expenses?.pph_amount || 0,
-      })),
+      ((data || []) as unknown as ViewAllocationRow[]).map((a) => {
+        const invId = a.purchase_invoices?.id || '';
+        const adj = invId ? adjMap[invId] : undefined;
+        return {
+          invoice_id: a.purchase_invoices?.id || a.finance_expenses?.id || '',
+          invoice_number: a.purchase_invoices?.invoice_number
+            || (a.finance_expenses ? `${a.finance_expenses.invoice_number || a.finance_expenses.voucher_number || 'Expense Bill'}` : '—'),
+          invoice_date: a.purchase_invoices?.invoice_date || a.finance_expenses?.expense_date || '',
+          allocated_amount: a.allocated_amount || 0,
+          allocated_currency: a.allocated_currency || 'IDR',
+          is_expense_bill: !!a.finance_expenses,
+          expense_id: a.finance_expenses?.id,
+          expense_category: a.finance_expenses?.expense_category,
+          gross_salary: a.finance_expenses?.amount,
+          advance_applied: a.finance_expenses ? (appliedBySalary[a.finance_expenses.id] || 0) : 0,
+          pph21: a.finance_expenses?.pph_amount || 0,
+          settlement_adjustment: adj?.amount,
+          adjustment_type: adj?.type,
+        };
+      }),
     );
   };
 
@@ -949,6 +1057,15 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
         return;
       }
 
+      // Validate discount reasons
+      for (const alloc of allocations) {
+        const discount = alloc.discountAmount || 0;
+        if (discount > 0 && (!alloc.adjustmentReason || alloc.adjustmentReason.trim() === '')) {
+          alert('A reason is required for discount/write-off adjustments on invoice allocations.');
+          return;
+        }
+      }
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
@@ -1000,6 +1117,27 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
             currency: 'IDR',
           })),
         ]);
+
+      // Persist settlement round-off or commercial discount adjustments
+      for (const alloc of allocations) {
+        const roundOff = alloc.roundOffAmount || 0;
+        const discount = alloc.discountAmount || 0;
+        const totalAdj = Math.round((roundOff + discount) * 100) / 100;
+        if (totalAdj > 0) {
+          const adjType = discount > 0 ? (alloc.adjustmentType || 'discount') : 'rounding';
+          const reason = discount > 0
+            ? (alloc.adjustmentReason?.trim() || 'Commercial discount')
+            : 'invoice_rounding_tolerance';
+          await applySettlementAdjustment({
+            documentType: 'purchase',
+            invoiceId: alloc.invoiceId,
+            voucherId: savedVoucher.id,
+            amount: totalAdj,
+            adjustmentType: adjType,
+            reason,
+          });
+        }
+      }
 
       if (bankReconStatementLineId && !editingVoucher) {
         const { error: postError } = await supabase.rpc('post_payment_voucher', {
@@ -1571,15 +1709,23 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
 
           {pendingInvoices.length > 0 && (
             <div className="border-t pt-3">
-              <h4 className="text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">Allocate to Invoices</h4>
-              <div className="max-h-40 overflow-y-auto border rounded-lg">
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Allocate to Invoices</h4>
+                <span className="text-[11px] text-gray-500">
+                  Rounding tolerance: <span className="font-semibold text-gray-700">Rp {roundingTolerance.toLocaleString('id-ID')}</span>
+                </span>
+              </div>
+              <div className="max-h-60 overflow-y-auto border rounded-lg">
                 <table className="w-full text-xs">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
                       <th className="px-3 py-1.5 text-left font-medium text-gray-500">Invoice</th>
-                      <th className="px-3 py-1.5 text-center font-medium text-gray-500">CCY</th>
-                      <th className="px-3 py-1.5 text-right font-medium text-gray-500">Available</th>
-                      <th className="px-3 py-1.5 text-right font-medium text-gray-500">Allocate</th>
+                      <th className="px-1.5 py-1.5 text-center font-medium text-gray-500">CCY</th>
+                      <th className="px-2 py-1.5 text-right font-medium text-gray-500">Outstanding</th>
+                      <th className="px-2 py-1.5 text-right font-medium text-gray-500">Pay Allocated</th>
+                      <th className="px-2 py-1.5 text-right font-medium text-gray-500">Round-Off</th>
+                      <th className="px-2 py-1.5 text-right font-medium text-gray-500">Discount</th>
+                      <th className="px-3 py-1.5 text-right font-medium text-gray-500">Final Balance</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1590,36 +1736,82 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                         : true)
                       .map(inv => {
                         const invCcy = inv.currency || 'IDR';
-                        // Effective available = DB balance + this voucher's existing allocation
-                        // (the existing allocation was already deducted from DB balance_amount)
-                        const thisAlloc = allocations.find(a => a.invoiceId === inv.id)?.amount || 0;
+                        const thisAlloc = allocations.find(a => a.invoiceId === inv.id);
+                        const allocatedAmount = thisAlloc?.amount || 0;
                         const availableBalance = editingVoucher
-                          ? inv.balance_amount + thisAlloc
+                          ? Math.round((inv.balance_amount + allocatedAmount) * 100) / 100
                           : inv.balance_amount;
+                        const roundOff = thisAlloc?.roundOffAmount || 0;
+                        const discount = thisAlloc?.discountAmount || 0;
+                        const finalRemaining = Math.max(0, Math.round((availableBalance - allocatedAmount - roundOff - discount) * 100) / 100);
+                        const isSettled = finalRemaining <= 0 && (allocatedAmount > 0 || roundOff > 0 || discount > 0);
+
                         return (
-                          <tr key={inv.id}>
+                          <tr key={inv.id} className="hover:bg-gray-50/50">
                             <td className="px-3 py-1.5">
                               <div className="font-mono">{inv.invoice_number}</div>
-                              <div className="text-gray-400">{new Date(inv.invoice_date).toLocaleDateString('id-ID')}</div>
+                              <div className="text-gray-400 text-[10px]">{new Date(inv.invoice_date).toLocaleDateString('id-ID')}</div>
                             </td>
-                            <td className="px-3 py-1.5 text-center">
+                            <td className="px-1.5 py-1.5 text-center">
                               <span className={`px-1 py-0.5 rounded text-[10px] font-bold ${invCcy === 'USD' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                                 {invCcy}
                               </span>
                             </td>
-                            <td className="px-3 py-1.5 text-right font-medium text-red-600">
+                            <td className="px-2 py-1.5 text-right font-medium text-red-600">
                               {fmt(availableBalance, invCcy)}
                             </td>
-                            <td className="px-3 py-1.5 text-right">
+                            <td className="px-2 py-1.5 text-right">
                               <MoneyInput
                                 decimal
                                 min={0}
                                 max={availableBalance}
-                                value={thisAlloc || 0}
+                                value={allocatedAmount}
                                 onChange={(n) => handleAllocationChange(inv, Math.min(n, availableBalance))}
                                 className="w-24 px-2 py-1 border rounded text-right"
                                 placeholder="0"
                               />
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <MoneyInput
+                                decimal
+                                min={0}
+                                max={Math.min(roundingTolerance, Math.max(0, availableBalance - allocatedAmount))}
+                                value={roundOff}
+                                onChange={(r) => handleAllocationChange(inv, allocatedAmount, { roundOffAmount: r, adjustmentType: 'rounding' })}
+                                className="w-20 px-1.5 py-1 border rounded text-right text-amber-700 bg-amber-50/30"
+                                placeholder="0"
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <div className="flex flex-col items-end gap-1">
+                                <MoneyInput
+                                  decimal
+                                  min={0}
+                                  max={Math.max(0, availableBalance - allocatedAmount - roundOff)}
+                                  value={discount}
+                                  onChange={(d) => handleAllocationChange(inv, allocatedAmount, { discountAmount: d, adjustmentType: 'discount' })}
+                                  className="w-20 px-1.5 py-1 border rounded text-right text-purple-700 bg-purple-50/30"
+                                  placeholder="0"
+                                />
+                                {discount > 0 && (
+                                  <input
+                                    type="text"
+                                    placeholder="Reason (req)*"
+                                    value={thisAlloc?.adjustmentReason || ''}
+                                    onChange={(e) => handleAllocationChange(inv, allocatedAmount, { adjustmentReason: e.target.value })}
+                                    className="w-28 text-[10px] px-1 py-0.5 border border-purple-300 rounded bg-white text-gray-800"
+                                    title="Approved reason for discount/write-off"
+                                  />
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              <div className={`font-semibold ${finalRemaining === 0 ? 'text-green-700' : 'text-gray-700'}`}>
+                                {fmt(finalRemaining, invCcy)}
+                              </div>
+                              <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-medium ${isSettled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                {isSettled ? 'Settled' : 'Partial'}
+                              </span>
                             </td>
                           </tr>
                         );
@@ -1627,15 +1819,16 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                   </tbody>
                 </table>
               </div>
-              {totalAllocated > 0 && (
-                <div className="mt-1.5 flex justify-between text-xs font-medium">
-                  <span className="text-gray-500">Allocated ({invoiceCurrency}):</span>
-                  <span className={totalAllocated > formData.amount ? 'text-red-600' : 'text-green-700'}>
-                    {fmt(totalAllocated, invoiceCurrency)}
-                    {totalAllocated > formData.amount && <span className="ml-1 text-red-400">Over!</span>}
-                  </span>
+              <div className="mt-2 flex flex-wrap justify-between items-center text-xs gap-2">
+                <div className="flex gap-3 text-gray-600">
+                  <span>Pay Allocated: <strong className={totalAllocated > formData.amount ? 'text-red-600' : 'text-green-700'}>{fmt(totalAllocated, invoiceCurrency)}</strong></span>
+                  {totalRoundOff > 0 && <span>Round-off: <strong className="text-amber-700">{fmt(totalRoundOff, invoiceCurrency)}</strong></span>}
+                  {totalDiscount > 0 && <span>Discount: <strong className="text-purple-700">{fmt(totalDiscount, invoiceCurrency)}</strong></span>}
                 </div>
-              )}
+                {totalAllocated > formData.amount && (
+                  <span className="text-red-500 font-medium">Over allocated by {fmt(totalAllocated - formData.amount, invoiceCurrency)}!</span>
+                )}
+              </div>
             </div>
           )}
 
@@ -1836,6 +2029,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                         <th className="px-3 py-2 text-left font-medium text-gray-600">Invoice No.</th>
                         <th className="px-3 py-2 text-left font-medium text-gray-600">Invoice Date</th>
                         <th className="px-3 py-2 text-right font-medium text-gray-600">Allocated</th>
+                        <th className="px-3 py-2 text-right font-medium text-gray-600">Adjustment</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1863,6 +2057,15 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                           <td className="px-3 py-2 text-gray-600">{a.invoice_date ? new Date(a.invoice_date).toLocaleDateString('en-GB') : '—'}</td>
                           <td className="px-3 py-2 text-right font-medium text-gray-900">
                             {fmt(a.allocated_amount, a.allocated_currency)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {a.settlement_adjustment && a.settlement_adjustment > 0 ? (
+                              <span className="text-amber-700 font-medium">
+                                {fmt(a.settlement_adjustment, a.allocated_currency)} ({a.adjustment_type || 'adj'})
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
                           </td>
                         </tr>
                       ))}

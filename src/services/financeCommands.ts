@@ -163,6 +163,26 @@ export const savePaymentVoucher = (
   p_payment_purpose: payload.payment_purpose || 'general',
 });
 
+export interface SettlementAdjustmentCommand {
+  documentType: 'purchase' | 'sales';
+  invoiceId: string;
+  voucherId?: string | null;
+  amount?: number | null;
+  adjustmentType: 'rounding' | 'discount' | 'write_off';
+  reason: string;
+}
+
+export const applySettlementAdjustment = (cmd: SettlementAdjustmentCommand) =>
+  rpc<void>('save_invoice_settlement_adjustment', {
+    p_document_type: cmd.documentType,
+    p_invoice_id: cmd.invoiceId,
+    p_voucher_id: cmd.voucherId || null,
+    p_adjustment_amount: cmd.amount ?? null,
+    p_adjustment_type: cmd.adjustmentType,
+    p_reason: cmd.reason,
+  });
+
+
 export const saveFinanceJournal = (
   entryId: string | null,
   entryDate: string,
