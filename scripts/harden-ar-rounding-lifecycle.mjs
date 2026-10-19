@@ -41,6 +41,7 @@ DECLARE
   v_user_id uuid;
   v_target_rv_id uuid;
   v_has_posted_allocations boolean := false;
+  v_voucher_date date;
 BEGIN
   SELECT *
   INTO v_invoice
@@ -97,6 +98,12 @@ BEGIN
     v_target_rv_id := NULL;
   END IF;
 
+  IF v_target_rv_id IS NOT NULL THEN
+    SELECT voucher_date INTO v_voucher_date
+    FROM public.receipt_vouchers
+    WHERE id = v_target_rv_id;
+  END IF;
+
   v_residual := ROUND(COALESCE(v_invoice.total_amount, 0) - COALESCE(v_allocated, 0), 2);
 
   -- Small residual within tolerance requires posted payment activity
@@ -147,7 +154,7 @@ BEGIN
       description, total_debit, total_credit, is_posted, posted_by, created_by
     ) VALUES (
       v_entry_number,
-      COALESCE(v_invoice.invoice_date, CURRENT_DATE),
+      COALESCE(v_voucher_date, CURRENT_DATE),
       'sales_invoice_rounding',
       v_invoice.id,
       v_invoice.invoice_number,

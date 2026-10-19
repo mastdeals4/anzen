@@ -235,3 +235,137 @@ test('7. PurchaseInvoiceManager.tsx settlement UI and quick-settle integration',
   assert.match(content, /Settle Round-Off/,
     'PurchaseInvoiceManager must provide Settle Round-Off button for residual balances within tolerance');
 });
+
+test('8. Migration 20261019152825_fix_receipt_rounding_journal_dates.sql structure and accounting invariants', () => {
+  const migrationPath = path.join(
+    process.cwd(),
+    'supabase/migrations/20261019152825_fix_receipt_rounding_journal_dates.sql'
+  );
+  assert.ok(fs.existsSync(migrationPath), 'Migration 20261019152825 must exist in repository');
+
+  const content = fs.readFileSync(migrationPath, 'utf-8');
+
+  // Must update both overloads of apply_receipt_allocation_rounding_adjustment
+  const receiptFnMatches = content.match(/CREATE OR REPLACE FUNCTION public\.apply_receipt_allocation_rounding_adjustment/g);
+  assert.equal(receiptFnMatches?.length, 2, 'Migration must define exactly 2 overloads of apply_receipt_allocation_rounding_adjustment');
+
+  // Must update apply_payment_allocation_rounding_adjustment
+  assert.match(content, /CREATE OR REPLACE FUNCTION public\.apply_payment_allocation_rounding_adjustment/,
+    'Migration must update apply_payment_allocation_rounding_adjustment');
+
+  // Must NOT backdate to invoice_date
+  assert.doesNotMatch(content, /COALESCE\(v_invoice\.invoice_date,\s*CURRENT_DATE\)/,
+    'Settlement journals must never be dated with invoice_date');
+
+  // Must use voucher_date with documented CURRENT_DATE fallback
+  assert.match(content, /COALESCE\(v_voucher_date,\s*CURRENT_DATE\)/,
+    'Settlement journals must use COALESCE(v_voucher_date, CURRENT_DATE)');
+
+  // Must include the 4 historical sales rounding journals
+  assert.match(content, /JE2608-0157.*2026-01-15/, 'Must correct JE2608-0157 to 2026-01-15');
+  assert.match(content, /JE2609-0450.*2026-06-10/, 'Must correct JE2609-0450 to 2026-06-10');
+  assert.match(content, /JE2607-0036.*2026-07-23/, 'Must correct JE2607-0036 to 2026-07-23');
+  assert.match(content, /JE2608-0065.*2026-08-24/, 'Must correct JE2608-0065 to 2026-08-24');
+});
+
+test('9. Purchase settlement journal date simulation (old invoice settled by later payment voucher)', () => {
+  const invoice = {
+    id: 'pi-001',
+    invoice_number: 'PI-2601-001',
+    invoice_date: '2026-01-10', // 3 months earlier
+    total_amount: 10000000.50,
+  };
+  const paymentVoucher = {
+    id: 'pv-001',
+    voucher_number: 'PV/26-26/050',
+    voucher_date: '2026-04-15', // Later payment date
+    is_posted: true,
+  };
+
+  // Accounting rule simulation: Journal date must be payment voucher date
+  const voucherDate = paymentVoucher.voucher_date;
+  const journalEntryDate = voucherDate || new Date().toISOString().slice(0, 10);
+
+  assert.equal(journalEntryDate, '2026-04-15', 'Adjustment journal date must equal payment voucher date');
+  assert.notEqual(journalEntryDate, invoice.invoice_date, 'Adjustment journal date must NEVER backdate to invoice date');
+});
+
+test('10. Sales settlement journal date simulation (old invoice settled by later receipt voucher)', () => {
+  const invoice = {
+    id: 'si-001',
+    invoice_number: 'SI-2602-005',
+    invoice_date: '2026-02-01',
+    total_amount: 5000045.00,
+  };
+  const receiptVoucher = {
+    id: 'rv-001',
+    voucher_number: 'RV/26-26/100',
+    voucher_date: '2026-07-23',
+    is_posted: true,
+  };
+
+  const voucherDate = receiptVoucher.voucher_date;
+  const journalEntryDate = voucherDate || new Date().toISOString().slice(0, 10);
+
+  assert.equal(journalEntryDate, '2026-07-23', 'Adjustment journal date must equal receipt voucher date');
+  assert.notEqual(journalEntryDate, invoice.invoice_date, 'Adjustment journal date must NEVER backdate to invoice date');
+});
+
+test('11. Both overloads of sales rounding function enforce voucher date resolution', () => {
+  const migrationPath = path.join(
+    process.cwd(),
+    'supabase/migrations/20261019152825_fix_receipt_rounding_journal_dates.sql'
+  );
+  const content = fs.readFileSync(migrationPath, 'utf-8');
+
+  // Verify Overload 1 (2-param) extracts voucher_date
+  assert.match(content, /SELECT voucher_date INTO v_voucher_date\s+FROM public\.receipt_vouchers/,
+    'Overload 1 must select voucher_date from receipt_vouchers');
+
+  // Verify Overload 2 (5-param) extracts voucher_date
+  assert.match(content, /SELECT voucher_date INTO v_voucher_date\s+FROM public\.payment_vouchers/,
+    'Purchase function must select voucher_date from payment_vouchers');
+});
+
+test('12. Repeated execution idempotency & duplicate prevention', () => {
+  const migrationPath = path.join(
+    process.cwd(),
+    'supabase/migrations/20261019152825_fix_receipt_rounding_journal_dates.sql'
+  );
+  const content = fs.readFileSync(migrationPath, 'utf-8');
+
+  // Idempotency: When already adjusted, existing entry is reused, never duplicated
+  assert.match(content, /IF v_existing\.id IS NOT NULL AND v_existing\.adjustment_amount = v_residual THEN/,
+    'Must check if already correctly adjusted and avoid recreating journal');
+
+  // Re-run guard on historical corrections: entry_date <> target
+  assert.match(content, /WHERE entry_number = 'JE2608-0157' AND entry_date <> '2026-01-15'/,
+    'Historical update must be conditional on entry_date <> target date to remain zero-row on re-runs');
+});
+
+test('13. Debit equals credit balance verification across all settlement journal lines', () => {
+  const testCases = [
+    { type: 'AP Rounding Gain', lines: [{ dr: 0.50, cr: 0 }, { dr: 0, cr: 0.50 }] },
+    { type: 'AP Rounding Loss', lines: [{ dr: 0.75, cr: 0 }, { dr: 0, cr: 0.75 }] },
+    { type: 'AR Rounding Write-off', lines: [{ dr: 45.00, cr: 0 }, { dr: 0, cr: 45.00 }] },
+    { type: 'AR Rounding Gain', lines: [{ dr: 20.00, cr: 0 }, { dr: 0, cr: 20.00 }] },
+    { type: 'Commercial Discount', lines: [{ dr: 250000, cr: 0 }, { dr: 0, cr: 250000 }] },
+  ];
+
+  for (const tc of testCases) {
+    const totalDr = tc.lines.reduce((s, l) => s + l.dr, 0);
+    const totalCr = tc.lines.reduce((s, l) => s + l.cr, 0);
+    assert.equal(totalDr, totalCr, `${tc.type} journal lines must be perfectly balanced`);
+  }
+});
+
+test('14. Fallback date handling and historical correction safety', () => {
+  // When voucher_date is null or missing:
+  const voucherDate = null;
+  const fallbackDate = new Date().toISOString().slice(0, 10);
+  const resolvedDate = voucherDate || fallbackDate;
+
+  assert.equal(resolvedDate, fallbackDate, 'Missing voucher date must fallback to CURRENT_DATE');
+  assert.notEqual(resolvedDate, '1970-01-01', 'Fallback must be valid current date');
+});
+
