@@ -156,9 +156,10 @@ export interface InvoiceAllocationItem {
 
 
 interface ViewAllocationRow {
+  purchase_invoice_id?: string | null;
   allocated_amount: number | null;
   allocated_currency: string | null;
-  purchase_invoices?: { id: string; invoice_number: string; invoice_date: string } | null;
+  purchase_invoices?: { id: string; invoice_number: string; invoice_date: string } | { id: string; invoice_number: string; invoice_date: string }[] | null;
   finance_expenses?: {
     id: string;
     voucher_number: string | null;
@@ -167,7 +168,15 @@ interface ViewAllocationRow {
     expense_category?: string;
     amount?: number;
     pph_amount?: number | null;
-  } | null;
+  } | {
+    id: string;
+    voucher_number: string | null;
+    invoice_number: string | null;
+    expense_date?: string;
+    expense_category?: string;
+    amount?: number;
+    pph_amount?: number | null;
+  }[] | null;
 }
 
 type PaymentPurpose = 'general' | 'salary_advance' | 'salary_advance_settlement';
@@ -883,11 +892,13 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     setViewingVoucher(v);
     const { data } = await supabase
       .from('voucher_allocations')
-      .select('allocated_amount, allocated_currency, purchase_invoices(id, invoice_number, invoice_date), finance_expenses(id, voucher_number, invoice_number, expense_date, expense_category, amount, pph_amount)')
+      .select('purchase_invoice_id, allocated_amount, allocated_currency, purchase_invoices(id, invoice_number, invoice_date), finance_expenses(id, voucher_number, invoice_number, expense_date, expense_category, amount, pph_amount)')
       .eq('payment_voucher_id', v.id);
-    const salaryExpenseIds = ((data || []) as any[])
-      .filter(a => a.finance_expenses?.expense_category === 'salary')
-      .map(a => a.finance_expenses.id);
+    const rawAllocs = ((data || []) as any[]);
+    const salaryExpenseIds = rawAllocs
+      .map(a => Array.isArray(a.finance_expenses) ? a.finance_expenses[0] : a.finance_expenses)
+      .filter(fe => fe?.expense_category === 'salary')
+      .map(fe => fe.id);
     const { data: salaryApplications } = salaryExpenseIds.length > 0
       ? await supabase.from('salary_advance_applications').select('salary_expense_id, applied_amount').in('salary_expense_id', salaryExpenseIds)
       : { data: [] as Array<{ salary_expense_id: string; applied_amount: number }> };
@@ -895,11 +906,43 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
       totals[application.salary_expense_id] = (totals[application.salary_expense_id] || 0) + Number(application.applied_amount || 0);
       return totals;
     }, {});
-    const { data: adjData } = await supabase
-      .from('invoice_rounding_adjustments')
-      .select('purchase_invoice_id, adjustment_amount, adjustment_type, reason')
-      .eq('payment_voucher_id', v.id);
-    const adjMap = (adjData || []).reduce<Record<string, { amount: number; type: string; reason: string }>>((acc, adj) => {
+
+    const invoiceIds = rawAllocs
+      .map(a => a.purchase_invoice_id || (Array.isArray(a.purchase_invoices) ? a.purchase_invoices[0]?.id : a.purchase_invoices?.id))
+      .filter(Boolean);
+
+    const adjData: any[] = [];
+    try {
+      const { data: pvAdjs, error: pvErr } = await supabase
+        .from('invoice_rounding_adjustments')
+        .select('purchase_invoice_id, adjustment_amount, adjustment_type, reason')
+        .eq('payment_voucher_id', v.id);
+      if (!pvErr && pvAdjs) {
+        adjData.push(...pvAdjs);
+      }
+    } catch {
+      // Safe fallback if payment_voucher_id is missing
+    }
+
+    if (invoiceIds.length > 0) {
+      try {
+        const { data: piAdjs, error: piErr } = await supabase
+          .from('invoice_rounding_adjustments')
+          .select('purchase_invoice_id, adjustment_amount, adjustment_type, reason')
+          .in('purchase_invoice_id', invoiceIds);
+        if (!piErr && piAdjs) {
+          for (const adj of piAdjs) {
+            if (!adjData.some(existing => existing.purchase_invoice_id === adj.purchase_invoice_id)) {
+              adjData.push(adj);
+            }
+          }
+        }
+      } catch {
+        // Safe fallback if purchase_invoice_id is missing
+      }
+    }
+
+    const adjMap = adjData.reduce<Record<string, { amount: number; type: string; reason: string }>>((acc, adj) => {
       if (adj.purchase_invoice_id) {
         acc[adj.purchase_invoice_id] = {
           amount: Number(adj.adjustment_amount),
@@ -911,22 +954,24 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     }, {});
 
     setViewAllocations(
-      ((data || []) as unknown as ViewAllocationRow[]).map((a) => {
-        const invId = a.purchase_invoices?.id || '';
+      rawAllocs.map((a) => {
+        const inv = Array.isArray(a.purchase_invoices) ? a.purchase_invoices[0] : a.purchase_invoices;
+        const exp = Array.isArray(a.finance_expenses) ? a.finance_expenses[0] : a.finance_expenses;
+        const invId = a.purchase_invoice_id || inv?.id || '';
         const adj = invId ? adjMap[invId] : undefined;
         return {
-          invoice_id: a.purchase_invoices?.id || a.finance_expenses?.id || '',
-          invoice_number: a.purchase_invoices?.invoice_number
-            || (a.finance_expenses ? `${a.finance_expenses.invoice_number || a.finance_expenses.voucher_number || 'Expense Bill'}` : '—'),
-          invoice_date: a.purchase_invoices?.invoice_date || a.finance_expenses?.expense_date || '',
+          invoice_id: invId || exp?.id || '',
+          invoice_number: inv?.invoice_number
+            || (exp ? `${exp.invoice_number || exp.voucher_number || 'Expense Bill'}` : '—'),
+          invoice_date: inv?.invoice_date || exp?.expense_date || '',
           allocated_amount: a.allocated_amount || 0,
           allocated_currency: a.allocated_currency || 'IDR',
-          is_expense_bill: !!a.finance_expenses,
-          expense_id: a.finance_expenses?.id,
-          expense_category: a.finance_expenses?.expense_category,
-          gross_salary: a.finance_expenses?.amount,
-          advance_applied: a.finance_expenses ? (appliedBySalary[a.finance_expenses.id] || 0) : 0,
-          pph21: a.finance_expenses?.pph_amount || 0,
+          is_expense_bill: !!exp,
+          expense_id: exp?.id,
+          expense_category: exp?.expense_category,
+          gross_salary: exp?.amount,
+          advance_applied: exp ? (appliedBySalary[exp.id] || 0) : 0,
+          pph21: exp?.pph_amount || 0,
           settlement_adjustment: adj?.amount,
           adjustment_type: adj?.type,
         };
@@ -2059,9 +2104,9 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                             {fmt(a.allocated_amount, a.allocated_currency)}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {a.settlement_adjustment && a.settlement_adjustment > 0 ? (
+                            {Number(a.settlement_adjustment) > 0 ? (
                               <span className="text-amber-700 font-medium">
-                                {fmt(a.settlement_adjustment, a.allocated_currency)} ({a.adjustment_type || 'adj'})
+                                {fmt(Number(a.settlement_adjustment), a.allocated_currency)} ({a.adjustment_type || 'adj'})
                               </span>
                             ) : (
                               <span className="text-gray-400">—</span>

@@ -601,9 +601,22 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       voucher.journal_entry_id
         ? supabase.from('journal_entry_lines').select('line_number, debit, credit, description, chart_of_accounts(code, name)').eq('journal_entry_id', voucher.journal_entry_id).order('line_number')
         : Promise.resolve({ data: [] as any[] }),
-      supabase.from('invoice_rounding_adjustments')
-        .select('id, sales_invoice_id, adjustment_amount, adjustment_type, reason, journal_entry_id')
-        .eq('receipt_voucher_id', voucher.id),
+      (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('invoice_rounding_adjustments')
+            .select('id, sales_invoice_id, adjustment_amount, adjustment_type, reason, journal_entry_id')
+            .eq('receipt_voucher_id', voucher.id);
+          if (!error && data) return { data };
+          const fallback = await supabase
+            .from('invoice_rounding_adjustments')
+            .select('id, sales_invoice_id, adjustment_amount, reason, journal_entry_id')
+            .eq('receipt_voucher_id', voucher.id);
+          return fallback;
+        } catch {
+          return { data: [] as any[] };
+        }
+      })(),
     ]);
 
     setVoucherAllocations(allocs || []);
@@ -700,10 +713,24 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       const invoiceIds = allocs.filter(a => a.sales_invoice_id).map(a => a.sales_invoice_id!);
       const adjustmentsMap = new Map<string, any>();
       if (invoiceIds.length > 0) {
-        const { data: adjs } = await supabase
-          .from('invoice_rounding_adjustments')
-          .select('sales_invoice_id, adjustment_amount, adjustment_type, reason')
-          .in('sales_invoice_id', invoiceIds);
+        let adjs: any[] | null = null;
+        try {
+          const res = await supabase
+            .from('invoice_rounding_adjustments')
+            .select('sales_invoice_id, adjustment_amount, adjustment_type, reason')
+            .in('sales_invoice_id', invoiceIds);
+          if (!res.error && res.data) {
+            adjs = res.data;
+          } else {
+            const fallback = await supabase
+              .from('invoice_rounding_adjustments')
+              .select('sales_invoice_id, adjustment_amount, reason')
+              .in('sales_invoice_id', invoiceIds);
+            adjs = fallback.data || [];
+          }
+        } catch {
+          adjs = [];
+        }
         if (adjs) {
           for (const adj of adjs) {
             if (adj.sales_invoice_id) adjustmentsMap.set(adj.sales_invoice_id, adj);
@@ -1204,13 +1231,15 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {voucherAllocations.map((alloc, idx) => {
+                      {voucherAllocations.map((alloc: any, idx) => {
+                        const inv = Array.isArray(alloc.sales_invoices) ? alloc.sales_invoices[0] : alloc.sales_invoices;
+                        const so = Array.isArray(alloc.sales_orders) ? alloc.sales_orders[0] : alloc.sales_orders;
                         const adj = receiptAdjustments.find(a => a.sales_invoice_id === alloc.sales_invoice_id);
                         return (
                         <tr key={idx}>
                           <td className="px-3 py-2 font-mono text-xs">
-                            <div>{alloc.sales_invoices ? alloc.sales_invoices.invoice_number : alloc.sales_orders?.so_number}</div>
-                            <div className="mt-0.5 text-[10px] text-gray-400">{alloc.sales_invoices?.invoice_date || alloc.sales_orders?.so_date || '—'}</div>
+                            <div>{inv ? inv.invoice_number : so?.so_number}</div>
+                            <div className="mt-0.5 text-[10px] text-gray-400">{inv?.invoice_date || so?.so_date || '—'}</div>
                           </td>
                           <td className="px-3 py-2 text-center">
                             <span className={`px-2 py-0.5 rounded text-xs font-medium ${
@@ -1223,9 +1252,9 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
                           </td>
                           <td className="px-3 py-2 text-right font-medium">
                             <div>{formatCurrency(alloc.allocated_amount, voucherCurrency(selectedVoucher))}</div>
-                            {adj && (
+                            {adj && Number(adj.adjustment_amount) > 0 && (
                               <div className="text-[10px] text-amber-700">
-                                + {formatCurrency(adj.adjustment_amount, voucherCurrency(selectedVoucher))} ({adj.adjustment_type})
+                                + {formatCurrency(adj.adjustment_amount, voucherCurrency(selectedVoucher))} ({adj.adjustment_type || 'rounding'})
                               </div>
                             )}
                           </td>

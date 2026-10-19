@@ -18,6 +18,7 @@ import { useFinance } from '../../contexts/FinanceContext';
 import { useNavigation } from '../../contexts/NavigationContext';
 import { extractPurchaseInvoicePdf, ExtractedPurchaseInvoice } from '../../utils/purchaseInvoicePdfExtractor';
 import { applySettlementAdjustment } from '../../services/financeCommands';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface Supplier {
   id: string;
@@ -119,6 +120,8 @@ interface PurchaseInvoiceManagerProps {
 }
 
 export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInvoiceId, onInitialViewHandled }: PurchaseInvoiceManagerProps) {
+  const { profile, accessibleModules } = useAuth();
+  const hasManageAccess = canManage || profile?.role === 'admin' || profile?.role === 'accounts' || profile?.role === 'manager' || accessibleModules.has('purchase-invoices') || accessibleModules.has('finance');
   const { dateRange } = useFinance();
   const { navigationData, clearNavigationData } = useNavigation();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -587,14 +590,18 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
     await loadReceivingAllocations(invoice.id);
 
     try {
-      const { data: adjData } = await supabase
+      const { data: adjData, error: adjErr } = await supabase
         .from('invoice_rounding_adjustments')
         .select('id, adjustment_amount, adjustment_type, reason, created_at, journal_entries(entry_number)')
         .eq('purchase_invoice_id', invoice.id)
         .maybeSingle();
-      setInvoiceAdjustment(adjData || null);
+      if (!adjErr && adjData) {
+        setInvoiceAdjustment(adjData);
+      } else {
+        setInvoiceAdjustment(null);
+      }
     } catch (adjErr) {
-      console.error('Error fetching settlement adjustment for purchase invoice:', adjErr);
+      console.warn('Settlement adjustment not loaded (migration may be pending):', adjErr);
       setInvoiceAdjustment(null);
     }
 
@@ -651,14 +658,26 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       const { data: updatedInv } = await supabase.from('purchase_invoices').select('*, suppliers(company_name, pkp_status)').eq('id', selectedInvoice.id).single();
       if (updatedInv) setSelectedInvoice(updatedInv as any);
       await loadViewLineItems(selectedInvoice.id);
-      const { data: adjData } = await supabase
-        .from('invoice_rounding_adjustments')
-        .select('id, adjustment_amount, adjustment_type, reason, created_at, journal_entries(entry_number)')
-        .eq('purchase_invoice_id', selectedInvoice.id)
-        .maybeSingle();
-      setInvoiceAdjustment(adjData || null);
+      try {
+        const { data: adjData, error: adjErr } = await supabase
+          .from('invoice_rounding_adjustments')
+          .select('id, adjustment_amount, adjustment_type, reason, created_at, journal_entries(entry_number)')
+          .eq('purchase_invoice_id', selectedInvoice.id)
+          .maybeSingle();
+        if (!adjErr && adjData) setInvoiceAdjustment(adjData);
+      } catch {
+        // Safe query fallback
+      }
     } catch (err: any) {
-      showToast({ type: 'error', title: 'Error', message: 'Failed to settle: ' + err.message });
+      console.error('Failed to post round-off adjustment:', err);
+      const msg = err?.message || 'Failed to post round-off adjustment';
+      showToast({
+        type: 'error',
+        title: 'Settlement Failed',
+        message: msg.includes('schema cache') || msg.includes('does not exist')
+          ? 'Database migration pending: save_invoice_settlement_adjustment is not installed in the database yet. Please apply migration 20261019140000_invoice_rounding_and_discount_settlement.sql.'
+          : msg,
+      });
     } finally {
       setSettlingAdjustment(false);
     }
@@ -1873,7 +1892,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Balance Due</p>
                 <p className="font-bold text-lg text-blue-700">{formatCurrency(selectedInvoice.balance_amount, selectedInvoice.currency)}</p>
-                {selectedInvoice.status === 'partial' && Number(selectedInvoice.balance_amount) > 0 && Number(selectedInvoice.balance_amount) <= roundingTolerance && canManage && (
+                {selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' && Number(selectedInvoice.balance_amount) > 0 && Number(selectedInvoice.balance_amount) <= (Number(roundingTolerance) > 0 ? Number(roundingTolerance) : 100) && hasManageAccess && (
                   <button
                     type="button"
                     disabled={settlingAdjustment}
@@ -1891,15 +1910,20 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             {invoiceAdjustment && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-center justify-between text-xs">
                 <div>
-                  <span className="font-semibold text-amber-900 capitalize">{invoiceAdjustment.adjustment_type} Adjustment: </span>
+                  <span className="font-semibold text-amber-900 capitalize">{invoiceAdjustment.adjustment_type || 'Rounding'} Adjustment: </span>
                   <span className="font-bold text-amber-800">{formatCurrency(invoiceAdjustment.adjustment_amount, selectedInvoice.currency)}</span>
-                  <span className="text-amber-700 ml-2">({invoiceAdjustment.reason})</span>
+                  {invoiceAdjustment.reason && <span className="text-amber-700 ml-2">({invoiceAdjustment.reason})</span>}
                 </div>
-                {invoiceAdjustment.journal_entries?.entry_number && (
-                  <span className="font-mono text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-medium">
-                    GL #{invoiceAdjustment.journal_entries.entry_number}
-                  </span>
-                )}
+                {(() => {
+                  const gl = Array.isArray(invoiceAdjustment.journal_entries)
+                    ? invoiceAdjustment.journal_entries[0]
+                    : invoiceAdjustment.journal_entries;
+                  return gl?.entry_number ? (
+                    <span className="font-mono text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-medium">
+                      GL #{gl.entry_number}
+                    </span>
+                  ) : null;
+                })()}
               </div>
             )}
 
