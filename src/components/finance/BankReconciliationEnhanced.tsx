@@ -2213,6 +2213,16 @@ export function BankReconciliationEnhanced({
           });
           return;
         }
+
+        if (exp?.approval_status === 'rejected' || exp?.approval_status === 'cancelled') {
+          setActionFeedback({
+            type: 'error',
+            title: `Expense ${exp.approval_status}`,
+            message: `Expense ${exp.voucher_number || ''} is ${exp.approval_status}.\n\nCannot confirm match for a ${exp.approval_status} expense. Please reject this suggestion to unlink or resolve the expense.`,
+            timestamp: Date.now(),
+          });
+          return;
+        }
         await linkBankStatementLine(lineId, 'expense', bsl.matched_expense_id);
       }
       else if (bsl.matched_receipt_id) await linkBankStatementLine(lineId, 'receipt', bsl.matched_receipt_id);
@@ -4051,6 +4061,10 @@ export function BankReconciliationEnhanced({
                               {line.matchedExpense.approval_status === 'pending_approval' ? (
                                 <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 font-semibold">
                                   Pending Approval
+                                </span>
+                              ) : line.matchedExpense.approval_status === 'rejected' || line.matchedExpense.approval_status === 'cancelled' ? (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-800 font-semibold">
+                                  {line.matchedExpense.approval_status === 'rejected' ? 'Rejected' : 'Cancelled'}
                                 </span>
                               ) : (
                                 <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-green-100 text-green-800 font-semibold">
@@ -6300,6 +6314,8 @@ export function BankReconciliationEnhanced({
         const textScoreStr = textScoreMatch ? textScoreMatch[1] : (exp.voucher_number && line.description.includes(exp.voucher_number) ? '8' : '4');
 
         const isPending = exp.approval_status === 'pending_approval';
+        const isRejected = exp.approval_status === 'rejected' || exp.approval_status === 'cancelled';
+        const cannotConfirm = isPending || isRejected;
 
         return (
           <Modal
@@ -6319,6 +6335,21 @@ export function BankReconciliationEnhanced({
                     </p>
                     <p className="text-xs text-amber-800 mt-0.5">
                       Approve this expense in Finance before confirming the bank match. Bank transactions cannot automatically approve pending expenses.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Rejected / Cancelled Banner */}
+              {isRejected && (
+                <div className="bg-red-50 border border-red-300 rounded-lg p-3 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-semibold text-red-900">
+                      Expense {exp.approval_status === 'rejected' ? 'Rejected' : 'Cancelled'} — Confirm Match Disabled
+                    </p>
+                    <p className="text-xs text-red-800 mt-0.5">
+                      This expense has been {exp.approval_status}. Reject this suggestion to unlink the bank transaction or record a new expense.
                     </p>
                   </div>
                 </div>
@@ -6385,8 +6416,8 @@ export function BankReconciliationEnhanced({
                       <FileText className="w-4 h-4 text-purple-600" />
                       Suggested Expense
                     </h4>
-                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${isPending ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
-                      {isPending ? 'Pending Approval' : 'Approved'}
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${isPending ? 'bg-amber-100 text-amber-800' : isRejected ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                      {isPending ? 'Pending Approval' : isRejected ? (exp.approval_status === 'rejected' ? 'Rejected' : 'Cancelled') : 'Approved'}
                     </span>
                   </div>
 
@@ -6581,13 +6612,13 @@ export function BankReconciliationEnhanced({
                   </button>
                   <button
                     type="button"
-                    disabled={isPending}
+                    disabled={cannotConfirm}
                     onClick={async () => {
                       await confirmMatch(line.id);
                       setSelectedSuggestedLine(null);
                     }}
-                    className={`px-4 py-1.5 rounded text-xs font-semibold text-white ${isPending ? 'bg-gray-300 cursor-not-allowed opacity-60' : 'bg-green-600 hover:bg-green-700 shadow-sm'}`}
-                    title={isPending ? 'Approve this expense in Finance before confirming' : 'Confirm and reconcile'}
+                    className={`px-4 py-1.5 rounded text-xs font-semibold text-white ${cannotConfirm ? 'bg-gray-300 cursor-not-allowed opacity-60' : 'bg-green-600 hover:bg-green-700 shadow-sm'}`}
+                    title={isPending ? 'Approve this expense in Finance before confirming' : isRejected ? 'Cannot confirm match for a rejected or cancelled expense' : 'Confirm and reconcile'}
                   >
                     Confirm Match
                   </button>

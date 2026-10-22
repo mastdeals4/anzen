@@ -1779,7 +1779,11 @@ export function ExpenseManager({
           }
         }
 
-        const newExpensePayload = { ...expenseData, created_by: user.id };
+        const newExpensePayload = {
+          ...expenseData,
+          created_by: user.id,
+          ...(selectedBankTransactionId ? { originating_bank_statement_line_id: selectedBankTransactionId } : {}),
+        };
         const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
         if (formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
           const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
@@ -1838,6 +1842,7 @@ export function ExpenseManager({
           if (linkErr) {
             console.error('Error linking bank statement line to expense:', linkErr);
           }
+          await syncExpenseBankLinks([newExpense.id]);
           setReconciledExpenseIds(prev => new Set(prev).add(newExpense.id));
           notifyFinanceReconciliationRefresh();
           onExpenseSavedFromBankReconciliation?.(newExpense as FinanceExpense, selectedBankTransactionId);
@@ -2037,6 +2042,8 @@ export function ExpenseManager({
     setApprovalLoading(id);
     try {
       await approveFinanceExpense(id, profile?.id);
+      await syncExpenseBankLinks([id]);
+      notifyFinanceReconciliationRefresh();
       const lifecycle = await getEffectiveExpensePostingState(id);
       setExpenses(prev => prev.map(e => e.id === id ? {
         ...e,
@@ -2062,6 +2069,27 @@ export function ExpenseManager({
         .update({ approval_status: 'rejected', approved_by: profile?.id, approved_at: new Date().toISOString(), rejection_reason: rejectionReason })
         .eq('id', rejectionTarget.id);
       if (error) throw error;
+
+      // Update bank statement line notes with rejection reason to preserve audit history
+      const { data: matchedLines } = await supabase
+        .from('bank_statement_lines')
+        .select('id, notes')
+        .eq('matched_expense_id', rejectionTarget.id);
+
+      if (matchedLines && matchedLines.length > 0) {
+        const targetExp = expenses.find(e => e.id === rejectionTarget.id);
+        const voucherNumber = targetExp?.voucher_number || rejectionTarget.id;
+        for (const line of matchedLines) {
+          const rejectionNote = `[Expense ${voucherNumber} rejected: ${rejectionReason}]`;
+          const updatedNotes = line.notes ? `${line.notes} ${rejectionNote}` : rejectionNote;
+          await supabase
+            .from('bank_statement_lines')
+            .update({ notes: updatedNotes })
+            .eq('id', line.id);
+        }
+        notifyFinanceReconciliationRefresh();
+      }
+
       const lifecycle = await getEffectiveExpensePostingState(rejectionTarget.id);
       setExpenses(prev => prev.map(e => e.id === rejectionTarget.id ? {
         ...e,
