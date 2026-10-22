@@ -736,18 +736,18 @@ export function FundTransferManager({
     <>
       <FinancePage
         title="Fund Transfers"
-        subtitle="Transfer funds between accounts"
         actions={canManage && (
           <button
+            type="button"
             onClick={() => { resetForm(); setModalOpen(true); }}
-            className="inline-flex items-center gap-1 h-7 px-2 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700"
+            className="inline-flex items-center gap-1.5 h-8 px-3 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors shadow-xs whitespace-nowrap"
           >
-            <Plus className="w-3 h-3" />
-            New Transfer
+            <Plus className="w-3.5 h-3.5" />
+            <span>New Transfer</span>
           </button>
         )}
         toolbar={(
-          <div className="inline-flex items-center rounded border border-gray-200 bg-gray-50 p-0.5">
+          <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
             {([
               ['all', 'All'],
               ['fully_linked', 'Fully Linked'],
@@ -758,10 +758,10 @@ export function FundTransferManager({
                 key={value}
                 type="button"
                 onClick={() => setReconciliationFilter(value)}
-                className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
+                className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
                   reconciliationFilter === value
-                    ? 'bg-white text-gray-900 border border-gray-200 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800'
+                    ? 'bg-white text-blue-700 font-semibold shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
                 {label}

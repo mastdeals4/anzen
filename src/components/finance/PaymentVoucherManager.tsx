@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Search, ArrowUpCircle, Printer, Lock, RotateCcw, CheckCircle } from 'lucide-react';
+import { Search, ArrowUpCircle, Printer, Lock, RotateCcw, CheckCircle, X, ExternalLink, Info } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
 import { MoneyInput } from '../MoneyInput';
@@ -9,7 +9,6 @@ import { FinancePage } from './FinancePage';
 import { FinanceTable } from './FinanceTable';
 import { FinanceModal } from './FinanceModal';
 import { F_BTN_PRIMARY, F_BTN_SECONDARY } from './FinanceForm';
-import { SapRow, SapField, SAP_INPUT } from './SapLayout';
 import { supabaseErrorMessage } from '../../utils/supabaseError';
 import { formatCurrency } from '../../utils/currency';
 import { linkBankStatementLine, savePaymentVoucher, applySettlementAdjustment } from '../../services/financeCommands';
@@ -23,6 +22,9 @@ import {
 } from './bankTransactionLinking';
 import { FinanceDocumentAttachments, uploadFinanceDocuments } from './FinanceDocumentAttachments';
 import { useFinance } from '../../contexts/FinanceContext';
+
+const VOUCHER_INPUT = 'w-full h-9 px-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed';
+const VOUCHER_LABEL = 'block text-[11px] font-semibold text-gray-600 uppercase tracking-wider mb-1';
 
 interface Supplier {
   id: string;
@@ -256,6 +258,7 @@ export function PaymentVoucherManager({
   const [bankReconExpectedAmount, setBankReconExpectedAmount] = useState<number | null>(null);
   const [bankReconBankAccountId, setBankReconBankAccountId] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
+  const [activeInvoicePopoverId, setActiveInvoicePopoverId] = useState<string | null>(null);
   const [viewAllocations, setViewAllocations] = useState<Array<{ invoice_id: string; invoice_number: string; invoice_date: string; allocated_amount: number; allocated_currency: string; is_expense_bill?: boolean; expense_id?: string; expense_category?: string; gross_salary?: number; advance_applied?: number; pph21?: number; settlement_adjustment?: number; adjustment_type?: string }>>([]);
 
   const [formData, setFormData] = useState({
@@ -276,6 +279,13 @@ export function PaymentVoucherManager({
     payment_currency: 'IDR',
     exchange_rate: 1,
   });
+
+  useEffect(() => {
+    if (!activeInvoicePopoverId) return;
+    const handleOutsideClick = () => setActiveInvoicePopoverId(null);
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, [activeInvoicePopoverId]);
 
   useEffect(() => {
     loadVouchers();
@@ -1265,41 +1275,62 @@ export function PaymentVoucherManager({
         title="Payment Vouchers"
         actions={canManage && (
           <button
+            type="button"
             onClick={() => { resetForm(); setModalOpen(true); }}
-            className="inline-flex items-center gap-1 h-7 px-2 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700"
+            className="inline-flex items-center gap-1.5 h-8 px-3 bg-red-600 text-white rounded-md text-xs font-medium hover:bg-red-700 transition-colors shadow-xs whitespace-nowrap"
           >
-            <ArrowUpCircle className="w-3 h-3" />
-            New Payment
+            <ArrowUpCircle className="w-3.5 h-3.5" />
+            <span>New Payment</span>
           </button>
         )}
         toolbar={
-          <div className="flex flex-1 min-w-0 flex-wrap items-center gap-2">
+          <div className="flex flex-1 min-w-0 flex-wrap items-center gap-2.5">
             <div className="relative w-full max-w-xs">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-              <input name="search_term" aria-label="Search payments..."
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+              <input
+                name="search_term"
+                aria-label="Search payments..."
                 type="text"
                 placeholder="Search voucher, supplier, or staff..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
+                className="w-full h-8 pl-8 pr-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
-            <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-0.5" role="group" aria-label="Payment voucher type">
-              <button type="button" onClick={() => setVoucherView('payments')} aria-pressed={voucherView === 'payments'}
-                className={`h-6 px-2 rounded text-[11px] font-medium whitespace-nowrap ${voucherView === 'payments' ? 'bg-white text-blue-700 shadow-sm border border-gray-200' : 'text-gray-600 hover:bg-white'}`}>
+            <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md" role="group" aria-label="Payment voucher type">
+              <button
+                type="button"
+                onClick={() => setVoucherView('payments')}
+                aria-pressed={voucherView === 'payments'}
+                className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                  voucherView === 'payments' ? 'bg-white text-blue-700 font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
                 Payments ({paymentVoucherCount})
               </button>
-              <button type="button" onClick={() => setVoucherView('settlements')} aria-pressed={voucherView === 'settlements'}
-                className={`h-6 px-2 rounded text-[11px] font-medium whitespace-nowrap ${voucherView === 'settlements' ? 'bg-white text-purple-700 shadow-sm border border-gray-200' : 'text-gray-600 hover:bg-white'}`}>
+              <button
+                type="button"
+                onClick={() => setVoucherView('settlements')}
+                aria-pressed={voucherView === 'settlements'}
+                className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                  voucherView === 'settlements' ? 'bg-white text-purple-700 font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
                 Advance Settlements ({settlementVoucherCount})
               </button>
-              <button type="button" onClick={() => setVoucherView('all')} aria-pressed={voucherView === 'all'}
-                className={`h-6 px-2 rounded text-[11px] font-medium whitespace-nowrap ${voucherView === 'all' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-600 hover:bg-white'}`}>
+              <button
+                type="button"
+                onClick={() => setVoucherView('all')}
+                aria-pressed={voucherView === 'all'}
+                className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                  voucherView === 'all' ? 'bg-white text-gray-900 font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
                 All
               </button>
             </div>
             {voucherView === 'settlements' && (
-              <span className="text-[10px] text-purple-700">Internal salary deductions — no bank/cash payment</span>
+              <span className="text-[10px] text-purple-700 font-medium hidden lg:inline">Internal salary deductions — no bank/cash payment</span>
             )}
           </div>
         }
@@ -1308,28 +1339,6 @@ export function PaymentVoucherManager({
           rows={filteredVouchers}
           rowKey={(v) => v.id}
           empty="No payment vouchers found"
-          expandable={(v) => {
-            const invs = v.invoice_numbers || [];
-            if (invs.length <= 1) return null;
-            return {
-              label: `+${invs.length - 1} more`,
-              content: (
-                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Paid Invoices</span>
-                  {invs.map(inv => (
-                    <button
-                      key={inv.id}
-                      onClick={(e) => { e.stopPropagation(); onViewInvoice?.(inv.id); }}
-                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-mono"
-                      title="View purchase invoice"
-                    >
-                      {inv.number}
-                    </button>
-                  ))}
-                </div>
-              ),
-            };
-          }}
           columns={[
             { header: 'Voucher No', cell: (v) => <span className="font-mono font-medium">{v.voucher_number}</span> },
             { header: 'Date',       cell: (v) => new Date(v.voucher_date).toLocaleDateString('id-ID') },
@@ -1349,13 +1358,81 @@ export function PaymentVoucherManager({
               const invs = v.invoice_numbers || [];
               if (invs.length === 0) return <span className="text-gray-400">—</span>;
               const first = invs[0];
+              if (invs.length === 1) {
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onViewInvoice?.(first.id); }}
+                    className="text-blue-600 hover:text-blue-800 hover:underline font-mono text-xs"
+                    title="View purchase invoice"
+                  >
+                    {first.number}
+                  </button>
+                );
+              }
+              const isPopoverOpen = activeInvoicePopoverId === v.id;
               return (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onViewInvoice?.(first.id); }}
-                  className="text-blue-600 hover:text-blue-800 hover:underline font-mono"
-                >
-                  {first.number}
-                </button>
+                <div className="relative inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onViewInvoice?.(first.id); }}
+                    className="text-blue-600 hover:text-blue-800 hover:underline font-mono text-xs"
+                    title="View primary purchase invoice"
+                  >
+                    {first.number}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveInvoicePopoverId(isPopoverOpen ? null : v.id);
+                    }}
+                    className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                      isPopoverOpen
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                        : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                    }`}
+                    title="Show all linked invoices"
+                  >
+                    +{invs.length - 1} more
+                  </button>
+                  {isPopoverOpen && (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute left-0 top-full mt-1 z-30 min-w-[210px] max-w-xs bg-white rounded-lg shadow-xl border border-gray-200 p-2 text-left"
+                    >
+                      <div className="flex items-center justify-between border-b border-gray-100 pb-1 mb-1.5">
+                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+                          Paid Invoices ({invs.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setActiveInvoicePopoverId(null)}
+                          className="text-gray-400 hover:text-gray-600 p-0.5 rounded hover:bg-gray-100"
+                          title="Close"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+                        {invs.map((inv) => (
+                          <button
+                            key={inv.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveInvoicePopoverId(null);
+                              onViewInvoice?.(inv.id);
+                            }}
+                            className="flex items-center justify-between px-2 py-1 rounded text-xs font-mono text-blue-600 hover:bg-blue-50 hover:text-blue-800 transition-colors text-left"
+                          >
+                            <span>{inv.number}</span>
+                            <ExternalLink className="w-3 h-3 text-blue-400 ml-1.5 shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             } },
             { header: 'Bank', cell: (v) => v.payment_purpose === 'salary_advance_settlement'
@@ -1421,17 +1498,30 @@ export function PaymentVoucherManager({
           </>
         }
       >
-        <form id="payment-voucher-form" onSubmit={handleSubmit} className="flex flex-col gap-1.5">
-
-          {/* Row A: Date · Payee · Method */}
-          <SapRow>
-            <SapField label="Date" required span={3}>
-              <input name="voucher_date" aria-label="Voucher Date" type="date" required value={formData.voucher_date}
+        <form id="payment-voucher-form" onSubmit={handleSubmit} className="flex flex-col gap-3">
+          {/* Row 1 — Transaction details (4 columns) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className={VOUCHER_LABEL}>
+                Date <span className="text-red-500">*</span>
+              </label>
+              <input
+                name="voucher_date"
+                aria-label="Voucher Date"
+                type="date"
+                required
+                value={formData.voucher_date}
                 onChange={(e) => setFormData({ ...formData, voucher_date: e.target.value })}
-                className={SAP_INPUT} />
-            </SapField>
-            <SapField label="Pay To" required span={2}>
-              <select name="payee_type" aria-label="Payee Type"
+                className={VOUCHER_INPUT}
+              />
+            </div>
+            <div>
+              <label className={VOUCHER_LABEL}>
+                Pay To <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="payee_type"
+                aria-label="Payee Type"
                 value={formData.payee_type}
                 onChange={(e) => {
                   const payeeType = e.target.value as 'supplier' | 'staff';
@@ -1446,12 +1536,16 @@ export function PaymentVoucherManager({
                   setExpenseBillAllocations([]);
                   setOutstandingExpenseBills([]);
                 }}
-                className={SAP_INPUT}>
+                className={VOUCHER_INPUT}
+              >
                 <option value="supplier">Supplier</option>
                 <option value="staff">Staff</option>
               </select>
-            </SapField>
-            <SapField label={formData.payee_type === 'staff' ? 'Staff Member' : 'Supplier'} required span={3}>
+            </div>
+            <div>
+              <label className={VOUCHER_LABEL}>
+                {formData.payee_type === 'staff' ? 'Staff Member' : 'Supplier'} <span className="text-red-500">*</span>
+              </label>
               {formData.payee_type === 'staff' ? (
                 <SearchableSelect
                   value={formData.staff_id}
@@ -1465,6 +1559,7 @@ export function PaymentVoucherManager({
                   }}
                   options={staffList.map(s => ({ value: s.id, label: s.employee_code ? `${s.full_name} (${s.employee_code})` : s.full_name }))}
                   placeholder="Select staff"
+                  className="!h-9 !rounded-md text-xs"
                 />
               ) : (
                 <SearchableSelect
@@ -1472,13 +1567,22 @@ export function PaymentVoucherManager({
                   onChange={(val) => setFormData({ ...formData, supplier_id: val })}
                   options={suppliers.map(s => ({ value: s.id, label: s.company_name }))}
                   placeholder="Select supplier"
+                  className="!h-9 !rounded-md text-xs"
                 />
               )}
-            </SapField>
-            <SapField label="Method" required span={4}>
-              <select name="payment_method" aria-label="Payment Method" required value={formData.payment_method}
+            </div>
+            <div>
+              <label className={VOUCHER_LABEL}>
+                Payment Method <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="payment_method"
+                aria-label="Payment Method"
+                required
+                value={formData.payment_method}
                 onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
-                className={SAP_INPUT}>
+                className={VOUCHER_INPUT}
+              >
                 <option value="cash">Cash</option>
                 <option value="bank_transfer">Bank Transfer</option>
                 <option value="check">Check</option>
@@ -1488,25 +1592,22 @@ export function PaymentVoucherManager({
                   <option value="advance_adjustment">Adjust Against Staff Advance</option>
                 )}
               </select>
-            </SapField>
-          </SapRow>
+            </div>
+          </div>
 
-          <FinanceDocumentAttachments
-            documentUrls={formData.document_urls}
-            pendingFiles={uploadingFiles}
-            onDocumentUrlsChange={(document_urls) => setFormData((previous) => ({ ...previous, document_urls }))}
-            onPendingFilesChange={setUploadingFiles}
-            active={modalOpen}
-            compact
-          />
-
-          {formData.payee_type === 'staff' && (
-            <SapRow>
-              <SapField label="Payment Purpose" required span={4}>
-                <select name="payment_purpose" aria-label="Payment Purpose"
+          {/* Row 2 — Payment details (4 columns) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {formData.payee_type === 'staff' && (
+              <div className={['cash', 'advance_adjustment'].includes(formData.payment_method) ? 'lg:col-span-2' : 'lg:col-span-1'}>
+                <label className={VOUCHER_LABEL}>
+                  Payment Purpose <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="payment_purpose"
+                  aria-label="Payment Purpose"
                   value={formData.payment_purpose}
                   onChange={(e) => setFormData({ ...formData, payment_purpose: e.target.value as PaymentPurpose })}
-                  className={SAP_INPUT}
+                  className={VOUCHER_INPUT}
                   disabled={!!editingVoucher?.is_posted}
                 >
                   <option value="general">General Staff Payment</option>
@@ -1515,43 +1616,48 @@ export function PaymentVoucherManager({
                     <option value="salary_advance_settlement">Salary Advance Settlement</option>
                   )}
                 </select>
-              </SapField>
-              {formData.payment_purpose === 'salary_advance' && (
-                <div className="col-span-8 flex items-center rounded border border-amber-200 bg-amber-50 px-3 text-xs text-amber-800">
-                  This posted payment will remain as an outstanding Salary Advance for the selected staff member.
-                </div>
-              )}
-            </SapRow>
-          )}
+              </div>
+            )}
 
-          {/* Row B: Amount · Bank Account · Reference (bank account/ref only for
-              methods that actually move money through a bank) */}
-          <SapRow>
-            <SapField
-              label={`Amount${pendingInvoices.length > 0 ? ` (${invoiceCurrency})` : ''}`}
-              required
-              span={['cash', 'advance_adjustment'].includes(formData.payment_method) ? 12 : 4}>
-              <MoneyInput required decimal value={formData.amount}
+            <div className={
+              formData.payee_type === 'staff'
+                ? (['cash', 'advance_adjustment'].includes(formData.payment_method) ? 'lg:col-span-2' : 'lg:col-span-1')
+                : (['cash', 'advance_adjustment'].includes(formData.payment_method) ? 'lg:col-span-2' : 'lg:col-span-1')
+            }>
+              <label className={VOUCHER_LABEL}>
+                Amount {pendingInvoices.length > 0 ? `(${invoiceCurrency})` : ''} <span className="text-red-500">*</span>
+              </label>
+              <MoneyInput
+                required
+                decimal
+                value={formData.amount}
                 onChange={(n) => setFormData({ ...formData, amount: n })}
-                className={SAP_INPUT + ' !text-right !font-mono !font-semibold'} />
-            </SapField>
+                className={`${VOUCHER_INPUT} !text-right !font-mono !font-semibold`}
+              />
+            </div>
+
             {!['cash', 'advance_adjustment'].includes(formData.payment_method) && (
               <>
-                <SapField
-                  label="Bank Account"
-                  span={4}
-                  right={selectedBank ? (
-                    <span className={`px-1 py-0.5 text-[9px] font-bold rounded ${
-                      isCrossCurrency ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
-                    }`}>{selectedBank.currency || 'IDR'}</span>
-                  ) : null}>
-                  <select name="bank_account_id" aria-label="Bank Account Id"
+                <div className={formData.payee_type === 'staff' ? 'lg:col-span-1' : 'lg:col-span-2'}>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={VOUCHER_LABEL.replace('mb-1', '')}>Bank Account</label>
+                    {selectedBank && (
+                      <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
+                        isCrossCurrency ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {selectedBank.currency || 'IDR'}
+                      </span>
+                    )}
+                  </div>
+                  <select
+                    name="bank_account_id"
+                    aria-label="Bank Account Id"
                     value={formData.bank_account_id}
                     onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
-                    className={SAP_INPUT + (
-                      currencyMismatchWithoutRate ? ' !border-red-400 !bg-red-50'
-                      : isCrossCurrency ? ' !border-amber-400' : ''
-                    )}>
+                    className={`${VOUCHER_INPUT} ${
+                      currencyMismatchWithoutRate ? '!border-red-400 !bg-red-50' : isCrossCurrency ? '!border-amber-400' : ''
+                    }`}
+                  >
                     <option value="">Select account</option>
                     {pendingInvoices.length > 0 ? (
                       <>
@@ -1582,24 +1688,55 @@ export function PaymentVoucherManager({
                       ))
                     )}
                   </select>
-                </SapField>
-                <SapField label="Reference No" span={4}>
-                  <input name="reference_number" aria-label="Reference Number" type="text" value={formData.reference_number}
+                </div>
+                <div className="lg:col-span-1">
+                  <label className={VOUCHER_LABEL}>Reference No</label>
+                  <input
+                    name="reference_number"
+                    aria-label="Reference Number"
+                    type="text"
+                    value={formData.reference_number}
                     onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
-                    className={SAP_INPUT} />
-                </SapField>
+                    className={VOUCHER_INPUT}
+                    placeholder="Ref / Cheque #"
+                  />
+                </div>
               </>
             )}
-          </SapRow>
+
+            {formData.payee_type === 'supplier' && ['cash', 'advance_adjustment'].includes(formData.payment_method) && (
+              <div className="lg:col-span-2">
+                <label className={VOUCHER_LABEL}>Reference / Memo</label>
+                <input
+                  name="reference_number"
+                  aria-label="Reference Number"
+                  type="text"
+                  value={formData.reference_number}
+                  onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
+                  className={VOUCHER_INPUT}
+                  placeholder="Receipt / Voucher Ref #"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Conditional notes / warnings */}
+          {formData.payee_type === 'staff' && formData.payment_purpose === 'salary_advance' && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <Info className="w-4 h-4 shrink-0 text-amber-600" />
+              <span>This posted payment will remain as an outstanding Salary Advance for the selected staff member.</span>
+            </div>
+          )}
+
           {!['cash', 'advance_adjustment'].includes(formData.payment_method) && (
             <>
               {currencyMismatchWithoutRate && (
-                <p className="text-[10px] text-red-600 font-medium">
+                <p className="text-xs text-red-600 font-medium bg-red-50 border border-red-200 rounded-md p-2">
                   ✗ {selectedBank?.currency} account selected for a {invoiceCurrency} invoice — enter an exchange rate below, or choose a {invoiceCurrency} account.
                 </p>
               )}
               {isCrossCurrency && !currencyMismatchWithoutRate && (
-                <p className="text-[10px] text-amber-700">
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2">
                   Cross-currency: enter exchange rate in the panel below.
                 </p>
               )}
@@ -1608,117 +1745,162 @@ export function PaymentVoucherManager({
 
           {/* Cross-currency panel */}
           {isCrossCurrency && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <p className="text-xs font-semibold text-amber-800 mb-2">
-                Currency Conversion
-                <span className="ml-2 font-normal text-amber-600">{invoiceCurrency} invoice → {bankCurrency} bank debit</span>
-              </p>
-              <div className="grid grid-cols-3 gap-2 mb-2">
+            <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-amber-900">Currency Conversion</span>
+                <span className="text-[11px] text-amber-700 font-mono">{invoiceCurrency} invoice → {bankCurrency} bank debit</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-2.5">
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-1">Invoice ({invoiceCurrency})</label>
-                  <input name="invoice_invoicecurrency" aria-label="Invoice ({invoiceCurrency})"
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Invoice ({invoiceCurrency})</label>
+                  <input
+                    name="invoice_invoicecurrency"
+                    aria-label="Invoice ({invoiceCurrency})"
                     readOnly
                     value={formData.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-gray-50 text-gray-700"
+                    className="w-full h-9 px-2.5 text-xs border border-gray-200 rounded-md bg-gray-50 text-gray-700 font-mono text-right"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-1">Rate (1 {invoiceCurrency} = {bankCurrency})</label>
-                  <input name="rate_1_invoicecurrency_bankcur" aria-label="Rate (1 {invoiceCurrency} = {bankCurrency})"
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Rate (1 {invoiceCurrency} = {bankCurrency})</label>
+                  <input
+                    name="rate_1_invoicecurrency_bankcur"
+                    aria-label="Rate (1 {invoiceCurrency} = {bankCurrency})"
                     type="number"
                     required={isCrossCurrency}
                     step="0.000001"
                     min="0.000001"
                     value={formData.exchange_rate || ''}
                     onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-2 py-1.5 text-sm border border-amber-300 rounded bg-white focus:ring-1 focus:ring-amber-400"
+                    className="w-full h-9 px-2.5 text-xs border border-amber-300 rounded-md bg-white font-mono text-right focus:ring-1 focus:ring-amber-500"
                     placeholder="e.g. 16200"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-1">Converted ({bankCurrency})</label>
-                  <input name="converted_bankcurrency" aria-label="Converted ({bankCurrency})"
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Converted ({bankCurrency})</label>
+                  <input
+                    name="converted_bankcurrency"
+                    aria-label="Converted ({bankCurrency})"
                     readOnly
                     value={invoiceInBankCurrency.toLocaleString('id-ID', { minimumFractionDigits: 0 })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-green-50 text-green-800 font-medium"
+                    className="w-full h-9 px-2.5 text-xs border border-green-200 rounded-md bg-green-50 text-green-800 font-mono font-medium text-right"
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-2">
-                  <label className="block text-[10px] font-medium text-gray-500 mb-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
                     Bank Transfer Charge ({bankCurrency}) — added to bank debit
                   </label>
                   <MoneyInput
                     decimal
                     value={formData.bank_charge}
                     onChange={(n) => setFormData({ ...formData, bank_charge: n })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-white"
+                    className="w-full h-9 px-2.5 text-xs border border-gray-300 rounded-md bg-white font-mono text-right"
                     placeholder="e.g. 50000"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-1">Total Bank Debit ({bankCurrency})</label>
-                  <input name="total_bank_debit_bankcurrency" aria-label="Total Bank Debit ({bankCurrency})"
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Total Bank Debit ({bankCurrency})</label>
+                  <input
+                    name="total_bank_debit_bankcurrency"
+                    aria-label="Total Bank Debit ({bankCurrency})"
                     readOnly
                     value={totalBankDebit.toLocaleString('id-ID', { minimumFractionDigits: 0 })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-blue-50 text-blue-800 font-bold"
+                    className="w-full h-9 px-2.5 text-xs border border-gray-200 rounded-md bg-blue-50 text-blue-900 font-bold font-mono text-right"
                   />
                 </div>
               </div>
             </div>
           )}
 
-          {/* PPh + Summary */}
-          <div className="border-t border-gray-200 pt-2">
-            <SapRow>
-              <SapField label="PPh Type" span={6}>
-                <select name="pph_code_id" aria-label="Pph Code Id" value={formData.pph_code_id}
-                  onChange={(e) => setFormData({ ...formData, pph_code_id: e.target.value })}
-                  className={SAP_INPUT}>
-                  <option value="">No withholding</option>
-                  {taxCodes.map(t => (
-                    <option key={t.id} value={t.id}>{t.code} - {t.name} ({t.rate}%)</option>
-                  ))}
-                </select>
-              </SapField>
-              <SapField label={`PPh Amt${pendingInvoices.length > 0 ? ` (${invoiceCurrency})` : ''}`} span={6}>
-                <MoneyInput decimal value={formData.pph_amount}
-                  onChange={(n) => setFormData({ ...formData, pph_amount: n })}
-                  className={SAP_INPUT + ' !text-right !font-mono text-orange-700'} />
-              </SapField>
-            </SapRow>
-            <div className="mt-2 pt-2 border-t border-gray-100 space-y-0.5 text-[11px]">
-              <div className="flex justify-between text-gray-600">
-                <span>Gross ({invoiceCurrency}):</span>
-                <span className="font-mono">{fmt(formData.amount, invoiceCurrency)}</span>
+          {/* Row 3 — Tax details (4 columns) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-t border-gray-100 pt-3">
+            <div className="lg:col-span-2">
+              <label className={VOUCHER_LABEL}>PPh Type</label>
+              <select
+                name="pph_code_id"
+                aria-label="Pph Code Id"
+                value={formData.pph_code_id}
+                onChange={(e) => setFormData({ ...formData, pph_code_id: e.target.value })}
+                className={VOUCHER_INPUT}
+              >
+                <option value="">No withholding</option>
+                {taxCodes.map(t => (
+                  <option key={t.id} value={t.id}>{t.code} - {t.name} ({t.rate}%)</option>
+                ))}
+              </select>
+            </div>
+            <div className="lg:col-span-2">
+              <label className={VOUCHER_LABEL}>
+                PPh Amount {pendingInvoices.length > 0 ? `(${invoiceCurrency})` : ''}
+              </label>
+              <MoneyInput
+                decimal
+                value={formData.pph_amount}
+                onChange={(n) => setFormData({ ...formData, pph_amount: n })}
+                className={`${VOUCHER_INPUT} !text-right !font-mono text-orange-700`}
+              />
+            </div>
+          </div>
+
+          {/* Row 4 — Financial Summary (compact aligned strip) */}
+          <div className="bg-gray-50/90 border border-gray-200 rounded-lg p-2.5">
+            <div className={`grid grid-cols-2 ${isCrossCurrency ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5`}>
+              <div className="bg-white border border-gray-200 rounded-md px-3 py-2 flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Gross Amount</span>
+                <span className="font-mono text-sm font-semibold text-gray-800 text-right mt-0.5">
+                  {fmt(formData.amount, invoiceCurrency)}
+                </span>
               </div>
-              {formData.pph_amount > 0 && (
-                <div className="flex justify-between text-orange-600">
-                  <span>Less PPh:</span>
-                  <span className="font-mono">−{fmt(formData.pph_amount, invoiceCurrency)}</span>
-                </div>
-              )}
-              <div className="flex justify-between font-semibold border-t border-gray-200 pt-1 mt-1">
-                <span>Net Payment ({invoiceCurrency}):</span>
-                <span className="text-red-600 font-mono">{fmt(netInvoiceAmount, invoiceCurrency)}</span>
+              <div className="bg-white border border-gray-200 rounded-md px-3 py-2 flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-orange-600 uppercase tracking-wider">Less PPh</span>
+                <span className="font-mono text-sm font-semibold text-orange-600 text-right mt-0.5">
+                  {formData.pph_amount > 0 ? `−${fmt(formData.pph_amount, invoiceCurrency)}` : '—'}
+                </span>
+              </div>
+              <div className="bg-red-50/70 border border-red-200 rounded-md px-3 py-2 flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-red-700 uppercase tracking-wider">Net Payment</span>
+                <span className="font-mono text-base font-bold text-red-600 text-right mt-0.5">
+                  {fmt(netInvoiceAmount, invoiceCurrency)}
+                </span>
               </div>
               {isCrossCurrency && (
-                <div className="flex justify-between font-semibold text-blue-700">
-                  <span>Bank Debit ({bankCurrency}) incl. charges:</span>
-                  <span className="font-mono">{fmt(netBankDebit, bankCurrency)}</span>
+                <div className="bg-blue-50/70 border border-blue-200 rounded-md px-3 py-2 flex flex-col justify-between">
+                  <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Bank Debit</span>
+                  <span className="font-mono text-sm font-bold text-blue-800 text-right mt-0.5">
+                    {fmt(netBankDebit, bankCurrency)}
+                  </span>
                 </div>
               )}
             </div>
           </div>
 
-          <SapRow>
-            <SapField label="Description" span={12}>
-              <input name="description" aria-label="Payment description..." type="text" value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                className={SAP_INPUT} placeholder="Payment description..." />
-            </SapField>
-          </SapRow>
+          {/* Row 5 — Description */}
+          <div>
+            <label className={VOUCHER_LABEL}>Description</label>
+            <input
+              name="description"
+              aria-label="Payment description..."
+              type="text"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className={VOUCHER_INPUT}
+              placeholder="Payment description..."
+            />
+          </div>
+
+          {/* Attachments (compact & unobtrusive) */}
+          <div className="border-t border-gray-100 pt-1">
+            <FinanceDocumentAttachments
+              documentUrls={formData.document_urls}
+              pendingFiles={uploadingFiles}
+              onDocumentUrlsChange={(document_urls) => setFormData((previous) => ({ ...previous, document_urls }))}
+              onPendingFilesChange={setUploadingFiles}
+              active={modalOpen}
+              compact
+            />
+          </div>
 
           {/* ── Expense Bill Allocations ──────────────────────────────── */}
           {outstandingExpenseBills.length > 0 && (

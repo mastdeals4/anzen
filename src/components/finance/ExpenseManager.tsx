@@ -2799,194 +2799,228 @@ export function ExpenseManager({
   const editingBankLines = normalizeExpenseBankLinks(editingExpense?.bank_statement_lines || []);
 
   return (
-    <div className={embeddedModalOnly ? undefined : "space-y-4"}>
+    <div className={embeddedModalOnly ? undefined : "flex flex-col gap-2"}>
       {!embeddedModalOnly && (
         <>
-          {/* Compact single-strip header — KPIs + primary actions */}
-          <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded px-2 py-1 text-white shadow-sm flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-gray-800 whitespace-nowrap">Expenses</h2>
-          <div className="flex gap-1.5">
-            <div className="bg-white/20 rounded px-1.5 py-0.5">
-            <span className="text-blue-100 text-[9px] mr-1">EXPENSE TOTAL</span>
-              <span className="text-[11px] font-bold">
-                {formatExpenseTotals(filteredExpenses.filter(expense => expense.effective_posting_state === 'ACTIVE' || expense.effective_posting_state === 'REPLACED')) || formatCurrency(0)}
-              </span>
+          {/* Row 1: Title, KPI summary badges, Health, Export & New actions */}
+          <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg min-h-[42px] flex-wrap">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">Expenses</h1>
+              <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[11px] font-medium">
+                  <span className="text-gray-500 font-normal">Total:</span>
+                  <span className="font-mono font-semibold">
+                    {formatExpenseTotals(filteredExpenses.filter(expense => expense.effective_posting_state === 'ACTIVE' || expense.effective_posting_state === 'REPLACED')) || formatCurrency(0)}
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1 bg-teal-50 text-teal-800 border border-teal-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
+                  <span className="text-teal-600 font-normal">Reconciled:</span>
+                  <span className="font-mono font-semibold">
+                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.payment_method === 'bank_transfer' || (e.paid_amount ?? 0) > 0.01)).length}
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
+                  <span className="text-amber-600 font-normal">Outstanding:</span>
+                  <span className="font-mono font-semibold">
+                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method === null && (e.paid_amount ?? 0) <= 0.01).length}
+                  </span>
+                </span>
+              </div>
             </div>
-            <div className="bg-white/20 rounded px-1.5 py-0.5">
-              <span className="text-blue-100 text-[9px] mr-1">RECONCILED</span>
-              <span className="text-[11px] font-bold">
-                {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.payment_method === 'bank_transfer' || (e.paid_amount ?? 0) > 0.01)).length}
-              </span>
-            </div>
-            <div className="bg-white/20 rounded px-1.5 py-0.5">
-              <span className="text-blue-100 text-[9px] mr-1">OUTSTANDING</span>
-              <span className="text-[11px] font-bold">
-                {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method === null && (e.paid_amount ?? 0) <= 0.01).length}
-              </span>
+
+            <div className="flex items-center gap-2 shrink-0 ml-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setHealthCheckOpen(o => !o);
+                  if (!healthCheckOpen && healthIssues.length === 0) loadHealthCheck();
+                }}
+                className={`relative inline-flex items-center gap-1.5 h-8 px-2.5 border rounded-md text-xs font-medium transition-colors shadow-xs ${
+                  healthCheckOpen
+                    ? 'bg-amber-100 border-amber-300 text-amber-900'
+                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+                title="Finance Health Check"
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                <span>Health</span>
+                {healthIssues.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {healthIssues.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={exportToCSV}
+                disabled={filteredExpenses.length === 0}
+                className="inline-flex items-center gap-1.5 h-8 px-3 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-xs font-medium transition-colors shadow-xs disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5 text-gray-500" />
+                <span>Export ({filteredExpenses.length})</span>
+              </button>
+
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => { resetForm(); setModalOpen(true); }}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors shadow-xs whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Expense</span>
+                </button>
+              )}
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => {
-              setHealthCheckOpen(o => !o);
-              if (!healthCheckOpen && healthIssues.length === 0) loadHealthCheck();
-            }}
-            className={`relative inline-flex items-center gap-1 h-6 px-2 rounded font-medium text-[11px] border transition-colors ${healthCheckOpen ? 'bg-orange-50 border-orange-300 text-orange-700' : 'bg-white/95 border-transparent text-gray-700 hover:bg-white'}`}
-            title="Finance Health Check"
-          >
-            <AlertCircle className="w-3 h-3" />
-            Health
-            {healthIssues.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center">
-                {healthIssues.length}
-              </span>
-            )}
-          </button>
-          {canManage && (
-            <button
-              onClick={() => { resetForm(); setModalOpen(true); }}
-              className="inline-flex items-center gap-1 h-6 px-2 bg-white text-blue-700 rounded font-semibold text-[11px] hover:bg-blue-50"
-            >
-              <Plus className="w-3 h-3" /> New
-            </button>
-          )}
-        </div>
-      </div>
 
-      {/* Compact filter bar (single row) */}
-      <div className="bg-white rounded border border-gray-200 px-2 py-1 flex items-center gap-2 flex-wrap">
-        <div className="flex gap-0.5">
-          {[
-            { value: 'all', label: 'All' },
-            { value: 'import', label: 'Import' },
-            { value: 'sales', label: 'Sales' },
-            { value: 'staff', label: 'Staff' },
-            { value: 'operations', label: 'Ops' },
-            { value: 'admin', label: 'Admin' },
-          ].map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setFilterType(tab.value as any)}
-              className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
-                filterType === tab.value ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="h-4 w-px bg-gray-300"></div>
-
-        <div className="flex gap-0.5">
-          {[
-            { value: 'operational', label: 'Operational' },
-            { value: 'cancelled', label: 'Cancelled' },
-          ].map((filter) => (
-            <button
-              key={filter.value}
-              onClick={() => setLifecycleFilter(filter.value as 'operational' | 'cancelled')}
-              className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
-                lifecycleFilter === filter.value ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="h-4 w-px bg-gray-300"></div>
-
-        <div className="flex gap-0.5">
-          {[
-            { value: 'all', label: 'All' },
-            { value: 'reconciled', label: 'Reconciled' },
-            { value: 'pending_recon', label: 'Pending Recon' },
-            { value: 'outstanding', label: 'Outstanding' },
-          ].map((filter) => (
-            <button
-              key={filter.value}
-              onClick={() => setReconFilter(filter.value as any)}
-              className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
-                reconFilter === filter.value ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="h-4 w-px bg-gray-300"></div>
-
-        <div className="flex gap-0.5">
-          {[
-            { value: 'all', label: 'All' },
-            { value: 'pending_approval', label: 'Pending' },
-            { value: 'approved', label: 'Approved' },
-          ].map((filter) => (
-            <button
-              key={filter.value}
-              onClick={() => setApprovalFilter(filter.value as any)}
-              className={`h-6 px-2 rounded text-[11px] font-medium transition-colors ${
-                approvalFilter === filter.value ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-
-        <select name="category_filter" aria-label="Category Filter"
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="h-6 px-1.5 border border-gray-300 rounded text-[11px] bg-white"
-        >
-          <option value="all">All Categories</option>
-          {groupExpenseCategories(expenseCategories).map(([parent, categories]) => (
-            <optgroup key={parent} label={parent}>
-              {categories.map((category) => (
-                <option key={category.value} value={category.value}>{category.label}</option>
+          {/* Row 2: Type filters, Recon, Approval, Category, Supplier, Lifecycle, and Search */}
+          <div className="flex items-center gap-2 px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg min-h-[42px] flex-wrap text-xs">
+            {/* Type tabs */}
+            <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+              {[
+                { value: 'all', label: 'All' },
+                { value: 'import', label: 'Import' },
+                { value: 'sales', label: 'Sales' },
+                { value: 'staff', label: 'Staff' },
+                { value: 'operations', label: 'Ops' },
+                { value: 'admin', label: 'Admin' },
+              ].map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  onClick={() => setFilterType(tab.value as any)}
+                  className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                    filterType === tab.value
+                      ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
               ))}
-            </optgroup>
-          ))}
-        </select>
+            </div>
 
-        {suppliers.length > 0 && (
-          <select name="supplier_filter" aria-label="Supplier Filter"
-            value={supplierFilter}
-            onChange={(e) => setSupplierFilter(e.target.value)}
-            className="h-6 px-1.5 border border-gray-300 rounded text-[11px] bg-white"
-          >
-            <option value="all">All Suppliers</option>
-            <option value="no_supplier">— No Supplier —</option>
-            {suppliers.map(s => (
-              <option key={s.id} value={s.id}>{s.company_name}</option>
-            ))}
-          </select>
-        )}
+            <div className="h-4 w-px bg-gray-200 hidden sm:block" />
 
-        <div className="relative">
-          <Search className="absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
-          <input name="search_query"
-            type="search"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search expenses"
-            aria-label="Search expenses"
-            className="h-6 w-44 rounded border border-gray-300 bg-white pl-6 pr-2 text-[11px]"
-          />
-        </div>
+            {/* Recon filter group */}
+            <div className="inline-flex items-center gap-1 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mr-0.5">Recon</span>
+              {[
+                { value: 'all', label: 'All' },
+                { value: 'reconciled', label: 'Reconciled' },
+                { value: 'pending_recon', label: 'Pending' },
+                { value: 'outstanding', label: 'Outstanding' },
+              ].map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setReconFilter(filter.value as any)}
+                  className={`h-[26px] px-2 rounded text-[11px] font-medium transition-colors ${
+                    reconFilter === filter.value
+                      ? 'bg-green-600 text-white font-semibold shadow-xs'
+                      : 'text-gray-600 hover:bg-gray-200/70'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
 
-        <button
-          onClick={exportToCSV}
-          disabled={filteredExpenses.length === 0}
-          className="ml-auto inline-flex items-center gap-1 h-6 px-2 bg-green-600 text-white rounded text-[11px] font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-        >
-          <Download className="w-3 h-3" /> Export ({filteredExpenses.length})
-        </button>
-      </div>
+            <div className="h-4 w-px bg-gray-200 hidden sm:block" />
+
+            {/* Approval filter group */}
+            <div className="inline-flex items-center gap-1 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mr-0.5">Approval</span>
+              {[
+                { value: 'all', label: 'All' },
+                { value: 'pending_approval', label: 'Pending' },
+                { value: 'approved', label: 'Approved' },
+              ].map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setApprovalFilter(filter.value as any)}
+                  className={`h-[26px] px-2 rounded text-[11px] font-medium transition-colors ${
+                    approvalFilter === filter.value
+                      ? 'bg-amber-600 text-white font-semibold shadow-xs'
+                      : 'text-gray-600 hover:bg-gray-200/70'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Category dropdown */}
+            <select
+              name="category_filter"
+              aria-label="Category Filter"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="h-8 px-2.5 border border-gray-300 rounded-md text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="all">All Categories</option>
+              {groupExpenseCategories(expenseCategories).map(([parent, categories]) => (
+                <optgroup key={parent} label={parent}>
+                  {categories.map((category) => (
+                    <option key={category.value} value={category.value}>{category.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+
+            {suppliers.length > 0 && (
+              <select
+                name="supplier_filter"
+                aria-label="Supplier Filter"
+                value={supplierFilter}
+                onChange={(e) => setSupplierFilter(e.target.value)}
+                className="h-8 px-2.5 border border-gray-300 rounded-md text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-[180px]"
+              >
+                <option value="all">All Suppliers</option>
+                <option value="no_supplier">— No Supplier —</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>{s.company_name}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Lifecycle toggle (Operational vs Cancelled) */}
+            <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+              {[
+                { value: 'operational', label: 'Operational' },
+                { value: 'cancelled', label: 'Cancelled' },
+              ].map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setLifecycleFilter(filter.value as 'operational' | 'cancelled')}
+                  className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                    lifecycleFilter === filter.value
+                      ? 'bg-gray-800 text-white font-semibold shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Search */}
+            <div className="relative flex-1 min-w-[180px] max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+              <input
+                name="search_query"
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search expenses by voucher, utility..."
+                aria-label="Search expenses"
+                className="h-8 w-full rounded-md border border-gray-300 bg-white pl-8 pr-2.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
         <table className="min-w-full">

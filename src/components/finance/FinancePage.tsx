@@ -76,39 +76,40 @@ const TINT_TEXT: Record<NonNullable<KPI['tint']>, string> = {
 
 export function FinancePage({ title, subtitle, actions, kpis, toolbar, chips, children }: FinancePageProps) {
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex min-h-14 items-center justify-between gap-4 px-4 py-2 bg-white border border-gray-200 rounded-lg">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <h1 className={`${TYPE_TITLE} truncate`}>{title}</h1>
-          {subtitle && <span className={`${TYPE_MUTED} truncate`}>{subtitle}</span>}
+    <div className="flex flex-col gap-2">
+      {/* Consolidated header toolbar: Title | Subtitle | Toolbar/Filters | Actions */}
+      <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg">
+        <div className="flex items-center gap-2 shrink-0">
+          <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">{title}</h1>
+          {subtitle && <span className="text-xs text-gray-500 hidden md:inline truncate">{subtitle}</span>}
         </div>
+
+        {toolbar && (
+          <div className="flex flex-1 items-center gap-2 min-w-0 flex-wrap">
+            {toolbar}
+          </div>
+        )}
+
         {actions && (
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>
+          <div className="flex shrink-0 items-center gap-2 ml-auto">{actions}</div>
         )}
       </div>
 
       {/* KPI strip — only when kpis provided */}
       {kpis && kpis.length > 0 && (
-        <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${kpis.length}, minmax(0, 1fr))` }}>
+        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${kpis.length}, minmax(0, 1fr))` }}>
           {kpis.map((k, i) => (
-            <div key={i} className="border border-gray-200 rounded-lg bg-white px-4 py-3">
-              <div className={`${TYPE_LABEL} mb-1`}>{k.label}</div>
-              <div className={`${TYPE_NUM} text-left text-xl font-semibold ${TINT_TEXT[k.tint ?? 'default']}`}>{k.value}</div>
+            <div key={i} className="border border-gray-200 rounded-lg bg-white px-3 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-0.5">{k.label}</div>
+              <div className={`${TYPE_NUM} text-left text-lg font-semibold ${TINT_TEXT[k.tint ?? 'default']}`}>{k.value}</div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Toolbar — only when provided */}
-      {toolbar && (
-        <div className="flex min-h-14 flex-wrap items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg">
-          {toolbar}
-        </div>
-      )}
-
       {/* Chip strip — only when provided */}
       {chips && (
-        <div className="flex flex-wrap items-center gap-2 px-1">
+        <div className="flex flex-wrap items-center gap-1.5 px-0.5">
           {chips}
         </div>
       )}

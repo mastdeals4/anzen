@@ -910,43 +910,48 @@ export function ReceiptVoucherManager({
   }
 
   return (
-    <div className={embeddedModalOnly ? undefined : "flex flex-col gap-1.5"}>
+    <div className={embeddedModalOnly ? undefined : "flex flex-col gap-2"}>
       {!embeddedModalOnly && (
         <>
-          {/* Shared title strip — matches every other Finance page */}
-          <div className="flex items-center justify-between h-8 px-2 bg-white border border-gray-200 rounded">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <h1 className="text-xs font-bold text-gray-900 truncate">Receipt Vouchers</h1>
-          <span className="text-[10px] text-gray-400 truncate">Customer receipts and invoice allocation</span>
-        </div>
-        {canManage && (
-          <div className="ml-auto flex items-center gap-1.5 shrink-0">
-            <button onClick={() => void exportExcel()} className="inline-flex items-center gap-1 h-7 px-2 border border-gray-300 rounded text-xs font-semibold hover:bg-gray-50">
-              <Download className="w-3 h-3" /> Excel
-            </button>
-            <button
-              onClick={() => { resetForm(); setModalOpen(true); }}
-              className="inline-flex items-center gap-1 h-7 px-2 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700"
-            >
-              <ArrowDownCircle className="w-3 h-3" /> New Receipt
-            </button>
+          <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg min-h-[42px] flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-2 shrink-0">
+              <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">Receipt Vouchers</h1>
+            </div>
+            <div className="relative flex-1 max-w-md min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+              <input
+                name="search_term"
+                aria-label="Search receipts..."
+                type="text"
+                placeholder="Search receipts by voucher, customer..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-8 pl-8 pr-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-2 shrink-0 ml-auto">
+              {canManage && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void exportExcel()}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 border border-gray-300 rounded-md text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors shadow-xs whitespace-nowrap"
+                  >
+                    <Download className="w-3.5 h-3.5 text-gray-500" />
+                    <span>Excel</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { resetForm(); setModalOpen(true); }}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 bg-green-600 text-white rounded-md text-xs font-medium hover:bg-green-700 transition-colors shadow-xs whitespace-nowrap"
+                  >
+                    <ArrowDownCircle className="w-3.5 h-3.5" />
+                    <span>New Receipt</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-        )}
-      </div>
-
-      {/* Toolbar — search */}
-      <div className="flex items-center gap-2 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input name="search_term" aria-label="Search receipts..."
-            type="text"
-            placeholder="Search receipts..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
-          />
-        </div>
-      </div>
 
       <div className="bg-white rounded border border-gray-200 overflow-hidden">
         <table className="w-full">

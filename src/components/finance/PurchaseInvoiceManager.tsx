@@ -1185,37 +1185,34 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {/* Shared title strip — matches every other Finance page */}
-      <div className="flex items-center justify-between h-8 px-2 bg-white border border-gray-200 rounded">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <h1 className="text-xs font-bold text-gray-900 truncate">Purchase Invoices</h1>
-          <span className="text-[10px] text-gray-400 truncate">Vendor invoices and A/P bills</span>
+    <div className="flex flex-col gap-2">
+      {/* Consolidated single-line header toolbar: Purchase Invoices | Search | + New Purchase Invoice */}
+      <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg min-h-[42px] flex-wrap sm:flex-nowrap">
+        <div className="flex items-center gap-2 shrink-0">
+          <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">Purchase Invoices</h1>
         </div>
-        {canManage && (
-          <button
-            onClick={() => { resetForm(); setModalOpen(true); }}
-            className="inline-flex items-center gap-1 h-7 px-2 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700"
-          >
-            <Plus className="w-3 h-3" />
-            <span className="hidden sm:inline">New Purchase Invoice</span>
-            <span className="sm:hidden">New</span>
-          </button>
-        )}
-      </div>
-
-      {/* Toolbar — search */}
-      <div className="flex items-center gap-2 min-h-8 px-2 py-1 bg-white border border-gray-200 rounded flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-          <input name="search_term" aria-label="Search by invoice number or supplier..."
+        <div className="relative flex-1 max-w-md min-w-[200px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+          <input
+            name="search_term"
+            aria-label="Search by invoice number or supplier..."
             type="text"
             placeholder="Search by invoice number or supplier..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
+            className="w-full h-8 pl-8 pr-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => { resetForm(); setModalOpen(true); }}
+            className="inline-flex items-center gap-1.5 h-8 px-3 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors shadow-xs whitespace-nowrap shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>New Purchase Invoice</span>
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow overflow-x-auto">
