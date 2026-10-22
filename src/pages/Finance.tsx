@@ -34,7 +34,9 @@ const CAReports = lazy(() => import('../components/finance/CAReports').then(m =>
 const GeneralJournalEntry = lazy(() => import('../components/finance/GeneralJournalEntry').then(m => ({ default: m.GeneralJournalEntry })));
 const IntegrityMonitor = lazy(() => import('../components/finance/IntegrityMonitor').then(m => ({ default: m.IntegrityMonitor })));
 const FinanceExceptionCorrectionDashboard = lazy(() => import('../components/finance/FinanceExceptionCorrectionDashboard').then(m => ({ default: m.FinanceExceptionCorrectionDashboard })));
-const PayeeMasterManager = lazy(() => import('../components/finance/PayeeMasterManager').then(m => ({ default: m.PayeeMasterManager })));
+import { PayeeMasterManager } from '../components/finance/PayeeMasterManager';
+import type { BankReconciliationExpensePrefill } from '../components/finance/ExpenseManager';
+import type { BankReconciliationReceiptPrefill } from '../components/finance/ReceiptVoucherManager';
 const FXReport = lazy(() => import('../components/finance/FXReport').then(m => ({ default: m.FXReport })));
 const FXBusinessDashboard = lazy(() => import('../components/finance/FXBusinessDashboard').then(m => ({ default: m.FXBusinessDashboard })));
 
@@ -213,6 +215,8 @@ function FinanceContent() {
   const [paymentReconPrefill, setPaymentReconPrefill] = useState<{
     bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string;
   } | null>(null);
+  const [expenseReconPrefill, setExpenseReconPrefill] = useState<BankReconciliationExpensePrefill | null>(null);
+  const [receiptReconPrefill, setReceiptReconPrefill] = useState<BankReconciliationReceiptPrefill | null>(null);
   const handleOpenBankReconciliation = useCallback((bankAccountId: string, bankStatementLineId: string) => {
     const query = new URLSearchParams({ bank: bankAccountId, bankLine: bankStatementLineId });
     setActiveTab('bank_recon', query);
@@ -388,7 +392,7 @@ function FinanceContent() {
         if (!hasPurchaseInvoices) return <div className="p-8 text-center text-gray-500">Access denied</div>;
         return <PurchaseInvoiceManager canManage={canManagePurchaseInvoices} initialViewInvoiceId={focusPurchaseInvoiceId} onInitialViewHandled={() => setFocusPurchaseInvoiceId(null)} />;
       case 'receipt':
-        return <ReceiptVoucherManager canManage={canManage} initialViewVoucherId={focusReceiptId} onInitialViewHandled={() => setFocusReceiptId(null)} />;
+        return <ReceiptVoucherManager canManage={canManage} initialViewVoucherId={focusReceiptId} onInitialViewHandled={() => setFocusReceiptId(null)} prefillFromBankReconciliation={receiptReconPrefill} onBankReconciliationPrefillConsumed={() => setReceiptReconPrefill(null)} />;
       case 'payment':
         return <PaymentVoucherManager canManage={canManage} initialViewVoucherId={focusPaymentId} onInitialViewHandled={() => setFocusPaymentId(null)} prefillInvoice={payInvoice} onPrefillConsumed={() => setPayInvoice(null)} prefillExpenseBill={payExpenseBill} onPrefillExpenseBillConsumed={() => setPayExpenseBill(null)} onViewInvoice={(invoiceId) => openFinanceTarget('purchase', 'document', invoiceId)} onViewExpense={(expenseId) => openFinanceTarget('expenses', 'document', expenseId)} prefillFromBankReconciliation={paymentReconPrefill} onBankReconciliationPrefillConsumed={() => setPaymentReconPrefill(null)} />;
       case 'journal':
@@ -417,6 +421,8 @@ function FinanceContent() {
             onInitialViewHandled={() => setFocusExpenseId(null)}
             onSettleBill={handleSettleExpenseBill}
             onViewPaymentVoucher={(paymentVoucherId) => openFinanceTarget('payment', 'document', paymentVoucherId)}
+            prefillFromBankReconciliation={expenseReconPrefill}
+            onBankReconciliationPrefillConsumed={() => setExpenseReconPrefill(null)}
           />
         );
       case 'petty_cash':
@@ -453,6 +459,14 @@ function FinanceContent() {
             onRecordPayment={(prefill) => {
               setPaymentReconPrefill(prefill);
               setActiveTab('payment');
+            }}
+            onRecordExpense={(prefill) => {
+              setExpenseReconPrefill(prefill);
+              setActiveTab('expenses');
+            }}
+            onRecordReceipt={(prefill) => {
+              setReceiptReconPrefill(prefill);
+              setActiveTab('receipt');
             }}
             onOpenJournal={handleOpenJournal}
           />

@@ -19,7 +19,8 @@ import { supabaseErrorMessage } from '../../utils/supabaseError';
 import { type CompanySnapshot } from '../../types/company';
 import { waitForImages } from '../../utils/companyLogoUrl';
 import { formatCurrency } from '../../utils/currency';
-import { getReportingUsdRate, saveReceiptVoucher, applySettlementAdjustment } from '../../services/financeCommands';
+import { getReportingUsdRate, saveReceiptVoucher, applySettlementAdjustment, linkBankStatementLine } from '../../services/financeCommands';
+import { notifyFinanceReconciliationRefresh } from './bankTransactionLinking';
 import { useFinance } from '../../contexts/FinanceContext';
 
 interface Customer {
@@ -89,13 +90,37 @@ interface ReceiptAllocationItem {
   adjustmentReason?: string;
 }
 
-interface ReceiptVoucherManagerProps {
+export interface BankReconciliationReceiptPrefill {
+  statementLineId: string;
+  bankAccountId: string;
+  date: string;
+  amount: number;
+  description: string;
+  currency?: 'IDR' | 'USD';
+  reference?: string;
+}
+
+export interface ReceiptVoucherManagerProps {
   canManage: boolean;
   initialViewVoucherId?: string | null;
   onInitialViewHandled?: () => void;
+  prefillFromBankReconciliation?: BankReconciliationReceiptPrefill | null;
+  onBankReconciliationPrefillConsumed?: () => void;
+  onReceiptSavedFromBankReconciliation?: (voucherId: string, statementLineId: string) => void;
+  embeddedModalOnly?: boolean;
+  onCloseEmbedded?: () => void;
 }
 
-export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onInitialViewHandled }: ReceiptVoucherManagerProps) {
+export function ReceiptVoucherManager({
+  canManage,
+  initialViewVoucherId,
+  onInitialViewHandled,
+  prefillFromBankReconciliation,
+  onBankReconciliationPrefillConsumed,
+  onReceiptSavedFromBankReconciliation,
+  embeddedModalOnly,
+  onCloseEmbedded,
+}: ReceiptVoucherManagerProps) {
   const { t } = useLanguage();
   const { profile } = useAuth();
   const { dateRange } = useFinance();
@@ -121,6 +146,9 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
   const [allocations, setAllocations] = useState<ReceiptAllocationItem[]>([]);
   const [roundingTolerance, setRoundingTolerance] = useState(100);
   const [receiptAdjustments, setReceiptAdjustments] = useState<any[]>([]);
+  const [bankReconStatementLineId, setBankReconStatementLineId] = useState<string | null>(null);
+  const [bankReconExpectedAmount, setBankReconExpectedAmount] = useState<number | null>(null);
+  const [bankReconBankAccountId, setBankReconBankAccountId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     voucher_date: new Date().toISOString().split('T')[0],
@@ -142,6 +170,30 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
     loadBankAccounts();
     loadCompanySettings();
   }, []);
+
+  useEffect(() => {
+    if (!prefillFromBankReconciliation || loading) return;
+    setBankReconStatementLineId(prefillFromBankReconciliation.statementLineId);
+    setBankReconExpectedAmount(prefillFromBankReconciliation.amount);
+    setBankReconBankAccountId(prefillFromBankReconciliation.bankAccountId);
+
+    resetForm();
+    const bank = bankAccounts.find(b => b.id === prefillFromBankReconciliation.bankAccountId);
+    const currency = prefillFromBankReconciliation.currency || (bank?.currency as 'IDR' | 'USD') || 'IDR';
+
+    setFormData(prev => ({
+      ...prev,
+      voucher_date: prefillFromBankReconciliation.date,
+      bank_account_id: prefillFromBankReconciliation.bankAccountId,
+      amount: prefillFromBankReconciliation.amount,
+      description: prefillFromBankReconciliation.description,
+      reference_number: prefillFromBankReconciliation.reference || '',
+      payment_method: 'bank_transfer',
+      exchange_rate: currency === 'IDR' ? 1 : 1,
+    }));
+    setModalOpen(true);
+    onBankReconciliationPrefillConsumed?.();
+  }, [prefillFromBankReconciliation, loading, bankAccounts, onBankReconciliationPrefillConsumed]);
 
   const loadCompanySettings = async () => {
     const { data } = await supabase
@@ -446,6 +498,21 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       return;
     }
 
+    if (bankReconStatementLineId) {
+      if (formData.payment_method === 'cash') {
+        showToast({ type: 'error', title: 'Invalid Method', message: 'A reconciled bank receipt must use the bank transfer payment method.' });
+        return;
+      }
+      if (bankReconBankAccountId && formData.bank_account_id !== bankReconBankAccountId) {
+        showToast({ type: 'error', title: 'Invalid Bank Account', message: 'The receipt bank account must remain the bank account on the selected statement line.' });
+        return;
+      }
+      if (bankReconExpectedAmount != null && Math.abs(formData.amount - bankReconExpectedAmount) > 0.01) {
+        showToast({ type: 'error', title: 'Amount Mismatch', message: 'Receipt amount must equal the selected bank statement amount.' });
+        return;
+      }
+    }
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
@@ -453,6 +520,18 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
       if (editMode && selectedVoucher?.is_posted) {
         showToast({ type: 'error', title: 'Posted', message: 'Cannot edit a posted receipt voucher. Cancel posting first.' });
         return;
+      }
+
+      if (bankReconStatementLineId) {
+        const { data: lineCheck, error: checkErr } = await supabase
+          .from('bank_statement_lines')
+          .select('id, matched_receipt_id, matching_status')
+          .eq('id', bankReconStatementLineId)
+          .single();
+        if (checkErr) throw checkErr;
+        if (lineCheck?.matched_receipt_id) {
+          throw new Error(`This bank statement line is already linked to a receipt (ID: ${lineCheck.matched_receipt_id}).`);
+        }
       }
 
       const currency = (bankAccounts.find(bank => bank.id === formData.bank_account_id)?.currency || 'IDR') as 'IDR' | 'USD';
@@ -503,8 +582,21 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
         }
       }
 
+      if (bankReconStatementLineId && !editMode) {
+        const { error: postError } = await supabase.rpc('post_receipt_voucher', {
+          p_rv_id: savedVoucherId,
+          p_posted_by: user.id,
+        });
+        if (postError) throw postError;
+        await linkBankStatementLine(bankReconStatementLineId, 'receipt', savedVoucherId);
+        setBankReconStatementLineId(null);
+        notifyFinanceReconciliationRefresh();
+        onReceiptSavedFromBankReconciliation?.(savedVoucherId, bankReconStatementLineId);
+      }
+
       setModalOpen(false);
       resetForm();
+      onCloseEmbedded?.();
       await loadVouchers();
     } catch (error: any) {
       console.error('Error saving voucher:', error);
@@ -527,6 +619,9 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
     setAllocationTargets([]);
     setEditMode(false);
     setSelectedVoucher(null);
+    setBankReconStatementLineId(null);
+    setBankReconExpectedAmount(null);
+    setBankReconBankAccountId(null);
   };
 
   const handlePostVoucher = async (v: ReceiptVoucher) => {
@@ -815,9 +910,11 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {/* Shared title strip — matches every other Finance page */}
-      <div className="flex items-center justify-between h-8 px-2 bg-white border border-gray-200 rounded">
+    <div className={embeddedModalOnly ? undefined : "flex flex-col gap-1.5"}>
+      {!embeddedModalOnly && (
+        <>
+          {/* Shared title strip — matches every other Finance page */}
+          <div className="flex items-center justify-between h-8 px-2 bg-white border border-gray-200 rounded">
         <div className="flex items-baseline gap-2 min-w-0">
           <h1 className="text-xs font-bold text-gray-900 truncate">Receipt Vouchers</h1>
           <span className="text-[10px] text-gray-400 truncate">Customer receipts and invoice allocation</span>
@@ -915,15 +1012,17 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
           </tbody>
         </table>
       </div>
+        </>
+      )}
 
       <FinanceModal
         isOpen={modalOpen}
-        onClose={() => { setModalOpen(false); resetForm(); }}
+        onClose={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }}
         title={editMode ? "Edit Receipt Voucher" : "New Receipt Voucher"}
         size="lg"
         footer={
           <>
-            <button type="button" onClick={() => { setModalOpen(false); resetForm(); }} className={F_BTN_SECONDARY}>
+            <button type="button" onClick={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }} className={F_BTN_SECONDARY}>
               Cancel
             </button>
             <button type="submit" form="receipt-voucher-form" className={`${F_BTN_PRIMARY} bg-green-600 hover:bg-green-700`}>
@@ -1172,9 +1271,11 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
         </form>
       </FinanceModal>
 
-      {/* View Details Modal */}
-      <Modal
-        isOpen={viewModalOpen}
+      {!embeddedModalOnly && (
+        <>
+          {/* View Details Modal */}
+          <Modal
+            isOpen={viewModalOpen}
         onClose={() => { setViewModalOpen(false); setSelectedVoucher(null); setVoucherAllocations([]); }}
         title="Receipt Voucher Details"
         size="xl"
@@ -1529,6 +1630,8 @@ export function ReceiptVoucherManager({ canManage, initialViewVoucherId, onIniti
             </p>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

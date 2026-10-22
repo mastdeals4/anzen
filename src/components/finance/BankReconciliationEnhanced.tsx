@@ -11,6 +11,9 @@ import { useSupabaseRealtimeChannel } from '../../hooks/useSupabaseRealtimeChann
 import { useExpenseCategories } from './useExpenseCategories';
 import { groupExpenseCategories } from './ExpenseCategorySelect';
 import { calculateCanonicalCashPayable, calculateCanonicalExpenseTotal, paymentDateGapWarning } from '../../utils/taxCalculations';
+import { ExpenseManager, BankReconciliationExpensePrefill } from './ExpenseManager';
+import { ReceiptVoucherManager, BankReconciliationReceiptPrefill } from './ReceiptVoucherManager';
+import { PaymentVoucherManager } from './PaymentVoucherManager';
 import {
   BANK_ALLOCATION_EPSILON,
   FINANCE_RECONCILIATION_REFRESH_EVENT,
@@ -200,6 +203,8 @@ interface BankReconciliationEnhancedProps {
   onInitialFocusHandled?: () => void;
   onRecordContra?: (line: { bankAccountId: string; statementLineId: string; date: string; amount: number; description: string; direction: 'from' | 'to' }) => void;
   onRecordPayment?: (line: { bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string }) => void;
+  onRecordExpense?: (line: BankReconciliationExpensePrefill) => void;
+  onRecordReceipt?: (line: BankReconciliationReceiptPrefill) => void;
   onOpenJournal?: (journalEntryId: string) => void;
 }
 
@@ -277,6 +282,8 @@ export function BankReconciliationEnhanced({
   onInitialFocusHandled,
   onRecordContra,
   onRecordPayment,
+  onRecordExpense,
+  onRecordReceipt,
   onOpenJournal,
 }: BankReconciliationEnhancedProps) {
   const { t } = useLanguage();
@@ -311,6 +318,11 @@ export function BankReconciliationEnhanced({
   };
   const [recordingLine, setRecordingLine] = useState<StatementLine | null>(null);
   const [recordModal, setRecordModal] = useState(false);
+  const [embeddedExpensePrefill, setEmbeddedExpensePrefill] = useState<BankReconciliationExpensePrefill | null>(null);
+  const [embeddedReceiptPrefill, setEmbeddedReceiptPrefill] = useState<BankReconciliationReceiptPrefill | null>(null);
+  const [embeddedPaymentPrefill, setEmbeddedPaymentPrefill] = useState<{
+    bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string;
+  } | null>(null);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [linkToExpense, setLinkToExpense] = useState(false);
   const [linkPaymentKind, setLinkPaymentKind] = useState<'supplier' | 'pph23'>('supplier');
@@ -4422,13 +4434,21 @@ export function BankReconciliationEnhanced({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onRecordPayment?.({
+                      onClick={() => onRecordPayment ? onRecordPayment?.({
                         bankAccountId: selectedBank,
                         statementLineId: recordingLine.id,
                         date: recordingLine.date,
                         amount: recordingLine.debit,
                         currency: recordingLine.currency as 'IDR' | 'USD',
-                        reference: recordingLine.reference,
+                        reference: recordingLine.reference || '',
+                        description: recordingLine.description,
+                      }) : setEmbeddedPaymentPrefill({
+                        bankAccountId: selectedBank,
+                        statementLineId: recordingLine.id,
+                        date: recordingLine.date,
+                        amount: recordingLine.debit,
+                        currency: recordingLine.currency as 'IDR' | 'USD',
+                        reference: recordingLine.reference || '',
                         description: recordingLine.description,
                       })}
                       className="py-1.5 px-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200"
@@ -4901,51 +4921,67 @@ export function BankReconciliationEnhanced({
                     )}
                   </div>
                 ) : !linkToExpense ? (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const formData = new FormData(e.currentTarget);
-                      const category = formData.get('category') as string;
-                      const description = formData.get('description') as string;
-                      handleRecordExpense(recordingLine, category, description);
-                    }}
-                    className="space-y-3"
-                  >
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
-                      <select
-                        name="category"
-                        required
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Select category...</option>
+                  <div className="space-y-4 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                    <div className="border-b pb-2">
+                      <h4 className="font-semibold text-sm text-slate-800">RECORD AS EXPENSE</h4>
+                      <p className="text-xs text-slate-500">
+                        Opens the full SAPJ Expense form supporting Category, Utility (e.g. PT. PAM JAYA - water), billing date, billing month, billing reference, amount, PPN, PPH withholding/code, invoice description, payment method, currency, and original bill/receipt attachments.
+                      </p>
+                    </div>
 
-                        {groupExpenseCategories(expenseCategories).map(([parent, categories]) => (
-                          <optgroup key={parent} label={parent}>
-                            {categories.map((category) => (
-                              <option key={category.value} value={category.value}>{category.label}</option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Billing Date:</span>
+                        <span className="font-medium text-slate-800">{new Date(recordingLine.date).toLocaleDateString('id-ID')}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Debit Amount:</span>
+                        <span className="font-bold text-red-600">{formatCurrency(recordingLine.debit, recordingLine.currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Invoice Description:</span>
+                        <span className="font-medium text-slate-800 text-right max-w-[260px] truncate">{recordingLine.description}</span>
+                      </div>
+                      {recordingLine.reference && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Billing Reference:</span>
+                          <span className="font-mono text-slate-700">{recordingLine.reference}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Payment Method:</span>
+                        <span className="font-medium text-slate-700">Bank Transfer</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Currency:</span>
+                        <span className="font-medium text-slate-700">{recordingLine.currency}</span>
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                      <input
-                        type="text"
-                        name="description"
-                        defaultValue={recordingLine.description}
-                        className="w-full px-3 py-2 border rounded-lg"
-                        placeholder="Optional: Override description"
-                      />
-                    </div>
+
                     <button
-                      type="submit"
-                      className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                      type="button"
+                      onClick={() => {
+                        const prefill: BankReconciliationExpensePrefill = {
+                          statementLineId: recordingLine.id,
+                          bankAccountId: selectedBank,
+                          date: recordingLine.date,
+                          amount: recordingLine.debit,
+                          description: recordingLine.description,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                        };
+                        setRecordModal(false);
+                        if (onRecordExpense) {
+                          onRecordExpense(prefill);
+                        } else {
+                          setEmbeddedExpensePrefill(prefill);
+                        }
+                      }}
+                      className="w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm flex items-center justify-center gap-2 shadow-sm"
                     >
-                      Create & Link Expense
+                      <span>Open Full Expense Form</span>
                     </button>
-                  </form>
+                  </div>
                 ) : (
                   <form
                     onSubmit={(e) => {
@@ -5036,6 +5072,29 @@ export function BankReconciliationEnhanced({
                       className="text-xs text-cyan-700 hover:underline"
                     >
                       Record Contra
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prefill: BankReconciliationReceiptPrefill = {
+                          statementLineId: recordingLine.id,
+                          bankAccountId: selectedBank,
+                          date: recordingLine.date,
+                          amount: recordingLine.credit,
+                          description: recordingLine.description,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                        };
+                        setRecordModal(false);
+                        if (onRecordReceipt) {
+                          onRecordReceipt(prefill);
+                        } else {
+                          setEmbeddedReceiptPrefill(prefill);
+                        }
+                      }}
+                      className="text-xs text-green-700 font-semibold hover:underline"
+                    >
+                      Open Full Receipt Form
                     </button>
                     <button
                       type="button"
@@ -6538,6 +6597,62 @@ export function BankReconciliationEnhanced({
           </Modal>
         );
       })()}
+
+      {embeddedExpensePrefill && (
+        <ExpenseManager
+          canManage={canManage}
+          embeddedModalOnly={true}
+          prefillFromBankReconciliation={embeddedExpensePrefill}
+          onCloseEmbedded={() => setEmbeddedExpensePrefill(null)}
+          onExpenseSavedFromBankReconciliation={async (savedExpense) => {
+            setEmbeddedExpensePrefill(null);
+            await loadStatementLines();
+            await loadExpenses();
+            notifyFinanceReconciliationRefresh();
+            setActionFeedback({
+              type: 'success',
+              title: 'Expense recorded as pending',
+              message: 'Expense created and linked to statement line. An authorized approver must approve it before posting.',
+              details: [
+                { label: 'Expense ID', value: savedExpense.id.slice(0, 8) },
+                { label: 'Amount', value: formatCurrency(savedExpense.amount, savedExpense.transaction_currency) },
+                { label: 'Category', value: savedExpense.expense_category },
+                { label: 'Date', value: new Date(savedExpense.expense_date).toLocaleDateString('id-ID') },
+                { label: 'Status', value: 'Pending Approval' },
+              ],
+              timestamp: Date.now(),
+            });
+          }}
+        />
+      )}
+
+      {embeddedReceiptPrefill && (
+        <ReceiptVoucherManager
+          canManage={canManage}
+          embeddedModalOnly={true}
+          prefillFromBankReconciliation={embeddedReceiptPrefill}
+          onCloseEmbedded={() => setEmbeddedReceiptPrefill(null)}
+          onReceiptSavedFromBankReconciliation={async () => {
+            setEmbeddedReceiptPrefill(null);
+            await loadStatementLines();
+            notifyFinanceReconciliationRefresh();
+          }}
+        />
+      )}
+
+      {embeddedPaymentPrefill && (
+        <PaymentVoucherManager
+          canManage={canManage}
+          embeddedModalOnly={true}
+          prefillFromBankReconciliation={embeddedPaymentPrefill}
+          onCloseEmbedded={() => setEmbeddedPaymentPrefill(null)}
+          onPaymentSavedFromBankReconciliation={async () => {
+            setEmbeddedPaymentPrefill(null);
+            await loadStatementLines();
+            notifyFinanceReconciliationRefresh();
+          }}
+        />
+      )}
     </div>
   );
 }

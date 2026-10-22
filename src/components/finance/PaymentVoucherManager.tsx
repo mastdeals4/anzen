@@ -135,6 +135,9 @@ interface PaymentVoucherManagerProps {
     bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string;
   } | null;
   onBankReconciliationPrefillConsumed?: () => void;
+  onPaymentSavedFromBankReconciliation?: (voucherId: string, statementLineId: string) => void;
+  embeddedModalOnly?: boolean;
+  onCloseEmbedded?: () => void;
 }
 
 interface PaymentAllocationRow {
@@ -207,7 +210,22 @@ function fmt(amount: number, currency: string) {
 }
 
 
-export function PaymentVoucherManager({ canManage, initialViewVoucherId, onInitialViewHandled, prefillInvoice, onPrefillConsumed, prefillExpenseBill, onPrefillExpenseBillConsumed, onViewInvoice, onViewExpense, prefillFromBankReconciliation, onBankReconciliationPrefillConsumed }: PaymentVoucherManagerProps) {
+export function PaymentVoucherManager({
+  canManage,
+  initialViewVoucherId,
+  onInitialViewHandled,
+  prefillInvoice,
+  onPrefillConsumed,
+  prefillExpenseBill,
+  onPrefillExpenseBillConsumed,
+  onViewInvoice,
+  onViewExpense,
+  prefillFromBankReconciliation,
+  onBankReconciliationPrefillConsumed,
+  onPaymentSavedFromBankReconciliation,
+  embeddedModalOnly,
+  onCloseEmbedded,
+}: PaymentVoucherManagerProps) {
   const { profile } = useAuth();
   const { dateRange } = useFinance();
   const isAdmin = profile?.role === 'admin';
@@ -1185,18 +1203,31 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
       }
 
       if (bankReconStatementLineId && !editingVoucher) {
+        const { data: lineCheck, error: checkErr } = await supabase
+          .from('bank_statement_lines')
+          .select('id, matched_payment_id, matching_status')
+          .eq('id', bankReconStatementLineId)
+          .single();
+        if (checkErr) throw checkErr;
+        if (lineCheck?.matched_payment_id) {
+          throw new Error(`This bank statement line is already linked to a payment (ID: ${lineCheck.matched_payment_id}).`);
+        }
+
         const { error: postError } = await supabase.rpc('post_payment_voucher', {
           p_pv_id: savedVoucher.id,
           p_posted_by: user.id,
         });
         if (postError) throw postError;
         await linkBankStatementLine(bankReconStatementLineId, 'payment', savedVoucher.id);
+        const lineId = bankReconStatementLineId;
         setBankReconStatementLineId(null);
         notifyFinanceReconciliationRefresh();
+        onPaymentSavedFromBankReconciliation?.(savedVoucher.id, lineId);
       }
 
       setModalOpen(false);
       resetForm();
+      onCloseEmbedded?.();
       await loadVouchers();
     } catch (error: unknown) {
       console.error('Error saving voucher:', error);
@@ -1229,7 +1260,8 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
 
   return (
     <>
-      <FinancePage
+      {!embeddedModalOnly && (
+        <FinancePage
         title="Payment Vouchers"
         actions={canManage && (
           <button
@@ -1371,15 +1403,16 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
           ]}
         />
       </FinancePage>
+      )}
 
       <FinanceModal
         isOpen={modalOpen}
-        onClose={() => { setModalOpen(false); resetForm(); }}
+        onClose={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }}
         title={editingVoucher ? `Edit ${editingVoucher.voucher_number}` : 'New Payment Voucher'}
         size="lg"
         footer={
           <>
-            <button type="button" onClick={() => { setModalOpen(false); resetForm(); }} className={F_BTN_SECONDARY}>
+            <button type="button" onClick={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }} className={F_BTN_SECONDARY}>
               Cancel
             </button>
             <button type="submit" form="payment-voucher-form" className={`${F_BTN_PRIMARY} bg-red-600 hover:bg-red-700`}>
@@ -1880,7 +1913,9 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
         </form>
       </FinanceModal>
 
-      {cancelPostingTarget && (
+      {!embeddedModalOnly && (
+        <>
+          {cancelPostingTarget && (
         <Modal
           isOpen={!!cancelPostingTarget}
           onClose={() => { setCancelPostingTarget(null); setCancelPostingReason(''); }}
@@ -2181,6 +2216,8 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
             />
           </div>
         </Modal>
+      )}
+        </>
       )}
     </>
   );

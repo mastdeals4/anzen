@@ -470,15 +470,41 @@ interface ExpenseExportAccount {
   coa_name: string | null;
 }
 
-interface ExpenseManagerProps {
+export interface BankReconciliationExpensePrefill {
+  statementLineId: string;
+  bankAccountId: string;
+  date: string;
+  amount: number;
+  description: string;
+  currency?: 'IDR' | 'USD';
+  reference?: string;
+}
+
+export interface ExpenseManagerProps {
   canManage: boolean;
   initialViewExpenseId?: string | null;
   onInitialViewHandled?: () => void;
   onSettleBill?: (bill: { id: string; supplier_id: string | null; staff_id: string | null; balance_amount: number }) => void;
   onViewPaymentVoucher?: (paymentVoucherId: string) => void;
+  prefillFromBankReconciliation?: BankReconciliationExpensePrefill | null;
+  onBankReconciliationPrefillConsumed?: () => void;
+  onExpenseSavedFromBankReconciliation?: (expense: FinanceExpense, statementLineId: string) => void;
+  embeddedModalOnly?: boolean;
+  onCloseEmbedded?: () => void;
 }
 
-export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewHandled, onSettleBill, onViewPaymentVoucher }: ExpenseManagerProps) {
+export function ExpenseManager({
+  canManage,
+  initialViewExpenseId,
+  onInitialViewHandled,
+  onSettleBill,
+  onViewPaymentVoucher,
+  prefillFromBankReconciliation,
+  onBankReconciliationPrefillConsumed,
+  onExpenseSavedFromBankReconciliation,
+  embeddedModalOnly,
+  onCloseEmbedded,
+}: ExpenseManagerProps) {
   const { profile } = useAuth();
   const { t } = useLanguage();
   const isAdmin = profile?.role === 'admin';
@@ -1141,6 +1167,33 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     openExpense();
   }, [initialViewExpenseId, expenses, onInitialViewHandled]);
 
+  useEffect(() => {
+    if (!prefillFromBankReconciliation || loading) return;
+
+    resetForm();
+    const bank = bankAccounts.find(b => b.id === prefillFromBankReconciliation.bankAccountId);
+    const txnCurrency = prefillFromBankReconciliation.currency || (bank?.currency as 'IDR' | 'USD') || 'IDR';
+
+    setSelectedBankTransactionId(prefillFromBankReconciliation.statementLineId);
+    setSelectedBankAllocationAmount(prefillFromBankReconciliation.amount);
+
+    setFormData(prev => ({
+      ...prev,
+      expense_date: prefillFromBankReconciliation.date,
+      due_date: prefillFromBankReconciliation.date,
+      amount: prefillFromBankReconciliation.amount,
+      description: prefillFromBankReconciliation.description,
+      payment_method: 'bank_transfer',
+      bank_account_id: prefillFromBankReconciliation.bankAccountId,
+      payment_reference: prefillFromBankReconciliation.reference || '',
+      transaction_currency: txnCurrency,
+      exchange_rate: txnCurrency === 'IDR' ? 1 : prev.exchange_rate,
+    }));
+
+    setModalOpen(true);
+    onBankReconciliationPrefillConsumed?.();
+  }, [prefillFromBankReconciliation, loading, bankAccounts, onBankReconciliationPrefillConsumed]);
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -1714,6 +1767,18 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         console.log('=== CREATING NEW EXPENSE ===');
 
+        if (selectedBankTransactionId) {
+          const { data: lineCheck, error: checkErr } = await supabase
+            .from('bank_statement_lines')
+            .select('id, matched_expense_id, matching_status')
+            .eq('id', selectedBankTransactionId)
+            .single();
+          if (checkErr) throw checkErr;
+          if (lineCheck?.matched_expense_id) {
+            throw new Error(`This bank statement line is already linked to an expense (ID: ${lineCheck.matched_expense_id}).`);
+          }
+        }
+
         const newExpensePayload = { ...expenseData, created_by: user.id };
         const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
         if (formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
@@ -1763,8 +1828,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         const finalExpense = newExpense;
 
         if (selectedBankTransactionId && newExpense) {
+          const { error: linkErr } = await supabase
+            .from('bank_statement_lines')
+            .update({
+              matched_expense_id: newExpense.id,
+              matching_status: 'suggested',
+            })
+            .eq('id', selectedBankTransactionId);
+          if (linkErr) {
+            console.error('Error linking bank statement line to expense:', linkErr);
+          }
           setReconciledExpenseIds(prev => new Set(prev).add(newExpense.id));
           notifyFinanceReconciliationRefresh();
+          onExpenseSavedFromBankReconciliation?.(newExpense as FinanceExpense, selectedBankTransactionId);
         }
 
         // Add to local state (with bank link if applicable)
@@ -1774,6 +1850,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
       setModalOpen(false);
       resetForm();
+      onCloseEmbedded?.();
     } catch (error: any) {
       console.error('Error saving expense:', error.message);
       // Show clear error message from backend validation
@@ -2694,9 +2771,11 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
   const editingBankLines = normalizeExpenseBankLinks(editingExpense?.bank_statement_lines || []);
 
   return (
-    <div className="space-y-4">
-      {/* Compact single-strip header — KPIs + primary actions */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded px-2 py-1 text-white shadow-sm flex items-center justify-between gap-2">
+    <div className={embeddedModalOnly ? undefined : "space-y-4"}>
+      {!embeddedModalOnly && (
+        <>
+          {/* Compact single-strip header — KPIs + primary actions */}
+          <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded px-2 py-1 text-white shadow-sm flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-gray-800 whitespace-nowrap">Expenses</h2>
           <div className="flex gap-1.5">
@@ -3283,17 +3362,19 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           </tbody>
         </table>
       </div>
+        </>
+      )}
 
       {modalOpen && (
         <FinanceModal
           isOpen={modalOpen}
-          onClose={() => { setModalOpen(false); resetForm(); }}
+          onClose={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }}
           title={editingExpense ? 'Edit Expense' : 'Record New Expense'}
           subtitle={editingExpense?.voucher_number || undefined}
           size="2xl"
           footer={
             <>
-              <button type="button" onClick={() => { setModalOpen(false); resetForm(); }} className={F_BTN_SECONDARY}>
+              <button type="button" onClick={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }} className={F_BTN_SECONDARY}>
                 Cancel
               </button>
               <button type="submit" form="expense-form" className={F_BTN_PRIMARY}>
@@ -4600,8 +4681,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         </Modal>
       )}
 
-      {/* Finance Health Check slide-over panel */}
-      {healthCheckOpen && (
+      {!embeddedModalOnly && (
+        <>
+          {/* Finance Health Check slide-over panel */}
+          {healthCheckOpen && (
         <div className="fixed right-0 top-0 h-full w-80 bg-white shadow-2xl border-l border-gray-200 z-50 flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
             <div className="flex items-center gap-2">
@@ -5590,6 +5673,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
             </div>
           </div>
         </Modal>
+      )}
+        </>
       )}
     </div>
   );
