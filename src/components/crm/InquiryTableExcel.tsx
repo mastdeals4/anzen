@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import {
   ChevronDown, X, Mail, Phone, FileText, Calendar,
   Flame, ArrowUp, Minus, Send, MessageSquare, CheckSquare,
-  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle, Plus, ChevronRight, Layers, Clock, CheckCircle2, Calculator, Search, ExternalLink, Loader, Upload
+  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, XCircle, Plus, ChevronRight, Layers, Clock, CheckCircle2, Calculator, Search, ExternalLink, Loader, Upload
 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { GmailLikeComposer } from './GmailLikeComposer';
@@ -45,6 +45,11 @@ interface InquiryItem {
   sample_sent_at?: string | null;
   agency_letter_sent_at?: string | null;
   others_sent_at?: string | null;
+  price_required?: boolean | null;
+  coa_required?: boolean | null;
+  sample_required?: boolean | null;
+  agency_letter_required?: boolean | null;
+  others_required?: boolean | null;
   status: string;
   pipeline_stage: string;
   document_sent: boolean;
@@ -3024,16 +3029,53 @@ export function InquiryTableExcel({
                       )}
                       {isColumnVisible('our_side') && (
                         <td className="px-3 py-2 border-r border-gray-200 text-center">
-                          {item.document_sent ? (
-                            <div className="flex items-center justify-center gap-1">
-                              <Check className="w-4 h-4 text-green-600" />
-                              <span className="text-xs text-gray-500">
-                                {item.document_sent_at ? new Date(item.document_sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
-                              </span>
-                            </div>
-                          ) : (
-                            <XCircle className="w-4 h-4 text-gray-400 mx-auto" />
-                          )}
+                          {(() => {
+                            const priceRequired = item.price_required !== undefined && item.price_required !== null
+                              ? Boolean(item.price_required)
+                              : (inquiry.price_required ?? true);
+
+                            const coaRequired = item.coa_required !== undefined && item.coa_required !== null
+                              ? Boolean(item.coa_required)
+                              : (inquiry.coa_required ?? true);
+
+                            const sampleRequired = item.sample_required !== undefined && item.sample_required !== null
+                              ? Boolean(item.sample_required)
+                              : Boolean(inquiry.sample_required);
+
+                            const agencyLetterRequired = item.agency_letter_required !== undefined && item.agency_letter_required !== null
+                              ? Boolean(item.agency_letter_required)
+                              : Boolean(inquiry.agency_letter_required);
+
+                            const othersRequired = item.others_required !== undefined && item.others_required !== null
+                              ? Boolean(item.others_required)
+                              : Boolean(inquiry.others_required);
+
+                            const anyRequired = priceRequired || coaRequired || sampleRequired || agencyLetterRequired || othersRequired;
+
+                            if (!anyRequired) {
+                              return <XCircle className="w-4 h-4 text-gray-400 mx-auto" />;
+                            }
+
+                            return (
+                              <div className="flex items-center justify-center">
+                                <OurSideChips
+                                  inquiry={{
+                                    price_required: priceRequired,
+                                    coa_required: coaRequired,
+                                    sample_required: sampleRequired,
+                                    agency_letter_required: agencyLetterRequired,
+                                    others_required: othersRequired,
+                                    price_sent_at: item.price_sent_at ?? inquiry.price_sent_at ?? null,
+                                    coa_sent_at: item.coa_sent_at ?? (item.document_sent ? item.document_sent_at : null) ?? inquiry.coa_sent_at ?? null,
+                                    sample_sent_at: item.sample_sent_at ?? inquiry.sample_sent_at ?? null,
+                                    agency_letter_sent_at: item.agency_letter_sent_at ?? inquiry.agency_letter_sent_at ?? null,
+                                    others_sent_at: item.others_sent_at ?? inquiry.others_sent_at ?? null,
+                                  }}
+                                  compact
+                                />
+                              </div>
+                            );
+                          })()}
                         </td>
                       )}
                       {isColumnVisible('quote_status') && <td className="px-3 py-2 border-r border-gray-200 text-xs text-gray-500">-</td>}
