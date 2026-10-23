@@ -104,7 +104,10 @@ export interface ThreadMessage {
 interface Props {
   onOpenInquiry?: (inquiryId: string) => void;
   onOpenCustomer?: (customerId: string) => void;
-  onCreateInquiryFromMessage?: (msg: { subject: string; body: string; fromEmail: string; fromName: string }) => void;
+  onCreateInquiryFromMessage?: (
+    msg: { subject: string; body: string; fromEmail: string; fromName: string; id?: string },
+    parsed?: any,
+  ) => void;
 }
 
 export function CrmOmnichannelInbox({
@@ -137,6 +140,56 @@ export function CrmOmnichannelInbox({
   const [allInquiries, setAllInquiries] = useState<Array<{ id: string; inquiry_number: string; company_name: string; product_name: string }>>([]);
   const [selectedInquiryToLink, setSelectedInquiryToLink] = useState('');
   const [isLinking, setIsLinking] = useState(false);
+  const [isExtractingAi, setIsExtractingAi] = useState(false);
+
+  const handleExtractAndCreate = async (conv: InboxConversation) => {
+    setIsExtractingAi(true);
+    try {
+      const latestMsg = threadMessages[threadMessages.length - 1];
+      const emailBody = latestMsg?.body || conv.snippet;
+      const emailSubject = conv.subject || latestMsg?.subject || '';
+      const fromEmail = conv.senderAddress || latestMsg?.from || '';
+      const fromName = conv.senderName || '';
+
+      let parsedResult = null;
+      try {
+        const { data, error } = await supabase.functions.invoke('parse-pharma-email', {
+          body: {
+            emailSubject,
+            emailBody,
+            fromEmail,
+            fromName,
+          },
+        });
+        if (!error && data) {
+          parsedResult = data.data || data.fallbackData || data;
+        }
+      } catch (invokeErr) {
+        console.warn('AI extraction invoke failed, proceeding with raw email:', invokeErr);
+      }
+
+      if (onCreateInquiryFromMessage) {
+        onCreateInquiryFromMessage(
+          {
+            subject: emailSubject,
+            body: emailBody,
+            fromEmail,
+            fromName,
+            id: conv.id,
+          },
+          parsedResult,
+        );
+      }
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Extraction Error',
+        message: err.message || 'Failed to extract inquiry details.',
+      });
+    } finally {
+      setIsExtractingAi(false);
+    }
+  };
 
   // Load conversations list
   const loadConversations = async () => {
@@ -994,6 +1047,15 @@ export function CrmOmnichannelInbox({
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <button
+                        onClick={() => handleExtractAndCreate(selectedConversation)}
+                        disabled={isExtractingAi}
+                        className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        title="Extract products, quantities, specifications, and documents using AI"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin' : ''}`} />
+                        <span>{isExtractingAi ? 'Extracting with AI...' : 'AI Extract & Create'}</span>
+                      </button>
+                      <button
                         onClick={() => setShowLinkDialog(true)}
                         className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
                       >
@@ -1008,6 +1070,7 @@ export function CrmOmnichannelInbox({
                             body: selectedConversation.snippet,
                             fromEmail: selectedConversation.senderAddress,
                             fromName: selectedConversation.senderName,
+                            id: selectedConversation.id,
                           })
                         }
                         className="px-2.5 py-1 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 text-xs font-semibold rounded cursor-pointer"

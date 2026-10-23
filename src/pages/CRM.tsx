@@ -15,6 +15,7 @@ import {
   SlidersHorizontal,
   RefreshCw,
   FileText,
+  Sparkles,
 } from 'lucide-react';
 
 import { CrmOmnichannelInbox } from '../components/crm/inbox/CrmOmnichannelInbox';
@@ -262,18 +263,48 @@ export function CRM() {
     }
   };
 
-  const handleCreateInquiryFromMessage = (msg: {
-    subject: string;
-    body: string;
-    fromEmail: string;
-    fromName: string;
-  }) => {
+  const handleCreateInquiryFromMessage = (
+    msg: {
+      subject: string;
+      body: string;
+      fromEmail: string;
+      fromName: string;
+      id?: string;
+    },
+    parsed?: any,
+  ) => {
     setEditingInquiry(null);
+    const products = Array.isArray(parsed?.products) ? parsed.products : [];
+    const firstProd = products[0] || {};
+
     setPrefillInquiry({
-      company_name: msg.fromName || '',
-      contact_email: msg.fromEmail || '',
-      email_subject: msg.subject || '',
-      remarks: msg.body?.slice(0, 500) || '',
+      company_name: parsed?.companyName || msg.fromName || '',
+      contact_person: parsed?.contactPerson || '',
+      contact_email: parsed?.contactEmail || msg.fromEmail || '',
+      contact_phone: parsed?.contactPhone || '',
+      product_name: parsed?.productName || firstProd.productName || '',
+      specification: parsed?.specification || firstProd.specification || '',
+      quantity: parsed?.quantity || firstProd.quantity || '',
+      supplier_name: parsed?.supplierName || firstProd.supplierName || '',
+      supplier_country: parsed?.supplierCountry || firstProd.supplierCountry || '',
+      coa_required: Boolean(parsed?.coaRequested),
+      msds_required: Boolean(parsed?.msdsRequested),
+      sample_required: Boolean(parsed?.sampleRequested),
+      price_required: Boolean(parsed?.priceRequested),
+      priority: parsed?.urgency || 'medium',
+      mail_subject: msg.subject || '',
+      remarks: parsed?.remarks || msg.body?.slice(0, 500) || '',
+      source_email_id: msg.id || null,
+      is_multi_product: products.length > 1,
+      products: products.map((p: any) => ({
+        productName: p.productName || '',
+        specification: p.specification || '',
+        quantity: p.quantity || '',
+        supplierName: p.supplierName || '',
+        supplierCountry: p.supplierCountry || '',
+        deliveryDate: p.deliveryDate || '',
+        deliveryTerms: p.deliveryTerms || '',
+      })),
     });
     setModalOpen(true);
   };
@@ -380,6 +411,8 @@ export function CRM() {
         const { items, products, is_multi_product, ...restFormData } = formData;
         const multiProducts = (items && items.length > 0) ? items : (products && products.length > 0 ? products : []);
 
+        let createdInquiryId: string | null = null;
+
         if (is_multi_product && multiProducts.length > 0) {
           const inquiriesToInsert = multiProducts.map((item: any) =>
             sanitizeFormData({
@@ -409,6 +442,7 @@ export function CRM() {
           if (error) throw error;
 
           if (insertedInquiries && insertedInquiries.length > 0) {
+            createdInquiryId = insertedInquiries[0].id;
             const baseInquiryNumber = insertedInquiries[0].inquiry_number;
             for (let i = 0; i < insertedInquiries.length; i++) {
               await supabase
@@ -430,7 +464,11 @@ export function CRM() {
             has_items: false,
           });
 
-          const { error, status } = await supabase.from('crm_inquiries').insert([insertData]);
+          const { data: insertedRows, error, status } = await supabase
+            .from('crm_inquiries')
+            .insert([insertData])
+            .select('id, inquiry_number');
+
           if (error) {
             console.error('[CRM_INQUIRY_INSERT_ERROR]', {
               message: error.message,
@@ -441,6 +479,24 @@ export function CRM() {
               payloadKeys: Object.keys(insertData),
             });
             throw error;
+          }
+
+          createdInquiryId = insertedRows?.[0]?.id || null;
+        }
+
+        const sourceEmailId = formData.source_email_id || prefillInquiry?.source_email_id;
+        if (sourceEmailId && createdInquiryId) {
+          try {
+            await supabase
+              .from('crm_email_inbox')
+              .update({
+                converted_to_inquiry: createdInquiryId,
+                is_processed: true,
+                is_inquiry: true,
+              })
+              .eq('id', sourceEmailId);
+          } catch (e) {
+            console.warn('Failed linking source email to new inquiry:', e);
           }
         }
       }
@@ -544,6 +600,7 @@ export function CRM() {
               [
                 ['inbox', Inbox, 'INBOX'],
                 ['inquiries', Table, 'INQUIRIES'],
+                ['control-center', Sparkles, 'CONTROL CENTER'],
                 ['bulk_email', Send, 'BULK EMAIL'],
                 ['customers', Users, 'CUSTOMERS'],
                 ['documents', FileText, 'DOCUMENT BANK'],

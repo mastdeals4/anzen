@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
 import { CrmCustomerDrawer, CustomerDetail } from './CrmCustomerDrawer';
+import { CustomerDatabaseExcel } from '../CustomerDatabaseExcel';
 import {
   Users,
   Search,
@@ -18,6 +19,8 @@ import {
   Send,
   MoreHorizontal,
   FolderOpen,
+  Table,
+  LayoutGrid,
 } from 'lucide-react';
 
 interface CustomerRow extends CustomerDetail {
@@ -42,6 +45,7 @@ export function CrmCustomersWorkspace({
   const [filterType, setFilterType] = useState<'all' | 'active' | 'inquiries' | 'orders' | 'dormant'>('all');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomerForDrawer, setSelectedCustomerForDrawer] = useState<CustomerDetail | null>(null);
+  const [viewMode, setViewMode] = useState<'directory' | 'excel'>('directory');
 
   // Checkbox selections for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -302,6 +306,36 @@ export function CrmCustomersWorkspace({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {/* View Toggle */}
+          <div className="flex items-center bg-gray-100 p-0.5 rounded-md border border-gray-200">
+            <button
+              type="button"
+              onClick={() => setViewMode('directory')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded transition ${
+                viewMode === 'directory'
+                  ? 'bg-white text-gray-900 shadow-2xs'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+              title="Directory View"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Directory</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('excel')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded transition ${
+                viewMode === 'excel'
+                  ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+              title="Excel Spreadsheet View"
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span>Excel Spreadsheet</span>
+            </button>
+          </div>
+
           {selectedIds.size > 0 && (
             <button
               onClick={handleStartBulkEmail}
@@ -322,33 +356,39 @@ export function CrmCustomersWorkspace({
         </div>
       </div>
 
-      {/* Quick Filters */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        {(
-          [
-            ['all', `All Customers (${customers.length})`],
-            ['active', `Active (${customers.filter(c => c.is_active !== false).length})`],
-            ['inquiries', `With Open Inquiries (${customers.filter(c => c.openInquiriesCount > 0).length})`],
-            ['orders', `With Open Orders (${customers.filter(c => c.openOrdersCount > 0).length})`],
-            ['dormant', `Dormant / No Open Action (${customers.filter(c => c.openInquiriesCount === 0 && c.openOrdersCount === 0).length})`],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setFilterType(key)}
-            className={`px-3 py-1.5 rounded-full font-medium transition whitespace-nowrap ${
-              filterType === key
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {viewMode === 'excel' ? (
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-3">
+          <CustomerDatabaseExcel />
+        </div>
+      ) : (
+        <>
+          {/* Quick Filters */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+            {(
+              [
+                ['all', `All Customers (${customers.length})`],
+                ['active', `Active (${customers.filter(c => c.is_active !== false).length})`],
+                ['inquiries', `With Open Inquiries (${customers.filter(c => c.openInquiriesCount > 0).length})`],
+                ['orders', `With Open Orders (${customers.filter(c => c.openOrdersCount > 0).length})`],
+                ['dormant', `Dormant / No Open Action (${customers.filter(c => c.openInquiriesCount === 0 && c.openOrdersCount === 0).length})`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setFilterType(key)}
+                className={`px-3 py-1.5 rounded-full font-medium transition whitespace-nowrap ${
+                  filterType === key
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
-      {/* Master Customer Table */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+          {/* Master Customer Table */}
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
@@ -508,6 +548,8 @@ export function CrmCustomersWorkspace({
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* Customer Right-Side Drawer */}
       <CrmCustomerDrawer

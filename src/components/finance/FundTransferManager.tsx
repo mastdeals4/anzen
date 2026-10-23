@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, ArrowRightLeft, CheckCircle, Clock, RotateCcw, Undo2, Landmark, AlertTriangle } from 'lucide-react';
+import { Plus, ArrowRightLeft, CheckCircle, Clock, RotateCcw, Undo2, Landmark, AlertTriangle, Unlink, Edit3, ShieldAlert } from 'lucide-react';
 import { FinancePage } from './FinancePage';
 import { FinanceTable } from './FinanceTable';
 import { FinanceModal } from './FinanceModal';
@@ -15,6 +15,7 @@ import { notifyFinanceReconciliationRefresh } from './bankTransactionLinking';
 import { formatCurrency } from '../../utils/currency';
 import { FinanceActionButton, FinanceBadge } from './FinanceUI';
 import { useFinance } from '../../contexts/FinanceContext';
+import { unlinkBankStatementLine } from '../../services/financeCommands';
 
 interface FundTransfer {
   id: string;
@@ -89,6 +90,7 @@ interface BankReconciliationConflict {
   document_number: string;
   journal_entry_id: string | null;
   journal_entry_number: string | null;
+  is_unexpected_match?: boolean;
 }
 
 // Helper function to format date as dd/mm/yy
@@ -125,6 +127,8 @@ export function FundTransferManager({
   const [undoReverseTarget, setUndoReverseTarget] = useState<FundTransfer | null>(null);
   const [undoReverseReason, setUndoReverseReason] = useState('');
   const [reconciliationConflict, setReconciliationConflict] = useState<BankReconciliationConflict | null>(null);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
+  const [updatingLinks, setUpdatingLinks] = useState(false);
   const [formData, setFormData] = useState({
     transfer_date: new Date().toISOString().split('T')[0],
     from_amount: 0,
@@ -384,34 +388,70 @@ export function FundTransferManager({
       const exchangeRate = calculateExchangeRate();
 
       if (editingTransfer) {
-        // UPDATE existing transfer
-        const transferData: any = {
-          transfer_date: formData.transfer_date,
-          amount: formData.from_amount,  // For backwards compatibility
-          from_amount: formData.from_amount,
-          to_amount: formData.to_amount,
-          exchange_rate: exchangeRate,
-          from_account_type: formData.from_account_type,
-          to_account_type: formData.to_account_type,
-          description: formData.description || null,
-          from_bank_account_id: formData.from_account_type === 'bank' ? formData.from_bank_account_id : null,
-          to_bank_account_id: formData.to_account_type === 'bank' ? formData.to_bank_account_id : null,
-          from_bank_statement_line_id: formData.from_bank_statement_line_id || null,
-          to_bank_statement_line_id: formData.to_bank_statement_line_id || null,
-        };
+        if (editingTransfer.status === 'posted') {
+          // POSTED Contra: Only bank statement lines can be linked/unlinked to preserve GL integrity
+          setUpdatingLinks(true);
+          const oldFromLineId = editingTransfer.from_bank_statement_line_id;
+          const newFromLineId = formData.from_bank_statement_line_id || null;
+          const oldToLineId = editingTransfer.to_bank_statement_line_id;
+          const newToLineId = formData.to_bank_statement_line_id || null;
 
-        console.log('Updating fund transfer:', editingTransfer.id, transferData);
-        const { data: updatedData, error } = await supabase
-          .from('fund_transfers')
-          .update(transferData)
-          .eq('id', editingTransfer.id)
-          .select();
+          // If from-bank line changed or unlinked, unmatch old line first
+          if (oldFromLineId && oldFromLineId !== newFromLineId) {
+            try {
+              await unlinkBankStatementLine(oldFromLineId);
+            } catch (err) {
+              console.warn('Could not unmatch previous from-statement line:', err);
+            }
+          }
 
-        console.log('Update result:', { updatedData, error });
-        
-        if (error) throw error;
+          // If to-bank line changed or unlinked, unmatch old line first
+          if (oldToLineId && oldToLineId !== newToLineId) {
+            try {
+              await unlinkBankStatementLine(oldToLineId);
+            } catch (err) {
+              console.warn('Could not unmatch previous to-statement line:', err);
+            }
+          }
 
-        showToast({ type: 'success', title: 'Success', message: 'Fund transfer updated successfully!' });
+          const { error } = await supabase
+            .from('fund_transfers')
+            .update({
+              from_bank_statement_line_id: newFromLineId,
+              to_bank_statement_line_id: newToLineId,
+            })
+            .eq('id', editingTransfer.id);
+
+          if (error) throw error;
+
+          notifyFinanceReconciliationRefresh();
+          showToast({ type: 'success', title: 'Success', message: 'Bank statement links updated successfully!' });
+        } else {
+          // UPDATE existing draft/pending transfer
+          const transferData: any = {
+            transfer_date: formData.transfer_date,
+            amount: formData.from_amount,  // For backwards compatibility
+            from_amount: formData.from_amount,
+            to_amount: formData.to_amount,
+            exchange_rate: exchangeRate,
+            from_account_type: formData.from_account_type,
+            to_account_type: formData.to_account_type,
+            description: formData.description || null,
+            from_bank_account_id: formData.from_account_type === 'bank' ? formData.from_bank_account_id : null,
+            to_bank_account_id: formData.to_account_type === 'bank' ? formData.to_bank_account_id : null,
+            from_bank_statement_line_id: formData.from_bank_statement_line_id || null,
+            to_bank_statement_line_id: formData.to_bank_statement_line_id || null,
+          };
+
+          const { error } = await supabase
+            .from('fund_transfers')
+            .update(transferData)
+            .eq('id', editingTransfer.id);
+
+          if (error) throw error;
+
+          showToast({ type: 'success', title: 'Success', message: 'Fund transfer updated successfully!' });
+        }
       } else {
         // CREATE new transfer + optional petty cash posting atomically in DB
         const { error } = await supabase.rpc('create_fund_transfer_with_posting', {
@@ -440,6 +480,8 @@ export function FundTransferManager({
     } catch (error: any) {
       console.error('Error with fund transfer:', error.message);
       showToast({ type: 'error', title: 'Error', message: 'Failed to save fund transfer: ' + error.message });
+    } finally {
+      setUpdatingLinks(false);
     }
   };
 
@@ -651,8 +693,48 @@ export function FundTransferManager({
           return;
         }
       } catch {
-        // Non-structured database errors continue through the existing toast path.
+        // Non-structured database errors continue through the fallback path.
       }
+
+      const errorMsg = error.message || '';
+      if (
+        errorMsg.includes('unexpected bank statement line') ||
+        errorMsg.includes('bank reconciliation dependency') ||
+        errorMsg.includes('bank statement line is linked')
+      ) {
+        try {
+          const { data: conflictLines } = await supabase
+            .from('bank_statement_lines')
+            .select('id, bank_account_id, transaction_date, debit_amount, credit_amount, description, reconciliation_status, matched_fund_transfer_id, matched_entry_id')
+            .or(`matched_fund_transfer_id.eq.${transfer.id}${transfer.journal_entry_id ? `,matched_entry_id.eq.${transfer.journal_entry_id}` : ''}`)
+            .limit(1);
+
+          if (conflictLines && conflictLines.length > 0) {
+            const line = conflictLines[0];
+            const amount = Number(line.debit_amount || line.credit_amount || transfer.from_amount);
+            const bankAcc = bankAccounts.find(b => b.id === line.bank_account_id);
+            setUndoReverseTarget(null);
+            setUndoReverseReason('');
+            setReconciliationConflict({
+              kind: 'bank_reconciliation_conflict',
+              bank_statement_line_id: line.id,
+              bank_account_id: line.bank_account_id,
+              transaction_date: line.transaction_date,
+              amount: amount,
+              currency: bankAcc?.currency || transfer.from_currency || 'IDR',
+              document_type: 'Fund Transfer',
+              document_number: transfer.transfer_number,
+              journal_entry_id: transfer.journal_entry_id,
+              journal_entry_number: line.description || null,
+              is_unexpected_match: true,
+            });
+            return;
+          }
+        } catch (findErr) {
+          console.error('Error finding conflicting bank line:', findErr);
+        }
+      }
+
       showToast({
         type: 'error',
         title: 'Undo Reverse Blocked',
@@ -816,8 +898,11 @@ export function FundTransferManager({
               header: 'Actions', align: 'center' as const,
               cell: (t: FundTransfer) => (
                 <div className="flex items-center justify-center gap-0.5">
-                  {t.status === 'pending' && (
+                  {['pending', 'draft'].includes(t.status) && (
                     <FinanceActionButton action="edit" label="Edit Transfer" onClick={(e) => { e.stopPropagation(); handleEdit(t); }} />
+                  )}
+                  {t.status === 'posted' && (
+                    <FinanceActionButton action="edit" label="Edit / Link Statement" onClick={(e) => { e.stopPropagation(); handleEdit(t); }} />
                   )}
                   {t.status === 'posted' && (
                     <FinanceActionButton action="view" label="View Transfer" onClick={(e) => { e.stopPropagation(); handleView(t); }} />
@@ -851,11 +936,13 @@ export function FundTransferManager({
         />
       </FinancePage>
 
-      {modalOpen && (
+      {modalOpen && (() => {
+        const isAccountingLocked = !viewOnly && editingTransfer?.status === 'posted';
+        return (
         <FinanceModal
           isOpen={modalOpen}
           onClose={() => { setModalOpen(false); resetForm(); }}
-          title={viewOnly ? "View Fund Transfer" : editingTransfer ? "Edit Fund Transfer" : "New Fund Transfer"}
+          title={viewOnly ? "View Fund Transfer" : isAccountingLocked ? `Link Bank Statement (${editingTransfer?.transfer_number})` : editingTransfer ? "Edit Fund Transfer" : "New Fund Transfer"}
           size="md"
           footer={
             <>
@@ -870,24 +957,46 @@ export function FundTransferManager({
                   Undo Reverse
                 </button>
               )}
+              {viewOnly && editingTransfer?.status === 'posted' && canManage && (
+                <button
+                  type="button"
+                  onClick={() => setViewOnly(false)}
+                  className="inline-flex items-center gap-1 h-7 px-2 border border-blue-300 text-blue-700 bg-blue-50 rounded text-xs font-semibold hover:bg-blue-100"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  Edit / Link Statement
+                </button>
+              )}
               <button type="button" onClick={() => { setModalOpen(false); resetForm(); }} className={F_BTN_SECONDARY}>
                 {viewOnly ? 'Close' : 'Cancel'}
               </button>
               {!viewOnly && (
-                <button type="submit" form="fund-transfer-form" className={F_BTN_PRIMARY}>
-                  {editingTransfer ? 'Update Transfer' : 'Create Transfer'}
+                <button type="submit" form="fund-transfer-form" className={F_BTN_PRIMARY} disabled={updatingLinks}>
+                  {updatingLinks ? 'Saving...' : isAccountingLocked ? 'Save Statement Links' : editingTransfer ? 'Update Transfer' : 'Create Transfer'}
                 </button>
               )}
             </>
           }
         >
-          <form id="fund-transfer-form" onSubmit={handleSubmit} className="flex flex-col gap-1.5">
-          <fieldset disabled={viewOnly} className="contents">
+          <form id="fund-transfer-form" onSubmit={handleSubmit} className="flex flex-col gap-2">
+            {isAccountingLocked && (
+              <div className="text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded p-2.5 flex items-start gap-2">
+                <ShieldAlert className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-blue-900">Posted Voucher Accounting Protection</p>
+                  <p className="text-[11px] text-blue-700 mt-0.5">
+                    Accounting amounts, dates, and accounts are locked in compliance with accounting controls. You can link, change, or unlink the associated bank statement lines below.
+                  </p>
+                </div>
+              </div>
+            )}
+            <fieldset disabled={viewOnly} className="contents">
             {/* Row A: Date · From Type · From Bank */}
             <SapRow>
               <SapField label="Date" required span={4}>
                 <input name="transfer_date" aria-label="Transfer Date" type="date" value={formData.transfer_date}
                   onChange={(e) => setFormData({ ...formData, transfer_date: e.target.value })}
+                  disabled={viewOnly || isAccountingLocked}
                   className={SAP_INPUT} required />
               </SapField>
               <SapField label="From Type" required span={4}>
@@ -897,6 +1006,7 @@ export function FundTransferManager({
                     from_account_type: e.target.value as any,
                     from_bank_account_id: e.target.value === 'bank' ? formData.from_bank_account_id : ''
                   })}
+                  disabled={viewOnly || isAccountingLocked}
                   className={SAP_INPUT} required>
                   <option value="bank">Bank Account</option>
                   <option value="petty_cash">Petty Cash</option>
@@ -909,6 +1019,7 @@ export function FundTransferManager({
                       setFormData({ ...formData, from_bank_account_id: e.target.value, from_bank_statement_line_id: '' });
                       loadBankStatements(e.target.value, 'from');
                     }}
+                    disabled={viewOnly || isAccountingLocked}
                     className={SAP_INPUT} required>
                     <option value="">Select</option>
                     {bankAccounts.map((bank) => (
@@ -935,6 +1046,7 @@ export function FundTransferManager({
                       setFormData({ ...formData, from_amount: newAmount });
                     }
                   }}
+                  disabled={viewOnly || isAccountingLocked}
                   className={SAP_INPUT + ' !text-right !font-mono !font-semibold'} required />
               </SapField>
               <SapField label="To Type" required span={4}>
@@ -944,6 +1056,7 @@ export function FundTransferManager({
                     to_account_type: e.target.value as any,
                     to_bank_account_id: e.target.value === 'bank' ? formData.to_bank_account_id : ''
                   })}
+                  disabled={viewOnly || isAccountingLocked}
                   className={SAP_INPUT} required>
                   <option value="petty_cash">Petty Cash</option>
                   <option value="bank">Bank Account</option>
@@ -956,6 +1069,7 @@ export function FundTransferManager({
                       setFormData({ ...formData, to_bank_account_id: e.target.value, to_bank_statement_line_id: '' });
                       loadBankStatements(e.target.value, 'to');
                     }}
+                    disabled={viewOnly || isAccountingLocked}
                     className={SAP_INPUT} required>
                     <option value="">Select</option>
                     {bankAccounts.map((bank) => (
@@ -978,42 +1092,69 @@ export function FundTransferManager({
                 ) : null}>
                 <MoneyInput decimal value={formData.to_amount}
                   onChange={(n) => setFormData({ ...formData, to_amount: n })}
+                  disabled={viewOnly || isAccountingLocked}
                   className={SAP_INPUT + ' !text-right !font-mono !font-semibold'} required />
               </SapField>
               {formData.from_bank_account_id && (
                 <SapField label="From Bank Stmt" span={4}>
-                  {fromBankStatements.length > 0 ? (
-                    <select name="from_bank_statement_line_id" aria-label="From Bank Statement Line Id" value={formData.from_bank_statement_line_id}
-                      onChange={(e) => setFormData({ ...formData, from_bank_statement_line_id: e.target.value })}
-                      className={SAP_INPUT}>
-                      <option value="">No link</option>
-                      {fromBankStatements.map((stmt) => (
-                        <option key={stmt.id} value={stmt.id}>
-                          {formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getFromCurrency(), stmt.debit_amount || stmt.credit_amount || 0)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className={SAP_INPUT + ' !bg-gray-50 !text-gray-400 italic flex items-center'}>No unlinked txn</div>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {fromBankStatements.length > 0 ? (
+                      <select name="from_bank_statement_line_id" aria-label="From Bank Statement Line Id" value={formData.from_bank_statement_line_id}
+                        onChange={(e) => setFormData({ ...formData, from_bank_statement_line_id: e.target.value })}
+                        disabled={viewOnly}
+                        className={SAP_INPUT}>
+                        <option value="">No link</option>
+                        {fromBankStatements.map((stmt) => (
+                          <option key={stmt.id} value={stmt.id}>
+                            {formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getFromCurrency(), stmt.debit_amount || stmt.credit_amount || 0)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className={SAP_INPUT + ' !bg-gray-50 !text-gray-400 italic flex items-center'}>No unlinked txn</div>
+                    )}
+                    {!viewOnly && formData.from_bank_statement_line_id && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, from_bank_statement_line_id: '' })}
+                        className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded shrink-0"
+                        title="Unlink statement line"
+                      >
+                        <Unlink className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </SapField>
               )}
               {formData.to_bank_account_id && (
                 <SapField label="To Bank Stmt" span={4}>
-                  {toBankStatements.length > 0 ? (
-                    <select name="to_bank_statement_line_id" aria-label="To Bank Statement Line Id" value={formData.to_bank_statement_line_id}
-                      onChange={(e) => setFormData({ ...formData, to_bank_statement_line_id: e.target.value })}
-                      className={SAP_INPUT}>
-                      <option value="">No link</option>
-                      {toBankStatements.map((stmt) => (
-                        <option key={stmt.id} value={stmt.id}>
-                          {formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getToCurrency(), stmt.debit_amount || stmt.credit_amount || 0)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className={SAP_INPUT + ' !bg-gray-50 !text-gray-400 italic flex items-center'}>No unlinked txn</div>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {toBankStatements.length > 0 ? (
+                      <select name="to_bank_statement_line_id" aria-label="To Bank Statement Line Id" value={formData.to_bank_statement_line_id}
+                        onChange={(e) => setFormData({ ...formData, to_bank_statement_line_id: e.target.value })}
+                        disabled={viewOnly}
+                        className={SAP_INPUT}>
+                        <option value="">No link</option>
+                        {toBankStatements.map((stmt) => (
+                          <option key={stmt.id} value={stmt.id}>
+                            {formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getToCurrency(), stmt.debit_amount || stmt.credit_amount || 0)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className={SAP_INPUT + ' !bg-gray-50 !text-gray-400 italic flex items-center'}>No unlinked txn</div>
+                    )}
+                    {!viewOnly && formData.to_bank_statement_line_id && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, to_bank_statement_line_id: '' })}
+                        className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded shrink-0"
+                        title="Unlink statement line"
+                      >
+                        <Unlink className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </SapField>
               )}
             </SapRow>
@@ -1022,11 +1163,12 @@ export function FundTransferManager({
               <SapField label="Description" span={12}>
                 <input name="description" aria-label="Purpose of transfer (optional)" type="text" value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  disabled={viewOnly || isAccountingLocked}
                   className={SAP_INPUT} placeholder="Purpose of transfer (optional)" />
               </SapField>
             </SapRow>
 
-            {!viewOnly && (
+            {!viewOnly && !isAccountingLocked && (
               <p className="text-[10px] text-blue-800 bg-blue-50 border border-blue-200 rounded px-2 py-1">
                 <ArrowRightLeft className="w-3 h-3 inline mr-1" />
                 Journal entry will be posted automatically when the transfer is saved. Both accounts update immediately.
@@ -1036,7 +1178,8 @@ export function FundTransferManager({
 
           </form>
         </FinanceModal>
-      )}
+        );
+      })()}
 
       {undoReverseTarget && (
         <FinanceModal
@@ -1111,6 +1254,51 @@ export function FundTransferManager({
               >
                 Close
               </button>
+              {reconciliationConflict.is_unexpected_match && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setResolvingConflict(true);
+                    try {
+                      await unlinkBankStatementLine(reconciliationConflict.bank_statement_line_id);
+                      notifyFinanceReconciliationRefresh();
+                      showToast({
+                        type: 'success',
+                        title: 'Statement Line Unlinked',
+                        message: 'Unlinked bank statement line. Restoring Contra voucher...',
+                      });
+                      const targetTransfer = transfers.find((t) => t.transfer_number === reconciliationConflict.document_number);
+                      if (targetTransfer) {
+                        const { error: undoErr } = await supabase.rpc('undo_reverse_fund_transfer', {
+                          p_id: targetTransfer.id,
+                          p_reason: 'Resolved unexpected statement line dependency',
+                        });
+                        if (undoErr) throw undoErr;
+                        showToast({
+                          type: 'success',
+                          title: 'Reversal Undone',
+                          message: `${reconciliationConflict.document_number} restored to Posted successfully.`,
+                        });
+                        await loadData();
+                      }
+                      setReconciliationConflict(null);
+                    } catch (err: any) {
+                      showToast({
+                        type: 'error',
+                        title: 'Resolution Failed',
+                        message: err.message || 'Could not unlink statement line or undo reversal.',
+                      });
+                    } finally {
+                      setResolvingConflict(false);
+                    }
+                  }}
+                  disabled={resolvingConflict}
+                  className="inline-flex items-center gap-1 h-8 px-3 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700 disabled:opacity-50"
+                >
+                  <Unlink className="w-3.5 h-3.5" />
+                  {resolvingConflict ? 'Restoring...' : 'Unlink Line & Restore Contra'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
