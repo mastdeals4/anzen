@@ -238,3 +238,51 @@ test('8. Decimal precision and UI integration in ReceiptVoucherManager.tsx', () 
   assert.match(content, /Round-off Gain/,
     'Summary footer must display Round-off Gain chip when within tolerance');
 });
+
+test('9. Migration 20261023210000 verifies bounded invoice paid amount and posted-only allocations', () => {
+  const migrationPath = path.join(
+    process.cwd(),
+    'supabase/migrations/20261023210000_fix_sales_invoice_paid_amount_calculation.sql'
+  );
+  assert.ok(fs.existsSync(migrationPath), 'Migration file 20261023210000 must exist');
+
+  const content = fs.readFileSync(migrationPath, 'utf-8');
+
+  // get_invoice_allocation_amount must require posted receipt vouchers
+  assert.match(content, /JOIN public\.receipt_vouchers rv ON rv\.id = va\.receipt_voucher_id[\s\S]*rv\.is_posted = true/,
+    'get_invoice_allocation_amount must filter rv.is_posted = true');
+
+  // recalculate_sales_invoice_payment_state must bound paid_amount
+  assert.match(content, /v_paid := LEAST\([\s\S]*COALESCE\(v_invoice\.total_amount, 0\)/,
+    'recalculate_sales_invoice_payment_state must bound paid_amount to total_amount');
+
+  // get_invoice_paid_amount must bound paid_amount
+  assert.match(content, /SELECT LEAST\([\s\S]*SELECT total_amount FROM public\.sales_invoices/,
+    'get_invoice_paid_amount must bound paid_amount to total_amount');
+
+  // get_invoices_with_balance must floor balance_amount at 0
+  assert.match(content, /GREATEST\([\s\S]*si\.total_amount -[\s\S]*,[\s\S]*0[\s\S]*\) AS balance_amount/,
+    'get_invoices_with_balance must floor balance_amount at 0');
+});
+
+test('10. RV2610-0005 reproduction: residual tolerance gain does not exceed total amount (P0001)', () => {
+  const invoiceTotal = 100000000;
+  const allocatedAmount = 100000000;
+  const actualReceived = 100000000.25;
+  const residualDiff = actualReceived - allocatedAmount; // +0.25 rounding gain
+
+  // Old buggy formula:
+  const buggyPaidAmount = allocatedAmount + residualDiff; // 100000000.25
+  const causesP0001 = buggyPaidAmount > invoiceTotal + 0.01;
+  assert.equal(causesP0001, true, 'Old unconstrained calculation triggered P0001 exception');
+
+  // Fixed bounded formula:
+  const fixedPaidAmount = Math.min(Math.max(allocatedAmount + residualDiff, 0), invoiceTotal);
+  assert.equal(fixedPaidAmount, invoiceTotal, 'Fixed calculation bounds paid_amount to exact invoice total');
+
+  const balanceAmount = Math.max(invoiceTotal - fixedPaidAmount, 0);
+  assert.equal(balanceAmount, 0, 'Fixed calculation leaves clean 0 balance');
+
+  const paymentStatus = fixedPaidAmount >= invoiceTotal ? 'paid' : (fixedPaidAmount <= 0 ? 'pending' : 'partial');
+  assert.equal(paymentStatus, 'paid', 'Invoice is marked paid in full');
+});

@@ -804,8 +804,8 @@ export function ReceiptVoucherManager({
     const confirmed = await showConfirm({
       title: 'Link Receipt to Bank Statement',
       message: `Link ${selectedVoucher.voucher_number} to the bank transaction dated ${line.transaction_date}, amount ${formatCurrency(lineAmount, voucherCurrency(selectedVoucher))}? The posted journal will not be changed.`,
-      confirmText: 'Link Transaction',
-      cancelText: 'Cancel',
+      confirmLabel: 'Link Transaction',
+      cancelLabel: 'Cancel',
     });
     if (!confirmed) return;
     setReceiptBankLinkLoading(true);
