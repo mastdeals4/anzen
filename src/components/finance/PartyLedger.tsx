@@ -54,6 +54,9 @@ interface ImportCostEntry {
   payment_status: 'paid' | 'unpaid' | 'partial';
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (val?: string | null): boolean => Boolean(val && UUID_REGEX.test(val.trim()));
+
 export default function PartyLedger() {
   const { dateRange: globalDateRange } = useFinance();
   const printRef = useRef<HTMLDivElement>(null);
@@ -183,7 +186,7 @@ export default function PartyLedger() {
           id: d.id,
           expense_date: d.expense_date,
           voucher_number: d.voucher_number || '',
-          invoice_number: d.invoice_number || '',
+          invoice_number: (!d.invoice_number || isUuid(d.invoice_number)) ? (d.voucher_number || '') : d.invoice_number,
           category: d.expense_category,
           description: d.description || '',
           bm_amount: Number(d.pib_bm_amount || 0),
@@ -370,7 +373,7 @@ export default function PartyLedger() {
             id: bill.id,
             entry_date: bill.expense_date,
             particulars: `Expense Bill - ${(bill.expense_category || '').replace(/_/g, ' ')}${outstanding <= 0.01 ? ' (Paid)' : ''}`,
-            reference: bill.invoice_number || bill.voucher_number || '',
+            reference: (!bill.invoice_number || isUuid(bill.invoice_number)) ? (bill.voucher_number || '') : (bill.voucher_number || bill.invoice_number || ''),
             currency,
             debit: 0,
             credit: payable,
@@ -388,7 +391,7 @@ export default function PartyLedger() {
       if (!isUsdSupplier) {
         const brokerLinesQuery = supabase
           .from('journal_entry_lines')
-          .select('id, entry_date:journal_entries!inner(entry_date), debit, credit, description, journal_entry_id, journal_entries!inner(reference_number, transaction_category, is_posted, is_reversed), chart_of_accounts!inner(code)')
+          .select('id, entry_date:journal_entries!inner(entry_date), debit, credit, description, journal_entry_id, journal_entries!inner(reference_id, reference_number, entry_number, transaction_category, is_posted, is_reversed), chart_of_accounts!inner(code)')
           .eq('supplier_id', selectedParty)
           .eq('journal_entries.transaction_category', 'import_broker')
           .eq('chart_of_accounts.code', '2110')
@@ -396,15 +399,58 @@ export default function PartyLedger() {
           .eq('journal_entries.is_reversed', false);
         const brokerLines = await dateRange(brokerLinesQuery, 'journal_entries.entry_date');
         if (brokerLines.data) {
+          const brokerExpIds = Array.from(new Set(
+            brokerLines.data
+              .map((line: any) => {
+                const rawRef = line.journal_entries?.reference_number || '';
+                if (rawRef.startsWith('EXP-')) {
+                  const sub = rawRef.substring(4);
+                  if (isUuid(sub)) return sub;
+                }
+                if (isUuid(line.journal_entries?.reference_id)) {
+                  return line.journal_entries.reference_id;
+                }
+                return null;
+              })
+              .filter(Boolean)
+          )) as string[];
+
+          let brokerExpMap: Record<string, string> = {};
+          if (brokerExpIds.length > 0) {
+            const { data: bExps } = await supabase
+              .from('finance_expenses')
+              .select('id, voucher_number, invoice_number')
+              .in('id', brokerExpIds);
+            if (bExps) {
+              brokerExpMap = Object.fromEntries(
+                bExps.map((e: any) => [
+                  e.id,
+                  e.voucher_number || (!isUuid(e.invoice_number) ? e.invoice_number : '') || ''
+                ])
+              );
+            }
+          }
+
           brokerLines.data.forEach((line: any) => {
             const entryDate = line.entry_date?.entry_date || line.journal_entries?.entry_date;
             const lineDebit = Number(line.debit || 0);
             const lineCredit = Number(line.credit || 0);
+            const rawRef = line.journal_entries?.reference_number || '';
+            let brokerRef = rawRef;
+            if (rawRef.startsWith('EXP-')) {
+              const sub = rawRef.substring(4);
+              brokerRef = brokerExpMap[sub] || (!isUuid(sub) ? sub : (line.journal_entries?.entry_number || ''));
+            } else if (line.journal_entries?.reference_id && brokerExpMap[line.journal_entries.reference_id]) {
+              brokerRef = brokerExpMap[line.journal_entries.reference_id];
+            } else if (isUuid(rawRef)) {
+              brokerRef = brokerExpMap[rawRef] || line.journal_entries?.entry_number || '';
+            }
+
             entries.push({
               id: `${line.journal_entry_id}:${line.id}`,
               entry_date: entryDate,
               particulars: line.description || 'Customs Broker Invoice',
-              reference: line.journal_entries?.reference_number || '',
+              reference: brokerRef,
               currency: 'IDR',
               debit: lineDebit,
               credit: lineCredit,
@@ -488,7 +534,7 @@ export default function PartyLedger() {
             id: bill.id,
             entry_date: bill.expense_date,
             particulars: `${(bill.expense_category || '').replace(/_/g, ' ')} Bill${outstanding <= 0.01 ? ' (Paid)' : ''}${currencyDetail(payable, currency, bill.exchange_rate)}`,
-            reference: bill.invoice_number || bill.voucher_number || '',
+            reference: (!bill.invoice_number || isUuid(bill.invoice_number)) ? (bill.voucher_number || '') : (bill.voucher_number || bill.invoice_number || ''),
             debit: 0,
             credit: toFunctionalIDR(payable, currency, bill.exchange_rate),
             running_balance: 0,
@@ -516,7 +562,7 @@ export default function PartyLedger() {
             id: adv.id,
             entry_date: adv.expense_date,
             particulars: `Staff Advance Given${currencyDetail(adv.amount, currency, adv.exchange_rate)}`,
-            reference: adv.invoice_number || adv.voucher_number || '',
+            reference: (!adv.invoice_number || isUuid(adv.invoice_number)) ? (adv.voucher_number || '') : (adv.voucher_number || adv.invoice_number || ''),
             debit: toFunctionalIDR(adv.amount, currency, adv.exchange_rate),
             credit: 0,
             running_balance: 0,
@@ -546,7 +592,7 @@ export default function PartyLedger() {
             particulars: isAdjustment
               ? `Less Salary Advance${currencyDetail(pv.amount, currency, pv.exchange_rate)}`
               : `${pv.description || 'Payment to Staff'}${currencyDetail(pv.amount, currency, pv.exchange_rate)}`,
-            reference: pv.voucher_number,
+            reference: (!pv.voucher_number || isUuid(pv.voucher_number)) ? '' : pv.voucher_number,
             debit: functionalAmount,
             credit: 0,
             running_balance: 0,
@@ -612,7 +658,98 @@ export default function PartyLedger() {
     }
 
     entries.sort((a, b) => new Date(a.entry_date).getTime() - new Date(b.entry_date).getTime());
-    return entries;
+    return resolveCanonicalReferences(entries);
+  };
+
+  const resolveCanonicalReferences = async (entries: LedgerEntry[]): Promise<LedgerEntry[]> => {
+    if (!entries.length) return entries;
+
+    const expenseUuids = new Set<string>();
+    const paymentUuids = new Set<string>();
+    const invoiceUuids = new Set<string>();
+
+    entries.forEach(entry => {
+      const ref = (entry.reference || '').trim();
+      if (!ref) return;
+      if (ref.startsWith('EXP-')) {
+        const idPart = ref.substring(4);
+        if (isUuid(idPart)) expenseUuids.add(idPart);
+      } else if (ref.startsWith('PV-')) {
+        const idPart = ref.substring(3);
+        if (isUuid(idPart)) paymentUuids.add(idPart);
+      } else if (isUuid(ref)) {
+        if (entry.type === 'payment') {
+          paymentUuids.add(ref);
+          expenseUuids.add(ref);
+        } else {
+          expenseUuids.add(ref);
+          invoiceUuids.add(ref);
+        }
+      }
+    });
+
+    const [expMap, pvMap, piMap, siMap] = await Promise.all([
+      expenseUuids.size > 0
+        ? supabase
+            .from('finance_expenses')
+            .select('id, voucher_number, invoice_number')
+            .in('id', Array.from(expenseUuids))
+            .then(res => Object.fromEntries((res.data || []).map((x: any) => [x.id, x.voucher_number || (!isUuid(x.invoice_number) ? x.invoice_number : '') || ''])))
+        : Promise.resolve({} as Record<string, string>),
+      paymentUuids.size > 0
+        ? supabase
+            .from('payment_vouchers')
+            .select('id, voucher_number')
+            .in('id', Array.from(paymentUuids))
+            .then(res => Object.fromEntries((res.data || []).map((x: any) => [x.id, x.voucher_number || ''])))
+        : Promise.resolve({} as Record<string, string>),
+      invoiceUuids.size > 0
+        ? supabase
+            .from('purchase_invoices')
+            .select('id, invoice_number')
+            .in('id', Array.from(invoiceUuids))
+            .then(res => Object.fromEntries((res.data || []).map((x: any) => [x.id, x.invoice_number || ''])))
+        : Promise.resolve({} as Record<string, string>),
+      invoiceUuids.size > 0
+        ? supabase
+            .from('sales_invoices')
+            .select('id, invoice_number')
+            .in('id', Array.from(invoiceUuids))
+            .then(res => Object.fromEntries((res.data || []).map((x: any) => [x.id, x.invoice_number || ''])))
+        : Promise.resolve({} as Record<string, string>),
+    ]);
+
+    return entries.map(entry => {
+      let ref = (entry.reference || '').trim();
+      if (ref.startsWith('EXP-')) {
+        const idPart = ref.substring(4);
+        if (isUuid(idPart) && expMap[idPart]) {
+          ref = expMap[idPart];
+        }
+      } else if (ref.startsWith('PV-')) {
+        const idPart = ref.substring(3);
+        if (isUuid(idPart) && pvMap[idPart]) {
+          ref = pvMap[idPart];
+        }
+      } else if (isUuid(ref)) {
+        ref = expMap[ref] || pvMap[ref] || piMap[ref] || siMap[ref] || '';
+      }
+
+      let particulars = entry.particulars;
+      if (particulars && particulars.includes('Salary Advance Recovery - ')) {
+        const parts = particulars.split('Salary Advance Recovery - ');
+        const candidateUuid = parts[1]?.trim();
+        if (isUuid(candidateUuid) && expMap[candidateUuid]) {
+          particulars = `${parts[0]}Salary Advance Recovery - ${expMap[candidateUuid]}`;
+        }
+      }
+
+      return {
+        ...entry,
+        reference: ref,
+        particulars,
+      };
+    });
   };
 
   const loadLedgerEntries = async () => {

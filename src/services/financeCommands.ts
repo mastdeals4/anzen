@@ -164,7 +164,7 @@ export const savePaymentVoucher = (
 });
 
 export interface SettlementAdjustmentCommand {
-  documentType: 'purchase' | 'sales';
+  documentType: 'purchase' | 'sales' | 'sales_order';
   invoiceId: string;
   voucherId?: string | null;
   amount?: number | null;

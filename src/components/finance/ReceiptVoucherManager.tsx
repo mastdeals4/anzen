@@ -396,7 +396,7 @@ export function ReceiptVoucherManager({
       let adjType = patch?.adjustmentType !== undefined ? patch.adjustmentType : (existing?.adjustmentType || 'rounding');
       const adjReason = patch?.adjustmentReason !== undefined ? patch.adjustmentReason : (existing?.adjustmentReason || '');
 
-      if (targetType === 'invoice' && patch?.roundOffAmount === undefined && patch?.discountAmount === undefined) {
+      if ((targetType === 'invoice' || targetType === 'salesorder') && patch?.roundOffAmount === undefined && patch?.discountAmount === undefined) {
         const residual = Math.round((balance - allocated) * 100) / 100;
         if (allocated > 0 && Math.abs(residual) > 0 && Math.abs(residual) <= roundingTolerance && discount === 0) {
           roundOff = residual;
@@ -435,24 +435,24 @@ export function ReceiptVoucherManager({
   const voucherCurrency = (voucher: ReceiptVoucher) => voucher.bank_accounts?.currency || 'IDR';
 
   const getInvoiceAllocationPreview = (target: AllocationTarget) => {
-    if (target.type !== 'invoice') {
-      return { roundingAdjustment: 0, discountAdjustment: 0, finalBalance: 0, invoiceClosed: false };
-    }
+    const balance = target.type === 'invoice'
+      ? (target as SalesInvoice & { type: 'invoice' }).balance_amount
+      : (target as SalesOrder & { type: 'salesorder' }).balance_due;
 
     const alloc = allocations.find(a => a.targetId === target.id);
     const allocated = alloc?.amount || 0;
     const roundOff = alloc?.roundOffAmount || 0;
     const discount = alloc?.discountAmount || 0;
-    const residual = Math.round((target.balance_amount - allocated) * 100) / 100;
+    const residual = Math.round((balance - allocated) * 100) / 100;
     const withinTolerance = allocated > 0 && Math.abs(residual) > 0 && Math.abs(residual) <= roundingTolerance;
     const effectiveRoundOff = alloc ? roundOff : (withinTolerance ? residual : 0);
-    const finalBalance = Math.max(0, Math.round((target.balance_amount - allocated - effectiveRoundOff - discount) * 100) / 100);
+    const finalBalance = Math.max(0, Math.round((balance - allocated - effectiveRoundOff - discount) * 100) / 100);
 
     return {
       roundingAdjustment: effectiveRoundOff,
       discountAdjustment: discount,
       finalBalance,
-      invoiceClosed: finalBalance === 0 && (allocated > 0 || effectiveRoundOff > 0 || discount > 0),
+      invoiceClosed: (finalBalance === 0 && (allocated > 0 || effectiveRoundOff > 0 || discount > 0)) || (allocated >= balance && balance > 0),
     };
   };
 
@@ -489,6 +489,16 @@ export function ReceiptVoucherManager({
 
     if (allocations.length > 0 && totalAllocated > formData.amount) {
       showToast({ type: 'error', title: 'Error', message: 'Total allocated amount cannot exceed payment amount' });
+      return;
+    }
+
+    const unallocatedDifference = Math.round((formData.amount - totalAllocated) * 100) / 100;
+    if (allocations.length > 0 && unallocatedDifference > roundingTolerance) {
+      showToast({
+        type: 'error',
+        title: 'Rounding Tolerance Exceeded',
+        message: `Unallocated receipt difference of ${formatCurrency(unallocatedDifference, formCurrency)} exceeds configured rounding tolerance of ${formatCurrency(roundingTolerance, formCurrency)}.`,
+      });
       return;
     }
 
@@ -561,24 +571,22 @@ export function ReceiptVoucherManager({
 
       // Persist settlement round-off or commercial discount adjustments
       for (const alloc of allocations) {
-        if (alloc.targetType === 'invoice') {
-          const roundOff = alloc.roundOffAmount || 0;
-          const discount = alloc.discountAmount || 0;
-          const totalAdj = Math.round((roundOff + discount) * 100) / 100;
-          if (totalAdj > 0) {
-            const adjType = discount > 0 ? (alloc.adjustmentType || 'discount') : 'rounding';
-            const reason = discount > 0
-              ? (alloc.adjustmentReason?.trim() || 'Commercial discount')
-              : 'invoice_rounding_tolerance';
-            await applySettlementAdjustment({
-              documentType: 'sales',
-              invoiceId: alloc.targetId,
-              voucherId: savedVoucherId,
-              amount: totalAdj,
-              adjustmentType: adjType,
-              reason,
-            });
-          }
+        const roundOff = alloc.roundOffAmount || 0;
+        const discount = alloc.discountAmount || 0;
+        const totalAdj = Math.round((roundOff + discount) * 100) / 100;
+        if (totalAdj > 0) {
+          const adjType = discount > 0 ? (alloc.adjustmentType || 'discount') : 'rounding';
+          const reason = discount > 0
+            ? (alloc.adjustmentReason?.trim() || 'Commercial discount')
+            : 'invoice_rounding_tolerance';
+          await applySettlementAdjustment({
+            documentType: 'sales',
+            invoiceId: alloc.targetId,
+            voucherId: savedVoucherId,
+            amount: totalAdj,
+            adjustmentType: adjType,
+            reason,
+          });
         }
       }
 
@@ -1182,62 +1190,48 @@ export function ReceiptVoucherManager({
                             />
                           </td>
                           <td className="px-2 py-2 text-right">
-                            {target.type === 'invoice' ? (
+                            <MoneyInput
+                              decimal
+                              min={0}
+                              max={Math.min(roundingTolerance, Math.max(0, balance - allocatedAmount))}
+                              value={roundOff}
+                              onChange={(r) => handleAllocationChange(target.id, target.type, allocatedAmount, { roundOffAmount: r, adjustmentType: 'rounding' })}
+                              className="w-20 px-1.5 py-1 border rounded text-right text-xs text-amber-700 bg-amber-50/30"
+                              placeholder="0"
+                            />
+                          </td>
+                          <td className="px-2 py-2 text-right">
+                            <div className="flex flex-col items-end gap-1">
                               <MoneyInput
                                 decimal
                                 min={0}
-                                max={Math.min(roundingTolerance, Math.max(0, balance - allocatedAmount))}
-                                value={roundOff}
-                                onChange={(r) => handleAllocationChange(target.id, target.type, allocatedAmount, { roundOffAmount: r, adjustmentType: 'rounding' })}
-                                className="w-20 px-1.5 py-1 border rounded text-right text-xs text-amber-700 bg-amber-50/30"
+                                max={Math.max(0, balance - allocatedAmount - roundOff)}
+                                value={discount}
+                                onChange={(d) => handleAllocationChange(target.id, target.type, allocatedAmount, { discountAmount: d, adjustmentType: 'discount' })}
+                                className="w-20 px-1.5 py-1 border rounded text-right text-xs text-purple-700 bg-purple-50/30"
                                 placeholder="0"
                               />
-                            ) : (
-                              <span className="text-gray-400 text-xs">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2 text-right">
-                            {target.type === 'invoice' ? (
-                              <div className="flex flex-col items-end gap-1">
-                                <MoneyInput
-                                  decimal
-                                  min={0}
-                                  max={Math.max(0, balance - allocatedAmount - roundOff)}
-                                  value={discount}
-                                  onChange={(d) => handleAllocationChange(target.id, target.type, allocatedAmount, { discountAmount: d, adjustmentType: 'discount' })}
-                                  className="w-20 px-1.5 py-1 border rounded text-right text-xs text-purple-700 bg-purple-50/30"
-                                  placeholder="0"
+                              {discount > 0 && (
+                                <input
+                                  type="text"
+                                  placeholder="Reason (req)*"
+                                  value={thisAlloc?.adjustmentReason || ''}
+                                  onChange={(e) => handleAllocationChange(target.id, target.type, allocatedAmount, { adjustmentReason: e.target.value })}
+                                  className="w-28 text-[10px] px-1 py-0.5 border border-purple-300 rounded bg-white text-gray-800"
+                                  title="Approved reason for commercial discount/write-off"
                                 />
-                                {discount > 0 && (
-                                  <input
-                                    type="text"
-                                    placeholder="Reason (req)*"
-                                    value={thisAlloc?.adjustmentReason || ''}
-                                    onChange={(e) => handleAllocationChange(target.id, target.type, allocatedAmount, { adjustmentReason: e.target.value })}
-                                    className="w-28 text-[10px] px-1 py-0.5 border border-purple-300 rounded bg-white text-gray-800"
-                                    title="Approved reason for commercial discount/write-off"
-                                  />
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-gray-400 text-xs">-</span>
-                            )}
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {target.type === 'invoice' ? (
-                              <div>
-                                <div className={`font-semibold text-xs ${finalBalance === 0 ? 'text-green-700' : 'text-gray-700'}`}>
-                                  {formatCurrency(finalBalance, formCurrency)}
-                                </div>
-                                <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-medium ${isSettled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                  {isSettled ? 'Settled' : 'Partial'}
-                                </span>
+                            <div>
+                              <div className={`font-semibold text-xs ${finalBalance === 0 ? 'text-green-700' : 'text-gray-700'}`}>
+                                {formatCurrency(finalBalance, formCurrency)}
                               </div>
-                            ) : (
-                              <div className="text-xs text-gray-700 font-medium">
-                                {formatCurrency(Math.max(0, balance - allocatedAmount), formCurrency)}
-                              </div>
-                            )}
+                              <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-medium ${isSettled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                {isSettled ? 'Settled' : 'Partial'}
+                              </span>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1253,23 +1247,48 @@ export function ReceiptVoucherManager({
                   )}
                 </div>
               )}
-              <div className="mt-3 flex flex-wrap justify-between items-center text-sm gap-2">
-                <div className="flex gap-3 text-xs text-gray-600">
-                  <span><strong className="text-gray-900">{allocations.length}</strong> allocation(s)</span>
-                  {totalRoundOff > 0 && <span>Round-off: <strong className="text-amber-700">{formatCurrency(totalRoundOff, formCurrency)}</strong></span>}
-                  {totalDiscount > 0 && <span>Discount: <strong className="text-purple-700">{formatCurrency(totalDiscount, formCurrency)}</strong></span>}
-                </div>
-                <div className="text-right">
-                  <span className="text-gray-500 text-xs">Total Allocated:</span>
-                  <span className={`ml-2 font-bold text-base ${totalAllocated > formData.amount ? 'text-red-600' : 'text-green-600'}`}>
-                    {formatCurrency(totalAllocated, formCurrency)}
-                  </span>
-                  <span className="text-gray-400 ml-1 text-xs">/ {formatCurrency(formData.amount, formCurrency)}</span>
-                </div>
-              </div>
-              <div className="mt-2 text-xs text-gray-500">
-                Rounding tolerance: Rp {roundingTolerance.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
+              {(() => {
+                const diff = Math.round((formData.amount - totalAllocated) * 100) / 100;
+                const isResidualWithinTol = allocations.length > 0 && diff > 0 && diff <= roundingTolerance;
+                const isResidualExceeding = allocations.length > 0 && diff > roundingTolerance;
+
+                return (
+                  <>
+                    <div className="mt-3 flex flex-wrap justify-between items-center text-sm gap-2">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                        <span><strong className="text-gray-900">{allocations.length}</strong> allocation(s)</span>
+                        {totalRoundOff > 0 && <span>Doc Round-off: <strong className="text-amber-700">{formatCurrency(totalRoundOff, formCurrency)}</strong></span>}
+                        {totalDiscount > 0 && <span>Discount: <strong className="text-purple-700">{formatCurrency(totalDiscount, formCurrency)}</strong></span>}
+                        {isResidualWithinTol && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-amber-50 border border-amber-300 text-amber-800 font-medium">
+                            +{formatCurrency(diff, formCurrency)} Round-off Gain
+                          </span>
+                        )}
+                        {isResidualExceeding && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-red-50 border border-red-300 text-red-700 font-medium">
+                            Unallocated {formatCurrency(diff, formCurrency)} exceeds tolerance ({formatCurrency(roundingTolerance, formCurrency)})
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-gray-500 text-xs">Total Allocated:</span>
+                        <span className={`ml-2 font-bold text-base ${totalAllocated > formData.amount ? 'text-red-600' : (isResidualWithinTol || totalAllocated === formData.amount ? 'text-green-600' : 'text-gray-800')}`}>
+                          {formatCurrency(totalAllocated, formCurrency)}
+                        </span>
+                        <span className="text-gray-400 ml-1 text-xs">/ {formatCurrency(formData.amount, formCurrency)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between text-xs text-gray-500 gap-1">
+                      <span>Rounding tolerance: Rp {roundingTolerance.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      {isResidualWithinTol && (
+                        <span className="text-green-700 font-medium">
+                          Residual difference within tolerance will be recorded as Rounding Gain.
+                        </span>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
