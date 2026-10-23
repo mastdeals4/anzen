@@ -580,7 +580,7 @@ export function ReceiptVoucherManager({
             ? (alloc.adjustmentReason?.trim() || 'Commercial discount')
             : 'invoice_rounding_tolerance';
           await applySettlementAdjustment({
-            documentType: 'sales',
+            documentType: alloc.targetType === 'salesorder' ? 'sales_order' : 'sales',
             invoiceId: alloc.targetId,
             voucherId: savedVoucherId,
             amount: totalAdj,
