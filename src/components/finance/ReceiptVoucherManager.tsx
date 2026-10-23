@@ -354,9 +354,24 @@ export function ReceiptVoucherManager({
       const uniqueSOs = Array.from(new Map(allSOs.map(so => [so.id, so])).values())
         .filter(so => so.advance_payment_status !== 'full');
 
+      // A Sales Order is an advance-payment target only until an invoice exists.
+      // Once invoiced, collect against the invoice balance instead of showing
+      // the same commercial transaction a second time as "SO (Advance)".
+      // Preserve SOs already allocated to this receipt so legacy allocations
+      // remain visible/editable and are not silently discarded.
+      const existingAllocatedSoIds = new Set(additionalSOs.map(so => so.id));
+      const { data: invoicedOrderRows, error: invoicedOrderError } = await supabase
+        .from('sales_invoices')
+        .select('sales_order_id')
+        .eq('customer_id', customerId)
+        .not('sales_order_id', 'is', null);
+      if (invoicedOrderError) throw invoicedOrderError;
+      const invoicedOrderIds = new Set((invoicedOrderRows || []).map((row: any) => row.sales_order_id).filter(Boolean));
+      const eligibleSOs = uniqueSOs.filter(so => !invoicedOrderIds.has(so.id) || existingAllocatedSoIds.has(so.id));
+
       // Combine both into allocation targets
       const targets: AllocationTarget[] = [
-        ...uniqueSOs.map(so => ({
+        ...eligibleSOs.map(so => ({
           ...so,
           balance_due: so.total_amount - (so.advance_payment_amount || 0),
           type: 'salesorder' as const
