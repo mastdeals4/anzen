@@ -46,6 +46,7 @@ export function CrmCustomersWorkspace({
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomerForDrawer, setSelectedCustomerForDrawer] = useState<CustomerDetail | null>(null);
   const [viewMode, setViewMode] = useState<'directory' | 'excel'>('excel');
+  const [excelRefreshKey, setExcelRefreshKey] = useState(0);
 
   // Checkbox selections for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -202,6 +203,7 @@ export function CrmCustomersWorkspace({
       setNewPhone('');
       setNewCity('');
       loadCustomers();
+      setExcelRefreshKey(k => k + 1);
 
       if (data) {
         setSelectedCustomerForDrawer(data as CustomerDetail);
@@ -290,13 +292,16 @@ export function CrmCustomersWorkspace({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search company, contact person, email, phone..."
+              placeholder="Search customers by company, contact person, email, phone or city..."
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
             />
           </div>
 
           <button
-            onClick={loadCustomers}
+            onClick={() => {
+              loadCustomers();
+              setExcelRefreshKey(k => k + 1);
+            }}
             disabled={loading}
             className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded border border-gray-200 transition"
             title="Refresh Customers"
@@ -313,7 +318,7 @@ export function CrmCustomersWorkspace({
               onClick={() => setViewMode('directory')}
               className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded transition ${
                 viewMode === 'directory'
-                  ? 'bg-white text-gray-900 shadow-2xs'
+                  ? 'bg-white text-gray-900 shadow-2xs font-bold'
                   : 'text-gray-500 hover:text-gray-900'
               }`}
               title="Directory View"
@@ -336,7 +341,7 @@ export function CrmCustomersWorkspace({
             </button>
           </div>
 
-          {selectedIds.size > 0 && (
+          {viewMode === 'directory' && selectedIds.size > 0 && (
             <button
               onClick={handleStartBulkEmail}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md text-xs font-semibold hover:bg-indigo-100 transition"
@@ -356,12 +361,8 @@ export function CrmCustomersWorkspace({
         </div>
       </div>
 
-      {viewMode === 'excel' ? (
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-3">
-          <CustomerDatabaseExcel />
-        </div>
-      ) : (
-        <>
+      {/* Directory View */}
+      <div className={viewMode === 'directory' ? 'space-y-4' : 'hidden'}>
           {/* Quick Filters */}
           <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
             {(
@@ -548,8 +549,16 @@ export function CrmCustomersWorkspace({
           </table>
         </div>
       </div>
-      </>
-      )}
+      </div>
+
+      {/* Excel Spreadsheet View */}
+      <div className={viewMode === 'excel' ? 'bg-white rounded-lg border border-gray-200 shadow-sm p-3' : 'hidden'}>
+        <CustomerDatabaseExcel
+          externalSearch={searchQuery}
+          hideToolbarSearchAndAdd={true}
+          refreshTrigger={excelRefreshKey}
+        />
+      </div>
 
       {/* Customer Right-Side Drawer */}
       <CrmCustomerDrawer
