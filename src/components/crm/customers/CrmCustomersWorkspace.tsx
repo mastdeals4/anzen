@@ -45,7 +45,7 @@ export function CrmCustomersWorkspace({
   const [filterType, setFilterType] = useState<'all' | 'active' | 'inquiries' | 'orders' | 'dormant'>('all');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomerForDrawer, setSelectedCustomerForDrawer] = useState<CustomerDetail | null>(null);
-  const [viewMode, setViewMode] = useState<'directory' | 'excel'>('directory');
+  const [viewMode, setViewMode] = useState<'directory' | 'excel'>('excel');
 
   // Checkbox selections for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
