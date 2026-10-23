@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Download, Upload, Trash2, Send, Search, UserCheck, ChevronUp, ChevronDown, ChevronsUpDown, Filter, X } from 'lucide-react';
+import { Download, Upload, Trash2, Send, UserCheck, ChevronUp, ChevronDown, ChevronsUpDown, Filter, X } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
 import { showToast } from '../ToastNotification';
@@ -63,8 +63,7 @@ export interface CustomerDatabaseExcelProps {
 }
 
 export function CustomerDatabaseExcel({
-  externalSearch,
-  hideToolbarSearchAndAdd = false,
+  externalSearch = '',
   refreshTrigger,
 }: CustomerDatabaseExcelProps = {}) {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -73,7 +72,6 @@ export function CustomerDatabaseExcel({
   const [editValue, setEditValue] = useState('');
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [bulkEmailModalOpen, setBulkEmailModalOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilter>>({});
@@ -235,22 +233,7 @@ export function CustomerDatabaseExcel({
     else if (e.key === 'Escape') { setEditingCell(null); setEditValue(''); }
   };
 
-  const handleAddRow = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-      const { data, error } = await supabase
-        .from('crm_contacts')
-        .insert({ company_name: `New Customer ${Date.now()}`, is_active: true, created_by: user.id })
-        .select()
-        .single();
-      if (error) throw error;
-      setCustomers(prev => [{ ...data, assigned_sales: null, assigned_sales_ids: [] }, ...prev]);
-    } catch (error) {
-      console.error('Error adding customer:', error);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to add customer' });
-    }
-  };
+
 
   const handleDeleteSelected = async () => {
     if (selectedRows.size === 0) return;
@@ -553,7 +536,7 @@ export function CustomerDatabaseExcel({
 
   const filteredCustomers = (() => {
     let result = [...customers];
-    const activeSearch = (externalSearch !== undefined ? externalSearch : searchTerm).trim();
+    const activeSearch = (externalSearch || '').trim();
 
     if (activeSearch) {
       const norm = normalizeForSearch(activeSearch);
@@ -561,6 +544,7 @@ export function CustomerDatabaseExcel({
         normalizeForSearch(c.company_name || '').includes(norm) ||
         (c.contact_person?.toLowerCase().includes(norm)) ||
         (c.email?.toLowerCase().includes(norm)) ||
+        (c.phone?.includes(norm) || c.mobile?.includes(norm) || c.landline?.includes(norm)) ||
         (c.city?.toLowerCase().includes(norm)) ||
         (c.assigned_sales?.toLowerCase().includes(norm))
       );
@@ -583,9 +567,6 @@ export function CustomerDatabaseExcel({
 
     return result;
   })();
-
-  const activeSearch = (externalSearch !== undefined ? externalSearch : searchTerm).trim();
-  const hasActiveFilters = Boolean(activeSearch) || Object.keys(columnFilters).length > 0;
 
   const renderCell = (customer: Customer, field: keyof Customer) => {
     const isEditing = editingCell?.rowId === customer.id && editingCell?.field === field;
@@ -671,15 +652,6 @@ export function CustomerDatabaseExcel({
       <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {!hideToolbarSearchAndAdd && (
-              <button
-                onClick={handleAddRow}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Customer
-              </button>
-            )}
             {selectedRows.size > 0 && (
               <>
                 <button
@@ -698,7 +670,7 @@ export function CustomerDatabaseExcel({
                 </button>
               </>
             )}
-            {hideToolbarSearchAndAdd && Object.keys(columnFilters).length > 0 && (
+            {Object.keys(columnFilters).length > 0 && (
               <button
                 onClick={() => setColumnFilters({})}
                 className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
@@ -723,30 +695,6 @@ export function CustomerDatabaseExcel({
             </button>
           </div>
         </div>
-
-        {!hideToolbarSearchAndAdd && (
-          <div className="flex items-center gap-2">
-            <div className="flex-1 relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <input name="search_term" aria-label="Search by company (PT/CV skipped), contact, email, city..."
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search by company (PT/CV skipped), contact, email, city..."
-                className="w-full pl-10 pr-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            {hasActiveFilters && (
-              <button
-                onClick={() => { setSearchTerm(''); setColumnFilters({}); }}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
-              >
-                <X className="w-3.5 h-3.5" />
-                Clear All Filters
-              </button>
-            )}
-          </div>
-        )}
 
         {Object.keys(columnFilters).length > 0 && (
           <div className="flex flex-wrap gap-1.5">

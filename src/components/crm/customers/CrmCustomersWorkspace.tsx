@@ -555,7 +555,6 @@ export function CrmCustomersWorkspace({
       <div className={viewMode === 'excel' ? 'bg-white rounded-lg border border-gray-200 shadow-sm p-3' : 'hidden'}>
         <CustomerDatabaseExcel
           externalSearch={searchQuery}
-          hideToolbarSearchAndAdd={true}
           refreshTrigger={excelRefreshKey}
         />
       </div>
