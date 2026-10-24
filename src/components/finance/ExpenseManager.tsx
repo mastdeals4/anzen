@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search, Clock } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
@@ -2488,7 +2488,7 @@ export function ExpenseManager({
   const requiresDC = selectedCategory?.type === 'sales';
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
 
-  const filteredExpenses = expenses.filter(exp => {
+  const filteredExpenses = useMemo(() => expenses.filter((exp) => {
     const isCancelled = exp.effective_posting_state === 'REVERSED';
     if (lifecycleFilter === 'cancelled' ? !isCancelled : isCancelled) return false;
 
@@ -2557,7 +2557,17 @@ export function ExpenseManager({
     // perf: date range filtered server-side in loadData().
 
     return true;
-  });
+  }), [
+    expenses,
+    lifecycleFilter,
+    filterType,
+    expenseCategories,
+    categoryFilter,
+    supplierFilter,
+    reconFilter,
+    approvalFilter,
+    normalizedSearch,
+  ]);
 
   // Sorting function
   const handleSort = (key: string) => {
@@ -2570,7 +2580,7 @@ export function ExpenseManager({
 
   // Accountant-priority sort: Pending Approval → Approved+Outstanding → Partial → Paid+Pending Recon → Paid+Reconciled → Petty Cash → Cancelled
   // Only applies when no explicit user sort is active.
-  const accountantPriorityRank = (exp: FinanceExpense): number => {
+  const accountantPriorityRank = useCallback((exp: FinanceExpense): number => {
     const recon = calculateExpenseReconciliation(exp);
     const isReconciled = recon.isFullyReconciled;
     if (exp.approval_status === 'pending_approval') return 0;
@@ -2583,9 +2593,9 @@ export function ExpenseManager({
     if (isPartiallyPaid) return 2.5; // Partially Paid
     if (!isReconciled) return 3; // Paid but Pending Bank Reconciliation
     return 4; // Paid & Reconciled
-  };
+  }, []);
 
-  const sortedExpenses = [...filteredExpenses].sort((a, b) => {
+  const sortedExpenses = useMemo(() => [...filteredExpenses].sort((a, b) => {
     if (!sortConfig) {
       const rankA = accountantPriorityRank(a);
       const rankB = accountantPriorityRank(b);
@@ -2642,7 +2652,7 @@ export function ExpenseManager({
     if (aValue < bValue) return direction === 'asc' ? -1 : 1;
     if (aValue > bValue) return direction === 'asc' ? 1 : -1;
     return 0;
-  });
+  }), [filteredExpenses, sortConfig, expenseCategories, accountantPriorityRank]);
 
   const exportToCSV = async () => {
     if (filteredExpenses.length === 0) {
@@ -3114,6 +3124,12 @@ export function ExpenseManager({
                   Loading...
                 </td>
               </tr>
+            ) : modalOpen ? (
+              <tr>
+                <td colSpan={canManage ? 11 : 10} className="px-6 py-8 text-center text-gray-400">
+                  Expense editor open
+                </td>
+              </tr>
             ) : filteredExpenses.length === 0 ? (
               <tr>
                 <td colSpan={canManage ? 11 : 10} className="px-6 py-8 text-center text-gray-500">
@@ -3441,7 +3457,7 @@ export function ExpenseManager({
               })
             )}
             {/* Totals Row */}
-            {!loading && sortedExpenses.length > 0 && (
+            {!modalOpen && !loading && sortedExpenses.length > 0 && (
               <tr className="bg-gradient-to-r from-blue-50 to-blue-100 border-t-2 border-blue-200 font-bold">
                 <td colSpan={5} className="px-2 py-1.5 text-right text-xs text-gray-900">
                   TOTAL ({sortedExpenses.length} expenses):
