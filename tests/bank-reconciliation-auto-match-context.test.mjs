@@ -6,6 +6,10 @@ const migration = readFileSync(
   new URL('../supabase/migrations/20261024183000_improve_bank_auto_match_context.sql', import.meta.url),
   'utf8',
 );
+const ui = readFileSync(
+  new URL('../src/components/finance/BankReconciliationEnhanced.tsx', import.meta.url),
+  'utf8',
+);
 
 test('Auto-match includes purchase invoice and supplier context for Payment Vouchers', () => {
   assert.match(migration, /WHEN 'payment' THEN/);
@@ -42,4 +46,13 @@ test('Auto-match still refuses ambiguous multiple best candidates', () => {
 
 test('Auto-match remains available to authenticated finance users', () => {
   assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.auto_match_smart\(\) TO authenticated/);
+});
+
+test('Auto-Match is visible beside the bank reconciliation status filters', () => {
+  const unmatchedFilter = ui.indexOf('✕ Unmatched ({stats.unmatched})');
+  const autoMatchAction = ui.indexOf("{autoMatching ? 'Matching…' : 'Auto-Match'}");
+  assert.ok(unmatchedFilter >= 0, 'Unmatched status filter should be present');
+  assert.ok(autoMatchAction > unmatchedFilter, 'Auto-Match should be beside the visible status filters');
+  assert.match(ui, /aria-label="Run bank transaction auto-match"/);
+  assert.doesNotMatch(ui, /title="Auto-match"/, 'Old duplicate header Match control should be removed');
 });
