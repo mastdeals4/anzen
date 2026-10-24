@@ -21,6 +21,8 @@ function recalculateExpensePaymentState({
   voucherAllocations = [], // { id, amount, is_posted, payment_voucher_id, payment_kind, journal_entry_id }
   bankAllocations = [],    // { id, amount, journal_entry_id, payment_kind, document_type, document_id }
   recognitionJournalLines = [], // { account_code, credit, debit }
+  legacyMatchedBankLines = [], // { matched_expense_id, payment_kind, amount, matched_entry_id, matched_payment_id, has_allocation }
+  expenseId = 'expense-1',
 }) {
   let supplierPaid = 0;
 
@@ -41,7 +43,19 @@ function recalculateExpensePaymentState({
   });
   supplierPaid += directBankAllocs.reduce((sum, bsa) => sum + Number(bsa.amount), 0);
 
-  // 3. Legacy cash expense recognition: if the original recognition journal directly credited
+  // 3. Legacy matched bank lines count unless that specific line identifies the same posted PV.
+  const legacyDirectBankLines = legacyMatchedBankLines.filter(line =>
+    line.matched_expense_id === expenseId &&
+    (line.payment_kind || 'supplier') === 'supplier' &&
+    line.has_allocation !== true &&
+    !postedPVs.some(pv =>
+      (pv.journal_entry_id && pv.journal_entry_id === line.matched_entry_id) ||
+      (pv.payment_voucher_id && pv.payment_voucher_id === line.matched_payment_id)
+    )
+  );
+  supplierPaid += legacyDirectBankLines.reduce((sum, line) => sum + Number(line.amount), 0);
+
+  // 4. Legacy cash expense recognition: if the original recognition journal directly credited
   // Cash on Hand (1101) or Petty Cash (1102) rather than AP 2110
   const legacyCashLines = recognitionJournalLines.filter(
     l => ['1101', '1102'].includes(l.account_code) && Number(l.credit) > 0
@@ -436,6 +450,29 @@ test('Test 8: Migration deduplicates bank statement allocations against voucher 
     migration,
     /AND\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+public\.voucher_allocations\s+va\s+JOIN\s+public\.payment_vouchers\s+pv\s+ON\s+pv\.id\s*=\s*va\.payment_voucher_id\s+WHERE\s+va\.finance_expense_id\s*=\s*p_expense_id\s+AND\s+pv\.is_posted\s*=\s*true\s+AND\s+pv\.journal_entry_id\s*=\s*bsa\.journal_entry_id\s*\)/i,
     'recalculate_expense_payment_state must deduplicate bsa by pv.journal_entry_id',
+  );
+});
+
+test('Test 9: A separate legacy bank payment is not ignored when another PV exists for the same expense', () => {
+  const state = recalculateExpensePaymentState({
+    payable: 100,
+    expenseId: 'exp-42',
+    voucherAllocations: [
+      { id: 'va-1', amount: 50, is_posted: true, payment_voucher_id: 'pv-1', journal_entry_id: 'JE-PV-50', payment_kind: 'supplier' },
+    ],
+    legacyMatchedBankLines: [
+      { matched_expense_id: 'exp-42', payment_kind: 'supplier', amount: 50, matched_entry_id: 'JE-PV-50', matched_payment_id: null, has_allocation: false },
+      { matched_expense_id: 'exp-42', payment_kind: 'supplier', amount: 50, matched_entry_id: null, matched_payment_id: 'pv-1', has_allocation: false },
+      { matched_expense_id: 'exp-42', payment_kind: 'supplier', amount: 25, matched_entry_id: 'JE-DIRECT-25', matched_payment_id: null, has_allocation: false },
+    ],
+  });
+  assert.equal(state.paid_amount, 75, 'Count PV 50 plus separate legacy payment 25, but not duplicate PV lines');
+  assert.equal(state.outstanding, 25);
+
+  assert.match(
+    migration,
+    /pv\.journal_entry_id\s*=\s*b\.matched_entry_id\s+OR\s+pv\.id\s*=\s*b\.matched_payment_id/i,
+    'Legacy line deduplication must be tied to the same Payment Voucher or journal, not any PV on the expense',
   );
 });
 
