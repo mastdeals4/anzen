@@ -1160,11 +1160,22 @@ export function FundTransferManager({
                         disabled={viewOnly}
                         className={SAP_INPUT}>
                         <option value="">No link</option>
-                        {fromBankStatements.map((stmt) => (
-                          <option key={stmt.id} value={stmt.id}>
-                            {formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getFromCurrency(), stmt.debit_amount || stmt.credit_amount || 0)}
-                          </option>
-                        ))}
+                        {fromBankStatements
+                          .filter(stmt => stmt.id === formData.from_bank_statement_line_id || stmt.id !== formData.to_bank_statement_line_id)
+                          .map((stmt) => {
+                            const actualSide = Number(stmt.debit_amount || 0) > 0.01 ? 'DB' : 'CR';
+                            const labelPrefix = stmt.isWrongDirection
+                              ? `⚠ Current link · wrong side (${actualSide}; expected DB) · `
+                              : stmt.isCurrentLink ? 'Current link · DB · ' : 'DB · ';
+                            const amount = stmt.isWrongDirection
+                              ? Number(stmt.debit_amount || stmt.credit_amount || 0)
+                              : Number(stmt.debit_amount || 0);
+                            return (
+                              <option key={stmt.id} value={stmt.id}>
+                                {labelPrefix}{formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getFromCurrency(), amount)}
+                              </option>
+                            );
+                          })}
                       </select>
                     ) : (
                       <div className={SAP_INPUT + ' !bg-gray-50 !text-gray-400 italic flex items-center'}>No unlinked txn</div>
@@ -1191,11 +1202,22 @@ export function FundTransferManager({
                         disabled={viewOnly}
                         className={SAP_INPUT}>
                         <option value="">No link</option>
-                        {toBankStatements.map((stmt) => (
-                          <option key={stmt.id} value={stmt.id}>
-                            {formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getToCurrency(), stmt.debit_amount || stmt.credit_amount || 0)}
-                          </option>
-                        ))}
+                        {toBankStatements
+                          .filter(stmt => stmt.id === formData.to_bank_statement_line_id || stmt.id !== formData.from_bank_statement_line_id)
+                          .map((stmt) => {
+                            const actualSide = Number(stmt.credit_amount || 0) > 0.01 ? 'CR' : 'DB';
+                            const labelPrefix = stmt.isWrongDirection
+                              ? `⚠ Current link · wrong side (${actualSide}; expected CR) · `
+                              : stmt.isCurrentLink ? 'Current link · CR · ' : 'CR · ';
+                            const amount = stmt.isWrongDirection
+                              ? Number(stmt.debit_amount || stmt.credit_amount || 0)
+                              : Number(stmt.credit_amount || 0);
+                            return (
+                              <option key={stmt.id} value={stmt.id}>
+                                {labelPrefix}{formatDateDDMMYY(stmt.transaction_date)} · {stmt.description?.substring(0, 30)} · {fmtAmount(getToCurrency(), amount)}
+                              </option>
+                            );
+                          })}
                       </select>
                     ) : (
                       <div className={SAP_INPUT + ' !bg-gray-50 !text-gray-400 italic flex items-center'}>No unlinked txn</div>
