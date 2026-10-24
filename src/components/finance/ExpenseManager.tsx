@@ -822,7 +822,7 @@ export function ExpenseManager({
           pph_code_id: calculation.pph21_applicable && pph21Code ? pph21Code.id : previous.pph_code_id,
           payment_method: editingExpense
             ? previous.payment_method
-            : (['cash','bank_transfer'].includes(calculation.default_payment_method)
+            : (calculation.default_payment_method === 'bank_transfer'
               ? calculation.default_payment_method
               : previous.payment_method),
         }));
@@ -1613,7 +1613,7 @@ export function ExpenseManager({
         payment_method: formData.payment_method || null,
         bank_account_id: formData.payment_method && formData.payment_method !== 'outstanding' ? (formData.bank_account_id || null) : null,
         payment_reference: formData.payment_reference || null,
-        paid_by: formData.payment_method === 'cash' ? 'cash' : (selectedBankTransactionId ? 'bank' : null),
+        paid_by: selectedBankTransactionId ? 'bank' : null,
         // save_finance_expense expects document_urls to always be a JSON array;
         // null causes jsonb_array_elements_text to fail in the RPC.
         document_urls: allDocumentUrls,
@@ -4507,8 +4507,8 @@ export function ExpenseManager({
                   <select name="payment_method" aria-label="Payment Method" value={formData.payment_method ?? 'outstanding'}
                     onChange={(e) => {
                       const val = e.target.value === 'outstanding' ? null : e.target.value;
-                      setFormData(prev => ({ ...prev, payment_method: val, bank_account_id: val && val !== 'cash' ? prev.bank_account_id : '' }));
-                      if (!e.target.value || e.target.value === 'outstanding' || e.target.value === 'cash') {
+                      setFormData(prev => ({ ...prev, payment_method: val, bank_account_id: val ? prev.bank_account_id : '' }));
+                      if (!e.target.value || e.target.value === 'outstanding') {
                         setSelectedBankTransactionId('');
                         setSelectedBankAllocationAmount(undefined);
                       }
@@ -4518,7 +4518,6 @@ export function ExpenseManager({
                     <option value="bank_transfer">🏦 Bank Transfer</option>
                     <option value="check">📝 Cheque</option>
                     <option value="giro">📋 Giro</option>
-                    <option value="cash">💵 Cash / Petty Cash</option>
                     <option value="other">📌 Other</option>
                   </select>
                   {(formData.payment_method === null || formData.payment_method === 'outstanding') && (
@@ -4530,15 +4529,13 @@ export function ExpenseManager({
                   {(formData.payment_method === 'check' || formData.payment_method === 'giro') && (
                     <p className="text-[9px] text-purple-700 mt-0.5 font-medium">📝 Cheque/Giro: Recognized to A/P 2110. Settled when payment voucher is posted.</p>
                   )}
-                  {formData.payment_method === 'cash' && (
-                    <p className="text-[9px] text-emerald-700 mt-0.5 font-medium">💵 Cash: Immediate cash disbursement. Credits Cash Box (1101) upon approval.</p>
-                  )}
                   {formData.payment_method === 'other' && (
                     <p className="text-[9px] text-gray-600 mt-0.5 font-medium">📌 Other: Recognized to Accounts Payable (A/P 2110).</p>
                   )}
+                  <p className="text-[9px] text-gray-400 mt-0.5">💡 For cash payments: record as Outstanding (A/P 2110), then record disbursement in Petty Cash Manager or Payment Voucher.</p>
                 </div>
 
-                {formData.payment_method !== null && formData.payment_method !== 'cash' && (
+                {formData.payment_method !== null && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Bank Account <span className="text-red-500">*</span></label>
                     <select name="bank_account_id" aria-label="Bank Account Id" value={formData.bank_account_id}
@@ -4550,14 +4547,14 @@ export function ExpenseManager({
                         setSelectedBankTransactionId('');
                         setSelectedBankAllocationAmount(undefined);
                       }}
-                      className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required={formData.payment_method !== null && formData.payment_method !== 'cash'}>
+                      className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required={formData.payment_method !== null}>
                       <option value="">Select account</option>
                       {bankAccounts.map(bank => <option key={bank.id} value={bank.id}>{bank.bank_name} — {bank.alias || bank.account_number}</option>)}
                     </select>
                   </div>
                 )}
 
-                {(formData.payment_method === null || formData.payment_method === 'cash') && (
+                {formData.payment_method === null && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Transaction Currency <span className="text-red-500">*</span></label>
                     <select name="transaction_currency" aria-label="Transaction Currency" value={formData.transaction_currency}

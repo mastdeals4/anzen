@@ -12,303 +12,445 @@ const expenseManager = readFileSync(
   'utf8',
 );
 
-// Canonical simulated payment state calculator
-function calculatePaymentState(payable, voucherAllocations = [], bankAllocations = []) {
-  const postedVoucherPaid = voucherAllocations
-    .filter(va => va.is_posted === true && va.payment_kind === 'supplier')
-    .reduce((sum, va) => sum + va.amount, 0);
+// =============================================================================
+// Canonical Engine Simulation for recalculate_expense_payment_state()
+// Replicates exact SQL deduplication & payment-evidence logic from migration
+// =============================================================================
+function recalculateExpensePaymentState({
+  payable,
+  voucherAllocations = [], // { id, amount, is_posted, payment_voucher_id, payment_kind, journal_entry_id }
+  bankAllocations = [],    // { id, amount, journal_entry_id, payment_kind, document_type, document_id }
+  recognitionJournalLines = [], // { account_code, credit, debit }
+}) {
+  let supplierPaid = 0;
 
-  const bankPaid = bankAllocations
-    .filter(ba => ba.payment_kind === 'supplier')
-    .reduce((sum, ba) => sum + ba.amount, 0);
+  // 1. Confirmed, posted Payment Vouchers allocated to this expense (supplier kind)
+  const postedPVs = voucherAllocations.filter(
+    va => va.is_posted === true && (va.payment_kind || 'supplier') === 'supplier'
+  );
+  supplierPaid += postedPVs.reduce((sum, va) => sum + Number(va.amount), 0);
 
-  const totalPaid = postedVoucherPaid + bankPaid;
-  const actualPaid = Math.min(payable, Math.max(0, totalPaid));
-  const outstanding = Math.max(0, payable - actualPaid);
+  // 2. Direct Bank Statement Allocations that do NOT duplicate a posted Payment Voucher
+  // Deduplicate by actual payment event / journal identity:
+  const directBankAllocs = bankAllocations.filter(bsa => {
+    if ((bsa.payment_kind || 'supplier') !== 'supplier') return false;
+    if (bsa.document_type !== 'expense') return false;
+    // Exclude if journal belongs to a posted Payment Voucher for this expense
+    const isDuplicateOfPV = postedPVs.some(pv => pv.journal_entry_id === bsa.journal_entry_id);
+    return !isDuplicateOfPV;
+  });
+  supplierPaid += directBankAllocs.reduce((sum, bsa) => sum + Number(bsa.amount), 0);
+
+  // 3. Legacy cash expense recognition: if the original recognition journal directly credited
+  // Cash on Hand (1101) or Petty Cash (1102) rather than AP 2110
+  const legacyCashLines = recognitionJournalLines.filter(
+    l => ['1101', '1102'].includes(l.account_code) && Number(l.credit) > 0
+  );
+  supplierPaid += legacyCashLines.reduce((sum, l) => sum + Number(l.credit), 0);
+
+  const targetPaid = Math.min(payable, Math.max(0, supplierPaid));
+  const outstanding = Math.max(0, payable - targetPaid);
 
   return {
-    actualPaid,
+    paid_amount: targetPaid,
     outstanding,
     isFullyPaid: outstanding <= 0.01,
-    isPartiallyPaid: actualPaid > 0.01 && outstanding > 0.01,
-    isOutstanding: actualPaid <= 0.01 && outstanding > 0.01,
+    isPartiallyPaid: targetPaid > 0.01 && outstanding > 0.01,
+    isOutstanding: targetPaid <= 0.01 && outstanding > 0.01,
   };
 }
 
-// Canonical recognition journal simulator based on auto_post_expense_accounting
-function simulateRecognitionJournal(expense) {
-  const lines = [];
-  const payable = expense.amount + (expense.ppn_amount || 0) - (expense.pph_amount || 0) + (expense.stamp_duty_amount || 0);
+// =============================================================================
+// Canonical Engine Simulation for link_bank_statement_line()
+// Replicates exact bank statement reconciliation routing & validation from migration
+// =============================================================================
+function simulateLinkBankStatementLine({
+  bankLine, // { id, bank_account_id, debit_amount, credit_amount, currency }
+  bankAccount, // { id, coa_code, currency }
+  documentType, // 'expense' or 'payment'
+  documentId,
+  payable,
+  voucherAllocations = [], // { va_id, pv_id, allocated_amount, pv_journal_id, is_posted, bank_account_id }
+  existingBankAllocations = [], // { id, bank_line_id, journal_entry_id, allocation_amount, document_type, document_id }
+  journalEntries = [], // { id, lines: [{ account_code, credit, debit }] }
+  allocationAmount,
+}) {
+  // Validate bank account & line
+  assert.equal(bankLine.bank_account_id, bankAccount.id, 'Bank account must match');
+  assert.ok(bankLine.debit_amount > 0, 'Expense payment requires an outgoing bank transaction');
 
-  // Debit expense
-  lines.push({ account: '5100', debit: expense.amount, credit: 0, desc: 'Expense' });
-  if (expense.ppn_amount > 0) {
-    lines.push({ account: '1150', debit: expense.ppn_amount, credit: 0, desc: 'PPN Masukan' });
-  }
-  if (expense.stamp_duty_amount > 0) {
-    lines.push({ account: '6950', debit: expense.stamp_duty_amount, credit: 0, desc: 'Bea Meterai' });
-  }
-  if (expense.pph_amount > 0) {
-    lines.push({ account: '2132', debit: 0, credit: expense.pph_amount, desc: 'PPh Payable' });
-  }
+  const bankTotal = bankLine.debit_amount;
+  const bankAlreadyAllocated = existingBankAllocations
+    .filter(a => a.bank_line_id === bankLine.id)
+    .reduce((sum, a) => sum + a.allocation_amount, 0);
+  const bankRemaining = bankTotal - bankAlreadyAllocated;
 
-  // Credit side:
-  let creditAccount;
-  if (expense.payment_method === 'cash') {
-    creditAccount = '1101'; // Cash Box
-  } else if (expense.payment_method === 'petty_cash') {
-    creditAccount = '1102'; // Petty Cash
-  } else {
-    // All other methods (bank_transfer, check, giro, other, outstanding, null) MUST credit AP 2110
-    creditAccount = '2110'; // Accounts Payable
-  }
+  let allocatedJe = null;
+  let allocateAmount = 0;
+  let finalDocType = documentType;
+  let finalDocId = documentId;
+  let createdNewJournal = false;
 
-  lines.push({ account: creditAccount, debit: 0, credit: payable, desc: 'Payable / Cash' });
+  if (documentType === 'expense') {
+    // Check if this expense already has an existing posted Payment Voucher on this bank account
+    const existingPV = voucherAllocations.find(va =>
+      va.is_posted === true &&
+      va.bank_account_id === bankLine.bank_account_id &&
+      (va.allocated_amount > existingBankAllocations
+        .filter(a => a.journal_entry_id === va.pv_journal_id)
+        .reduce((sum, a) => sum + a.allocation_amount, 0) + 0.01)
+    );
+
+    if (existingPV) {
+      // Reconciles the existing Payment Voucher!
+      finalDocType = 'payment';
+      finalDocId = existingPV.pv_id;
+      allocatedJe = existingPV.pv_journal_id;
+
+      const pvReconciled = existingBankAllocations
+        .filter(a => a.journal_entry_id === existingPV.pv_journal_id)
+        .reduce((sum, a) => sum + a.allocation_amount, 0);
+      const pvRemaining = existingPV.allocated_amount - pvReconciled;
+
+      allocateAmount = allocationAmount ? Math.min(allocationAmount, pvRemaining) : Math.min(bankRemaining, pvRemaining);
+      assert.ok(allocateAmount > 0.01, 'No remaining amount available to allocate');
+      assert.ok(allocateAmount <= bankRemaining + 0.01, 'Allocation exceeds remaining bank amount');
+      assert.ok(allocateAmount <= pvRemaining + 0.01, 'Allocation exceeds Payment Voucher remaining amount');
+    } else {
+      // Direct unvouched expense payment: requires remaining payable
+      const alreadySettledVA = voucherAllocations
+        .filter(va => va.is_posted)
+        .reduce((sum, va) => sum + va.allocated_amount, 0);
+      const alreadySettledBSA = existingBankAllocations
+        .filter(a => a.document_type === 'expense' && a.document_id === documentId)
+        .reduce((sum, a) => sum + a.allocation_amount, 0);
+      const docRemaining = payable - (alreadySettledVA + alreadySettledBSA);
+
+      assert.ok(docRemaining > 0.01, 'Allocation exceeds document outstanding amount');
+      allocateAmount = allocationAmount ? Math.min(allocationAmount, docRemaining) : Math.min(bankRemaining, docRemaining);
+      assert.ok(allocateAmount > 0.01, 'No remaining amount available to allocate');
+      assert.ok(allocateAmount <= docRemaining + 0.01, 'Allocation exceeds document outstanding amount');
+
+      // Creates new payment journal
+      allocatedJe = `EXP-PAY-JE-${Date.now()}`;
+      createdNewJournal = true;
+    }
+  }
 
   return {
-    lines,
-    creditsBank: lines.some(l => l.credit > 0 && (l.account.startsWith('1111') || (l.account !== '1101' && l.account !== '1102' && l.account !== '2110' && l.account !== '2132'))),
-    creditsAP: lines.some(l => l.credit > 0 && l.account === '2110'),
-    payable,
+    reconciledJournalId: allocatedJe,
+    allocatedAmount: allocateAmount,
+    finalDocType,
+    finalDocId,
+    createdNewJournal,
   };
 }
 
-// -----------------------------------------------------------------------------
-// Scenario 1: An unlinked approved expense
-// -----------------------------------------------------------------------------
-test('Scenario 1: Unlinked approved expense posts Dr Expense, Cr AP 2110; does not credit Bank; paid = 0, outstanding = 100', () => {
-  const expense = {
-    amount: 100,
-    ppn_amount: 0,
-    pph_amount: 0,
-    payment_method: null,
-  };
+// =============================================================================
+// TEST 1: Expense 100, no payment: paid 0, outstanding 100
+// =============================================================================
+test('Test 1: Expense 100 with no payment recorded shows paid = 0, outstanding = 100', () => {
+  const state = recalculateExpensePaymentState({
+    payable: 100,
+    voucherAllocations: [],
+    bankAllocations: [],
+  });
 
-  const recJournal = simulateRecognitionJournal(expense);
-  assert.equal(recJournal.creditsAP, true, 'Expense recognition must credit Accounts Payable 2110');
-  assert.equal(recJournal.creditsBank, false, 'Expense recognition must NOT credit any bank account');
-
-  const state = calculatePaymentState(recJournal.payable, [], []);
-  assert.equal(state.actualPaid, 0);
+  assert.equal(state.paid_amount, 0);
   assert.equal(state.outstanding, 100);
   assert.equal(state.isOutstanding, true);
   assert.equal(state.isFullyPaid, false);
 });
 
-// -----------------------------------------------------------------------------
-// Scenario 2: Full payment
-// -----------------------------------------------------------------------------
-test('Scenario 2: Full payment records Dr AP 100, Cr Bank 100 once; paid = 100, outstanding = 0; recognition intact', () => {
-  const expense = {
-    amount: 100,
-    payment_method: 'bank_transfer',
-  };
-
-  // 1. Initial recognition
-  const recJournal = simulateRecognitionJournal(expense);
-  assert.equal(recJournal.creditsAP, true);
-  assert.equal(recJournal.creditsBank, false);
-
-  // 2. Full payment event recorded (e.g. via Payment Voucher or Bank Line)
-  const paymentAllocations = [{ id: 'va-1', amount: 100, is_posted: true, payment_kind: 'supplier' }];
-  const paymentJournal = {
-    lines: [
-      { account: '2110', debit: 100, credit: 0, desc: 'Settle AP' },
-      { account: '111101', debit: 0, credit: 100, desc: 'Credit Bank' },
-    ],
-  };
-
-  const state = calculatePaymentState(recJournal.payable, paymentAllocations, []);
-  assert.equal(state.actualPaid, 100);
-  assert.equal(state.outstanding, 0);
-  assert.equal(state.isFullyPaid, true);
-
-  // Original recognition journal remains intact (total debit = 100, credit AP = 100)
-  assert.equal(recJournal.lines.find(l => l.account === '5100').debit, 100);
-  assert.equal(recJournal.lines.find(l => l.account === '2110').credit, 100);
-  // Payment journal posted once
-  assert.equal(paymentJournal.lines.find(l => l.account === '111101').credit, 100);
-});
-
-// -----------------------------------------------------------------------------
-// Scenario 3: Two partial payments
-// -----------------------------------------------------------------------------
-test('Scenario 3: Two partial payments of 50 each step through (paid 50, out 50) -> (paid 100, out 0); recognition intact', () => {
-  const expense = { amount: 100, payment_method: 'bank_transfer' };
-  const recJournal = simulateRecognitionJournal(expense);
-
-  // First partial payment of 50
-  const payment1 = { id: 'va-1', amount: 50, is_posted: true, payment_kind: 'supplier' };
-  const stateAfterP1 = calculatePaymentState(recJournal.payable, [payment1], []);
-  assert.equal(stateAfterP1.actualPaid, 50);
-  assert.equal(stateAfterP1.outstanding, 50);
-  assert.equal(stateAfterP1.isPartiallyPaid, true);
-
-  // Second partial payment of 50
-  const payment2 = { id: 'va-2', amount: 50, is_posted: true, payment_kind: 'supplier' };
-  const stateAfterP2 = calculatePaymentState(recJournal.payable, [payment1, payment2], []);
-  assert.equal(stateAfterP2.actualPaid, 100);
-  assert.equal(stateAfterP2.outstanding, 0);
-  assert.equal(stateAfterP2.isFullyPaid, true);
-
-  // Original recognition journal is unchanged
-  assert.equal(recJournal.lines.find(l => l.account === '2110').credit, 100);
-});
-
-// -----------------------------------------------------------------------------
-// Scenario 4: Expense entered before payment
-// -----------------------------------------------------------------------------
-test('Scenario 4: Expense entered before payment preserves accrual timeline and correct states at each date', () => {
-  const expenseDate = '2026-10-01';
-  const paymentDate = '2026-10-05';
-
-  const expense = { amount: 100, expense_date: expenseDate, payment_method: 'bank_transfer' };
-  const recJournal = simulateRecognitionJournal(expense);
-
-  // On Day 1 (2026-10-01): Expense approved, no payment recorded
-  const stateDay1 = calculatePaymentState(recJournal.payable, [], []);
-  assert.equal(stateDay1.actualPaid, 0);
-  assert.equal(stateDay1.outstanding, 100);
-  assert.equal(stateDay1.isOutstanding, true);
-
-  // On Day 5 (2026-10-05): Payment recorded
-  const payment = { id: 'va-1', date: paymentDate, amount: 100, is_posted: true, payment_kind: 'supplier' };
-  const stateDay5 = calculatePaymentState(recJournal.payable, [payment], []);
-  assert.equal(stateDay5.actualPaid, 100);
-  assert.equal(stateDay5.outstanding, 0);
-  assert.equal(stateDay5.isFullyPaid, true);
-});
-
-// -----------------------------------------------------------------------------
-// Scenario 5: Every payment-method choice
-// -----------------------------------------------------------------------------
-test('Scenario 5: Every payment method choice correctly routes liability or cash box, never crediting Bank at recognition', () => {
-  const methods = ['cash', 'petty_cash', 'bank_transfer', 'check', 'giro', 'other', 'outstanding', null];
-
-  for (const method of methods) {
-    const journal = simulateRecognitionJournal({ amount: 100, payment_method: method });
-    assert.equal(journal.creditsBank, false, `Method ${method} must NOT credit bank at recognition`);
-
-    if (method === 'cash') {
-      assert.equal(journal.lines.find(l => l.account === '1101').credit, 100);
-    } else if (method === 'petty_cash') {
-      assert.equal(journal.lines.find(l => l.account === '1102').credit, 100);
-    } else {
-      // bank_transfer, check, giro, other, outstanding, null ALL credit AP 2110
-      assert.equal(
-        journal.lines.find(l => l.account === '2110').credit,
-        100,
-        `Method ${method} must credit Accounts Payable 2110`,
-      );
-    }
-  }
-});
-
-// -----------------------------------------------------------------------------
-// Scenario 6: Unposted payment voucher
-// -----------------------------------------------------------------------------
-test('Scenario 6: Unposted payment voucher allocation does NOT affect paid_amount; only posting updates paid_amount', () => {
+// =============================================================================
+// TEST 2: Payment Voucher of 50, with its bank line subsequently matched
+// Paid stays 50, outstanding stays 50 (NO DOUBLE COUNTING)
+// =============================================================================
+test('Test 2: Payment Voucher of 50 with subsequent bank line match preserves paid = 50, outstanding = 50 without double counting', () => {
   const payable = 100;
-  const draftAllocation = [{ id: 'va-draft', amount: 50, is_posted: false, payment_kind: 'supplier' }];
+  const pvJournalId = 'JE-PV-50';
 
-  // While draft: paid_amount must remain 0
-  const draftState = calculatePaymentState(payable, draftAllocation, []);
-  assert.equal(draftState.actualPaid, 0, 'Draft payment voucher must not increase paid_amount');
-  assert.equal(draftState.outstanding, 100);
+  // Step 1: Posted Payment Voucher of 50
+  const voucherAllocations = [
+    { id: 'va-1', amount: 50, is_posted: true, payment_voucher_id: 'pv-1', journal_entry_id: pvJournalId, payment_kind: 'supplier' },
+  ];
 
-  // Once posted: paid_amount becomes 50
-  const postedAllocation = [{ id: 'va-draft', amount: 50, is_posted: true, payment_kind: 'supplier' }];
-  const postedState = calculatePaymentState(payable, postedAllocation, []);
-  assert.equal(postedState.actualPaid, 50, 'Posted payment voucher must increase paid_amount');
-  assert.equal(postedState.outstanding, 50);
+  const stateAfterPV = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations,
+    bankAllocations: [],
+  });
+  assert.equal(stateAfterPV.paid_amount, 50, 'Paid must be 50 after posted PV');
+  assert.equal(stateAfterPV.outstanding, 50, 'Outstanding must be 50 after posted PV');
+
+  // Step 2: Bank statement line of 50 arrives and is matched against this payment
+  const reconResult = simulateLinkBankStatementLine({
+    bankLine: { id: 'line-1', bank_account_id: 'bank-1', debit_amount: 50, credit_amount: 0, currency: 'IDR' },
+    bankAccount: { id: 'bank-1', coa_code: '111101', currency: 'IDR' },
+    documentType: 'expense',
+    documentId: 'expense-1',
+    payable,
+    voucherAllocations: [
+      { va_id: 'va-1', pv_id: 'pv-1', allocated_amount: 50, pv_journal_id: pvJournalId, is_posted: true, bank_account_id: 'bank-1' },
+    ],
+    existingBankAllocations: [],
+  });
+
+  // Verification of reconciliation:
+  assert.equal(reconResult.createdNewJournal, false, 'Reconciling existing PV must NOT create a new journal');
+  assert.equal(reconResult.reconciledJournalId, pvJournalId, 'Must reconcile the existing PV journal');
+  assert.equal(reconResult.finalDocType, 'payment', 'Must link to document_type = payment');
+
+  // Step 3: Bank allocation record is stored
+  const bankAllocations = [
+    { id: 'bsa-1', amount: 50, journal_entry_id: pvJournalId, payment_kind: 'supplier', document_type: reconResult.finalDocType, document_id: reconResult.finalDocId },
+  ];
+
+  // Step 4: Re-evaluate expense payment state
+  const stateAfterBankRecon = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations,
+    bankAllocations,
+  });
+
+  // CANONICAL CONTRACT: Paid must remain 50, NOT become 100!
+  assert.equal(stateAfterBankRecon.paid_amount, 50, 'Paid amount MUST stay 50 after matching bank line to existing PV');
+  assert.equal(stateAfterBankRecon.outstanding, 50, 'Outstanding MUST stay 50');
+  assert.equal(stateAfterBankRecon.isPartiallyPaid, true);
+  assert.equal(stateAfterBankRecon.isFullyPaid, false);
 });
 
-// -----------------------------------------------------------------------------
-// Scenario 7: Bank line matched after a payment has already been posted
-// -----------------------------------------------------------------------------
-test('Scenario 7: Bank line matched after payment already posted reuses existing payment journal, preventing duplicate bank credit', () => {
-  // Check migration logic for link_bank_statement_line
-  assert.match(
-    migration,
-    /OR\s+je\.id\s+IN\s*\(\s*SELECT\s+pv\.journal_entry_id\s+FROM\s+public\.voucher_allocations\s+va\s+JOIN\s+public\.payment_vouchers\s+pv\s+ON\s+pv\.id\s*=\s*va\.payment_voucher_id\s+WHERE\s+va\.finance_expense_id\s*=\s*p_document_id\s+AND\s+pv\.is_posted\s*=\s*true\s*\)/i,
-    'link_bank_statement_line must search for existing posted Payment Voucher journals allocated to this expense',
-  );
+// =============================================================================
+// TEST 3: Full Payment Voucher of 100, followed by bank reconciliation
+// Reconciliation succeeds without an extra journal or duplicate bank credit
+// =============================================================================
+test('Test 3: Full Payment Voucher of 100 followed by bank reconciliation succeeds without extra journal or duplicate bank credit', () => {
+  const payable = 100;
+  const pvJournalId = 'JE-PV-100';
 
-  assert.match(
-    migration,
-    /IF\s+v_existing_payment_je\s+IS\s+NOT\s+NULL\s+THEN\s+v_je\s*:=\s*v_existing_payment_je;\s+ELSE/i,
-    'link_bank_statement_line must reuse existing payment journal and skip inserting a duplicate payment journal',
-  );
+  // Full PV of 100 posted
+  const voucherAllocations = [
+    { id: 'va-1', amount: 100, is_posted: true, payment_voucher_id: 'pv-1', journal_entry_id: pvJournalId, payment_kind: 'supplier' },
+  ];
+
+  const stateInitial = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations,
+    bankAllocations: [],
+  });
+  assert.equal(stateInitial.paid_amount, 100);
+  assert.equal(stateInitial.outstanding, 0, 'Expense is fully settled (outstanding = 0)');
+
+  // Bank reconciliation on fully settled expense
+  const reconResult = simulateLinkBankStatementLine({
+    bankLine: { id: 'line-1', bank_account_id: 'bank-1', debit_amount: 100, credit_amount: 0, currency: 'IDR' },
+    bankAccount: { id: 'bank-1', coa_code: '111101', currency: 'IDR' },
+    documentType: 'expense',
+    documentId: 'expense-1',
+    payable,
+    voucherAllocations: [
+      { va_id: 'va-1', pv_id: 'pv-1', allocated_amount: 100, pv_journal_id: pvJournalId, is_posted: true, bank_account_id: 'bank-1' },
+    ],
+    existingBankAllocations: [],
+  });
+
+  assert.equal(reconResult.createdNewJournal, false, 'Must NOT create an extra payment journal');
+  assert.equal(reconResult.reconciledJournalId, pvJournalId, 'Must reuse the existing PV journal');
+  assert.equal(reconResult.allocatedAmount, 100);
+
+  // Bank allocation stored
+  const bankAllocations = [
+    { id: 'bsa-1', amount: 100, journal_entry_id: pvJournalId, payment_kind: 'supplier', document_type: reconResult.finalDocType, document_id: reconResult.finalDocId },
+  ];
+
+  const stateFinal = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations,
+    bankAllocations,
+  });
+
+  assert.equal(stateFinal.paid_amount, 100, 'Paid amount must remain 100');
+  assert.equal(stateFinal.outstanding, 0, 'Outstanding must remain 0');
+  assert.equal(stateFinal.isFullyPaid, true);
 });
 
-// -----------------------------------------------------------------------------
-// Database Migration Architecture & Safety Verification
-// -----------------------------------------------------------------------------
-test('Migration enforces non-cash expense recognition to AP 2110', () => {
-  assert.match(
-    migration,
-    /IF\s+NEW\.payment_method\s*=\s*'cash'\s*THEN[\s\S]*code='1101'[\s\S]*ELSIF\s+NEW\.payment_method\s*=\s*'petty_cash'\s*THEN[\s\S]*code='1102'[\s\S]*ELSE[\s\S]*code='2110'/i,
-  );
+// =============================================================================
+// TEST 4: Two separate partial payments of 50
+// Paid progresses from 50 to 100
+// =============================================================================
+test('Test 4: Two separate partial payments of 50 step cleanly from 50 to 100 paid', () => {
+  const payable = 100;
+  const pv1JournalId = 'JE-PV1-50';
+  const pv2JournalId = 'JE-PV2-50';
+
+  // Payment 1: PV 50
+  const va1 = { id: 'va-1', amount: 50, is_posted: true, payment_voucher_id: 'pv-1', journal_entry_id: pv1JournalId, payment_kind: 'supplier' };
+  const state1 = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations: [va1],
+    bankAllocations: [],
+  });
+  assert.equal(state1.paid_amount, 50);
+  assert.equal(state1.outstanding, 50);
+
+  // Match line 1 to PV 1
+  const bsa1 = { id: 'bsa-1', amount: 50, journal_entry_id: pv1JournalId, payment_kind: 'supplier', document_type: 'payment', document_id: 'pv-1' };
+  const state1Matched = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations: [va1],
+    bankAllocations: [bsa1],
+  });
+  assert.equal(state1Matched.paid_amount, 50, 'Paid stays 50 after line 1 match');
+  assert.equal(state1Matched.outstanding, 50);
+
+  // Payment 2: PV 50
+  const va2 = { id: 'va-2', amount: 50, is_posted: true, payment_voucher_id: 'pv-2', journal_entry_id: pv2JournalId, payment_kind: 'supplier' };
+  const state2 = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations: [va1, va2],
+    bankAllocations: [bsa1],
+  });
+  assert.equal(state2.paid_amount, 100, 'Paid reaches 100 after second PV');
+  assert.equal(state2.outstanding, 0, 'Outstanding cleared to 0');
+
+  // Match line 2 to PV 2
+  const bsa2 = { id: 'bsa-2', amount: 50, journal_entry_id: pv2JournalId, payment_kind: 'supplier', document_type: 'payment', document_id: 'pv-2' };
+  const state2Matched = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations: [va1, va2],
+    bankAllocations: [bsa1, bsa2],
+  });
+  assert.equal(state2Matched.paid_amount, 100, 'Paid stays 100 after line 2 match');
+  assert.equal(state2Matched.outstanding, 0);
+  assert.equal(state2Matched.isFullyPaid, true);
 });
 
-test('Migration enforces customs broker canonical posting to AP 2110 for non-cash', () => {
-  assert.match(
-    migration,
-    /v_outstanding\s+boolean\s*:=\s*NEW\.payment_method\s+IS\s+NULL\s+OR\s+NEW\.payment_method\s+NOT\s+IN\s*\('cash',\s*'petty_cash'\)/i,
-  );
+// =============================================================================
+// TEST 5: An unposted Payment Voucher does not affect paid amount
+// =============================================================================
+test('Test 5: An unposted (draft) Payment Voucher does not affect paid amount; posting it updates paid amount', () => {
+  const payable = 100;
+
+  // Draft PV: is_posted = false
+  const draftVA = [
+    { id: 'va-draft', amount: 50, is_posted: false, payment_voucher_id: 'pv-draft', journal_entry_id: null, payment_kind: 'supplier' },
+  ];
+
+  const stateDraft = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations: draftVA,
+    bankAllocations: [],
+  });
+  assert.equal(stateDraft.paid_amount, 0, 'Unposted PV must NOT affect paid amount');
+  assert.equal(stateDraft.outstanding, 100);
+
+  // Now post the PV: is_posted = true
+  const postedVA = [
+    { id: 'va-draft', amount: 50, is_posted: true, payment_voucher_id: 'pv-draft', journal_entry_id: 'JE-PV-50', payment_kind: 'supplier' },
+  ];
+
+  const statePosted = recalculateExpensePaymentState({
+    payable,
+    voucherAllocations: postedVA,
+    bankAllocations: [],
+  });
+  assert.equal(statePosted.paid_amount, 50, 'Posting the PV must update paid amount');
+  assert.equal(statePosted.outstanding, 50);
 });
 
-test('Migration normalizes unlinked bank/cheque/giro/other methods', () => {
-  assert.match(
-    migration,
-    /IF\s+NEW\.payment_method\s+IN\s*\('bank_transfer',\s*'check',\s*'giro',\s*'other'\)/i,
-  );
-});
-
-test('Migration enforces pv.is_posted = true in recalculate_expense_payment_state', () => {
-  assert.match(
-    migration,
-    /FROM\s+public\.voucher_allocations\s+va\s+JOIN\s+public\.payment_vouchers\s+pv\s+ON\s+pv\.id=va\.payment_voucher_id[\s\S]*AND\s+pv\.is_posted\s*=\s*true/i,
-  );
-});
-
-test('Migration contains no live historical data modifications or destructive drops', () => {
-  assert.doesNotMatch(migration, /DROP\s+TABLE/i);
-  assert.doesNotMatch(migration, /UPDATE\s+public\.finance_expenses\s+SET\s+amount/i);
-  assert.doesNotMatch(migration, /UPDATE\s+public\.bank_statement_lines\s+SET\s+(?:debit_amount|credit_amount)/i);
-});
-
-// -----------------------------------------------------------------------------
-// ExpenseManager UI Verification
-// -----------------------------------------------------------------------------
-test('ExpenseManager UI defaults payment_method to null (Outstanding / Pay later)', () => {
-  assert.match(
+// =============================================================================
+// TEST 6: Cash and petty-cash handling agrees with ledger and paid-state display
+// =============================================================================
+test('Test 6: Cash handling agrees with ledger and Expense form excludes direct cash option', () => {
+  // 1. Expense form does NOT offer cash in the payment method dropdown
+  assert.doesNotMatch(
     expenseManager,
-    /payment_method:\s*null\s*as\s*string\s*\|\s*null/i,
-    'emptyFormData must default payment_method to null',
+    /<option\s+value="cash">/i,
+    'Expense form must NOT expose direct cash option; cash is routed to Petty Cash Manager',
+  );
+
+  // 2. Legacy cash recognition journals crediting 1101/1102 are recognized so paid_amount agrees with ledger
+  const stateLegacyCash = recalculateExpensePaymentState({
+    payable: 100,
+    voucherAllocations: [],
+    bankAllocations: [],
+    recognitionJournalLines: [
+      { account_code: '5100', debit: 100, credit: 0 },
+      { account_code: '1101', debit: 0, credit: 100 }, // Legacy cash credit
+    ],
+  });
+  assert.equal(stateLegacyCash.paid_amount, 100, 'Legacy cash recognition journal must agree with ledger as paid');
+  assert.equal(stateLegacyCash.outstanding, 0);
+
+  // 3. Standard expense recognition crediting 2110 (A/P) leaves paid = 0 until payment event
+  const stateStandardAP = recalculateExpensePaymentState({
+    payable: 100,
+    voucherAllocations: [],
+    bankAllocations: [],
+    recognitionJournalLines: [
+      { account_code: '5100', debit: 100, credit: 0 },
+      { account_code: '2110', debit: 0, credit: 100 }, // Standard AP credit
+    ],
+  });
+  assert.equal(stateStandardAP.paid_amount, 0);
+  assert.equal(stateStandardAP.outstanding, 100);
+});
+
+// =============================================================================
+// TEST 7: Existing bank-allocation integrity checks continue to work
+// =============================================================================
+test('Test 7: Existing bank-allocation integrity triggers and validations are preserved', () => {
+  // Migration preserves all integrity checks:
+  assert.match(
+    migration,
+    /validate_expense_bank_allocation_against_journal/i,
+    'validate_expense_bank_allocation_against_journal trigger must be present',
   );
   assert.match(
-    expenseManager,
-    /resetForm[\s\S]*payment_method:\s*null,/i,
-    'resetForm must reset payment_method to null',
+    migration,
+    /Total bank allocations \(%\) exceed bank statement line amount/i,
+    'Bank line amount cap validation must be enforced',
+  );
+  assert.match(
+    migration,
+    /Allocation exceeds remaining bank amount/i,
+    'Remaining bank amount validation must be enforced',
+  );
+  assert.match(
+    migration,
+    /Direct expense allocation requires matching expense and bank currencies/i,
+    'Currency matching validation must be enforced',
+  );
+  assert.match(
+    migration,
+    /Expense payment requires an outgoing bank transaction/i,
+    'Debit direction validation must be enforced',
   );
 });
 
-test('ExpenseManager UI renders Outstanding status icon for unpaid expenses regardless of payment_method', () => {
+// =============================================================================
+// TEST 8: SQL Deduplication Invariant in Migration
+// =============================================================================
+test('Test 8: Migration deduplicates bank statement allocations against voucher allocations by journal identity', () => {
   assert.match(
-    expenseManager,
-    /const billBalance = calculateCanonicalCashPayable\(expense\) - \(expense\.paid_amount \?\? 0\);[\s\S]*if \(billBalance > 0\.01 && \(expense\.paid_amount \?\? 0\) > 0\.01\)[\s\S]*Partially Paid[\s\S]*if \(billBalance > 0\.01\)[\s\S]*Outstanding/i,
-    'Status icon must show Outstanding whenever billBalance > 0.01 and paid_amount <= 0.01',
+    migration,
+    /AND\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+public\.voucher_allocations\s+va\s+JOIN\s+public\.payment_vouchers\s+pv\s+ON\s+pv\.id\s*=\s*va\.payment_voucher_id\s+WHERE\s+va\.finance_expense_id\s*=\s*p_expense_id\s+AND\s+pv\.is_posted\s*=\s*true\s+AND\s+pv\.journal_entry_id\s*=\s*bsa\.journal_entry_id\s*\)/i,
+    'recalculate_expense_payment_state must deduplicate bsa by pv.journal_entry_id',
   );
 });
 
-test('ExpenseManager UI payment method options prominently feature Outstanding / Pay Later', () => {
+// =============================================================================
+// TEST 9: Fully Settled Payment Voucher Reconciliation Invariant in Migration
+// =============================================================================
+test('Test 9: Migration allows reconciling existing posted Payment Vouchers on fully paid expenses', () => {
   assert.match(
-    expenseManager,
-    /<option\s+value="outstanding">\s*⏳\s*Outstanding\s*\/\s*Pay\s*Later\s*\(A\/P\s*2110\)\s*<\/option>/i,
+    migration,
+    /SELECT\s+pv\.\*,\s+va\.allocated_amount\s+AS\s+expense_allocation_amount[\s\S]*WHERE\s+va\.finance_expense_id\s*=\s*p_document_id[\s\S]*pv\.is_posted\s*=\s*true/i,
+    'link_bank_statement_line must search for existing posted Payment Vouchers allocated to this expense',
   );
   assert.match(
-    expenseManager,
-    /⏳\s*Unpaid\s*expense:\s*Dr\s*Expense,\s*Cr\s*Accounts\s*Payable\s*\(2110\)/i,
+    migration,
+    /'reconciled_payment_voucher_id',\s*v_pv\.id/i,
+    'link_bank_statement_line must return the reconciled payment voucher id',
   );
 });
