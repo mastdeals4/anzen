@@ -390,7 +390,9 @@ BEGIN
           AND pv.journal_entry_id = bsa.journal_entry_id
      );
 
-  -- 3. Legacy confirmed bank lines without allocations (must not duplicate PV journals either)
+  -- 3. Legacy confirmed bank lines without allocations.
+  -- Ignore only lines explicitly linked to the same posted Payment Voucher by voucher id
+  -- or journal-entry id. A different bank payment for this expense must still count.
   SELECT v_supplier_paid + COALESCE(sum(COALESCE(NULLIF(b.debit_amount,0),b.credit_amount,0)),0) INTO v_supplier_paid
     FROM public.bank_statement_lines b
    WHERE b.matched_expense_id=p_expense_id
@@ -402,6 +404,7 @@ BEGIN
          JOIN public.payment_vouchers pv ON pv.id = va.payment_voucher_id
         WHERE va.finance_expense_id = p_expense_id
           AND pv.is_posted = true
+          AND (pv.journal_entry_id = b.matched_entry_id OR pv.id = b.matched_payment_id)
      );
 
   -- 4. Include posted salary advance applications (advance recovery)
