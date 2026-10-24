@@ -477,9 +477,9 @@ test('Test 9: A separate legacy bank payment is not ignored when another PV exis
 });
 
 // =============================================================================
-// TEST 9: Fully Settled Payment Voucher Reconciliation Invariant in Migration
+// TEST 10: Fully Settled Payment Voucher Reconciliation Invariant in Migration
 // =============================================================================
-test('Test 9: Migration allows reconciling existing posted Payment Vouchers on fully paid expenses', () => {
+test('Test 10: Migration allows reconciling existing posted Payment Vouchers on fully paid expenses', () => {
   assert.match(
     migration,
     /SELECT\s+pv\.\*,\s+va\.allocated_amount\s+AS\s+expense_allocation_amount[\s\S]*WHERE\s+va\.finance_expense_id\s*=\s*p_document_id[\s\S]*pv\.is_posted\s*=\s*true/i,
