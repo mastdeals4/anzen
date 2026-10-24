@@ -1868,7 +1868,7 @@ export function ExpenseManager({
     }
   };
 
-  const handleEdit = async (expense: FinanceExpense) => {
+  const handleEdit = async (expense: FinanceExpense, openBankLink = false) => {
     if (expense.effective_posting_state === 'REVERSED' || expense.effective_posting_state === 'AMBIGUOUS') {
       alert(expense.effective_posting_state === 'REVERSED'
         ? 'This expense is cancelled and cannot be edited.'
@@ -1895,9 +1895,14 @@ export function ExpenseManager({
 
     // Use reconciled bank info if available, otherwise use expense's own payment info
     const effectiveBankAccountId = reconciledBankInfo?.bank_account_id || expense.bank_account_id || '';
-    const effectivePaymentMethod = reconciledBankInfo?.bank_account_id
+    // The row-level bank-link shortcut opens the existing edit workflow with
+    // bank transfer selected, so the user can choose the correct bank account
+    // and statement line without changing any saved data just by clicking the icon.
+    const effectivePaymentMethod = openBankLink
       ? 'bank_transfer'
-      : expense.payment_method;
+      : reconciledBankInfo?.bank_account_id
+        ? 'bank_transfer'
+        : expense.payment_method;
 
     // Determine document type from category
     const docType = (Object.entries(DOCUMENT_TYPE_GROUPS) as [DocumentType, string[]][])
@@ -3357,6 +3362,29 @@ export function ExpenseManager({
                     {canManage && (
                       <td className="px-2 py-1.5 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-0.5">
+                          {(postingState === 'ACTIVE' || postingState === 'REPLACED') && !isReconciled && (
+                            <button
+                              type="button"
+                              onClick={() => void handleEdit(expense, true)}
+                              title={
+                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
+                                  ? 'Link remaining payment / finish bank reconciliation'
+                                  : 'Link bank transaction'
+                              }
+                              aria-label={
+                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
+                                  ? `Link remaining payment for ${expense.voucher_number || 'expense'}`
+                                  : `Link bank transaction for ${expense.voucher_number || 'expense'}`
+                              }
+                              className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
+                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
+                                  ? 'text-amber-700 hover:bg-amber-50'
+                                  : 'text-blue-600 hover:bg-blue-50'
+                              }`}
+                            >
+                              <Link2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <FinanceActionButton
                             action="view"
                             onClick={async () => {
