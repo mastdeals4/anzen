@@ -491,6 +491,22 @@ async function matchEmailToInquiry(
         .in("id", linkIds);
       if (inqRows) addCandidates(inqRows, 0.95, "Thread linked to inquiry (email_inquiry_links)");
     }
+
+    // Check crm_email_activities by thread
+    const { data: threadActivities } = await supabase
+      .from("crm_email_activities")
+      .select("inquiry_id")
+      .eq("gmail_thread_id", email.threadId)
+      .not("inquiry_id", "is", null)
+      .limit(5);
+    if (threadActivities && threadActivities.length > 0) {
+      const tInqIds = threadActivities.map((a: any) => a.inquiry_id).filter(Boolean);
+      const { data: inqRows } = await supabase
+        .from("crm_inquiries")
+        .select("id,inquiry_number,aceerp_no,product_name,company_name,supplier_name,specification,email_subject,mail_subject")
+        .in("id", tInqIds);
+      if (inqRows) addCandidates(inqRows, 0.95, "Thread linked to inquiry (crm_email_activities)");
+    }
   }
 
   // STEP 3: In-Reply-To Header Match
@@ -498,7 +514,7 @@ async function matchEmailToInquiry(
     const { data: parentActivities } = await supabase
       .from("crm_email_activities")
       .select("inquiry_id")
-      .eq("message_id", email.inReplyTo)
+      .eq("gmail_message_id", email.inReplyTo)
       .not("inquiry_id", "is", null)
       .limit(5);
     if (parentActivities && parentActivities.length > 0) {

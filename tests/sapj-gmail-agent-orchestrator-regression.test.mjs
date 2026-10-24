@@ -280,3 +280,24 @@ test('23. Traceability Fields Preserved: email_thread_map, email_inquiry_links, 
   assert.match(agentFn, /traceability:\s*\{/);
   assert.match(reviewComponent, /AI Evidence & Match Justification/);
 });
+
+test('24. CRM Email Activities Schema: queries use gmail_message_id and gmail_thread_id, not nonexistent message_id', () => {
+  // Ensure we never query nonexistent column 'message_id' on crm_email_activities
+  assert.doesNotMatch(
+    agentFn,
+    /\.from\(["']crm_email_activities["']\)[\s\S]*?\.eq\(["']message_id["']/,
+    'crm_email_activities must not query nonexistent message_id column'
+  );
+  // Ensure In-Reply-To uses gmail_message_id
+  assert.match(
+    agentFn,
+    /\.from\(["']crm_email_activities["']\)[\s\S]*?\.eq\(["']gmail_message_id["'],\s*email\.inReplyTo\)/,
+    'In-Reply-To check must query gmail_message_id'
+  );
+  // Ensure thread fallback queries gmail_thread_id on crm_email_activities
+  assert.match(
+    agentFn,
+    /\.from\(["']crm_email_activities["']\)[\s\S]*?\.eq\(["']gmail_thread_id["'],\s*email\.threadId\)/,
+    'Thread fallback must query gmail_thread_id on crm_email_activities'
+  );
+});
