@@ -33,7 +33,7 @@ test('Contra statement candidates exclude every legacy match owner and canonical
     'matched_payment_id',
     'matched_tax_payment_id',
   ]) {
-    assert.match(source, new RegExp(String.raw`\\.is\\('${column}', null\\)`), `${column} must be null`);
+    assert.match(source, new RegExp(String.raw`\.is\('${column}', null\)`), `${column} must be null`);
   }
 
   assert.match(source, /from\('bank_statement_allocations'\)[\s\S]{0,220}\.in\('bank_statement_line_id', candidateIds\)/);
