@@ -19,8 +19,8 @@ import { supabaseErrorMessage } from '../../utils/supabaseError';
 import { type CompanySnapshot } from '../../types/company';
 import { waitForImages } from '../../utils/companyLogoUrl';
 import { formatCurrency } from '../../utils/currency';
-import { getReportingUsdRate, saveReceiptVoucher, applySettlementAdjustment, linkBankStatementLine } from '../../services/financeCommands';
-import { notifyFinanceReconciliationRefresh } from './bankTransactionLinking';
+import { getReportingUsdRate, saveReceiptVoucher, applySettlementAdjustment, linkBankStatementLine, unlinkBankStatementAllocation } from '../../services/financeCommands';
+import { loadUnmatchedDebitBankTransactions, notifyFinanceReconciliationRefresh, unlinkBankTransaction } from './bankTransactionLinking';
 import { useFinance } from '../../contexts/FinanceContext';
 
 interface Customer {
@@ -763,27 +763,16 @@ export function ReceiptVoucherManager({
     }
     setReceiptBankCandidatesLoading(true);
     try {
-      const since = new Date();
-      since.setDate(since.getDate() - 120);
-      const { data, error } = await supabase
-        .from('bank_statement_lines')
-        .select('id, transaction_date, description, reference, debit_amount, credit_amount, reconciliation_status, matching_status, bank_accounts(bank_name, account_name, alias, currency)')
-        .eq('bank_account_id', selectedVoucher.bank_account_id)
-        .is('matched_receipt_id', null)
-        .gte('transaction_date', since.toISOString().slice(0, 10))
-        .order('transaction_date', { ascending: false })
-        .limit(250);
-      if (error) throw error;
-      const candidates = (data || []).filter((line: any) => {
-        const bankAmount = Number(line.credit_amount || line.debit_amount || 0);
-        return bankAmount > 0;
+      const candidates = await loadUnmatchedDebitBankTransactions({
+        bankAccountId: selectedVoucher.bank_account_id,
+        direction: 'credit',
       });
       setAvailableReceiptBankLines(candidates);
       setSelectedReceiptBankLineId(candidates.find((line: any) =>
-        Math.abs(Number(line.credit_amount || line.debit_amount || 0) - Number(selectedVoucher.amount)) <= 0.01
+        Math.abs(Number(line.credit_amount || 0) - Number(selectedVoucher.amount)) <= 0.01
       )?.id || '');
       if (!candidates.length) {
-        showToast({ type: 'info', title: 'No Unmatched Transactions', message: 'No unmatched statement lines were found for this bank account in the last 120 days.' });
+        showToast({ type: 'info', title: 'No Unmatched Transactions', message: 'No unmatched deposit transactions were found for this bank account.' });
       }
     } catch (error: any) {
       showToast({ type: 'error', title: 'Could Not Load Bank Lines', message: supabaseErrorMessage(error) });
@@ -796,7 +785,7 @@ export function ReceiptVoucherManager({
     if (!selectedVoucher || !selectedReceiptBankLineId) return;
     const line = availableReceiptBankLines.find((item: any) => item.id === selectedReceiptBankLineId);
     if (!line) return;
-    const lineAmount = Number(line.credit_amount || line.debit_amount || 0);
+    const lineAmount = Number(line.remainingAmount ?? (line.credit_amount || 0));
     if (Math.abs(lineAmount - Number(selectedVoucher.amount)) > 0.01) {
       showToast({ type: 'error', title: 'Amount Mismatch', message: 'The selected bank transaction amount must match the receipt amount. Choose the exact matching transaction.' });
       return;
@@ -819,6 +808,33 @@ export function ReceiptVoucherManager({
       notifyFinanceReconciliationRefresh();
     } catch (error: any) {
       showToast({ type: 'error', title: 'Could Not Link Bank Transaction', message: supabaseErrorMessage(error) });
+    } finally {
+      setReceiptBankLinkLoading(false);
+    }
+  };
+
+  const handleUnlinkReceiptBankLine = async (line: any) => {
+    if (!selectedVoucher) return;
+    const confirmed = await showConfirm({
+      title: 'Unlink Bank Statement Transaction',
+      message: `Unlink bank transaction ${line.reference || line.description || line.id} from this receipt voucher? The voucher and its posted journal will remain intact, and the bank transaction will become available to match again.`,
+      confirmLabel: 'Unlink',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return;
+    setReceiptBankLinkLoading(true);
+    try {
+      if (line.allocation_id) {
+        await unlinkBankStatementAllocation(line.allocation_id);
+      } else {
+        await unlinkBankTransaction(line.id);
+      }
+      showToast({ type: 'success', title: 'Bank Transaction Unlinked', message: 'The bank statement line was unlinked from this receipt voucher.' });
+      await handleView(selectedVoucher);
+      await loadVouchers();
+      notifyFinanceReconciliationRefresh();
+    } catch (error: any) {
+      showToast({ type: 'error', title: 'Could Not Unlink Bank Transaction', message: supabaseErrorMessage(error) });
     } finally {
       setReceiptBankLinkLoading(false);
     }
@@ -1486,9 +1502,25 @@ export function ReceiptVoucherManager({
                 <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Bank Reconciliation</h4>
                 {receiptBankLines.length ? receiptBankLines.map(line => {
                   const bank = line.bank_accounts;
-                  const amount = Number(line.debit_amount || line.credit_amount || 0);
+                  const amount = Number(line.allocation_amount || line.credit_amount || line.debit_amount || 0);
                   return <div key={line.id} className="rounded border border-gray-200 bg-white px-2 py-1.5 text-xs space-y-1">
-                    <div className="flex items-center justify-between"><span className="inline-flex items-center gap-1 text-green-700"><CheckCircle className="w-3 h-3" /> Reconciled</span><span className="font-mono font-semibold">{formatCurrency(amount, bank?.currency || voucherCurrency(selectedVoucher))}</span></div>
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 text-green-700"><CheckCircle className="w-3 h-3" /> Reconciled</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold">{formatCurrency(amount, bank?.currency || voucherCurrency(selectedVoucher))}</span>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => handleUnlinkReceiptBankLine(line)}
+                            disabled={receiptBankLinkLoading}
+                            className="text-red-600 hover:text-red-800 text-[11px] underline ml-1"
+                            title="Unlink this bank transaction"
+                          >
+                            Unlink
+                          </button>
+                        )}
+                      </div>
+                    </div>
                     <div className="text-gray-600">{new Date(line.transaction_date).toLocaleDateString('id-ID')} · {bank?.alias || (bank ? `${bank.bank_name} - ${bank.account_name}` : 'Bank')}</div>
                     <div className="text-gray-800 break-words">{line.description || '—'}</div>
                     {line.reference && <div className="font-mono text-gray-500">Ref: {line.reference}</div>}
@@ -1508,7 +1540,7 @@ export function ReceiptVoucherManager({
                           <option value="">Choose bank transaction…</option>
                           {availableReceiptBankLines.map((line: any) => {
                             const bank = line.bank_accounts;
-                            const amount = Number(line.credit_amount || line.debit_amount || 0);
+                            const amount = Number(line.remainingAmount ?? (line.credit_amount || 0));
                             return <option key={line.id} value={line.id}>
                               {line.transaction_date} · {formatCurrency(amount, bank?.currency || voucherCurrency(selectedVoucher))} · {line.reference || line.description || line.id}
                             </option>;
@@ -1516,17 +1548,21 @@ export function ReceiptVoucherManager({
                         </select>
                         {selectedReceiptBankLineId && (() => {
                           const line = availableReceiptBankLines.find((item: any) => item.id === selectedReceiptBankLineId);
-                          const amount = Number(line?.credit_amount || line?.debit_amount || 0);
+                          const amount = Number(line?.remainingAmount ?? (line?.credit_amount || 0));
                           const matches = Math.abs(amount - Number(selectedVoucher.amount)) <= 0.01;
-                          return <p className={`text-[11px] ${matches ? 'text-green-700' : 'text-amber-700'}`}>
-                            {matches ? 'Amount matches this receipt.' : `Amount differs from receipt (${formatCurrency(Number(selectedVoucher.amount), voucherCurrency(selectedVoucher))}); linking is disabled until the correct transaction is selected.`}
-                          </p>;
+                          return (
+                            <>
+                              <p className={`text-[11px] ${matches ? 'text-green-700' : 'text-amber-700'}`}>
+                                {matches ? 'Amount matches this receipt.' : `Amount differs from receipt (${formatCurrency(Number(selectedVoucher.amount), voucherCurrency(selectedVoucher))}); linking is disabled until the correct transaction is selected.`}
+                              </p>
+                              <button type="button" onClick={handleLinkReceiptToBankLine}
+                                disabled={receiptBankLinkLoading || !matches}
+                                className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                                <Link2 className="w-3.5 h-3.5" /> {receiptBankLinkLoading ? 'Linking…' : 'Link Selected Transaction'}
+                              </button>
+                            </>
+                          );
                         })()}
-                        <button type="button" onClick={handleLinkReceiptToBankLine}
-                          disabled={receiptBankLinkLoading || !selectedReceiptBankLineId || Math.abs(Number((availableReceiptBankLines.find((line: any) => line.id === selectedReceiptBankLineId)?.credit_amount || availableReceiptBankLines.find((line: any) => line.id === selectedReceiptBankLineId)?.debit_amount || 0)) - Number(selectedVoucher.amount)) > 0.01}
-                          className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-                          <Link2 className="w-3.5 h-3.5" /> {receiptBankLinkLoading ? 'Linking…' : 'Link Selected Transaction'}
-                        </button>
                       </div>
                     )}
                   </div>

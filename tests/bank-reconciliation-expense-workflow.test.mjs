@@ -33,7 +33,7 @@ test('batched statement reads preserve canonical allocations and split totals', 
   assert.match(loadStatementLines, /from\('bank_statement_allocations'\)/);
   assert.match(loadStatementLines, /const list = allocationMap\.get\(allocation\.bank_statement_line_id\) \|\| \[\]/);
   assert.match(loadStatementLines, /list\.push\(/);
-  assert.match(loadStatementLines, /allocatedAmount = allocations\.reduce/);
+  assert.match(loadStatementLines, /allocatedAmount = (?:validAllocations|allocations)\.reduce/);
   assert.match(loadStatementLines, /canonicalBankReconciliationStatus\(bankAmount, allocatedAmount\)/);
 });
 
