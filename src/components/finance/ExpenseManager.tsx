@@ -656,7 +656,7 @@ export function ExpenseManager({
     batch_id: '',
     import_container_id: '',
     delivery_challan_id: '',
-    payment_method: 'bank_transfer' as string | null,
+    payment_method: null as string | null,
     bank_account_id: '',
     payment_reference: '',
     document_urls: [] as string[],
@@ -1613,7 +1613,7 @@ export function ExpenseManager({
         payment_method: formData.payment_method || null,
         bank_account_id: formData.payment_method && formData.payment_method !== 'outstanding' ? (formData.bank_account_id || null) : null,
         payment_reference: formData.payment_reference || null,
-        paid_by: formData.payment_method === null || formData.payment_method === 'outstanding' ? null : 'bank',
+        paid_by: formData.payment_method === 'cash' ? 'cash' : (selectedBankTransactionId ? 'bank' : null),
         // save_finance_expense expects document_urls to always be a JSON array;
         // null causes jsonb_array_elements_text to fail in the RPC.
         document_urls: allDocumentUrls,
@@ -2268,7 +2268,7 @@ export function ExpenseManager({
       batch_id: '',
       import_container_id: '',
       delivery_challan_id: '',
-      payment_method: 'bank_transfer',
+      payment_method: null,
       bank_account_id: '',
       payment_reference: '',
       document_urls: [],
@@ -2516,12 +2516,13 @@ export function ExpenseManager({
       const isReconciled = recon.isFullyReconciled;
       const isCancelled = exp.approval_status === 'cancelled';
       const isCash = exp.payment_method === 'cash';
-      const isPaid = (exp.payment_method !== null && exp.payment_method !== 'cash') || ((exp.paid_amount ?? 0) > 0.01);
+      const isPaid = (exp.paid_amount ?? 0) > 0.01;
       if (isCancelled || isCash || isReconciled || !isPaid) return false;
     } else if (reconFilter === 'outstanding') {
       const isCancelled = exp.approval_status === 'cancelled';
-      const isPaid = (exp.payment_method !== null) || ((exp.paid_amount ?? 0) > 0.01);
-      if (isCancelled || isPaid) return false;
+      const billBalance = calculateCanonicalCashPayable(exp) - (exp.paid_amount ?? 0);
+      const isOutstanding = billBalance > 0.01 && (exp.paid_amount ?? 0) <= 0.01;
+      if (isCancelled || !isOutstanding) return false;
     }
 
     // Filter by approval status
@@ -2571,8 +2572,10 @@ export function ExpenseManager({
     if (exp.approval_status === 'rejected') return 1;
     if (exp.approval_status === 'cancelled') return 6;
     if (exp.payment_method === 'cash') return 5;
-    const isPaid = exp.payment_method !== null || (exp.paid_amount ?? 0) > 0.01;
-    if (!isPaid) return 2; // Approved but Outstanding
+    const isPaid = (exp.paid_amount ?? 0) >= (calculateCanonicalCashPayable(exp) - 0.01);
+    const isPartiallyPaid = (exp.paid_amount ?? 0) > 0.01 && !isPaid;
+    if (!isPaid && !isPartiallyPaid) return 2; // Approved but Outstanding
+    if (isPartiallyPaid) return 2.5; // Partially Paid
     if (!isReconciled) return 3; // Paid but Pending Bank Reconciliation
     return 4; // Paid & Reconciled
   };
@@ -2816,13 +2819,13 @@ export function ExpenseManager({
                 <span className="inline-flex items-center gap-1 bg-teal-50 text-teal-800 border border-teal-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-teal-600 font-normal">Reconciled:</span>
                   <span className="font-mono font-semibold">
-                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.payment_method === 'bank_transfer' || (e.paid_amount ?? 0) > 0.01)).length}
+                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.paid_amount ?? 0) > 0.01).length}
                   </span>
                 </span>
                 <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-amber-600 font-normal">Outstanding:</span>
                   <span className="font-mono font-semibold">
-                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method === null && (e.paid_amount ?? 0) <= 0.01).length}
+                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && (calculateCanonicalCashPayable(e) - (e.paid_amount ?? 0)) > 0.01 && (e.paid_amount ?? 0) <= 0.01).length}
                   </span>
                 </span>
               </div>
@@ -3217,11 +3220,11 @@ export function ExpenseManager({
                             </span>
                           );
                         }
-                        if (billBalance > 0.01 && (expense.paid_amount ?? 0) <= 0.01 && expense.payment_method === null) {
+                        if (billBalance > 0.01) {
                           return (
                             <span
                               className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-700"
-                              title="Outstanding"
+                              title={`Outstanding · ${formatCurrency(billBalance, getExpenseCurrency(expense))} payable`}
                             >
                               <Banknote className="w-3 h-3" />
                             </span>
@@ -4504,25 +4507,38 @@ export function ExpenseManager({
                   <select name="payment_method" aria-label="Payment Method" value={formData.payment_method ?? 'outstanding'}
                     onChange={(e) => {
                       const val = e.target.value === 'outstanding' ? null : e.target.value;
-                      setFormData(prev => ({ ...prev, payment_method: val, bank_account_id: val ? prev.bank_account_id : '' }));
-                      if (!e.target.value || e.target.value === 'outstanding') {
+                      setFormData(prev => ({ ...prev, payment_method: val, bank_account_id: val && val !== 'cash' ? prev.bank_account_id : '' }));
+                      if (!e.target.value || e.target.value === 'outstanding' || e.target.value === 'cash') {
                         setSelectedBankTransactionId('');
                         setSelectedBankAllocationAmount(undefined);
                       }
                     }}
                     className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required>
+                    <option value="outstanding">⏳ Outstanding / Pay Later (A/P 2110)</option>
                     <option value="bank_transfer">🏦 Bank Transfer</option>
                     <option value="check">📝 Cheque</option>
                     <option value="giro">📋 Giro</option>
+                    <option value="cash">💵 Cash / Petty Cash</option>
                     <option value="other">📌 Other</option>
-                    <option value="outstanding">📋 Outstanding (A/P)</option>
                   </select>
-                  {formData.payment_method === null && (
-                    <p className="text-[9px] text-amber-700 mt-0.5 font-medium">Posted as A/P 2110 — appears in Payables</p>
+                  {(formData.payment_method === null || formData.payment_method === 'outstanding') && (
+                    <p className="text-[9px] text-amber-700 mt-0.5 font-medium">⏳ Unpaid expense: Dr Expense, Cr Accounts Payable (2110). Zero bank credit until actual payment is recorded.</p>
+                  )}
+                  {formData.payment_method === 'bank_transfer' && (
+                    <p className="text-[9px] text-blue-700 mt-0.5 font-medium">🏦 Bank Transfer: Expense payable is recognized to A/P 2110. Bank is credited when reconciled with bank line or payment voucher.</p>
+                  )}
+                  {(formData.payment_method === 'check' || formData.payment_method === 'giro') && (
+                    <p className="text-[9px] text-purple-700 mt-0.5 font-medium">📝 Cheque/Giro: Recognized to A/P 2110. Settled when payment voucher is posted.</p>
+                  )}
+                  {formData.payment_method === 'cash' && (
+                    <p className="text-[9px] text-emerald-700 mt-0.5 font-medium">💵 Cash: Immediate cash disbursement. Credits Cash Box (1101) upon approval.</p>
+                  )}
+                  {formData.payment_method === 'other' && (
+                    <p className="text-[9px] text-gray-600 mt-0.5 font-medium">📌 Other: Recognized to Accounts Payable (A/P 2110).</p>
                   )}
                 </div>
 
-                {formData.payment_method !== null && (
+                {formData.payment_method !== null && formData.payment_method !== 'cash' && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Bank Account <span className="text-red-500">*</span></label>
                     <select name="bank_account_id" aria-label="Bank Account Id" value={formData.bank_account_id}
@@ -4534,14 +4550,14 @@ export function ExpenseManager({
                         setSelectedBankTransactionId('');
                         setSelectedBankAllocationAmount(undefined);
                       }}
-                      className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required={formData.payment_method !== null}>
+                      className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required={formData.payment_method !== null && formData.payment_method !== 'cash'}>
                       <option value="">Select account</option>
                       {bankAccounts.map(bank => <option key={bank.id} value={bank.id}>{bank.bank_name} — {bank.alias || bank.account_number}</option>)}
                     </select>
                   </div>
                 )}
 
-                {formData.payment_method === null && (
+                {(formData.payment_method === null || formData.payment_method === 'cash') && (
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Transaction Currency <span className="text-red-500">*</span></label>
                     <select name="transaction_currency" aria-label="Transaction Currency" value={formData.transaction_currency}
