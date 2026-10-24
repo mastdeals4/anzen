@@ -58,6 +58,8 @@ interface BankStatementLine {
   debit_amount: number | null;
   credit_amount: number | null;
   reconciliation_status: string | null;
+  isCurrentLink?: boolean;
+  isWrongDirection?: boolean;
 }
 
 type ReconciliationFilter = 'all' | 'fully_linked' | 'partially_linked' | 'unlinked';
@@ -279,9 +281,10 @@ export function FundTransferManager({
     }
 
     try {
-      // Load ALL unlinked statements (no date or limit restrictions)
-      // Must not be linked to any other transaction types
-      const query = supabase
+      // Source bank = money leaving the account (DB/debit).
+      // Destination bank = money entering the account (CR/credit).
+      // Only load lines with the correct transaction side and no legacy links.
+      let query = supabase
         .from('bank_statement_lines')
         .select('id, transaction_date, description, debit_amount, credit_amount, reconciliation_status')
         .eq('bank_account_id', bankAccountId)
@@ -290,24 +293,70 @@ export function FundTransferManager({
         .is('matched_receipt_id', null)
         .is('matched_petty_cash_id', null)
         .is('matched_entry_id', null)
+        .is('matched_payment_id', null)
+        .is('matched_tax_payment_id', null)
         .order('transaction_date', { ascending: false });
+
+      query = type === 'from'
+        ? query.gt('debit_amount', 0.01)
+        : query.gt('credit_amount', 0.01);
 
       const { data, error } = await query;
       if (error) throw error;
 
-      let statements = data || [];
+      let statements = (data || []) as BankStatementLine[];
 
-      // If editing, also include the currently linked statement
+      // A line can also be linked canonically even when old match columns were
+      // not backfilled. Exclude any existing allocation or Fund Transfer reference.
+      const candidateIds = statements.map(line => line.id);
+      if (candidateIds.length > 0) {
+        const [allocationsRes, fromTransfersRes, toTransfersRes] = await Promise.all([
+          supabase
+            .from('bank_statement_allocations')
+            .select('bank_statement_line_id')
+            .in('bank_statement_line_id', candidateIds),
+          supabase
+            .from('fund_transfers')
+            .select('from_bank_statement_line_id')
+            .in('from_bank_statement_line_id', candidateIds),
+          supabase
+            .from('fund_transfers')
+            .select('to_bank_statement_line_id')
+            .in('to_bank_statement_line_id', candidateIds),
+        ]);
+
+        const linkError = allocationsRes.error || fromTransfersRes.error || toTransfersRes.error;
+        if (linkError) throw linkError;
+
+        const alreadyUsed = new Set<string>([
+          ...(allocationsRes.data || []).map(row => row.bank_statement_line_id).filter((id): id is string => Boolean(id)),
+          ...(fromTransfersRes.data || []).map(row => row.from_bank_statement_line_id).filter((id): id is string => Boolean(id)),
+          ...(toTransfersRes.data || []).map(row => row.to_bank_statement_line_id).filter((id): id is string => Boolean(id)),
+        ]);
+        statements = statements.filter(line => !alreadyUsed.has(line.id));
+      }
+
+      // When editing, retain this transfer's existing line for safe unlink/replace.
+      // If its direction is wrong, show it explicitly as a warning rather than
+      // silently losing the current selection; it is not treated as a candidate.
       if (includeLinkedId) {
-        const { data: linkedData } = await supabase
+        const { data: linkedData, error: linkedError } = await supabase
           .from('bank_statement_lines')
           .select('id, transaction_date, description, debit_amount, credit_amount, reconciliation_status')
           .eq('id', includeLinkedId)
-          .single();
+          .eq('bank_account_id', bankAccountId)
+          .maybeSingle();
 
-        if (linkedData && !statements.find(s => s.id === linkedData.id)) {
-          // Add at the top of the list
-          statements = [linkedData, ...statements];
+        if (linkedError) throw linkedError;
+        if (linkedData && !statements.some(line => line.id === linkedData.id)) {
+          const isCorrectDirection = type === 'from'
+            ? Number(linkedData.debit_amount || 0) > 0.01
+            : Number(linkedData.credit_amount || 0) > 0.01;
+          statements = [{
+            ...linkedData,
+            isCurrentLink: true,
+            isWrongDirection: !isCorrectDirection,
+          }, ...statements];
         }
       }
 
@@ -315,6 +364,13 @@ export function FundTransferManager({
       else setToBankStatements(statements);
     } catch (error) {
       console.error('Error loading bank statements:', error);
+      showToast({
+        type: 'error',
+        title: 'Bank statement options unavailable',
+        message: 'Could not verify which bank transactions are still unlinked. Please retry; no transfer was changed.',
+      });
+      if (type === 'from') setFromBankStatements([]);
+      else setToBankStatements([]);
     }
   }, []);
 
