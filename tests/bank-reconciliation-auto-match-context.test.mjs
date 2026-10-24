@@ -27,7 +27,7 @@ test('Auto-match includes salary advance staff identity', () => {
 test('Auto-match includes customer and sales invoice context for Receipt Vouchers', () => {
   assert.match(migration, /WHEN 'receipt' THEN/);
   assert.match(migration, /rv\.description/);
-  assert.match(migration, /cu\.company_name/);
+  assert.match(migration, /c\.company_name/);
   assert.match(migration, /si\.invoice_number/);
   assert.match(migration, /ci\.company_name/);
 });
