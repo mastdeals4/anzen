@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search, Clock } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
@@ -656,7 +656,7 @@ export function ExpenseManager({
     batch_id: '',
     import_container_id: '',
     delivery_challan_id: '',
-    payment_method: 'bank_transfer' as string | null,
+    payment_method: null as string | null,
     bank_account_id: '',
     payment_reference: '',
     document_urls: [] as string[],
@@ -822,7 +822,7 @@ export function ExpenseManager({
           pph_code_id: calculation.pph21_applicable && pph21Code ? pph21Code.id : previous.pph_code_id,
           payment_method: editingExpense
             ? previous.payment_method
-            : (['cash','bank_transfer'].includes(calculation.default_payment_method)
+            : (calculation.default_payment_method === 'bank_transfer'
               ? calculation.default_payment_method
               : previous.payment_method),
         }));
@@ -1613,7 +1613,7 @@ export function ExpenseManager({
         payment_method: formData.payment_method || null,
         bank_account_id: formData.payment_method && formData.payment_method !== 'outstanding' ? (formData.bank_account_id || null) : null,
         payment_reference: formData.payment_reference || null,
-        paid_by: formData.payment_method === null || formData.payment_method === 'outstanding' ? null : 'bank',
+        paid_by: selectedBankTransactionId ? 'bank' : null,
         // save_finance_expense expects document_urls to always be a JSON array;
         // null causes jsonb_array_elements_text to fail in the RPC.
         document_urls: allDocumentUrls,
@@ -1868,7 +1868,7 @@ export function ExpenseManager({
     }
   };
 
-  const handleEdit = async (expense: FinanceExpense) => {
+  const handleEdit = async (expense: FinanceExpense, openBankLink = false) => {
     if (expense.effective_posting_state === 'REVERSED' || expense.effective_posting_state === 'AMBIGUOUS') {
       alert(expense.effective_posting_state === 'REVERSED'
         ? 'This expense is cancelled and cannot be edited.'
@@ -1895,9 +1895,14 @@ export function ExpenseManager({
 
     // Use reconciled bank info if available, otherwise use expense's own payment info
     const effectiveBankAccountId = reconciledBankInfo?.bank_account_id || expense.bank_account_id || '';
-    const effectivePaymentMethod = reconciledBankInfo?.bank_account_id
+    // The row-level bank-link shortcut opens the existing edit workflow with
+    // bank transfer selected, so the user can choose the correct bank account
+    // and statement line without changing any saved data just by clicking the icon.
+    const effectivePaymentMethod = openBankLink
       ? 'bank_transfer'
-      : expense.payment_method;
+      : reconciledBankInfo?.bank_account_id
+        ? 'bank_transfer'
+        : expense.payment_method;
 
     // Determine document type from category
     const docType = (Object.entries(DOCUMENT_TYPE_GROUPS) as [DocumentType, string[]][])
@@ -2268,7 +2273,7 @@ export function ExpenseManager({
       batch_id: '',
       import_container_id: '',
       delivery_challan_id: '',
-      payment_method: 'bank_transfer',
+      payment_method: null,
       bank_account_id: '',
       payment_reference: '',
       document_urls: [],
@@ -2483,7 +2488,7 @@ export function ExpenseManager({
   const requiresDC = selectedCategory?.type === 'sales';
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
 
-  const filteredExpenses = expenses.filter(exp => {
+  const filteredExpenses = useMemo(() => expenses.filter((exp) => {
     const isCancelled = exp.effective_posting_state === 'REVERSED';
     if (lifecycleFilter === 'cancelled' ? !isCancelled : isCancelled) return false;
 
@@ -2516,12 +2521,13 @@ export function ExpenseManager({
       const isReconciled = recon.isFullyReconciled;
       const isCancelled = exp.approval_status === 'cancelled';
       const isCash = exp.payment_method === 'cash';
-      const isPaid = (exp.payment_method !== null && exp.payment_method !== 'cash') || ((exp.paid_amount ?? 0) > 0.01);
+      const isPaid = (exp.paid_amount ?? 0) > 0.01;
       if (isCancelled || isCash || isReconciled || !isPaid) return false;
     } else if (reconFilter === 'outstanding') {
       const isCancelled = exp.approval_status === 'cancelled';
-      const isPaid = (exp.payment_method !== null) || ((exp.paid_amount ?? 0) > 0.01);
-      if (isCancelled || isPaid) return false;
+      const billBalance = calculateCanonicalCashPayable(exp) - (exp.paid_amount ?? 0);
+      const isOutstanding = billBalance > 0.01 && (exp.paid_amount ?? 0) <= 0.01;
+      if (isCancelled || !isOutstanding) return false;
     }
 
     // Filter by approval status
@@ -2551,7 +2557,17 @@ export function ExpenseManager({
     // perf: date range filtered server-side in loadData().
 
     return true;
-  });
+  }), [
+    expenses,
+    lifecycleFilter,
+    filterType,
+    expenseCategories,
+    categoryFilter,
+    supplierFilter,
+    reconFilter,
+    approvalFilter,
+    normalizedSearch,
+  ]);
 
   // Sorting function
   const handleSort = (key: string) => {
@@ -2564,20 +2580,22 @@ export function ExpenseManager({
 
   // Accountant-priority sort: Pending Approval → Approved+Outstanding → Partial → Paid+Pending Recon → Paid+Reconciled → Petty Cash → Cancelled
   // Only applies when no explicit user sort is active.
-  const accountantPriorityRank = (exp: FinanceExpense): number => {
+  const accountantPriorityRank = useCallback((exp: FinanceExpense): number => {
     const recon = calculateExpenseReconciliation(exp);
     const isReconciled = recon.isFullyReconciled;
     if (exp.approval_status === 'pending_approval') return 0;
     if (exp.approval_status === 'rejected') return 1;
     if (exp.approval_status === 'cancelled') return 6;
     if (exp.payment_method === 'cash') return 5;
-    const isPaid = exp.payment_method !== null || (exp.paid_amount ?? 0) > 0.01;
-    if (!isPaid) return 2; // Approved but Outstanding
+    const isPaid = (exp.paid_amount ?? 0) >= (calculateCanonicalCashPayable(exp) - 0.01);
+    const isPartiallyPaid = (exp.paid_amount ?? 0) > 0.01 && !isPaid;
+    if (!isPaid && !isPartiallyPaid) return 2; // Approved but Outstanding
+    if (isPartiallyPaid) return 2.5; // Partially Paid
     if (!isReconciled) return 3; // Paid but Pending Bank Reconciliation
     return 4; // Paid & Reconciled
-  };
+  }, []);
 
-  const sortedExpenses = [...filteredExpenses].sort((a, b) => {
+  const sortedExpenses = useMemo(() => [...filteredExpenses].sort((a, b) => {
     if (!sortConfig) {
       const rankA = accountantPriorityRank(a);
       const rankB = accountantPriorityRank(b);
@@ -2634,7 +2652,7 @@ export function ExpenseManager({
     if (aValue < bValue) return direction === 'asc' ? -1 : 1;
     if (aValue > bValue) return direction === 'asc' ? 1 : -1;
     return 0;
-  });
+  }), [filteredExpenses, sortConfig, expenseCategories, accountantPriorityRank]);
 
   const exportToCSV = async () => {
     if (filteredExpenses.length === 0) {
@@ -2816,13 +2834,13 @@ export function ExpenseManager({
                 <span className="inline-flex items-center gap-1 bg-teal-50 text-teal-800 border border-teal-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-teal-600 font-normal">Reconciled:</span>
                   <span className="font-mono font-semibold">
-                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.payment_method === 'bank_transfer' || (e.paid_amount ?? 0) > 0.01)).length}
+                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.paid_amount ?? 0) > 0.01).length}
                   </span>
                 </span>
                 <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-amber-600 font-normal">Outstanding:</span>
                   <span className="font-mono font-semibold">
-                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method === null && (e.paid_amount ?? 0) <= 0.01).length}
+                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && (calculateCanonicalCashPayable(e) - (e.paid_amount ?? 0)) > 0.01 && (e.paid_amount ?? 0) <= 0.01).length}
                   </span>
                 </span>
               </div>
@@ -3106,6 +3124,12 @@ export function ExpenseManager({
                   Loading...
                 </td>
               </tr>
+            ) : modalOpen ? (
+              <tr>
+                <td colSpan={canManage ? 11 : 10} className="px-6 py-8 text-center text-gray-400">
+                  Expense editor open
+                </td>
+              </tr>
             ) : filteredExpenses.length === 0 ? (
               <tr>
                 <td colSpan={canManage ? 11 : 10} className="px-6 py-8 text-center text-gray-500">
@@ -3217,11 +3241,11 @@ export function ExpenseManager({
                             </span>
                           );
                         }
-                        if (billBalance > 0.01 && (expense.paid_amount ?? 0) <= 0.01 && expense.payment_method === null) {
+                        if (billBalance > 0.01) {
                           return (
                             <span
                               className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-700"
-                              title="Outstanding"
+                              title={`Outstanding · ${formatCurrency(billBalance, getExpenseCurrency(expense))} payable`}
                             >
                               <Banknote className="w-3 h-3" />
                             </span>
@@ -3354,6 +3378,29 @@ export function ExpenseManager({
                     {canManage && (
                       <td className="px-2 py-1.5 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-0.5">
+                          {(postingState === 'ACTIVE' || postingState === 'REPLACED') && !isReconciled && (
+                            <button
+                              type="button"
+                              onClick={() => void handleEdit(expense, true)}
+                              title={
+                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
+                                  ? 'Link remaining payment / finish bank reconciliation'
+                                  : 'Link bank transaction'
+                              }
+                              aria-label={
+                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
+                                  ? `Link remaining payment for ${expense.voucher_number || 'expense'}`
+                                  : `Link bank transaction for ${expense.voucher_number || 'expense'}`
+                              }
+                              className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
+                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
+                                  ? 'text-amber-700 hover:bg-amber-50'
+                                  : 'text-blue-600 hover:bg-blue-50'
+                              }`}
+                            >
+                              <Link2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <FinanceActionButton
                             action="view"
                             onClick={async () => {
@@ -3410,7 +3457,7 @@ export function ExpenseManager({
               })
             )}
             {/* Totals Row */}
-            {!loading && sortedExpenses.length > 0 && (
+            {!modalOpen && !loading && sortedExpenses.length > 0 && (
               <tr className="bg-gradient-to-r from-blue-50 to-blue-100 border-t-2 border-blue-200 font-bold">
                 <td colSpan={5} className="px-2 py-1.5 text-right text-xs text-gray-900">
                   TOTAL ({sortedExpenses.length} expenses):
@@ -4511,15 +4558,25 @@ export function ExpenseManager({
                       }
                     }}
                     className="w-full h-7 px-2 border border-gray-300 rounded text-xs bg-white" required>
+                    <option value="outstanding">⏳ Outstanding / Pay Later (A/P 2110)</option>
                     <option value="bank_transfer">🏦 Bank Transfer</option>
                     <option value="check">📝 Cheque</option>
                     <option value="giro">📋 Giro</option>
                     <option value="other">📌 Other</option>
-                    <option value="outstanding">📋 Outstanding (A/P)</option>
                   </select>
-                  {formData.payment_method === null && (
-                    <p className="text-[9px] text-amber-700 mt-0.5 font-medium">Posted as A/P 2110 — appears in Payables</p>
+                  {(formData.payment_method === null || formData.payment_method === 'outstanding') && (
+                    <p className="text-[9px] text-amber-700 mt-0.5 font-medium">⏳ Unpaid expense: Dr Expense, Cr Accounts Payable (2110). Zero bank credit until actual payment is recorded.</p>
                   )}
+                  {formData.payment_method === 'bank_transfer' && (
+                    <p className="text-[9px] text-blue-700 mt-0.5 font-medium">🏦 Bank Transfer: Expense payable is recognized to A/P 2110. Bank is credited when reconciled with bank line or payment voucher.</p>
+                  )}
+                  {(formData.payment_method === 'check' || formData.payment_method === 'giro') && (
+                    <p className="text-[9px] text-purple-700 mt-0.5 font-medium">📝 Cheque/Giro: Recognized to A/P 2110. Settled when payment voucher is posted.</p>
+                  )}
+                  {formData.payment_method === 'other' && (
+                    <p className="text-[9px] text-gray-600 mt-0.5 font-medium">📌 Other: Recognized to Accounts Payable (A/P 2110).</p>
+                  )}
+                  <p className="text-[9px] text-gray-400 mt-0.5">💡 For cash payments: record as Outstanding (A/P 2110), then record disbursement in Petty Cash Manager or Payment Voucher.</p>
                 </div>
 
                 {formData.payment_method !== null && (

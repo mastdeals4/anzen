@@ -22,7 +22,8 @@ interface BankAccount {
   is_active: boolean;
   alias?: string;
   coa_code?: string;
-  ledger_balance?: number;
+  ledger_balance?: number | null;
+  ledger_balance_status?: 'ok' | 'unavailable' | 'no_coa';
 }
 
 interface Props {
@@ -56,9 +57,13 @@ export function BankAccountsManager({ canManage }: Props) {
         .rpc('get_bank_account_balances', { p_as_of_date: today });
 
       const balanceMap: Record<string, number> = {};
-      if (!balancesError && balancesData) {
+      if (balancesError) {
+        console.warn('Could not fetch ledger balances via RPC:', balancesError.message);
+      } else if (balancesData) {
         for (const b of balancesData) {
-          balanceMap[b.bank_account_id] = Number(b.book_balance);
+          if (b.book_balance !== null && b.book_balance !== undefined) {
+            balanceMap[b.bank_account_id] = Number(b.book_balance);
+          }
         }
       }
 
@@ -69,13 +74,20 @@ export function BankAccountsManager({ canManage }: Props) {
 
       if (accountsError) throw accountsError;
 
-      const enriched = (accountsData || []).map((acct: any) => ({
-        ...acct,
-        coa_code: acct.chart_of_accounts?.code,
-        ledger_balance: balanceMap[acct.id] !== undefined 
-          ? balanceMap[acct.id] 
-          : (acct.chart_of_accounts?.code ? Number(acct.opening_balance || 0) : null),
-      }));
+      const enriched = (accountsData || []).map((acct: any) => {
+        const hasCoa = Boolean(acct.chart_of_accounts?.code);
+        const hasBalance = balanceMap[acct.id] !== undefined;
+        return {
+          ...acct,
+          coa_code: acct.chart_of_accounts?.code,
+          ledger_balance: hasCoa && hasBalance ? balanceMap[acct.id] : null,
+          ledger_balance_status: !hasCoa
+            ? ('no_coa' as const)
+            : hasBalance
+            ? ('ok' as const)
+            : ('unavailable' as const),
+        };
+      });
 
       setAccounts(enriched);
     } catch (error) {
@@ -158,8 +170,11 @@ export function BankAccountsManager({ canManage }: Props) {
       key: 'balance',
       label: 'GL Balance',
       render: (_val: any, item: BankAccount) => {
-        if (item.ledger_balance === null || item.ledger_balance === undefined) {
+        if (!item.coa_code || item.ledger_balance_status === 'no_coa') {
           return <span className="text-gray-400 text-xs">No COA linked</span>;
+        }
+        if (item.ledger_balance_status === 'unavailable' || item.ledger_balance === null || item.ledger_balance === undefined) {
+          return <span className="text-amber-600 text-xs font-medium">GL balance unavailable</span>;
         }
         const isNegative = item.ledger_balance < 0;
         return (

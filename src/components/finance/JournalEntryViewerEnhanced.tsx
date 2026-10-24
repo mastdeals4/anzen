@@ -195,10 +195,62 @@ export function JournalEntryViewerEnhanced({
           chart_of_accounts: line.chart_of_accounts });
         linesByEntry.set(line.journal_entry_id, list);
       });
+      // Resolve canonical voucher references for receipt and payment vouchers
+      const receiptRefIds = Array.from(new Set(
+        entries
+          .filter(e => (e.source_module === 'receipt' || e.source_module === 'receipt_voucher' || e.source_module === 'customer_receipt') && Boolean(e.reference_id))
+          .map(e => e.reference_id as string)
+      ));
+      const paymentRefIds = Array.from(new Set(
+        entries
+          .filter(e => (e.source_module === 'payment' || e.source_module === 'payment_voucher' || e.source_module === 'supplier_payment') && Boolean(e.reference_id))
+          .map(e => e.reference_id as string)
+      ));
+
+      const canonicalRefMap = new Map<string, string>();
+
+      if (receiptRefIds.length > 0) {
+        for (let i = 0; i < receiptRefIds.length; i += 100) {
+          const chunk = receiptRefIds.slice(i, i + 100);
+          const { data: rvData } = await supabase
+            .from('receipt_vouchers')
+            .select('id, voucher_number')
+            .in('id', chunk);
+          (rvData || []).forEach((rv: any) => {
+            if (rv.voucher_number) {
+              canonicalRefMap.set(`receipt:${rv.id}`, rv.voucher_number);
+            }
+          });
+        }
+      }
+
+      if (paymentRefIds.length > 0) {
+        for (let i = 0; i < paymentRefIds.length; i += 100) {
+          const chunk = paymentRefIds.slice(i, i + 100);
+          const { data: pvData } = await supabase
+            .from('payment_vouchers')
+            .select('id, voucher_number')
+            .in('id', chunk);
+          (pvData || []).forEach((pv: any) => {
+            if (pv.voucher_number) {
+              canonicalRefMap.set(`payment:${pv.id}`, pv.voucher_number);
+            }
+          });
+        }
+      }
+
       setVoucherEntries(entries.map(entry => {
         const entryLines = linesByEntry.get(entry.id) || [];
         const debitLine = entryLines.find(line => line.debit > 0);
         const creditLine = entryLines.find(line => line.credit > 0);
+        const isReceipt = entry.source_module === 'receipt' || entry.source_module === 'receipt_voucher' || entry.source_module === 'customer_receipt';
+        const isPayment = entry.source_module === 'payment' || entry.source_module === 'payment_voucher' || entry.source_module === 'supplier_payment';
+        const canonicalRef = isReceipt && entry.reference_id
+          ? canonicalRefMap.get(`receipt:${entry.reference_id}`)
+          : isPayment && entry.reference_id
+          ? canonicalRefMap.get(`payment:${entry.reference_id}`)
+          : null;
+
         return {
           journal_entry_id: entry.id,
           date: entry.entry_date,
@@ -211,7 +263,7 @@ export function JournalEntryViewerEnhanced({
           transaction_amount: entry.transaction_currency && entry.transaction_currency !== 'IDR'
             ? entryLines.reduce((sum, line) => sum + line.transaction_debit, 0) : null,
           narration: entry.description || '',
-          reference_number: entry.reference_number,
+          reference_number: canonicalRef || entry.reference_number,
           source_module: entry.source_module,
           reference_id: entry.reference_id,
           is_posted: Boolean(entry.is_posted),
@@ -273,6 +325,22 @@ export function JournalEntryViewerEnhanced({
           .select('voucher_number, amount, transaction_currency, exchange_rate')
           .eq('id', entry.reference_id).maybeSingle();
         if (data) setSourceSummary(`${data.voucher_number} — ${formatCurrency(data.amount, data.transaction_currency || 'IDR')} — rate ${data.exchange_rate || 'manual review required'}`);
+      } else if (entry.reference_id && (entry.source_module === 'receipt' || entry.source_module === 'receipt_voucher' || entry.source_module === 'customer_receipt')) {
+        const { data } = await supabase.from('receipt_vouchers')
+          .select('voucher_number, total_amount, currency')
+          .eq('id', entry.reference_id).maybeSingle();
+        if (data?.voucher_number) {
+          setSourceSummary(`${data.voucher_number} — ${formatCurrency(data.total_amount, data.currency || 'IDR')}`);
+          entry.reference_number = data.voucher_number;
+        }
+      } else if (entry.reference_id && (entry.source_module === 'payment' || entry.source_module === 'payment_voucher' || entry.source_module === 'supplier_payment')) {
+        const { data } = await supabase.from('payment_vouchers')
+          .select('voucher_number, total_amount, currency')
+          .eq('id', entry.reference_id).maybeSingle();
+        if (data?.voucher_number) {
+          setSourceSummary(`${data.voucher_number} — ${formatCurrency(data.total_amount, data.currency || 'IDR')}`);
+          entry.reference_number = data.voucher_number;
+        }
       }
       await loadEntryLines(voucherEntry.journal_entry_id);
       setViewModalOpen(true);

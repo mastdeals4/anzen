@@ -3770,15 +3770,7 @@ export function BankReconciliationEnhanced({
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => { autoMatchTransactions(); }}
-              disabled={!selectedBank || autoMatching}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium shadow-sm"
-              title="Auto-match"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
-              {autoMatching ? 'Matching...' : 'Match'}
-            </button>
+  
             {canManage && (
               <>
                 <button
@@ -3878,6 +3870,17 @@ export function BankReconciliationEnhanced({
               }`}
             >
               ✕ Unmatched ({stats.unmatched})
+            </button>
+            <button
+              type="button"
+              onClick={() => { void autoMatchTransactions(); }}
+              disabled={!selectedBank || autoMatching}
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap"
+              title="Match unlinked transactions to posted finance documents; ambiguous matches remain unlinked"
+              aria-label="Run bank transaction auto-match"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
+              {autoMatching ? 'Matching…' : 'Auto-Match'}
             </button>
           </div>
         </div>
