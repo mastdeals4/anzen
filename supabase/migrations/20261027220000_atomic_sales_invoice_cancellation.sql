@@ -85,6 +85,7 @@ END;
 $$;
 
 -- 2. Update dc_invoicing_summary to exclude cancelled invoices
+DROP VIEW IF EXISTS public.dc_invoicing_summary CASCADE;
 CREATE OR REPLACE VIEW public.dc_invoicing_summary WITH (security_invoker = true) AS
  SELECT dc.id AS challan_id,
     dc.challan_number,

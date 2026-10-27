@@ -36,7 +36,7 @@ interface DeliveryChallan {
   vehicle_number: string | null;
   driver_name: string | null;
   notes: string | null;
-  approval_status: 'pending_approval' | 'approved' | 'rejected';
+  approval_status: 'pending_approval' | 'approved' | 'rejected' | 'cancelled';
   status?: string;
   sales_order_id?: string | null;
   invoicing_status?: 'not_invoiced' | 'partially_invoiced' | 'fully_invoiced';
@@ -875,10 +875,13 @@ export function DeliveryChallan() {
       .single();
 
     setEditingChallan(challan);
+    const targetCustomerId = fullChallan?.customer_id || challan.customer_id;
+    const targetSoId = fullChallan?.sales_order_id || '';
+
     setFormData({
       challan_number: challan.challan_number,
-      customer_id: challan.customer_id,
-      sales_order_id: fullChallan?.sales_order_id || '',
+      customer_id: targetCustomerId,
+      sales_order_id: targetSoId,
       challan_date: challan.challan_date,
       delivery_address: challan.delivery_address,
       vehicle_number: challan.vehicle_number || '',
@@ -886,11 +889,49 @@ export function DeliveryChallan() {
       notes: challan.notes || '',
     });
 
+    // Populate Sales Orders for this customer so the dropdown is ready for relinking
+    await loadSalesOrders(targetCustomerId);
+
+    // If linked to a Sales Order, hydrate SO items and reservation status
+    if (targetSoId) {
+      try {
+        const [soItemsResult, reservationsResult] = await Promise.all([
+          supabase
+            .from('sales_order_items')
+            .select(`id, product_id, make_id, quantity, delivered_quantity, unit_price, products(product_name, unit)`)
+            .eq('sales_order_id', targetSoId),
+          supabase
+            .from('so_product_reservation_status')
+            .select('sales_order_item_id, reserved_quantity')
+            .eq('sales_order_id', targetSoId)
+        ]);
+
+        if (soItemsResult.data) {
+          const normalized = soItemsResult.data.map((item: any) => ({
+            ...item,
+            products: Array.isArray(item.products) ? (item.products[0] || null) : item.products,
+          })) as SalesOrderItemSource[];
+          setSalesOrderItemSources(normalized);
+        }
+        if (reservationsResult.data) {
+          const resMap = new Map<string, number>();
+          reservationsResult.data.forEach((r: any) => {
+            resMap.set(r.sales_order_item_id, parseFloat(r.reserved_quantity));
+          });
+          setSoReservations(resMap);
+          setSoReservationLoadState('ready');
+        }
+      } catch (err) {
+        console.error('Error hydrating SO sources for DC edit:', err);
+      }
+    }
+
     const loadedItems = await loadChallanItems(challan.id);
     setOriginalItems(loadedItems);
 
     if (loadedItems.length > 0) {
       setItems(loadedItems.map(item => ({
+        id: item.id,
         product_id: item.product_id,
         sales_order_item_id: item.sales_order_item_id || null,
         batch_id: item.batch_id,
@@ -1028,8 +1069,8 @@ export function DeliveryChallan() {
           throw new Error('Approved Delivery Challans cannot be edited. Reject/cancel the DC to reverse its allocation, then create a corrected DC.');
         }
 
-        // When editing, DO NOT update challan_number (it's unique and shouldn't change)
-        const updateData = {
+        const isReactivating = editingChallan.approval_status === 'rejected' || editingChallan.approval_status === 'cancelled';
+        const updateData: Record<string, any> = {
           customer_id: formData.customer_id,
           sales_order_id: formData.sales_order_id || null,
           challan_date: formData.challan_date,
@@ -1037,9 +1078,16 @@ export function DeliveryChallan() {
           vehicle_number: formData.vehicle_number || null,
           driver_name: formData.driver_name || null,
           notes: formData.notes || null,
-          // Don't reset approval_status when editing
-          // Don't update created_by when editing
         };
+
+        if (isReactivating) {
+          updateData.approval_status = 'pending_approval';
+          updateData.rejection_reason = null;
+          updateData.rejected_by = null;
+          updateData.rejected_at = null;
+          updateData.approved_at = null;
+          updateData.approved_by = null;
+        }
 
         const { data: updatedChallan, error: updateError } = await supabase
           .from('delivery_challans')
@@ -1047,6 +1095,8 @@ export function DeliveryChallan() {
           .eq('id', editingChallan.id)
           .select()
           .single();
+
+        if (updateError) throw updateError;
 
         const prepareItemsWithPackaging = (rawItems: ChallanItem[]) => {
           return rawItems.map(item => {
@@ -1101,6 +1151,7 @@ export function DeliveryChallan() {
         // Approved allocations are immutable. Corrections must use the
         // canonical rejection/cancellation reversal and a replacement DC.
         const itemsForRpc = preparedItems.map(item => ({
+          id: item.id || undefined,
           product_id: item.product_id,
           batch_id: item.batch_id,
           sales_order_item_id: item.sales_order_item_id || null,
@@ -1240,7 +1291,16 @@ export function DeliveryChallan() {
       resetForm();
       loadChallans();
       loadBatches();
-      showToast({ type: 'success', title: 'Success', message: `Delivery Challan ${editingChallan ? 'updated' : 'created'} successfully!` });
+      const isReactivated = editingChallan && (editingChallan.approval_status === 'rejected' || editingChallan.approval_status === 'cancelled');
+      showToast({
+        type: 'success',
+        title: 'Success',
+        message: editingChallan
+          ? (isReactivated
+              ? 'Delivery Challan updated and submitted for approval. You can now re-approve it.'
+              : 'Delivery Challan updated successfully!')
+          : 'Delivery Challan created successfully!'
+      });
     } catch (error: any) {
       console.error('Error saving challan:', error);
       console.error('Full error object:', JSON.stringify(error, null, 2));
@@ -1268,21 +1328,47 @@ export function DeliveryChallan() {
       });
       return;
     }
-    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this delivery challan? This will revert the linked Sales Order status.', variant: 'danger', confirmLabel: 'Delete' })) return;
+    if (!await showConfirm({
+      title: 'Confirm Deletion',
+      message: 'Are you sure you want to delete this delivery challan? Unapproved draft records will be permanently removed.',
+      variant: 'danger',
+      confirmLabel: 'Delete'
+    })) return;
 
     try {
       const { data: dcData } = await supabase
         .from('delivery_challans')
-        .select('sales_order_id, id')
+        .select('sales_order_id, id, challan_number, approval_status')
         .eq('id', id)
         .single();
 
-      const { error } = await supabase
+      const { error, count } = await supabase
         .from('delivery_challans')
-        .delete()
+        .delete({ count: 'exact' })
         .eq('id', id);
 
-      if (error) throw error;
+      if (error) {
+        if (error.message?.includes('canonical stock history') || error.message?.includes('cannot be deleted')) {
+          showToast({
+            type: 'warning',
+            title: 'Audit Record Preserved',
+            message: `Delivery Challan ${dcData?.challan_number || ''} has posted inventory history and cannot be deleted from the database. It is preserved as ${dcData?.approval_status === 'rejected' ? 'Rejected' : 'Cancelled'} for audit tracking. To correct it, use Edit.`,
+          });
+          loadChallans();
+          return;
+        }
+        throw error;
+      }
+
+      if (count === 0) {
+        showToast({
+          type: 'warning',
+          title: 'Not Deleted',
+          message: `Delivery Challan ${dcData?.challan_number || ''} was not deleted. Historical audit records with inventory movements are preserved. Use Edit to recover or correct it.`,
+        });
+        loadChallans();
+        return;
+      }
 
       if (dcData?.sales_order_id) {
         await supabase
@@ -1298,10 +1384,18 @@ export function DeliveryChallan() {
       }
 
       loadChallans();
-      showToast({ type: 'success', title: 'Success', message: 'Delivery Challan deleted successfully. Sales Order status has been reverted.' });
-    } catch (error) {
+      showToast({
+        type: 'success',
+        title: 'Deleted',
+        message: 'Delivery Challan draft deleted successfully.'
+      });
+    } catch (error: any) {
       console.error('Error deleting challan:', error);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to delete challan. Please try again.' });
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: error?.message || 'Failed to delete challan. Please try again.'
+      });
     }
   };
 
@@ -1440,15 +1534,17 @@ export function DeliveryChallan() {
       key: 'approval_status',
       label: 'Status / Approval',
       render: (value: any, challan: DeliveryChallan) => {
-        const statusColors = {
+        const statusColors: Record<string, string> = {
           pending_approval: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
           approved: 'bg-green-100 text-green-800 border border-green-300',
-          rejected: 'bg-red-100 text-red-800 border border-red-300'
+          rejected: 'bg-red-100 text-red-800 border border-red-300',
+          cancelled: 'bg-red-100 text-red-800 border border-red-300',
         };
-        const statusLabels = {
+        const statusLabels: Record<string, string> = {
           pending_approval: 'Draft / Pending',
           approved: 'Approved (Stock Posted)',
-          rejected: 'Cancelled / Rejected'
+          rejected: 'Cancelled / Rejected',
+          cancelled: 'Cancelled / Rejected',
         };
         return (
           <div className="flex items-center justify-center gap-2">
@@ -1631,7 +1727,7 @@ export function DeliveryChallan() {
                       <button
                         onClick={() => handleEdit(challan)}
                         className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                        title="Edit Draft Challan"
+                        title={challan.approval_status === 'rejected' ? 'Recover & Edit Challan' : (challan.approval_status === 'cancelled' ? 'Edit Cancelled Challan' : 'Edit Draft Challan')}
                       >
                         <Edit className="w-4 h-4" />
                       </button>

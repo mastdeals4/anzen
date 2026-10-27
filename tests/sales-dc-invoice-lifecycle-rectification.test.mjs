@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const migrationCancelSql = fs.readFileSync('supabase/migrations/20261027220000_atomic_sales_invoice_cancellation.sql', 'utf8');
 const migrationRectifySql = fs.readFileSync('supabase/migrations/20261028000000_sales_dc_invoice_lifecycle_rectification.sql', 'utf8');
+const migrationRecoverySql = fs.readFileSync('supabase/migrations/20261028010000_delivery_challan_recovery_and_source_relinking.sql', 'utf8');
 const salesSource = fs.readFileSync('src/pages/Sales.tsx', 'utf8');
 const deliveryChallanSource = fs.readFileSync('src/pages/DeliveryChallan.tsx', 'utf8');
 const salesOrdersSource = fs.readFileSync('src/pages/SalesOrders.tsx', 'utf8');
@@ -497,5 +498,149 @@ test('Case 13: Cancelled invoice watermark, void banner, and status display in p
     invoiceViewSource,
     /\{isCancelled && \(\s*<div className="pt-1 text-red-600 font-bold">\s*<span>Status:<\/span>\s*<span className="ml-2 uppercase tracking-wide">Cancelled<\/span>\s*<\/div>\s*\)\}/,
     'Invoice details section must explicitly display Status: Cancelled'
+  );
+});
+
+// ==============================================================================
+// 14. Rejected DC recovery, edit, SO relinking, and item upsert architecture
+// ==============================================================================
+test('Case 14: Rejected DC recovery, edit, SO relinking, and item upsert architecture', () => {
+  // edit_delivery_challan checks approval_status = 'approved', allowing rejected/cancelled DCs to be edited
+  assert.match(
+    migrationRecoverySql,
+    /IF v_challan\.approval_status = 'approved' THEN\s+RETURN jsonb_build_object\('success', false, 'error', 'Cannot edit approved delivery challan directly; reverse it or use approved DC edit'\);/,
+    'edit_delivery_challan must guard on approval_status = approved rather than approved_at IS NOT NULL'
+  );
+
+  // edit_delivery_challan checks active uncancelled invoices and explains blocking invoice numbers
+  assert.match(
+    migrationRecoverySql,
+    /SELECT string_agg\(DISTINCT si\.invoice_number, ', '\)\s+INTO v_blocking_invoices[\s\S]*?WHERE dci\.challan_id = p_challan_id\s+AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\);/,
+    'edit_delivery_challan must aggregate active blocking invoice numbers'
+  );
+  assert.match(
+    migrationRecoverySql,
+    /'Delivery Challan already invoiced by active invoice\(s\) ' \|\| v_blocking_invoices \|\| '; cancel or reverse the invoice\(s\) first'/,
+    'edit_delivery_challan must report exact blocking invoices'
+  );
+
+  // edit_delivery_challan preserves and persists sales_order_item_id
+  assert.match(
+    migrationRecoverySql,
+    /v_so_item_id := NULLIF\(v_item->>'sales_order_item_id', ''\)::uuid;/,
+    'edit_delivery_challan must extract sales_order_item_id'
+  );
+  assert.match(
+    migrationRecoverySql,
+    /INSERT INTO public\.delivery_challan_items \([\s\S]*?sales_order_item_id[\s\S]*?\) VALUES \([\s\S]*?v_so_item_id[\s\S]*?\);/,
+    'edit_delivery_challan must insert sales_order_item_id'
+  );
+
+  // guard_delivery_challan_source_link permits relinking non-approved DCs
+  assert.match(
+    migrationRecoverySql,
+    /IF OLD\.approval_status = 'approved'\s+AND OLD\.sales_order_id IS NOT NULL\s+AND NEW\.sales_order_id IS DISTINCT FROM OLD\.sales_order_id THEN\s+RAISE EXCEPTION 'An approved Delivery Challan linked to a Sales Order cannot be detached or reassigned; cancel or reverse it first';/,
+    'guard_delivery_challan_source_link only blocks reassigning currently approved DCs'
+  );
+
+  // Frontend DeliveryChallan.tsx loads sales orders on handleEdit so relinking dropdown is ready
+  assert.match(
+    deliveryChallanSource,
+    /await loadSalesOrders\(targetCustomerId\);/,
+    'handleEdit must load sales orders for customer to populate relinking dropdown'
+  );
+
+  // Frontend DeliveryChallan.tsx resets status to pending_approval when saving edited rejected/cancelled DC
+  assert.match(
+    deliveryChallanSource,
+    /const isReactivating = editingChallan\.approval_status === 'rejected' \|\| editingChallan\.approval_status === 'cancelled';/,
+    'Frontend must detect reactivation of rejected or cancelled DC'
+  );
+  assert.match(
+    deliveryChallanSource,
+    /updateData\.approval_status = 'pending_approval';\s+updateData\.rejection_reason = null;/,
+    'Saving edited rejected DC must reset status to pending_approval and clear rejection reason'
+  );
+});
+
+// ==============================================================================
+// 15. Re-approval of corrected DC consumes reservations and records single-owner physical delivery
+// ==============================================================================
+test('Case 15: Re-approval of corrected DC consumes reservations and records single-owner physical delivery', () => {
+  // trg_dc_approval_product_reservation_v2 allows re-approval of previously rejected DCs
+  assert.doesNotMatch(
+    migrationRecoverySql,
+    /IF NEW\.approval_status='approved'\s+AND OLD\.approval_status IN \('rejected','cancelled'\) THEN\s+RAISE EXCEPTION/,
+    'trg_dc_approval_product_reservation_v2 must not contain blanket re-approval prohibition'
+  );
+
+  // Re-approval calls consume_so_product_reservation_v2 and fn_recompute_so_delivered
+  assert.match(
+    migrationRecoverySql,
+    /PERFORM public\.consume_so_product_reservation_v2\(\s*r\.id,\s*NEW\.approval_operation_id,\s*COALESCE\(NEW\.approved_by, auth\.uid\(\)\)\s*\);/,
+    'Approval must invoke consume_so_product_reservation_v2 for every item'
+  );
+  assert.match(
+    migrationRecoverySql,
+    /PERFORM public\.fn_recompute_so_delivered\(NEW\.sales_order_id\);\s+PERFORM public\.fn_recompute_so_status\(NEW\.sales_order_id\);/,
+    'Approval must trigger recomputation of SO delivered quantity and status'
+  );
+});
+
+// ==============================================================================
+// 16. Safe DC deletion handling and audit preservation toast (no false success)
+// ==============================================================================
+test('Case 16: Safe DC deletion handling and audit preservation toast (no false success)', () => {
+  // handleDelete must verify affected count and never claim success on 0 deleted rows
+  assert.match(
+    deliveryChallanSource,
+    /\.delete\(\{ count: 'exact' \}\)/,
+    'handleDelete must request exact delete count'
+  );
+  assert.match(
+    deliveryChallanSource,
+    /if \(count === 0\) \{[\s\S]*?title: 'Not Deleted'/,
+    'handleDelete must warn user if 0 rows were deleted'
+  );
+  assert.match(
+    deliveryChallanSource,
+    /title: 'Audit Record Preserved'[\s\S]*?has posted inventory history and cannot be deleted/,
+    'handleDelete must explain audit history preservation when stock movements exist'
+  );
+
+  // RLS DELETE policy for unposted DCs declared in migration
+  assert.match(
+    migrationRecoverySql,
+    /CREATE POLICY "Admin, sales, and warehouse can delete unposted delivery_challans"/,
+    'Migration must declare RLS delete policy for unposted delivery challans'
+  );
+});
+
+// ==============================================================================
+// 17. Migration 20261028010000 schema integrity: nullable invoice-item DC link, ON DELETE SET NULL
+// ==============================================================================
+test('Case 17: Migration 20261028010000 schema integrity: nullable invoice-item DC link, ON DELETE SET NULL', () => {
+  // delivery_challan_item_id column made nullable
+  assert.match(
+    migrationRecoverySql,
+    /ALTER TABLE public\.sales_invoice_items\s+ALTER COLUMN delivery_challan_item_id DROP NOT NULL;/,
+    'Must drop NOT NULL constraint on sales_invoice_items.delivery_challan_item_id'
+  );
+
+  // Foreign keys updated to ON DELETE SET NULL / CASCADE
+  assert.match(
+    migrationRecoverySql,
+    /ADD CONSTRAINT sales_invoice_items_delivery_challan_item_id_fkey\s+FOREIGN KEY \(delivery_challan_item_id\)\s+REFERENCES public\.delivery_challan_items\(id\)\s+ON DELETE SET NULL;/,
+    'sales_invoice_items FK must use ON DELETE SET NULL'
+  );
+  assert.match(
+    migrationRecoverySql,
+    /ADD CONSTRAINT so_product_reservation_events_delivery_challan_item_id_fkey\s+FOREIGN KEY \(delivery_challan_item_id\)\s+REFERENCES public\.delivery_challan_items\(id\)\s+ON DELETE SET NULL;/,
+    'so_product_reservation_events FK must use ON DELETE SET NULL'
+  );
+  assert.match(
+    migrationRecoverySql,
+    /ADD CONSTRAINT dc_batch_allocations_delivery_challan_item_id_fkey\s+FOREIGN KEY \(delivery_challan_item_id\)\s+REFERENCES public\.delivery_challan_items\(id\)\s+ON DELETE CASCADE;/,
+    'dc_batch_allocations FK must use ON DELETE CASCADE'
   );
 });
