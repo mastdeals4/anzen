@@ -6,6 +6,7 @@ const migrationCancelSql = fs.readFileSync('supabase/migrations/20261027220000_a
 const migrationRectifySql = fs.readFileSync('supabase/migrations/20261028000000_sales_dc_invoice_lifecycle_rectification.sql', 'utf8');
 const migrationRecoverySql = fs.readFileSync('supabase/migrations/20261028010000_delivery_challan_recovery_and_source_relinking.sql', 'utf8');
 const migrationAtomicHeaderSql = fs.readFileSync('supabase/migrations/20261028020000_delivery_challan_atomic_header_edit_and_quantity_workflow.sql', 'utf8');
+const migrationGuardSql = fs.readFileSync('supabase/migrations/20261028030000_guard_dc_approval_on_cancelled_so.sql', 'utf8');
 const salesSource = fs.readFileSync('src/pages/Sales.tsx', 'utf8');
 const deliveryChallanSource = fs.readFileSync('src/pages/DeliveryChallan.tsx', 'utf8');
 const salesOrdersSource = fs.readFileSync('src/pages/SalesOrders.tsx', 'utf8');
@@ -756,4 +757,69 @@ test('Case 20: Sales Order Edit Navigation and Re-Approval Workflow for Quantity
   const batchStockAfterDelivery = batchInitialStock - requestedDcQty;
   assert.strictEqual(batchStockAfterDelivery, 40.0, 'Batch stock correctly deducted by 50 kg');
 });
+
+// ==============================================================================
+// 21. Guard DC approval and items against cancelled or rejected Sales Orders
+// ==============================================================================
+test('Case 21: Guard DC approval and items against cancelled or rejected Sales Orders', () => {
+  // consume_so_product_reservation_v2 checks SO status
+  assert.match(
+    migrationGuardSql,
+    /SELECT status::text INTO v_so_status\s+FROM public\.sales_orders\s+WHERE id = v\.sales_order_id;\s+IF v_so_status IN \('cancelled', 'rejected'\) THEN\s+RAISE EXCEPTION 'Cannot approve Delivery Challan %: linked Sales Order is %'/,
+    'consume_so_product_reservation_v2 must prevent approving a DC linked to cancelled or rejected SO'
+  );
+
+  // validate_dc_item_product_reservation_v2 checks SO status
+  assert.match(
+    migrationGuardSql,
+    /SELECT status::text INTO v_so_status\s+FROM public\.sales_orders\s+WHERE id = v_dc\.sales_order_id;\s+IF v_so_status IN \('cancelled', 'rejected'\) THEN\s+RAISE EXCEPTION 'Cannot add or modify Delivery Challan items: linked Sales Order is %'/,
+    'validate_dc_item_product_reservation_v2 must prevent adding/modifying items on cancelled or rejected SO'
+  );
+
+  // trg_dc_approval_product_reservation_v2 checks SO status
+  assert.match(
+    migrationGuardSql,
+    /IF NEW\.sales_order_id IS NOT NULL THEN\s+SELECT status::text INTO v_so_status\s+FROM public\.sales_orders\s+WHERE id = NEW\.sales_order_id;\s+IF v_so_status IN \('cancelled', 'rejected'\) THEN\s+RAISE EXCEPTION 'Cannot approve Delivery Challan %: linked Sales Order is %'/,
+    'trg_dc_approval_product_reservation_v2 trigger must abort approval on cancelled or rejected SO'
+  );
+});
+
+// ==============================================================================
+// 22. Auto-cancel/reject draft and pending DCs when SO is cancelled or rejected
+// ==============================================================================
+test('Case 22: Auto-cancel/reject draft and pending DCs when SO is cancelled or rejected', () => {
+  // fn_cancel_sales_order updates draft & pending DCs
+  assert.match(
+    migrationGuardSql,
+    /UPDATE public\.delivery_challans\s+SET approval_status = 'rejected',\s+rejection_reason = 'Cancelled because linked Sales Order was cancelled: ' \|\| p_reason,[\s\S]*?WHERE sales_order_id = p_so_id\s+AND approval_status IN \('draft', 'pending_approval'\);/,
+    'fn_cancel_sales_order must transition draft and pending DCs to rejected with reason'
+  );
+
+  // fn_reject_sales_order updates draft & pending DCs
+  assert.match(
+    migrationGuardSql,
+    /UPDATE public\.delivery_challans\s+SET approval_status = 'rejected',\s+rejection_reason = 'Rejected because linked Sales Order was rejected: ' \|\| p_reason,[\s\S]*?WHERE sales_order_id = p_so_id\s+AND approval_status IN \('draft', 'pending_approval'\);/,
+    'fn_reject_sales_order must transition draft and pending DCs to rejected with reason'
+  );
+});
+
+// ==============================================================================
+// 23. Deleting draft DC recomputes Sales Order status dynamically via fn_recompute_so_status
+// ==============================================================================
+test('Case 23: Deleting draft DC recomputes Sales Order status dynamically via fn_recompute_so_status', () => {
+  // DeliveryChallan.tsx handleDelete calls fn_recompute_so_status
+  assert.match(
+    deliveryChallanSource,
+    /await supabase\.rpc\('fn_recompute_so_status', \{ p_so_id: dcData\.sales_order_id \}\);/,
+    'handleDelete must invoke fn_recompute_so_status to preserve actual SO order and delivery state'
+  );
+
+  // Sales.tsx cancel RPC error propagation
+  assert.match(
+    salesSource,
+    /const \{ data: rpcResult, error: rpcError \} = await supabase\.rpc\('cancel_sales_invoice'[\s\S]*?if \(rpcError\) \{[\s\S]*?throw rpcError;/,
+    'Sales.tsx cancel_sales_invoice must throw real RPC errors to outer error handler'
+  );
+});
+
 

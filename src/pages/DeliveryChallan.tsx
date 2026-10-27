@@ -1465,16 +1465,11 @@ export function DeliveryChallan() {
       }
 
       if (dcData?.sales_order_id) {
-        await supabase
-          .from('sales_orders')
-          .update({
-            status: 'pending_delivery',
-            is_archived: false,
-            archived_at: null,
-            archived_by: null,
-            archive_reason: null
-          })
-          .eq('id', dcData.sales_order_id);
+        try {
+          await supabase.rpc('fn_recompute_so_status', { p_so_id: dcData.sales_order_id });
+        } catch (statusErr) {
+          console.warn('Failed to recompute SO status after draft DC deletion:', statusErr);
+        }
       }
 
       loadChallans();

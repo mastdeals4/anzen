@@ -2070,14 +2070,27 @@ export function Sales() {
           p_reason: reasonTag,
           p_actor: profile?.id || null,
         });
-        if (!rpcError && (rpcResult as any)?.success) {
+        if (rpcError) {
+          const isMissingRpc =
+            rpcError.code === 'PGRST202' ||
+            rpcError.message?.toLowerCase().includes('function') ||
+            rpcError.message?.toLowerCase().includes('not found');
+          if (isMissingRpc) {
+            console.warn('cancel_sales_invoice RPC not found, falling back to direct reversal:', rpcError);
+          } else {
+            throw rpcError;
+          }
+        } else if ((rpcResult as any)?.success) {
           rpcHandled = true;
         }
-      } catch (rpcErr) {
-        console.warn(
-          'cancel_sales_invoice RPC not available or failed, using hardened direct reversal:',
-          rpcErr
-        );
+      } catch (rpcErr: any) {
+        if (
+          rpcErr?.code !== 'PGRST202' &&
+          !rpcErr?.message?.toLowerCase().includes('not found') &&
+          !rpcErr?.message?.toLowerCase().includes('function')
+        ) {
+          throw rpcErr;
+        }
       }
 
       if (!rpcHandled) {

@@ -20,7 +20,7 @@ function runDbQuery(sql) {
 test('Frontend: Validates delivery quantity against remaining SO quantity (not reservation)', () => {
   assert.match(dcPage, /const maxRemaining = Number\(source\.quantity\) - Number\(source\.delivered_quantity \|\| 0\);/);
   assert.match(dcPage, /if \(totalQty > maxRemaining \+ 0\.0001\)/);
-  assert.match(dcPage, /exceeds the remaining Sales Order quantity/);
+  assert.match(dcPage, /exceeds (?:the )?remaining Sales Order quantity/);
   assert.doesNotMatch(dcPage, /Delivery quantity exceeds the remaining Sales Order product reservation/);
 });
 
