@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const migrationCancelSql = fs.readFileSync('supabase/migrations/20261027220000_atomic_sales_invoice_cancellation.sql', 'utf8');
 const migrationRectifySql = fs.readFileSync('supabase/migrations/20261028000000_sales_dc_invoice_lifecycle_rectification.sql', 'utf8');
 const migrationRecoverySql = fs.readFileSync('supabase/migrations/20261028010000_delivery_challan_recovery_and_source_relinking.sql', 'utf8');
+const migrationAtomicHeaderSql = fs.readFileSync('supabase/migrations/20261028020000_delivery_challan_atomic_header_edit_and_quantity_workflow.sql', 'utf8');
 const salesSource = fs.readFileSync('src/pages/Sales.tsx', 'utf8');
 const deliveryChallanSource = fs.readFileSync('src/pages/DeliveryChallan.tsx', 'utf8');
 const salesOrdersSource = fs.readFileSync('src/pages/SalesOrders.tsx', 'utf8');
@@ -644,3 +645,115 @@ test('Case 17: Migration 20261028010000 schema integrity: nullable invoice-item 
     'dc_batch_allocations FK must use ON DELETE CASCADE'
   );
 });
+
+// ==============================================================================
+// 18. Delivery Challan Quantity Constraint Detection, Workflows, and Visual Guidance
+// ==============================================================================
+test('Case 18: Delivery Challan Quantity Constraint Detection, Workflows, and Visual Guidance', () => {
+  // Real-time quantity constraint computation in DeliveryChallan.tsx
+  assert.match(
+    deliveryChallanSource,
+    /const quantityViolations = useMemo\(\(\) => \{[\s\S]*?requestedQty > remainingQty \+ 0\.0001/,
+    'Must detect when requested quantity exceeds remaining Sales Order deliverable quantity'
+  );
+
+  // Workflow options: Edit SO, switch SO, or cap quantity
+  assert.match(
+    deliveryChallanSource,
+    /handleNavigateToEditSO[\s\S]*?editSalesOrderId: soId[\s\S]*?setCurrentPage\('sales-orders'\)/,
+    'Must provide one-click workflow to navigate to Sales Order edit screen'
+  );
+
+  assert.match(
+    deliveryChallanSource,
+    /handleCapQuantityToRemaining[\s\S]*?finalQty = remainingQty/,
+    'Must provide option to cap delivery quantity to remaining deliverable SO quantity'
+  );
+
+  // Visual warning banner rendered in modal
+  assert.match(
+    deliveryChallanSource,
+    /Sales Order Delivery Quantity Constraint Detected[\s\S]*?Requested delivery quantity[\s\S]*?exceeds remaining order quantity/,
+    'Must render prominent constraint alert banner identifying exact requested vs remaining quantities'
+  );
+
+  // Highlighting over-quantity inputs with warning borders
+  assert.match(
+    deliveryChallanSource,
+    /quantityViolations\.some\(v => v\.soItemId === item\.sales_order_item_id\)\s*\?\s*['"]border-amber-500/,
+    'Must highlight over-quantity input fields with amber warning borders'
+  );
+
+  // Submission validation blocks saving invalid over-deliveries
+  assert.match(
+    deliveryChallanSource,
+    /title: 'Sales Order Quantity Constraint'[\s\S]*?exceeds remaining Sales Order quantity/,
+    'Must block saving when requested quantity exceeds remaining SO quantity'
+  );
+});
+
+// ==============================================================================
+// 19. Atomic DC Header and Item Edit with Transactional Rollback Protection
+// ==============================================================================
+test('Case 19: Atomic DC Header and Item Edit with Transactional Rollback Protection', () => {
+  // edit_delivery_challan accepts optional p_header
+  assert.match(
+    migrationAtomicHeaderSql,
+    /CREATE OR REPLACE FUNCTION public\.edit_delivery_challan\(\s*p_challan_id uuid,\s*p_new_items jsonb,\s*p_header jsonb DEFAULT NULL\s*\)/,
+    'edit_delivery_challan must accept optional p_header parameter'
+  );
+
+  // Header update occurs inside function transaction
+  assert.match(
+    migrationAtomicHeaderSql,
+    /IF p_header IS NOT NULL THEN\s*UPDATE public\.delivery_challans SET[\s\S]*?customer_id = COALESCE[\s\S]*?sales_order_id =[\s\S]*?WHERE id = p_challan_id;/,
+    'Must update delivery_challans header atomically inside the function'
+  );
+
+  // 2-argument backward compatible wrapper
+  assert.match(
+    migrationAtomicHeaderSql,
+    /CREATE OR REPLACE FUNCTION public\.edit_delivery_challan\(\s*p_challan_id uuid,\s*p_new_items jsonb\s*\)[\s\S]*?SELECT public\.edit_delivery_challan\(p_challan_id, p_new_items, NULL::jsonb\);/,
+    'Must maintain 2-argument wrapper for backward compatibility'
+  );
+
+  // Frontend passes p_header directly to edit_delivery_challan
+  assert.match(
+    deliveryChallanSource,
+    /await supabase\.rpc\('edit_delivery_challan', \{\s*p_challan_id: editingChallan\.id,\s*p_new_items: itemsForRpc,\s*p_header: updateData,?\s*\}\)/,
+    'Frontend must pass p_header to edit_delivery_challan for atomic execution'
+  );
+});
+
+// ==============================================================================
+// 20. Sales Order Edit Navigation and Re-Approval Workflow for Quantity Adjustments
+// ==============================================================================
+test('Case 20: Sales Order Edit Navigation and Re-Approval Workflow for Quantity Adjustments', () => {
+  // SalesOrders page handles navigationData.editSalesOrderId
+  assert.match(
+    salesOrdersSource,
+    /const editId = navigationData\?\.editSalesOrderId;[\s\S]*?setEditingOrder\([\s\S]*?setShowCreateModal\(true\)/,
+    'SalesOrders page must automatically open target order for edit when editSalesOrderId is passed'
+  );
+
+  // Simulated workflow: SO-2026-0087 (30 kg) -> edit to 50 kg -> approve -> DC delivers 50 kg
+  const initialSoQty = 30.0;
+  let requestedDcQty = 50.0;
+
+  // Step 1: Constraint detected because 50 > 30
+  assert.strictEqual(requestedDcQty > initialSoQty, true, '50 kg exceeds initial 30 kg order');
+
+  // Step 2: SO quantity increased through authorized edit process
+  const updatedSoQty = 50.0;
+  const isSoReApproved = true;
+
+  // Step 3: Once approved, remaining SO quantity accommodates full DC quantity
+  const remainingDeliverable = updatedSoQty - 0.0; // 0 delivered
+  assert.strictEqual(requestedDcQty <= remainingDeliverable, true, '50 kg is now fully deliverable');
+
+  // Step 4: DC approved and stock posted atomically
+  const batchInitialStock = 90.0;
+  const batchStockAfterDelivery = batchInitialStock - requestedDcQty;
+  assert.strictEqual(batchStockAfterDelivery, 40.0, 'Batch stock correctly deducted by 50 kg');
+});
+

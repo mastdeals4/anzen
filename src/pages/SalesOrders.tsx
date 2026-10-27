@@ -175,6 +175,37 @@ export default function SalesOrders() {
     clearNavigationData();
   }, [navigationData, clearNavigationData]);
 
+  useEffect(() => {
+    const editId = navigationData?.editSalesOrderId;
+    if (typeof editId !== 'string') return;
+    const order = salesOrders.find((o) => o.id === editId);
+    if (order) {
+      setEditingOrder(order);
+      setShowCreateModal(true);
+      clearNavigationData();
+    } else if (!loading) {
+      supabase
+        .from('sales_orders')
+        .select(`
+          *,
+          customers(id, company_name),
+          sales_order_items(
+            *,
+            products(product_name, product_code, unit)
+          )
+        `)
+        .eq('id', editId)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) {
+            setEditingOrder(data as any);
+            setShowCreateModal(true);
+          }
+          clearNavigationData();
+        });
+    }
+  }, [navigationData, salesOrders, loading, clearNavigationData]);
+
   const fetchSOStatuses = async (orderIds: string[]) => {
     if (orderIds.length === 0) return;
     try {

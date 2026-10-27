@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Layout } from '../components/Layout';
 import { DataTable } from '../components/DataTable';
 import { Modal } from '../components/Modal';
@@ -11,7 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, Eye, Pencil as Edit, FileText, CheckCircle, XCircle, Lock, RotateCcw } from 'lucide-react';
+import { Plus, Trash2, Eye, Pencil as Edit, FileText, CheckCircle, XCircle, Lock, RotateCcw, AlertTriangle, ExternalLink } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -858,6 +858,94 @@ export function DeliveryChallan() {
     }
   };
 
+  const quantityViolations = useMemo(() => {
+    if (!formData.sales_order_id || !salesOrderItemSources.length) return [];
+    const sourceMap = new Map(salesOrderItemSources.map(s => [s.id, s]));
+    const qtyBySoItem = new Map<string, number>();
+    items.forEach(item => {
+      if (item.sales_order_item_id) {
+        const prev = qtyBySoItem.get(item.sales_order_item_id) || 0;
+        qtyBySoItem.set(item.sales_order_item_id, prev + (Number(item.quantity) || 0));
+      }
+    });
+
+    const violations: Array<{
+      soItemId: string;
+      productId: string;
+      productName: string;
+      unit: string;
+      requestedQty: number;
+      orderedQty: number;
+      deliveredQty: number;
+      remainingQty: number;
+      soNumber: string;
+      soId: string;
+    }> = [];
+
+    const currentSO = salesOrders.find(so => so.id === formData.sales_order_id);
+    const soNumber = currentSO?.so_number || 'Sales Order';
+
+    for (const [soItemId, requestedQty] of qtyBySoItem.entries()) {
+      const source = sourceMap.get(soItemId);
+      if (!source) continue;
+      const orderedQty = Number(source.quantity) || 0;
+      const deliveredQty = Number(source.delivered_quantity || 0);
+      const remainingQty = Math.max(0, orderedQty - deliveredQty);
+      if (requestedQty > remainingQty + 0.0001) {
+        const prod = products.find(p => p.id === source.product_id);
+        const prodName = source.products?.product_name || prod?.product_name || 'Product';
+        const unit = formatUnit(source.products?.unit || prod?.unit || '');
+        violations.push({
+          soItemId,
+          productId: source.product_id,
+          productName: prodName,
+          unit,
+          requestedQty,
+          orderedQty,
+          deliveredQty,
+          remainingQty,
+          soNumber,
+          soId: formData.sales_order_id,
+        });
+      }
+    }
+    return violations;
+  }, [formData.sales_order_id, salesOrderItemSources, items, salesOrders, products]);
+
+  const alternateSalesOrders = useMemo(() => {
+    if (!formData.customer_id) return [];
+    return salesOrders.filter(so => so.id !== formData.sales_order_id);
+  }, [salesOrders, formData.customer_id, formData.sales_order_id]);
+
+  const handleNavigateToEditSO = (soId: string) => {
+    setModalOpen(false);
+    resetForm();
+    setNavigationData({ editSalesOrderId: soId });
+    setCurrentPage('sales-orders');
+  };
+
+  const handleCapQuantityToRemaining = (soItemId: string, remainingQty: number) => {
+    const itemIndex = items.findIndex(it => it.sales_order_item_id === soItemId);
+    if (itemIndex === -1) return;
+    const targetItem = items[itemIndex];
+    const packSize = targetItem.pack_size ? Number(targetItem.pack_size) : null;
+    let finalQty = remainingQty;
+    let finalPacks = targetItem.number_of_packs;
+
+    if (packSize && packSize > 0) {
+      finalPacks = Math.max(1, Math.floor(remainingQty / packSize));
+      finalQty = finalPacks * packSize;
+    }
+
+    const nextItems = [...items];
+    nextItems[itemIndex] = {
+      ...targetItem,
+      quantity: finalQty,
+      number_of_packs: finalPacks,
+    };
+    setItems(nextItems);
+  };
+
   const handleEdit = async (challan: DeliveryChallan) => {
     if (challan.approval_status === 'approved') {
       showToast({
@@ -893,6 +981,7 @@ export function DeliveryChallan() {
     await loadSalesOrders(targetCustomerId);
 
     // If linked to a Sales Order, hydrate SO items and reservation status
+    let loadedSources: SalesOrderItemSource[] = [];
     if (targetSoId) {
       try {
         const [soItemsResult, reservationsResult] = await Promise.all([
@@ -912,6 +1001,7 @@ export function DeliveryChallan() {
             products: Array.isArray(item.products) ? (item.products[0] || null) : item.products,
           })) as SalesOrderItemSource[];
           setSalesOrderItemSources(normalized);
+          loadedSources = normalized;
         }
         if (reservationsResult.data) {
           const resMap = new Map<string, number>();
@@ -930,16 +1020,23 @@ export function DeliveryChallan() {
     setOriginalItems(loadedItems);
 
     if (loadedItems.length > 0) {
-      setItems(loadedItems.map(item => ({
-        id: item.id,
-        product_id: item.product_id,
-        sales_order_item_id: item.sales_order_item_id || null,
-        batch_id: item.batch_id,
-        quantity: parseFloat(String(item.quantity)) || 0,
-        pack_size: item.pack_size ? parseFloat(String(item.pack_size)) : null,
-        pack_type: item.pack_type,
-        number_of_packs: item.number_of_packs ? parseInt(String(item.number_of_packs), 10) : null,
-      })));
+      setItems(loadedItems.map(item => {
+        let soItemId = item.sales_order_item_id || null;
+        if (!soItemId && loadedSources.length > 0) {
+          const match = loadedSources.find(s => s.product_id === item.product_id);
+          if (match) soItemId = match.id;
+        }
+        return {
+          id: item.id,
+          product_id: item.product_id,
+          sales_order_item_id: soItemId,
+          batch_id: item.batch_id,
+          quantity: parseFloat(String(item.quantity)) || 0,
+          pack_size: item.pack_size ? parseFloat(String(item.pack_size)) : null,
+          pack_type: item.pack_type,
+          number_of_packs: item.number_of_packs ? parseInt(String(item.number_of_packs), 10) : null,
+        };
+      }));
     }
 
     setModalOpen(true);
@@ -1048,7 +1145,12 @@ export function DeliveryChallan() {
         const maxRemaining = Number(source.quantity) - Number(source.delivered_quantity || 0);
         if (totalQty > maxRemaining + 0.0001) {
           const prodName = products.find(p => p.id === source.product_id)?.product_name || 'Product';
-          showToast({ type: 'error', title: 'Delivery Challan', message: `Total quantity for ${prodName} (${totalQty}) exceeds the remaining Sales Order quantity (${maxRemaining}).` });
+          const soNumber = salesOrders.find(s => s.id === formData.sales_order_id)?.so_number || 'Sales Order';
+          showToast({
+            type: 'error',
+            title: 'Sales Order Quantity Constraint',
+            message: `Delivery quantity (${totalQty}) exceeds remaining Sales Order quantity (${maxRemaining}) for ${prodName} on ${soNumber}. Edit the Sales Order to increase quantity, select another order, or adjust the delivery quantity to ${maxRemaining}.`,
+          });
           return;
         }
       }
@@ -1088,15 +1190,6 @@ export function DeliveryChallan() {
           updateData.approved_at = null;
           updateData.approved_by = null;
         }
-
-        const { data: updatedChallan, error: updateError } = await supabase
-          .from('delivery_challans')
-          .update(updateData)
-          .eq('id', editingChallan.id)
-          .select()
-          .single();
-
-        if (updateError) throw updateError;
 
         const prepareItemsWithPackaging = (rawItems: ChallanItem[]) => {
           return rawItems.map(item => {
@@ -1163,7 +1256,8 @@ export function DeliveryChallan() {
 
         const { data: rpcResult, error: rpcError } = await supabase.rpc('edit_delivery_challan', {
           p_challan_id: editingChallan.id,
-          p_new_items: itemsForRpc
+          p_new_items: itemsForRpc,
+          p_header: updateData,
         });
         if (rpcError) {
           console.error('RPC Error:', rpcError);
@@ -1174,7 +1268,7 @@ export function DeliveryChallan() {
           throw new Error(rpcResult?.error || 'Failed to update DC items');
         }
 
-        challanId = updatedChallan.id;
+        challanId = editingChallan.id;
       } else {
         // When creating new, include all fields including challan_number
         const challanData = {
@@ -1920,6 +2014,66 @@ export function DeliveryChallan() {
                 </div>
               )}
 
+              {quantityViolations.length > 0 && (
+                <div className="mb-3 rounded-lg border-2 border-amber-400 bg-amber-50 p-3 text-xs text-amber-950 shadow-sm animate-fade-in">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1.5 flex-1">
+                      <div className="font-bold text-amber-900 text-sm">
+                        Sales Order Delivery Quantity Constraint Detected
+                      </div>
+                      {quantityViolations.map((v, i) => (
+                        <div key={i} className="text-amber-900">
+                          Requested delivery quantity <strong>{v.requestedQty} {v.unit}</strong> exceeds remaining order quantity <strong>{v.remainingQty} {v.unit}</strong> on Sales Order <strong>{v.soNumber}</strong> (Ordered: {v.orderedQty} {v.unit}, Delivered: {v.deliveredQty} {v.unit}).
+                        </div>
+                      ))}
+                      <p className="text-amber-800 text-[11px]">
+                        SAPJ ERP requires that Delivery Challan items do not exceed the authorized Sales Order quantities. You can either increase the Sales Order quantity through its authorized approval process, select another eligible Sales Order with sufficient remaining quantity, or adjust the delivery quantity to match the remaining order.
+                      </p>
+                      <div className="pt-2 flex flex-wrap items-center gap-2 border-t border-amber-200 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleNavigateToEditSO(formData.sales_order_id)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-md shadow-xs transition-colors text-xs"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          Edit Sales Order ({quantityViolations[0]?.soNumber}) to Increase Quantity
+                        </button>
+                        {alternateSalesOrders.length > 0 && (
+                          <div className="inline-flex items-center gap-1">
+                            <span className="text-[11px] text-amber-800 font-medium">Or switch to:</span>
+                            <select
+                              className="text-xs border border-amber-300 rounded px-2 py-1 bg-white text-gray-800"
+                              onChange={(e) => {
+                                if (e.target.value) handleSalesOrderChange(e.target.value);
+                              }}
+                              defaultValue=""
+                            >
+                              <option value="" disabled>Select alternative SO...</option>
+                              {alternateSalesOrders.map((altSo: any) => (
+                                <option key={altSo.id} value={altSo.id}>
+                                  {altSo.so_number} ({altSo.status})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        {quantityViolations.map((v, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => handleCapQuantityToRemaining(v.soItemId, v.remainingQty)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-900 font-medium rounded-md shadow-xs transition-colors text-xs"
+                          >
+                            Set Quantity to Remaining ({v.remainingQty} {v.unit})
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {editingChallan?.approval_status === 'approved' && (
                 <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
                   <span className="text-amber-500">!</span>
@@ -1994,11 +2148,63 @@ export function DeliveryChallan() {
                       <td className="px-2 py-1 text-gray-600">{selectedBatch?.expiry_date ? new Date(selectedBatch.expiry_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}</td>
                       <td className="px-2 py-1 text-gray-600 truncate max-w-36">{selectedBatch?.packaging_details || '—'}</td>
                       <td className="px-2 py-1">
-                        {item.pack_size ? <input name="quantity" aria-label="Quantity" type="text" value={item.quantity || 0} className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-100 text-right" disabled /> : <input name="quantity" aria-label="Quantity" type="number" min="0.01" step="0.01" value={item.quantity || ''} onChange={(e) => { const next = [...items]; next[index] = { ...next[index], quantity: Number(e.target.value) || 0 }; setItems(next); }} className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right" required />}
+                        {item.pack_size ? (
+                          <input
+                            name="quantity"
+                            aria-label="Quantity"
+                            type="text"
+                            value={item.quantity || 0}
+                            className={`w-full px-2 py-1 text-xs border rounded bg-gray-100 text-right ${
+                              quantityViolations.some(v => v.soItemId === item.sales_order_item_id)
+                                ? 'border-amber-500 font-semibold text-amber-900 bg-amber-50/50'
+                                : 'border-gray-200'
+                            }`}
+                            disabled
+                          />
+                        ) : (
+                          <input
+                            name="quantity"
+                            aria-label="Quantity"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={item.quantity || ''}
+                            onChange={(e) => {
+                              const next = [...items];
+                              next[index] = { ...next[index], quantity: Number(e.target.value) || 0 };
+                              setItems(next);
+                            }}
+                            className={`w-full px-2 py-1 text-xs border rounded text-right ${
+                              quantityViolations.some(v => v.soItemId === item.sales_order_item_id)
+                                ? 'border-amber-500 font-semibold text-amber-900 ring-1 ring-amber-400 bg-amber-50/50'
+                                : 'border-gray-300'
+                            }`}
+                            required
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-1 text-gray-600">{formatUnit(item.products?.unit || (selectedBatch?.product_id && products.find(p => p.id === selectedBatch.product_id)?.unit) || '')}</td>
                       <td className="px-2 py-1 text-right font-semibold text-green-700">{selectedBatch ? `${(getAvailableStock(selectedBatch) - (batchUsageInForm.get(selectedBatch.id) || 0)).toLocaleString()} ${formatUnit(products.find(p => p.id === item.product_id)?.unit)}` : '—'}</td>
-                      <td className="px-2 py-1">{item.pack_size ? <input name="number_of_packs" aria-label="Number Of Packs" type="number" min="1" value={item.number_of_packs || ''} onChange={(e) => updatePackQuantity(index, Number(e.target.value))} className="w-full min-w-[4.5rem] appearance-none px-1.5 py-1 text-xs border border-gray-300 rounded text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" required /> : <span className="text-gray-400">—</span>}</td>
+                      <td className="px-2 py-1">
+                        {item.pack_size ? (
+                          <input
+                            name="number_of_packs"
+                            aria-label="Number Of Packs"
+                            type="number"
+                            min="1"
+                            value={item.number_of_packs || ''}
+                            onChange={(e) => updatePackQuantity(index, Number(e.target.value))}
+                            className={`w-full min-w-[4.5rem] appearance-none px-1.5 py-1 text-xs border rounded text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${
+                              quantityViolations.some(v => v.soItemId === item.sales_order_item_id)
+                                ? 'border-amber-500 font-semibold text-amber-900 ring-1 ring-amber-400 bg-amber-50/50'
+                                : 'border-gray-300'
+                            }`}
+                            required
+                          />
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
                       <td className="px-2 py-1 text-center">{items.length > 1 && <button type="button" onClick={() => removeItem(index)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Remove item"><Trash2 className="w-3.5 h-3.5" /></button>}</td>
                     </tr>
                   );
