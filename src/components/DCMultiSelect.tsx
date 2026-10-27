@@ -68,16 +68,16 @@ export function DCMultiSelect({
     : `${selectedCount} DCs selected`;
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative w-full h-full flex items-center" ref={dropdownRef} data-dc-multiselect="true">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-2 py-1.5 text-sm text-left bg-white border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent flex items-center justify-between"
+        className="w-full h-full px-2.5 py-1 text-xs text-left bg-transparent border-0 rounded-none focus:outline-none flex items-center justify-between"
       >
-        <span className={selectedCount === 0 ? 'text-gray-400' : 'text-gray-900'}>
+        <span className={`truncate ${selectedCount === 0 ? 'text-gray-400' : 'text-gray-900 font-medium'}`}>
           {displayText}
         </span>
-        <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'transform rotate-180' : ''}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-gray-400 shrink-0 ml-1 transition-transform ${isOpen ? 'transform rotate-180' : ''}`} />
       </button>
 
       {isOpen && (

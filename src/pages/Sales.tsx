@@ -416,6 +416,11 @@ export function Sales() {
           }
 
           const batch = Array.isArray(item.batches) ? item.batches[0] : item.batches;
+          const batchSource = Array.isArray(batch?.product_sources) ? batch?.product_sources[0] : batch?.product_sources;
+          const fallbackBatch = batches.find((b) => b.id === item.batch_id);
+          const fallbackSource = Array.isArray(fallbackBatch?.product_sources) ? fallbackBatch?.product_sources[0] : fallbackBatch?.product_sources;
+          const resolvedMakeName = batchSource?.supplier_name || fallbackSource?.supplier_name || null;
+          const resolvedMakeId = batch?.make_id || fallbackBatch?.make_id || null;
 
           return {
             product_id: item.product_id,
@@ -428,8 +433,8 @@ export function Sales() {
             challan_id: item.challan_id,
             dc_number: dc?.challan_number || '',
             max_quantity: remainingQty,
-            make_id: batch?.make_id || null,
-            make_name: batch?.product_sources?.supplier_name || null,
+            make_id: resolvedMakeId,
+            make_name: resolvedMakeName,
           };
         })
         .filter((item): item is InvoiceItem => item !== null);
@@ -1440,6 +1445,19 @@ export function Sales() {
   const getSuggestedPrice = (batchId: string | null, markup: number = 25): number => {
     const cost = getBatchCostPerUnit(batchId);
     return Math.round(cost * (1 + markup / 100));
+  };
+
+  const getLineItemMakeName = (item: InvoiceItem): string => {
+    if (item.make_name) return item.make_name;
+    if (item.batch_id) {
+      const b = batches.find((candidate) => candidate.id === item.batch_id);
+      const bSource = Array.isArray(b?.product_sources) ? b.product_sources[0] : b?.product_sources;
+      if (bSource?.supplier_name) return bSource.supplier_name;
+    }
+    const itemBatches = Array.isArray(item.batches) ? item.batches[0] : item.batches;
+    const batchSources = Array.isArray(itemBatches?.product_sources) ? itemBatches.product_sources[0] : itemBatches?.product_sources;
+    if (batchSources?.supplier_name) return batchSources.supplier_name;
+    return '';
   };
 
   const updateItemTotal = (index: number, updatedItem: InvoiceItem) => {
@@ -3021,9 +3039,7 @@ export function Sales() {
                             </select>
                             <div className="mt-0.5 truncate text-[10px] text-gray-500">
                               Make:{' '}
-                              {item.make_name ||
-                                item.batches?.product_sources?.supplier_name ||
-                                'Not recorded'}
+                              {getLineItemMakeName(item) || 'Not recorded'}
                             </div>
                           </div>
 
@@ -3036,10 +3052,17 @@ export function Sales() {
                               onChange={(e) => {
                                 const batchId = e.target.value || null;
                                 const suggested = getSuggestedPrice(batchId);
+                                const foundBatch = batches.find((b) => b.id === batchId);
+                                const batchSources = Array.isArray(foundBatch?.product_sources)
+                                  ? foundBatch.product_sources[0]
+                                  : foundBatch?.product_sources;
+                                const resolvedMakeName = batchSources?.supplier_name || null;
                                 updateItemTotal(index, {
                                   ...item,
                                   batch_id: batchId,
                                   unit_price: suggested,
+                                  make_id: foundBatch?.make_id || null,
+                                  make_name: resolvedMakeName,
                                 });
                               }}
                               className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"

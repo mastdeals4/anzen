@@ -1,29 +1,16 @@
 import { ReactNode } from 'react';
 
 /**
- * FloatingField — Google-style outlined floating-label field, scoped to the
- * Expense modal. NOT a replacement for SapField; other finance modules keep
- * their existing label-above-input layout.
+ * FloatingField — Standardized Google Forms-style label-above-input field.
  *
- * Behaviour
- *   • Empty + unfocused → label sits centered inside the outlined field.
- *   • Focused            → border highlights blue, label floats into a notch
- *                          in the top border (opaque background masks the line).
- *   • Filled             → label stays in the top notch, value visible below.
- *   • Cleared + blurred  → label drops back inside.
- *
- * The "filled" state is controlled by the parent (it knows the value for every
- * child type: text input, native select, MoneyInput, SearchableSelect, date).
- * Focus is detected via :focus-within on the wrapper, so the parent never needs
- * to track focus.
- *
- * Sizing (from the compact-expense brief): 34px target / 36px max field height,
- * 12px value text, 10–11px label, ~8px horizontal padding.
+ * Renders a crisp label on its own line above the control box, eliminating
+ * floating label collisions with input values, placeholders, and date pickers.
+ * Control height is compact (32–34px), with clean borders and subtle focus rings.
  */
 
 interface FloatingFieldProps {
   label: string;
-  /** True when the field has a non-empty value (parent-controlled). */
+  /** Retained for API compatibility */
   filled?: boolean;
   required?: boolean;
   error?: string;
@@ -34,7 +21,7 @@ interface FloatingFieldProps {
   prefix?: ReactNode;
   /** Grid column span inside a 12-col SapRow. */
   span?: 1 | 2 | 3 | 4 | 5 | 6 | 8 | 12;
-  /** Disable the floating animation (e.g. static display fields). */
+  /** Retained for API compatibility */
   staticLabel?: boolean;
   /** Use auto-height (textarea) mode instead of fixed 34px. */
   textarea?: boolean;
@@ -42,7 +29,7 @@ interface FloatingFieldProps {
 }
 
 export function FloatingField({
-  label, filled = false, required, error, hint, right, prefix, span = 6, staticLabel = false, textarea = false, children,
+  label, required, error, hint, right, prefix, span = 6, textarea = false, children,
 }: FloatingFieldProps) {
   const spanClass =
     span === 12 ? 'sm:col-span-12'
@@ -54,25 +41,23 @@ export function FloatingField({
     : span === 2 ? 'sm:col-span-2'
     : 'sm:col-span-1';
 
-  const stateClass = [
-    'floating-field',
-    filled || staticLabel ? 'is-filled' : '',
-    error ? 'is-error' : '',
-    staticLabel ? 'is-static' : '',
-    textarea ? 'is-textarea' : '',
-  ].filter(Boolean).join(' ');
-
   return (
-    <div className={`${spanClass} min-w-0`}>
-      <div className={stateClass}>
-        <label className="floating-label">
+    <div className={`${spanClass} min-w-0 flex flex-col`}>
+      <label className="floating-label block text-[11px] font-medium text-gray-700 mb-1 leading-tight select-none">
+        <span className="truncate">
           {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-        </label>
-        <div className="floating-control">
-          {prefix && <div className="floating-adornment floating-prefix">{prefix}</div>}
+        </span>
+      </label>
+      <div
+        className={`floating-field relative border border-gray-300 rounded-md bg-white transition-colors focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 flex items-stretch ${
+          textarea ? 'min-h-[60px] h-auto' : 'h-[32px] sm:h-[34px]'
+        } ${error ? '!border-red-500 focus-within:!ring-red-500' : ''}`}
+      >
+        {prefix && <div className="floating-adornment floating-prefix">{prefix}</div>}
+        <div className="floating-control flex-1 min-w-0 flex items-center h-full">
           {children}
-          {right && <div className="floating-adornment">{right}</div>}
         </div>
+        {right && <div className="floating-adornment">{right}</div>}
       </div>
       {error ? (
         <div className="text-[10px] text-red-600 mt-0.5 leading-tight">{error}</div>
@@ -88,7 +73,7 @@ export function FloatingField({
  * MoneyInput that live inside a FloatingField. No border — the wrapper draws it.
  */
 export const FLOAT_INPUT =
-  'w-full h-full px-2 pt-2.5 pb-0 text-xs bg-transparent border-0 rounded-none outline-none focus:outline-none focus:ring-0 placeholder-transparent';
+  'w-full h-full px-2.5 py-1 text-xs bg-transparent border-0 rounded-none outline-none focus:outline-none focus:ring-0 placeholder:text-gray-400 text-gray-900';
 
 export const FLOAT_TEXTAREA =
-  'w-full h-full px-2 pt-3.5 pb-1 text-xs bg-transparent border-0 rounded-none outline-none focus:outline-none focus:ring-0 placeholder-transparent resize-none';
+  'w-full h-full px-2.5 py-1.5 text-xs bg-transparent border-0 rounded-none outline-none focus:outline-none focus:ring-0 placeholder:text-gray-400 text-gray-900 resize-none';

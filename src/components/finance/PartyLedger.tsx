@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { type CompanySnapshot, FALLBACK_COMPANY } from '../../types/company';
 import { CompanyLogo } from '../CompanyLogo';
+import { SearchableSelect } from '../SearchableSelect';
 import { Users, Building2, Download, Mail, RefreshCw } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -1030,18 +1031,19 @@ export default function PartyLedger() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Select {partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}
                 </label>
-                <select name="select_partytype_customer_cust" aria-label="Select Party"
+                <SearchableSelect
+                  id="party_ledger_select_party"
+                  name="select_partytype_customer_cust"
+                  aria-label="Select Party"
                   value={selectedParty}
-                  onChange={(e) => setSelectedParty(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm"
-                >
-                  <option value="">Select Party</option>
-                  {parties.map(party => (
-                    <option key={party.id} value={party.id}>
-                      {party.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setSelectedParty(val)}
+                  options={parties.map(party => ({
+                    value: party.id,
+                    label: party.name,
+                    keywords: party.npwp ? [party.npwp] : undefined,
+                  }))}
+                  placeholder={`Select ${partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Supplier' : 'Staff Member'}`}
+                />
               </div>
               <div className="col-span-2 flex items-center justify-between">
                 <p className="text-xs text-gray-500 mt-6">Period is controlled by global date range at top</p>

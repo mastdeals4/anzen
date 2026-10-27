@@ -834,47 +834,44 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
           />
         </FloatingField>
 
-        <FloatingField label={t('salesOrders.uploadPo')} span={5} filled={!!poFile}>
-          {existingOrder?.customer_po_file_url && !poFile && (
-            <div className="absolute -top-1 right-1 p-1 bg-blue-50 border border-blue-200 rounded flex items-center gap-2 z-10">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-600" />
-                <span className="text-xs text-blue-700">PO file already uploaded</span>
-              </div>
+        <FloatingField
+          label={t('salesOrders.uploadPo')}
+          span={5}
+          filled={!!poFile || !!existingOrder?.customer_po_file_url}
+          right={
+            existingOrder?.customer_po_file_url && !poFile ? (
               <a
                 href={poFileSignedUrl || existingOrder.customer_po_file_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-blue-600 hover:text-blue-800 underline"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 border border-blue-200 rounded text-[11px] text-blue-700 hover:underline shrink-0"
               >
-                View
+                <FileText className="w-3 h-3 text-blue-600" />
+                <span>View PO</span>
               </a>
-            </div>
-          )}
-          <div className="flex items-center gap-2 h-full">
-            <input name="file_upload" aria-label="Upload file"
-              type="file"
-              accept=".pdf,.jpg,.jpeg,.png"
-              onChange={(e) => setPoFile(e.target.files?.[0] || null)}
-              className={FLOAT_INPUT}
-            />
-            {poFile && (
-              <button
-                type="button"
-                onClick={() => setPoFile(null)}
-                className="text-red-600 hover:text-red-800 shrink-0"
-                title="Remove selected file"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-          {poFile && (
-            <p className="absolute left-0 -bottom-4 text-xs text-green-600 flex items-center gap-1 truncate">
-              <FileText className="w-4 h-4" />
-              Ready to upload: {poFile.name}
-            </p>
-          )}
+            ) : poFile ? (
+              <div className="inline-flex items-center gap-1 text-[11px] text-green-700 px-1 shrink-0">
+                <span className="truncate max-w-[140px]">{poFile.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setPoFile(null)}
+                  className="text-red-600 hover:text-red-800 p-0.5"
+                  title="Remove selected file"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : undefined
+          }
+        >
+          <input
+            name="file_upload"
+            aria-label="Upload file"
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png"
+            onChange={(e) => setPoFile(e.target.files?.[0] || null)}
+            className="w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+          />
         </FloatingField>
       </SapRow>
 

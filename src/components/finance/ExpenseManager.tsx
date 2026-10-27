@@ -4689,10 +4689,10 @@ export function ExpenseManager({
                       minimumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
                       maximumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
                     });
-                    // Excel density — 10 data cells per row + delete.
-                    const cellInputCls = 'w-full h-[26px] px-1 border-0 focus:ring-1 focus:ring-blue-400 focus:outline-none rounded-none text-[10px] bg-transparent';
-                    // # | Supplier | Inv# | Tax Inv# | Inv Date | Amount | DDP | PPN% | PPN Amt | Total | Del
-                    const grid = 'grid grid-cols-[24px_minmax(0,2.5fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_52px_minmax(0,1.3fr)_minmax(0,1.3fr)_28px]';
+                    // Excel density — 10 data cells per row + delete with consistent 28px height & text-[11px].
+                    const cellInputCls = 'w-full h-[28px] px-1.5 border-0 focus:ring-1 focus:ring-blue-400 focus:outline-none rounded-none text-[11px] bg-transparent';
+                    // # | Supplier | Inv# | Tax Inv# | Inv Date | Amount | DPP | PPN% | PPN Amt | Total | Del
+                    const grid = 'grid grid-cols-[28px_minmax(180px,2fr)_minmax(120px,1.2fr)_minmax(140px,1.3fr)_minmax(115px,1.1fr)_minmax(105px,1.1fr)_minmax(105px,1.1fr)_54px_minmax(105px,1.1fr)_minmax(105px,1.1fr)_28px] min-w-[960px]';
                     return (
                       <div className="mb-2">
                         <div className="flex items-center justify-between mb-1">
@@ -4710,17 +4710,17 @@ export function ExpenseManager({
                           <div className="border border-gray-300 rounded-md bg-white shadow-sm overflow-x-auto">
                             {/* Header row */}
                             <div className={`${grid} bg-gray-100 border-b border-gray-300 text-[10px] font-semibold text-gray-600 uppercase tracking-wide`}>
-                              <div className="px-1 py-1 border-r border-gray-300 text-center">#</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300">Supplier</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300">Invoice Number</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300">Tax Invoice #</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300 text-[9px]">Invoice Date</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300 text-right">Amount</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300 text-right">DPP</div>
-                              <div className="px-1 py-1 border-r border-gray-300 text-center">PPN %</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300 text-right">PPN Amount</div>
-                              <div className="px-1.5 py-1 border-r border-gray-300 text-right">Line Total</div>
-                              <div className="px-0.5 py-1 text-center">✕</div>
+                              <div className="px-1 py-1 border-r border-gray-300 text-center flex items-center justify-center">#</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 flex items-center">Supplier</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 flex items-center">Invoice Number</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 flex items-center">Tax Invoice #</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 flex items-center">Invoice Date</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 text-right flex items-center justify-end">Amount</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 text-right flex items-center justify-end">DPP</div>
+                              <div className="px-1 py-1 border-r border-gray-300 text-center flex items-center justify-center">PPN %</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 text-right flex items-center justify-end">PPN Amount</div>
+                              <div className="px-1.5 py-1 border-r border-gray-300 text-right flex items-center justify-end">Line Total</div>
+                              <div className="px-0.5 py-1 text-center flex items-center justify-center">✕</div>
                             </div>
                             {brokerItems.map((item, idx) => {
                               // Line Total = Invoice Amount. DPP and PPN remain
@@ -4733,11 +4733,11 @@ export function ExpenseManager({
                               return (
                                 <div key={idx}
                                   className={`${grid} items-stretch border-b border-gray-200 last:border-b-0 hover:bg-blue-50/40 group`}>
-                                  <div className="border-r border-gray-200 flex items-center justify-center h-[26px] text-[10px] text-gray-500 font-medium">
+                                  <div className="border-r border-gray-200 flex items-center justify-center h-[28px] text-[11px] text-gray-500 font-medium">
                                     {idx + 1}
                                   </div>
                                   {/* Supplier */}
-                                  <div className="border-r border-gray-200 [&_button]:!rounded-none [&_button]:!border-0 [&_button]:!shadow-none [&_button]:!bg-transparent [&_button]:!h-[30px] [&_button]:!py-0 [&_button]:!px-2 [&_button]:!text-[11px]">
+                                  <div className="border-r border-gray-200 [&_button]:!rounded-none [&_button]:!border-0 [&_button]:!shadow-none [&_button]:!bg-transparent [&_button]:!h-[28px] [&_button]:!py-0 [&_button]:!px-1.5 [&_button]:!text-[11px]">
                                     <SearchableSelect
                                       value={item.supplier_id || ''}
                                       onChange={(val) => updateLine(idx, { supplier_id: val || null })}
@@ -4797,34 +4797,34 @@ export function ExpenseManager({
                                   </div>
                                   {/* Total = Invoice Amount; mismatch is warning-only. */}
                                   <div
-                                    className={`border-r border-gray-200 flex items-center justify-end gap-1 px-1 h-[26px] font-mono text-[10px] font-semibold ${taxBreakdownExceedsAmount ? 'text-amber-700' : 'text-gray-900'}`}
+                                    className={`border-r border-gray-200 flex items-center justify-end gap-1 px-1.5 h-[28px] font-mono tabular-nums text-[11px] font-semibold ${taxBreakdownExceedsAmount ? 'text-amber-700' : 'text-gray-900'}`}
                                     title={taxBreakdownExceedsAmount ? 'Warning: Invoice Amount is lower than DPP + PPN. Values are preserved without adjustment.' : 'Line Total equals Invoice Amount'}
                                   >
                                     {taxBreakdownExceedsAmount && <AlertCircle className="w-3 h-3 flex-none" />}
                                     {lineTotal ? lineTotal.toLocaleString('id-ID') : ''}
                                   </div>
                                   {/* Delete */}
-                                  <div className="flex items-center justify-center h-[26px]">
+                                  <div className="flex items-center justify-center h-[28px]">
                                     <button type="button" onClick={() => removeLine(idx)}
                                       className="text-red-500 hover:text-red-700 p-0.5" title="Remove line" tabIndex={-1}>
-                                      <Trash2 className="w-3 h-3" />
+                                      <Trash2 className="w-3.5 h-3.5" />
                                     </button>
                                   </div>
                                 </div>
                               );
                             })}
                             {/* Footer totals row */}
-                            <div className={`${grid} bg-gray-50 border-t border-gray-300 text-[11px] font-semibold text-gray-700`}>
-                              <div className="border-r border-gray-300 px-1 py-1 text-center"></div>
-                              <div className="border-r border-gray-300 px-1.5 py-1">Reimbursement Total ({brokerItems.length})</div>
-                              <div className="border-r border-gray-300 px-1.5 py-1"></div>
-                              <div className="border-r border-gray-300 px-1.5 py-1"></div>
-                              <div className="border-r border-gray-300 px-1.5 py-1"></div>
-                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono text-gray-900">{reimbAmount.toLocaleString('id-ID')}</div>
-                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono text-gray-900">{reimbDpp.toLocaleString('id-ID')}</div>
-                              <div className="border-r border-gray-300 px-1 py-1"></div>
-                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono text-blue-700">{reimbPpn.toLocaleString('id-ID')}</div>
-                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono text-gray-900">{reimbAmount.toLocaleString('id-ID')}</div>
+                            <div className={`${grid} bg-gray-50 border-t border-gray-300 text-[11px] font-semibold text-gray-700 h-[28px] items-center`}>
+                              <div className="border-r border-gray-300 px-1 py-1 text-center h-full flex items-center justify-center"></div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 h-full flex items-center">Reimbursement Total ({brokerItems.length})</div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 h-full flex items-center"></div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 h-full flex items-center"></div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 h-full flex items-center"></div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono tabular-nums text-gray-900 h-full flex items-center justify-end">{reimbAmount.toLocaleString('id-ID')}</div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono tabular-nums text-gray-900 h-full flex items-center justify-end">{reimbDpp.toLocaleString('id-ID')}</div>
+                              <div className="border-r border-gray-300 px-1 py-1 h-full flex items-center justify-center"></div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono tabular-nums text-blue-700 h-full flex items-center justify-end">{reimbPpn.toLocaleString('id-ID')}</div>
+                              <div className="border-r border-gray-300 px-1.5 py-1 text-right font-mono tabular-nums text-gray-900 h-full flex items-center justify-end">{reimbAmount.toLocaleString('id-ID')}</div>
                               <div></div>
                             </div>
                           </div>

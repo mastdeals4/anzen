@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { useDebounce } from '../hooks/useDebounce';
+import { matchesIndonesianCompanySearch } from '../utils/indonesianCompanySearch';
 
 interface Option {
   value: string;
@@ -34,17 +35,6 @@ interface SearchableSelectProps {
   loading?: boolean;
 }
 
-const STRIP_PREFIXES = /^(PT\.?\s*|CV\.?\s*|UD\.?\s*|TBK\.?\s*|LTD\.?\s*|CO\.?\s*)/i;
-const STRIP_TOKENS = /\b(pt|cv|ud|tbk|ltd|co)\.?\b/gi;
-
-function normalize(text: string): string {
-  return text
-    .replace(STRIP_PREFIXES, '')
-    .replace(STRIP_TOKENS, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
 
 export function SearchableSelect({
   id,
@@ -82,19 +72,9 @@ export function SearchableSelect({
     }
     const searchTarget = freeSolo ? value : debouncedFilter;
     if (!searchTarget) return options;
-    const q = searchTarget.toLowerCase().trim();
-    const normalizedQ = normalize(searchTarget);
-    const qTokens = normalizedQ.split(/\s+/).filter(Boolean);
-    return options.filter(opt => {
-      const raw = opt.label.toLowerCase();
-      if (raw.includes(q)) return true;
-      if (opt.keywords && opt.keywords.some(k => k.toLowerCase().includes(q))) return true;
-      const stripped = normalize(opt.label);
-      if (stripped.includes(normalizedQ)) return true;
-      if (qTokens.length === 0) return false;
-      const optTokens = stripped.split(/\s+/).filter(Boolean);
-      return qTokens.every(qt => optTokens.some(ot => ot.includes(qt)));
-    });
+    return options.filter(opt =>
+      matchesIndonesianCompanySearch(opt.label, searchTarget, opt.keywords)
+    );
   }, [options, debouncedFilter, filterOptions, freeSolo, value]);
 
   const updateDropdownPosition = useCallback(() => {
