@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Pencil as Edit, Trash2, FileText, Eye, FileX, Lock } from 'lucide-react';
+import { Plus, Pencil as Edit, Trash2, Eye, FileX, Lock, Ban } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -24,7 +24,7 @@ import { SapRow } from '../components/finance/SapLayout';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
-  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+  return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
 }
 
 interface SalesInvoice {
@@ -65,10 +65,23 @@ interface SalesInvoice {
   }>;
   is_draft?: boolean;
   journal_entry_id?: string | null;
+  faktur_pajak_number?: string | null;
+}
+
+function isCancelledInvoice(invoice: SalesInvoice): boolean {
+  return Boolean(
+    invoice.notes?.includes('[CANCELLED') || invoice.notes?.toLowerCase().startsWith('cancelled')
+  );
 }
 
 function isPostedInvoice(invoice: SalesInvoice): boolean {
-  return !invoice.is_draft || Boolean(invoice.journal_entry_id) || invoice.payment_status === 'paid' || Number(invoice.paid_amount || 0) > 0;
+  return (
+    (!invoice.is_draft ||
+      Boolean(invoice.journal_entry_id) ||
+      invoice.payment_status === 'paid' ||
+      Number(invoice.paid_amount || 0) > 0) &&
+    !isCancelledInvoice(invoice)
+  );
 }
 
 interface SOItemOption {
@@ -208,7 +221,15 @@ export function Sales() {
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [pendingChallans, setPendingChallans] = useState<DeliveryChallan[]>([]);
-  const [pendingDCOptions, setPendingDCOptions] = useState<Array<{ challan_id: string; challan_number: string; challan_date: string; item_count: number; product_names?: string }>>([]);
+  const [pendingDCOptions, setPendingDCOptions] = useState<
+    Array<{
+      challan_id: string;
+      challan_number: string;
+      challan_date: string;
+      item_count: number;
+      product_names?: string;
+    }>
+  >([]);
   const [customerSalesOrders, setCustomerSalesOrders] = useState<SalesOrderOption[]>([]);
   const [selectedSOId, setSelectedSOId] = useState<string>('');
   const [soAutoLinked, setSoAutoLinked] = useState(false);
@@ -238,14 +259,16 @@ export function Sales() {
     po_number: '',
     notes: '',
   });
-  const [items, setItems] = useState<InvoiceItem[]>([{
-    product_id: '',
-    batch_id: null,
-    quantity: 1,
-    unit_price: 0,
-    tax_rate: 11,
-    total: 0,
-  }]);
+  const [items, setItems] = useState<InvoiceItem[]>([
+    {
+      product_id: '',
+      batch_id: null,
+      quantity: 1,
+      unit_price: 0,
+      tax_rate: 11,
+      total: 0,
+    },
+  ]);
 
   useEffect(() => {
     loadInvoices();
@@ -268,7 +291,8 @@ export function Sales() {
       // 1. Authoritative DC items query with joined SO, SO item, batch, and product info
       const { data: dciData, error: dciError } = await supabase
         .from('delivery_challan_items')
-        .select(`
+        .select(
+          `
           id,
           challan_id,
           product_id,
@@ -285,7 +309,8 @@ export function Sales() {
           sales_order_items(id, unit_price, tax_percent, product_id),
           products(product_name, product_code),
           batches(batch_number, make_id, product_sources!batches_make_id_fkey(supplier_name))
-        `)
+        `
+        )
         .in('challan_id', challanIds);
 
       if (dciError) throw dciError;
@@ -310,9 +335,14 @@ export function Sales() {
       });
 
       // 3. Resolve SO links and Customer PO Number
-      const soMap = new Map<string, { id: string; so_number: string; customer_po_number: string }>();
+      const soMap = new Map<
+        string,
+        { id: string; so_number: string; customer_po_number: string }
+      >();
       (dciData || []).forEach((dci: any) => {
-        const dc = Array.isArray(dci.delivery_challans) ? dci.delivery_challans[0] : dci.delivery_challans;
+        const dc = Array.isArray(dci.delivery_challans)
+          ? dci.delivery_challans[0]
+          : dci.delivery_challans;
         const so = Array.isArray(dc?.sales_orders) ? dc?.sales_orders[0] : dc?.sales_orders;
         if (dc?.sales_order_id && so) {
           soMap.set(dc.sales_order_id, {
@@ -329,11 +359,13 @@ export function Sales() {
         setSelectedSOId(linkedSo.id);
         setSoAutoLinked(true);
         if (linkedSo.customer_po_number) {
-          setFormData(prev => ({ ...prev, po_number: linkedSo.customer_po_number }));
+          setFormData((prev) => ({ ...prev, po_number: linkedSo.customer_po_number }));
         }
       } else if (distinctSoList.length > 1) {
         setSoAutoLinked(false);
-        const distinctPOs = Array.from(new Set(distinctSoList.map(s => s.customer_po_number).filter(Boolean)));
+        const distinctPOs = Array.from(
+          new Set(distinctSoList.map((s) => s.customer_po_number).filter(Boolean))
+        );
         if (distinctPOs.length > 1) {
           showToast({
             type: 'error',
@@ -348,9 +380,13 @@ export function Sales() {
       // 4. Construct authoritative invoice items
       const dcItems: InvoiceItem[] = (dciData || [])
         .map<InvoiceItem | null>((item: any) => {
-          const dc = Array.isArray(item.delivery_challans) ? item.delivery_challans[0] : item.delivery_challans;
+          const dc = Array.isArray(item.delivery_challans)
+            ? item.delivery_challans[0]
+            : item.delivery_challans;
           const so = Array.isArray(dc?.sales_orders) ? dc?.sales_orders[0] : dc?.sales_orders;
-          const soItem = Array.isArray(item.sales_order_items) ? item.sales_order_items[0] : item.sales_order_items;
+          const soItem = Array.isArray(item.sales_order_items)
+            ? item.sales_order_items[0]
+            : item.sales_order_items;
 
           // Determine remaining quantity
           const remainingQty = remainingQtyMap.has(item.id)
@@ -369,10 +405,13 @@ export function Sales() {
             if (soItem.tax_percent != null) taxRate = Number(soItem.tax_percent);
           } else if (so?.sales_order_items?.length) {
             // 2) Fallback to match by product_id on linked SO
-            const matchingSoItems = so.sales_order_items.filter((si: any) => si.product_id === item.product_id);
+            const matchingSoItems = so.sales_order_items.filter(
+              (si: any) => si.product_id === item.product_id
+            );
             if (matchingSoItems.length > 0) {
               unitPrice = Number(matchingSoItems[0].unit_price || 0);
-              if (matchingSoItems[0].tax_percent != null) taxRate = Number(matchingSoItems[0].tax_percent);
+              if (matchingSoItems[0].tax_percent != null)
+                taxRate = Number(matchingSoItems[0].tax_percent);
             }
           }
 
@@ -396,15 +435,21 @@ export function Sales() {
         .filter((item): item is InvoiceItem => item !== null);
 
       if (dcItems.length > 0) {
-        setItems(previous => {
-          const existingDcItemIds = new Set(previous.map(item => item.delivery_challan_item_id).filter(Boolean));
+        setItems((previous) => {
+          const existingDcItemIds = new Set(
+            previous.map((item) => item.delivery_challan_item_id).filter(Boolean)
+          );
           const additions = dcItems
-            .filter(item => !existingDcItemIds.has(item.delivery_challan_item_id))
-            .map(item => ({ ...item, total: calculateItemTotal(item) }));
+            .filter((item) => !existingDcItemIds.has(item.delivery_challan_item_id))
+            .map((item) => ({ ...item, total: calculateItemTotal(item) }));
           // Retain only authoritative DC items. Obsolete placeholder or unlinked
           // manual rows without delivery_challan_item_id must not be mixed into an SO/DC-derived invoice.
-          const retained = previous.filter(item => Boolean(item.delivery_challan_item_id));
-          return additions.length > 0 ? [...retained, ...additions] : (retained.length > 0 ? retained : additions);
+          const retained = previous.filter((item) => Boolean(item.delivery_challan_item_id));
+          return additions.length > 0
+            ? [...retained, ...additions]
+            : retained.length > 0
+              ? retained
+              : additions;
         });
       }
     } catch (error) {
@@ -415,24 +460,34 @@ export function Sales() {
   const handleDCMultiSelectChange = async (nextIds: string[]) => {
     const currentIds = new Set(selectedDCIds);
     const nextIdSet = new Set(nextIds);
-    const removedIds = selectedDCIds.filter(id => !nextIdSet.has(id));
-    const protectedIds = new Set(items.map(item => item.challan_id).filter((id): id is string => Boolean(id)));
+    const removedIds = selectedDCIds.filter((id) => !nextIdSet.has(id));
+    const protectedIds = new Set(
+      items.map((item) => item.challan_id).filter((id): id is string => Boolean(id))
+    );
 
     // Existing invoice lines are accounting/source records. Keep their DC link
     // immutable during edit instead of silently deleting source lines.
-    if (editingInvoice && removedIds.some(id => protectedIds.has(id))) {
-      const restoredIds = [...new Set([...nextIds, ...removedIds.filter(id => protectedIds.has(id))])];
+    if (editingInvoice && removedIds.some((id) => protectedIds.has(id))) {
+      const restoredIds = [
+        ...new Set([...nextIds, ...removedIds.filter((id) => protectedIds.has(id))]),
+      ];
       setSelectedDCIds(restoredIds);
-      showToast({ type: 'info', title: 'Delivery Challan retained', message: 'A Delivery Challan with existing invoice lines cannot be removed while editing.' });
+      showToast({
+        type: 'info',
+        title: 'Delivery Challan retained',
+        message: 'A Delivery Challan with existing invoice lines cannot be removed while editing.',
+      });
       return;
     }
 
     if (!editingInvoice && removedIds.length > 0) {
-      setItems(previous => previous.filter(item => !item.challan_id || !removedIds.includes(item.challan_id)));
+      setItems((previous) =>
+        previous.filter((item) => !item.challan_id || !removedIds.includes(item.challan_id))
+      );
     }
 
     setSelectedDCIds(nextIds);
-    const addedIds = nextIds.filter(id => !currentIds.has(id));
+    const addedIds = nextIds.filter((id) => !currentIds.has(id));
     if (addedIds.length > 0 && formData.customer_id) {
       await loadItemsFromSelectedDCs(addedIds);
     }
@@ -442,7 +497,9 @@ export function Sales() {
     try {
       const { data, error } = await supabase
         .from('sales_invoices')
-        .select('*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)')
+        .select(
+          '*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)'
+        )
         .gte('invoice_date', dateRange.startDate)
         .lte('invoice_date', dateRange.endDate)
         .order('invoice_date', { ascending: false });
@@ -468,13 +525,13 @@ export function Sales() {
         for (const a of allocs || []) {
           paidById.set(
             a.sales_invoice_id,
-            (paidById.get(a.sales_invoice_id) || 0) + Number(a.allocated_amount || 0),
+            (paidById.get(a.sales_invoice_id) || 0) + Number(a.allocated_amount || 0)
           );
         }
         for (const a of adjs || []) {
           paidById.set(
             a.sales_invoice_id,
-            (paidById.get(a.sales_invoice_id) || 0) + Number(a.adjustment_amount || 0),
+            (paidById.get(a.sales_invoice_id) || 0) + Number(a.adjustment_amount || 0)
           );
         }
       }
@@ -490,9 +547,10 @@ export function Sales() {
           .from('sales_invoice_items')
           .select('invoice_id')
           .in('invoice_id', invoiceIdsForPaid);
-        (itemRows || []).forEach((row: any) => itemCounts.set(row.invoice_id, (itemCounts.get(row.invoice_id) || 0) + 1));
+        (itemRows || []).forEach((row: any) =>
+          itemCounts.set(row.invoice_id, (itemCounts.get(row.invoice_id) || 0) + 1)
+        );
       }
-
 
       const bundle = await fetchLinkedDocumentsBundle();
       const invoicesWithLinked = invoicesWithPayments.map((inv: any) => {
@@ -500,11 +558,12 @@ export function Sales() {
         return {
           ...inv,
           item_count: itemCounts.get(inv.id) || 0,
-          item_integrity_status: Number(inv.total_amount || 0) > 0 && !(itemCounts.get(inv.id) || 0)
-            ? 'missing_product_rows'
-            : 'ok',
+          item_integrity_status:
+            Number(inv.total_amount || 0) > 0 && !(itemCounts.get(inv.id) || 0)
+              ? 'missing_product_rows'
+              : 'ok',
           sales_order: links?.sos?.[0] ? { so_number: links.sos[0].number } : null,
-          linked_challans: (links?.dcs || []).map((d) => ({ id: d.id, challan_number: d.number }))
+          linked_challans: (links?.dcs || []).map((d) => ({ id: d.id, challan_number: d.number })),
         };
       });
 
@@ -539,14 +598,13 @@ export function Sales() {
               prev.map((inv: any) => ({
                 ...inv,
                 product_names: productNamesMap.get(inv.id) || inv.product_names || '',
-              })),
+              }))
             );
           } catch (err) {
             console.error('Error hydrating product names:', err);
           }
         })();
       }
-
     } catch (error) {
       console.error('Error loading invoices:', error);
     } finally {
@@ -556,8 +614,17 @@ export function Sales() {
 
   const handleFlyChallanClick = async (challanId: string) => {
     const [{ data: challan }, { data: challanItems }] = await Promise.all([
-      supabase.from('delivery_challans').select('*, customers(company_name, address, city, phone, pbf_license)').eq('id', challanId).maybeSingle(),
-      supabase.from('delivery_challan_items').select('*, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), batches(id, batch_number, expiry_date, packaging_details, per_pack_weight, pack_type, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), product_sources!batches_make_id_fkey(supplier_name, grade))').eq('challan_id', challanId)
+      supabase
+        .from('delivery_challans')
+        .select('*, customers(company_name, address, city, phone, pbf_license)')
+        .eq('id', challanId)
+        .maybeSingle(),
+      supabase
+        .from('delivery_challan_items')
+        .select(
+          '*, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), batches(id, batch_number, expiry_date, packaging_details, per_pack_weight, pack_type, products(id, product_name, product_code, unit, per_pack_weight, pack_type, packaging_type), product_sources!batches_make_id_fkey(supplier_name, grade))'
+        )
+        .eq('challan_id', challanId),
     ]);
     if (challan) {
       setSelectedFlyChallan(challan);
@@ -565,12 +632,12 @@ export function Sales() {
     }
   };
 
-
   const openLinkedSalesOrderView = async (soId: string) => {
     if (!soId) return;
     const { data } = await supabase
       .from('sales_orders')
-      .select(`
+      .select(
+        `
         *,
         customers(*),
         sales_order_items(
@@ -578,7 +645,8 @@ export function Sales() {
           products(id, product_name, product_code, unit),
           product_sources!sales_order_items_make_id_fkey(supplier_name, grade)
         )
-      `)
+      `
+      )
       .eq('id', soId)
       .maybeSingle();
     if (data) setLinkedSOPreview(data);
@@ -596,8 +664,7 @@ export function Sales() {
       const startNumber = settings?.invoice_start_number || 1;
 
       // Get current financial year automatically
-      const { data: yearCode, error: fyError } = await supabase
-        .rpc('get_current_financial_year');
+      const { data: yearCode, error: fyError } = await supabase.rpc('get_current_financial_year');
 
       if (fyError) {
         console.error('Error getting financial year:', fyError);
@@ -620,11 +687,11 @@ export function Sales() {
       if (allInvoices && allInvoices.length > 0) {
         // Extract all numbers and find the maximum
         const numbers = allInvoices
-          .map(inv => {
+          .map((inv) => {
             const match = inv.invoice_number.match(/(\d+)$/);
             return match ? parseInt(match[1], 10) : 0;
           })
-          .filter(num => !isNaN(num));
+          .filter((num) => !isNaN(num));
 
         if (numbers.length > 0) {
           const maxNumber = Math.max(...numbers);
@@ -677,15 +744,19 @@ export function Sales() {
       // Load ALL batches for reference (including 0 stock for delivery challan invoices)
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, product_id, make_id, current_stock, import_price, duty_charges, freight_charges, other_charges, import_quantity, import_date, expiry_date, product_sources!batches_make_id_fkey(supplier_name, grade)')
+        .select(
+          'id, batch_number, product_id, make_id, current_stock, import_price, duty_charges, freight_charges, other_charges, import_quantity, import_date, expiry_date, product_sources!batches_make_id_fkey(supplier_name, grade)'
+        )
         .eq('is_active', true)
         .order('import_date', { ascending: true });
 
       if (error) throw error;
-      setBatches((data || []).map(batch => ({
-        ...batch,
-        product_sources: normalizeNestedRelation(batch.product_sources),
-      })));
+      setBatches(
+        (data || []).map((batch) => ({
+          ...batch,
+          product_sources: normalizeNestedRelation(batch.product_sources),
+        }))
+      );
     } catch (error) {
       console.error('Error loading batches:', error);
     }
@@ -709,11 +780,11 @@ export function Sales() {
       if (invoicesError) throw invoicesError;
 
       const linkedChallanIds = new Set<string>();
-      invoicedChallans?.forEach(inv => {
+      invoicedChallans?.forEach((inv) => {
         inv.linked_challan_ids?.forEach((id: string) => linkedChallanIds.add(id));
       });
 
-      const pending = allChallans?.filter(ch => !linkedChallanIds.has(ch.id)) || [];
+      const pending = allChallans?.filter((ch) => !linkedChallanIds.has(ch.id)) || [];
       setPendingChallans(pending);
     } catch (error) {
       console.error('Error loading pending challans:', error);
@@ -725,13 +796,22 @@ export function Sales() {
     try {
       const { data, error } = await supabase
         .from('sales_orders')
-        .select(`
+        .select(
+          `
           id, so_number, customer_po_number, total_amount, advance_payment_amount, advance_payment_status, status,
           sales_order_items(product_id, quantity, unit_price, tax_percent, make_id, product_sources!sales_order_items_make_id_fkey(supplier_name, grade), products(product_name))
-        `)
+        `
+        )
         .eq('customer_id', customerId)
         .eq('is_archived', false)
-        .in('status', ['approved', 'stock_reserved', 'shortage', 'pending_delivery', 'partially_delivered', 'delivered'])
+        .in('status', [
+          'approved',
+          'stock_reserved',
+          'shortage',
+          'pending_delivery',
+          'partially_delivered',
+          'delivered',
+        ])
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -768,10 +848,10 @@ export function Sales() {
     setSoAutoLinked(false);
     if (!salesOrderId) return;
 
-    const salesOrder = customerSalesOrders.find(order => order.id === salesOrderId);
+    const salesOrder = customerSalesOrders.find((order) => order.id === salesOrderId);
     const resolvedPO = salesOrder?.customer_po_number || salesOrder?.po_number || '';
     if (resolvedPO) {
-      setFormData(prev => ({ ...prev, po_number: resolvedPO }));
+      setFormData((prev) => ({ ...prev, po_number: resolvedPO }));
     }
 
     // A Sales Order requires an approved Delivery Challan before an invoice can be created.
@@ -790,16 +870,19 @@ export function Sales() {
         showToast({
           type: 'error',
           title: 'No Delivery Challan',
-          message: 'This Sales Order has no approved Delivery Challans to invoice. Every invoice line requires a source Delivery Challan.',
+          message:
+            'This Sales Order has no approved Delivery Challans to invoice. Every invoice line requires a source Delivery Challan.',
         });
-        setItems([{
-          product_id: '',
-          batch_id: null,
-          quantity: 1,
-          unit_price: 0,
-          tax_rate: 11,
-          total: 0,
-        }]);
+        setItems([
+          {
+            product_id: '',
+            batch_id: null,
+            quantity: 1,
+            unit_price: 0,
+            tax_rate: 11,
+            total: 0,
+          },
+        ]);
         setSelectedDCIds([]);
         return;
       }
@@ -821,7 +904,9 @@ export function Sales() {
     try {
       const { data, error } = await supabase
         .from('dc_invoicing_summary')
-        .select('challan_id, challan_number, challan_date, total_quantity, total_remaining_quantity')
+        .select(
+          'challan_id, challan_number, challan_date, total_quantity, total_remaining_quantity'
+        )
         .eq('customer_id', customerId)
         .gt('total_remaining_quantity', 0)
         .order('challan_date', { ascending: false });
@@ -829,7 +914,7 @@ export function Sales() {
       if (error) throw error;
 
       // Fetch product names for each DC
-      const challanIds = (data || []).map(dc => dc.challan_id);
+      const challanIds = (data || []).map((dc) => dc.challan_id);
       const productNameMap: Record<string, string> = {};
       if (challanIds.length > 0) {
         const { data: items } = await supabase
@@ -840,7 +925,8 @@ export function Sales() {
           const grouped: Record<string, Set<string>> = {};
           items.forEach((item: any) => {
             if (!grouped[item.challan_id]) grouped[item.challan_id] = new Set();
-            if (item.products?.product_name) grouped[item.challan_id].add(item.products.product_name);
+            if (item.products?.product_name)
+              grouped[item.challan_id].add(item.products.product_name);
           });
           Object.entries(grouped).forEach(([id, names]) => {
             productNameMap[id] = [...names].join(', ');
@@ -848,7 +934,7 @@ export function Sales() {
         }
       }
 
-      const options = (data || []).map(dc => ({
+      const options = (data || []).map((dc) => ({
         challan_id: dc.challan_id,
         challan_number: dc.challan_number,
         challan_date: dc.challan_date,
@@ -867,7 +953,9 @@ export function Sales() {
     if (!linkedDCIds || linkedDCIds.length === 0) return;
 
     try {
-      const missingIds = linkedDCIds.filter(id => !pendingDCOptions.some(opt => opt.challan_id === id));
+      const missingIds = linkedDCIds.filter(
+        (id) => !pendingDCOptions.some((opt) => opt.challan_id === id)
+      );
       if (missingIds.length === 0) return;
 
       const { data, error } = await supabase
@@ -878,17 +966,17 @@ export function Sales() {
 
       if (error) throw error;
 
-      const linkedOptions = (data || []).map(dc => ({
+      const linkedOptions = (data || []).map((dc) => ({
         challan_id: dc.id,
         challan_number: dc.challan_number,
         challan_date: dc.challan_date,
-        item_count: 0
+        item_count: 0,
       }));
 
       if (linkedOptions.length > 0) {
-        setPendingDCOptions(prev => {
-          const existingIds = new Set(prev.map(opt => opt.challan_id));
-          const toAdd = linkedOptions.filter(opt => !existingIds.has(opt.challan_id));
+        setPendingDCOptions((prev) => {
+          const existingIds = new Set(prev.map((opt) => opt.challan_id));
+          const toAdd = linkedOptions.filter((opt) => !existingIds.has(opt.challan_id));
           return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
         });
       }
@@ -899,11 +987,10 @@ export function Sales() {
 
   const loadPendingDCItems = async (customerId: string, excludeInvoiceId?: string) => {
     try {
-      const { data, error } = await supabase
-        .rpc('get_pending_dc_items_for_customer', {
-          p_customer_id: customerId,
-          p_exclude_invoice_id: excludeInvoiceId || null
-        });
+      const { data, error } = await supabase.rpc('get_pending_dc_items_for_customer', {
+        p_customer_id: customerId,
+        p_exclude_invoice_id: excludeInvoiceId || null,
+      });
 
       if (error) throw error;
 
@@ -912,7 +999,7 @@ export function Sales() {
         challan_number: dc.challan_number,
         challan_date: dc.challan_date,
         dc_status: dc.dc_status,
-        items: dc.items || []
+        items: dc.items || [],
       }));
 
       setPendingDCsWithItems(dcsWithItems);
@@ -921,14 +1008,14 @@ export function Sales() {
         const newSelectedItems = new Map<string, SelectedDCItem>();
         const newExpandedDCs = new Set<string>();
 
-        dcsWithItems.forEach(dc => {
-          dc.items.forEach(item => {
+        dcsWithItems.forEach((dc) => {
+          dc.items.forEach((item) => {
             if (item.is_from_editing) {
               newSelectedItems.set(item.dc_item_id, {
                 dcItemId: item.dc_item_id,
                 dcNumber: dc.challan_number,
                 selected: true,
-                quantity: item.remaining_quantity
+                quantity: item.remaining_quantity,
               });
               newExpandedDCs.add(dc.challan_id);
             }
@@ -952,7 +1039,7 @@ export function Sales() {
         dcItemId: dcItem.dc_item_id,
         dcNumber: dcNumber,
         selected: true,
-        quantity: dcItem.remaining_quantity
+        quantity: dcItem.remaining_quantity,
       });
     } else {
       newSelectedItems.delete(dcItem.dc_item_id);
@@ -972,23 +1059,28 @@ export function Sales() {
     setExpandedDCs(newExpanded);
   };
 
-  const handleDCSelectAll = (dcId: string, dcItems: DCItem[], dcNumber: string, checked: boolean) => {
+  const handleDCSelectAll = (
+    dcId: string,
+    dcItems: DCItem[],
+    dcNumber: string,
+    checked: boolean
+  ) => {
     const newSelectedItems = new Map(selectedDCItems);
 
     if (checked) {
-      dcItems.forEach(item => {
+      dcItems.forEach((item) => {
         newSelectedItems.set(item.dc_item_id, {
           dcItemId: item.dc_item_id,
           dcNumber: dcNumber,
           selected: true,
-          quantity: item.remaining_quantity
+          quantity: item.remaining_quantity,
         });
       });
       const newExpanded = new Set(expandedDCs);
       newExpanded.add(dcId);
       setExpandedDCs(newExpanded);
     } else {
-      dcItems.forEach(item => {
+      dcItems.forEach((item) => {
         newSelectedItems.delete(item.dc_item_id);
       });
     }
@@ -1000,8 +1092,8 @@ export function Sales() {
   const syncItemsFromDCSelection = (selectedDCMap: Map<string, SelectedDCItem>) => {
     const dcItems: InvoiceItem[] = [];
 
-    pendingDCsWithItems.forEach(dc => {
-      dc.items.forEach(dcItem => {
+    pendingDCsWithItems.forEach((dc) => {
+      dc.items.forEach((dcItem) => {
         const selected = selectedDCMap.get(dcItem.dc_item_id);
         if (selected) {
           dcItems.push({
@@ -1013,7 +1105,7 @@ export function Sales() {
             total: dcItem.remaining_quantity * dcItem.selling_price * 1.11,
             delivery_challan_item_id: dcItem.dc_item_id,
             dc_number: dc.challan_number,
-            max_quantity: dcItem.remaining_quantity
+            max_quantity: dcItem.remaining_quantity,
           });
         }
       });
@@ -1022,42 +1114,53 @@ export function Sales() {
     if (dcItems.length > 0) {
       setItems(dcItems);
     } else {
-      const manualItems = items.filter(item => !item.delivery_challan_item_id);
-      setItems(manualItems.length > 0 ? manualItems : [{
+      const manualItems = items.filter((item) => !item.delivery_challan_item_id);
+      setItems(
+        manualItems.length > 0
+          ? manualItems
+          : [
+              {
+                product_id: '',
+                batch_id: null,
+                quantity: 1,
+                unit_price: 0,
+                tax_rate: 11,
+                total: 0,
+                delivery_challan_item_id: null,
+              },
+            ]
+      );
+    }
+  };
+
+  const addManualItem = () => {
+    setItems([
+      ...items,
+      {
         product_id: '',
         batch_id: null,
         quantity: 1,
         unit_price: 0,
         tax_rate: 11,
         total: 0,
-        delivery_challan_item_id: null
-      }]);
-    }
-  };
-
-  const addManualItem = () => {
-    setItems([...items, {
-      product_id: '',
-      batch_id: null,
-      quantity: 1,
-      unit_price: 0,
-      tax_rate: 11,
-      total: 0,
-      delivery_challan_item_id: null
-    }]);
+        delivery_challan_item_id: null,
+      },
+    ]);
   };
 
   const handleChallanSelect = async (challanId: string) => {
     if (!challanId) {
       setSelectedChallanId('');
-      setItems([{
-        product_id: '',
-        batch_id: null,
-        quantity: 1,
-        unit_price: 0,
-        tax_rate: 11,
-        total: 0,
-      }]);
+      setItems([
+        {
+          product_id: '',
+          batch_id: null,
+          quantity: 1,
+          unit_price: 0,
+          tax_rate: 11,
+          total: 0,
+        },
+      ]);
       return;
     }
 
@@ -1065,21 +1168,27 @@ export function Sales() {
     setSelectedDCIds([challanId]);
 
     try {
-      const selectedChallan = pendingChallans.find(ch => ch.id === challanId);
+      const selectedChallan = pendingChallans.find((ch) => ch.id === challanId);
       if (!selectedChallan) {
         console.error('Selected challan not found in pending challans list');
-        showToast({ type: 'error', title: 'Error', message: 'Selected delivery challan not found. Please refresh and try again.' });
+        showToast({
+          type: 'error',
+          title: 'Error',
+          message: 'Selected delivery challan not found. Please refresh and try again.',
+        });
         return;
       }
 
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
         delivery_challan_number: selectedChallan.challan_number,
       }));
 
       const { data: challanItems, error } = await supabase
         .from('delivery_challan_items')
-        .select('id, product_id, batch_id, quantity, products(product_name, product_code), batches(batch_number, import_price, duty_charges, freight_charges, other_charges, import_quantity, make_id, product_sources!batches_make_id_fkey(supplier_name, grade))')
+        .select(
+          'id, product_id, batch_id, quantity, products(product_name, product_code), batches(batch_number, import_price, duty_charges, freight_charges, other_charges, import_quantity, make_id, product_sources!batches_make_id_fkey(supplier_name, grade))'
+        )
         .eq('challan_id', challanId);
 
       if (error) {
@@ -1089,7 +1198,11 @@ export function Sales() {
 
       if (!challanItems || challanItems.length === 0) {
         console.warn('No items found for this delivery challan');
-        showToast({ type: 'info', title: 'Info', message: 'This delivery challan has no items. Please add items manually.' });
+        showToast({
+          type: 'info',
+          title: 'Info',
+          message: 'This delivery challan has no items. Please add items manually.',
+        });
         return;
       }
 
@@ -1104,9 +1217,14 @@ export function Sales() {
         let unitPrice = 0;
 
         if (item.batch_id) {
-          const batch = batches.find(b => b.id === item.batch_id);
+          const batch = batches.find((b) => b.id === item.batch_id);
           if (batch) {
-            const costPerUnit = (batch.import_price + batch.duty_charges + batch.freight_charges + batch.other_charges) / (batch as any).import_quantity;
+            const costPerUnit =
+              (batch.import_price +
+                batch.duty_charges +
+                batch.freight_charges +
+                batch.other_charges) /
+              (batch as any).import_quantity;
             unitPrice = Math.round(costPerUnit * 1.25);
           } else {
             console.warn(`Batch ${item.batch_id} not found in loaded batches`);
@@ -1130,21 +1248,29 @@ export function Sales() {
       }
 
       if (invoiceItems.length === 0) {
-        showToast({ type: 'error', title: 'Error', message: 'Could not load items from delivery challan. Please add items manually.' });
+        showToast({
+          type: 'error',
+          title: 'Error',
+          message: 'Could not load items from delivery challan. Please add items manually.',
+        });
         return;
       }
 
       setItems(invoiceItems);
     } catch (error: any) {
       console.error('Error loading challan items:', error);
-      showToast({ type: 'error', title: 'Error', message: `Failed to load delivery challan items: ${error.message || 'Unknown error'}. Please try again or add items manually.` });
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: `Failed to load delivery challan items: ${error.message || 'Unknown error'}. Please try again or add items manually.`,
+      });
     }
   };
 
   const getFIFOBatch = (productId: string) => {
     const now = new Date();
     const productBatches = batches
-      .filter(b => {
+      .filter((b) => {
         if (b.product_id !== productId) return false;
         if (!(b as any).expiry_date) return true;
         return new Date((b as any).expiry_date) > now;
@@ -1195,7 +1321,7 @@ export function Sales() {
           .eq('id', sourceChallan.sales_order_id)
           .maybeSingle();
         if (linkedSO?.customer_po_number) {
-          setFormData(prev => ({ ...prev, po_number: linkedSO.customer_po_number }));
+          setFormData((prev) => ({ ...prev, po_number: linkedSO.customer_po_number }));
         }
       }
       await loadItemsFromSelectedDCs([data.challanId], data.customerId);
@@ -1207,14 +1333,17 @@ export function Sales() {
   const loadInvoiceItems = async (invoiceId: string) => {
     try {
       const itemsWithDCInfo = await loadInvoiceDisplayItems(supabase, invoiceId);
-      const mappedItems: InvoiceItem[] = itemsWithDCInfo.map(item => ({
+      const mappedItems: InvoiceItem[] = itemsWithDCInfo.map((item) => ({
         id: item.id,
         product_id: item.product_id,
         batch_id: item.batch_id,
         quantity: item.quantity,
         unit_price: item.unit_price,
         tax_rate: item.tax_rate,
-        total: item.line_total ?? item.total ?? item.quantity * item.unit_price * (1 + item.tax_rate / 100),
+        total:
+          item.line_total ??
+          item.total ??
+          item.quantity * item.unit_price * (1 + item.tax_rate / 100),
         delivery_challan_item_id: item.delivery_challan_item_id,
         challan_id: item.challan_id,
         dc_number: item.dc_number,
@@ -1242,17 +1371,28 @@ export function Sales() {
   // lose their Sales Order/DC provenance. Conflicting Sales Orders are
   // surfaced instead of being guessed or silently overwritten.
   const resolveInvoiceSourceLinks = async (sourceItems: InvoiceItem[]) => {
-    const dcItemIds = [...new Set(sourceItems.map(item => item.delivery_challan_item_id).filter((id): id is string => Boolean(id)))];
-    if (!dcItemIds.length) return { challanIds: [...new Set(selectedDCIds)], salesOrderId: selectedSOId || null };
+    const dcItemIds = [
+      ...new Set(
+        sourceItems
+          .map((item) => item.delivery_challan_item_id)
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+    if (!dcItemIds.length)
+      return { challanIds: [...new Set(selectedDCIds)], salesOrderId: selectedSOId || null };
 
     const { data, error } = await supabase
       .from('delivery_challan_items')
-      .select('id, challan_id, delivery_challans(id, sales_order_id, challan_number, sales_orders(id, customer_po_number))')
+      .select(
+        'id, challan_id, delivery_challans(id, sales_order_id, challan_number, sales_orders(id, customer_po_number))'
+      )
       .in('id', dcItemIds);
     if (error) throw error;
 
     const rows = (data || []).map((row: any) => {
-      const dc = Array.isArray(row.delivery_challans) ? row.delivery_challans[0] : row.delivery_challans;
+      const dc = Array.isArray(row.delivery_challans)
+        ? row.delivery_challans[0]
+        : row.delivery_challans;
       const so = Array.isArray(dc?.sales_orders) ? dc?.sales_orders[0] : dc?.sales_orders;
       return {
         challanId: row.challan_id as string,
@@ -1260,14 +1400,22 @@ export function Sales() {
         poNumber: (so?.customer_po_number || '') as string,
       };
     });
-    const resolvedChallanIds = [...new Set(rows.map(row => row.challanId).filter(Boolean))];
-    const resolvedSoIds = [...new Set(rows.map(row => row.salesOrderId).filter(Boolean))];
-    const resolvedPos = [...new Set(rows.map(row => row.poNumber).filter((po): po is string => Boolean(po && po.trim())))];
+    const resolvedChallanIds = [...new Set(rows.map((row) => row.challanId).filter(Boolean))];
+    const resolvedSoIds = [...new Set(rows.map((row) => row.salesOrderId).filter(Boolean))];
+    const resolvedPos = [
+      ...new Set(
+        rows.map((row) => row.poNumber).filter((po): po is string => Boolean(po && po.trim()))
+      ),
+    ];
     if (resolvedSoIds.length > 1) {
       if (resolvedPos.length > 1) {
-        throw new Error(`The selected Delivery Challans belong to different Sales Orders with conflicting customer PO numbers (${resolvedPos.join(', ')}). Resolve the conflict before saving this invoice.`);
+        throw new Error(
+          `The selected Delivery Challans belong to different Sales Orders with conflicting customer PO numbers (${resolvedPos.join(', ')}). Resolve the conflict before saving this invoice.`
+        );
       }
-      throw new Error('The selected Delivery Challans belong to different Sales Orders. Resolve the conflict before saving this invoice.');
+      throw new Error(
+        'The selected Delivery Challans belong to different Sales Orders. Resolve the conflict before saving this invoice.'
+      );
     }
     return {
       challanIds: [...new Set([...selectedDCIds, ...resolvedChallanIds])],
@@ -1277,9 +1425,10 @@ export function Sales() {
 
   const getBatchCostPerUnit = (batchId: string | null): number => {
     if (!batchId) return 0;
-    const batch = batches.find(b => b.id === batchId) as any;
+    const batch = batches.find((b) => b.id === batchId) as any;
     if (!batch || !batch.import_quantity) return 0;
-    const totalCost = batch.import_price + batch.duty_charges + batch.freight_charges + batch.other_charges;
+    const totalCost =
+      batch.import_price + batch.duty_charges + batch.freight_charges + batch.other_charges;
     return totalCost / batch.import_quantity;
   };
 
@@ -1301,14 +1450,17 @@ export function Sales() {
   };
 
   const addItem = () => {
-    setItems([...items, {
-      product_id: '',
-      batch_id: null,
-      quantity: 1,
-      unit_price: 0,
-      tax_rate: 11,
-      total: 0,
-    }]);
+    setItems([
+      ...items,
+      {
+        product_id: '',
+        batch_id: null,
+        quantity: 1,
+        unit_price: 0,
+        tax_rate: 11,
+        total: 0,
+      },
+    ]);
   };
 
   const removeItem = (index: number) => {
@@ -1318,10 +1470,10 @@ export function Sales() {
   };
 
   const calculateTotals = () => {
-    const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const taxAmount = items.reduce((sum, item) => {
       const itemSubtotal = item.quantity * item.unit_price;
-      return sum + (itemSubtotal * (item.tax_rate / 100));
+      return sum + itemSubtotal * (item.tax_rate / 100);
     }, 0);
     const stampDuty = formData.stamp_duty_amount || 0;
     const total = subtotal + taxAmount - formData.discount + stampDuty;
@@ -1335,13 +1487,20 @@ export function Sales() {
       const sourceLinks = await resolveInvoiceSourceLinks(items);
       const sourceDCIds = sourceLinks.challanIds;
       const sourceSOId = sourceLinks.salesOrderId;
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
       // Validate that invoice has at least one item with a product selected
-      const validItems = items.filter(item => item.product_id && item.product_id.trim() !== '');
+      const validItems = items.filter((item) => item.product_id && item.product_id.trim() !== '');
       if (validItems.length === 0) {
-        showToast({ type: 'error', title: 'Error', message: 'Invoice cannot be saved because its product table is empty. Select an approved Delivery Challan item or add a product line.' });
+        showToast({
+          type: 'error',
+          title: 'Error',
+          message:
+            'Invoice cannot be saved because its product table is empty. Select an approved Delivery Challan item or add a product line.',
+        });
         return;
       }
 
@@ -1377,12 +1536,17 @@ export function Sales() {
           // Controlled posted invoice adjustment:
           // Keep products, batches, quantities, and DC links intact to protect physical warehouse stock.
           // Recalculate financial totals and synchronize GL revenue entries consistently.
-          const subtotal = validItems.length > 0
-            ? items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0)
-            : Number(editingInvoice.subtotal || 0);
-          const taxAmount = validItems.length > 0
-            ? items.reduce((sum, item) => sum + (item.quantity * item.unit_price * (item.tax_rate / 100)), 0)
-            : Number(editingInvoice.tax_amount || 0);
+          const subtotal =
+            validItems.length > 0
+              ? items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+              : Number(editingInvoice.subtotal || 0);
+          const taxAmount =
+            validItems.length > 0
+              ? items.reduce(
+                  (sum, item) => sum + item.quantity * item.unit_price * (item.tax_rate / 100),
+                  0
+                )
+              : Number(editingInvoice.tax_amount || 0);
           const stampDuty = Number(formData.stamp_duty_amount) || 0;
           const discount = Number(formData.discount) || 0;
           const total = subtotal + taxAmount - discount + stampDuty;
@@ -1407,15 +1571,37 @@ export function Sales() {
             nextPaymentStatus = 'pending';
           }
 
-          // 1. Update sales invoice items with revised unit prices
+          // 1. Update sales invoice items with revised quantities and unit prices
           for (const item of items) {
             if (item.id) {
+              const newQty = Number(item.quantity);
+
+              // If linked to a DC item, validate that invoice quantity does not exceed approved DC dispatched quantity
+              if (item.delivery_challan_item_id) {
+                const { data: dcItem } = await supabase
+                  .from('delivery_challan_items')
+                  .select('quantity, delivery_challans(challan_number)')
+                  .eq('id', item.delivery_challan_item_id)
+                  .maybeSingle();
+
+                const maxQty = Number(dcItem?.quantity || 0);
+                if (maxQty > 0 && newQty > maxQty + 0.0001) {
+                  showToast({
+                    type: 'error',
+                    title: 'Quantity Exceeds Delivery',
+                    message: `Invoice quantity (${newQty}) cannot exceed Delivery Challan ${(dcItem?.delivery_challans as any)?.challan_number || ''} dispatched quantity (${maxQty}). To bill additional stock, dispatch another Delivery Challan first.`,
+                  });
+                  return;
+                }
+              }
+
               await supabase
                 .from('sales_invoice_items')
                 .update({
+                  quantity: newQty,
                   unit_price: item.unit_price,
                   tax_rate: item.tax_rate,
-                  total_amount: item.quantity * item.unit_price,
+                  total_amount: newQty * item.unit_price,
                 })
                 .eq('id', item.id);
             }
@@ -1493,12 +1679,59 @@ export function Sales() {
             }
           }
 
-          // 4. Audit Log entry for the price revision
+          // 3b. Synchronize General Ledger (COGS Journal Entry lines if present)
+          const { data: cogsJe } = await supabase
+            .from('journal_entries')
+            .select('id')
+            .eq('source_module', 'sales_invoice_cogs')
+            .eq('reference_id', editingInvoice.id)
+            .maybeSingle();
+
+          if (cogsJe) {
+            let totalCogs = 0;
+            for (const item of items) {
+              const unitCost = getBatchCostPerUnit(item.batch_id);
+              totalCogs += (Number(item.quantity) || 0) * unitCost;
+            }
+
+            if (totalCogs > 0) {
+              await supabase
+                .from('journal_entries')
+                .update({
+                  total_debit: totalCogs,
+                  total_credit: totalCogs,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', cogsJe.id);
+
+              const { data: cogsLines } = await supabase
+                .from('journal_entry_lines')
+                .select('id, account_id, chart_of_accounts(code)')
+                .eq('journal_entry_id', cogsJe.id);
+
+              for (const line of cogsLines || []) {
+                const coaCode = (line.chart_of_accounts as any)?.code;
+                if (coaCode === '5100') {
+                  await supabase
+                    .from('journal_entry_lines')
+                    .update({ debit: totalCogs, credit: 0 })
+                    .eq('id', line.id);
+                } else if (coaCode === '1130') {
+                  await supabase
+                    .from('journal_entry_lines')
+                    .update({ debit: 0, credit: totalCogs })
+                    .eq('id', line.id);
+                }
+              }
+            }
+          }
+
+          // 4. Audit Log entry for the posted invoice correction
           await Promise.resolve(
             supabase.from('audit_logs').insert({
               table_name: 'sales_invoices',
               record_id: editingInvoice.id,
-              action: 'PRICE_REVISION',
+              action: 'POSTED_INVOICE_CORRECTION',
               user_id: profile?.id || null,
               details: {
                 invoice_number: editingInvoice.invoice_number,
@@ -1506,15 +1739,21 @@ export function Sales() {
                 new_total: total,
                 old_subtotal: editingInvoice.subtotal,
                 new_subtotal: subtotal,
-                notes: formData.notes || 'Controlled price revision',
+                revised_items: items.map((i) => ({
+                  product_id: i.product_id,
+                  quantity: i.quantity,
+                  unit_price: i.unit_price,
+                  total: i.total,
+                })),
+                notes: formData.notes || 'Controlled posted invoice correction',
               },
             })
           ).catch(() => {});
 
           showToast({
             type: 'success',
-            title: 'Invoice Updated',
-            message: `Invoice ${editingInvoice.invoice_number} updated successfully.`,
+            title: 'Invoice Corrected',
+            message: `Invoice ${editingInvoice.invoice_number} corrected successfully. Accounting postings and stock synchronized.`,
           });
 
           await loadInvoices();
@@ -1529,8 +1768,8 @@ export function Sales() {
         // Deduplicate items before sending (in case of UI state issues)
         const itemsMap = new Map();
         items
-          .filter(item => item.product_id && item.product_id.trim() !== '')
-          .forEach(item => {
+          .filter((item) => item.product_id && item.product_id.trim() !== '')
+          .forEach((item) => {
             const key = `${item.product_id}-${item.batch_id}-${item.delivery_challan_item_id || 'manual'}`;
             if (!itemsMap.has(key)) {
               itemsMap.set(key, {
@@ -1548,8 +1787,9 @@ export function Sales() {
 
         const atomicItems = Array.from(itemsMap.values());
 
-        const { data: invoiceId, error: rpcError } = await supabase
-          .rpc('update_sales_invoice_atomic', {
+        const { data: invoiceId, error: rpcError } = await supabase.rpc(
+          'update_sales_invoice_atomic',
+          {
             p_invoice_id: editingInvoice.id,
             p_invoice_updates: {
               invoice_date: formData.invoice_date,
@@ -1566,7 +1806,8 @@ export function Sales() {
               notes: formData.notes || null,
             },
             p_new_items: atomicItems,
-          });
+          }
+        );
 
         if (rpcError) throw rpcError;
 
@@ -1591,15 +1832,17 @@ export function Sales() {
         if (existingInvoice) {
           // Invoice number already exists, generate a new one
           invoiceNumber = await generateNextInvoiceNumber();
-          setFormData(prev => ({ ...prev, invoice_number: invoiceNumber }));
+          setFormData((prev) => ({ ...prev, invoice_number: invoiceNumber }));
         }
 
         // Filter and map only valid items (with product_id)
         const invoiceItemsData = items
-          .filter(item => item.product_id && item.product_id.trim() !== '')
-          .map(item => {
+          .filter((item) => item.product_id && item.product_id.trim() !== '')
+          .map((item) => {
             if (!item.delivery_challan_item_id) {
-              throw new Error('Every invoice line must have a source Delivery Challan item. Select the Delivery Challan item again before saving.');
+              throw new Error(
+                'Every invoice line must have a source Delivery Challan item. Select the Delivery Challan item again before saving.'
+              );
             }
 
             return {
@@ -1612,34 +1855,42 @@ export function Sales() {
             };
           });
 
-        if (invoiceItemsData.length === 0) throw new Error('Invoice product rows were empty; no invoice was created.');
+        if (invoiceItemsData.length === 0)
+          throw new Error('Invoice product rows were empty; no invoice was created.');
 
         // New invoices are created in one database transaction. The RPC
         // derives totals from the persisted source lines and rolls back the
         // header, items, journal, and links if any validation fails.
-        const { data: newInvoiceId, error: invoiceError } = await supabase.rpc('create_sales_invoice_atomic', {
-          p_invoice: {
-            invoice_number: invoiceNumber,
-            customer_id: formData.customer_id,
-            // sales_order_id: selectedSOId is resolved from authoritative DC items above.
-            sales_order_id: sourceSOId,
-            invoice_date: formData.invoice_date,
-            due_date: dueDate.toISOString().split('T')[0],
-            discount_amount: formData.discount,
-            po_number: formData.po_number || null,
-            payment_terms_days: paymentTermsDays,
-            notes: formData.notes || null,
-            subtotal: totals.subtotal,
-            tax_amount: totals.taxAmount,
-            stamp_duty_amount: totals.stampDuty,
-            total_amount: totals.total,
-            created_by: user.id,
-            linked_challan_ids: sourceDCIds.length > 0 ? sourceDCIds : null,
-          },
-          p_items: invoiceItemsData,
-        });
+        const { data: newInvoiceId, error: invoiceError } = await supabase.rpc(
+          'create_sales_invoice_atomic',
+          {
+            p_invoice: {
+              invoice_number: invoiceNumber,
+              customer_id: formData.customer_id,
+              // sales_order_id: selectedSOId is resolved from authoritative DC items above.
+              sales_order_id: sourceSOId,
+              invoice_date: formData.invoice_date,
+              due_date: dueDate.toISOString().split('T')[0],
+              discount_amount: formData.discount,
+              po_number: formData.po_number || null,
+              payment_terms_days: paymentTermsDays,
+              notes: formData.notes || null,
+              subtotal: totals.subtotal,
+              tax_amount: totals.taxAmount,
+              stamp_duty_amount: totals.stampDuty,
+              total_amount: totals.total,
+              created_by: user.id,
+              linked_challan_ids: sourceDCIds.length > 0 ? sourceDCIds : null,
+            },
+            p_items: invoiceItemsData,
+          }
+        );
         if (invoiceError) throw invoiceError;
-        const { data: newInvoice, error: fetchInvoiceError } = await supabase.from('sales_invoices').select().eq('id', newInvoiceId).single();
+        const { data: newInvoice, error: fetchInvoiceError } = await supabase
+          .from('sales_invoices')
+          .select()
+          .eq('id', newInvoiceId)
+          .single();
         if (fetchInvoiceError) throw fetchInvoiceError;
         invoice = newInvoice;
       }
@@ -1651,16 +1902,22 @@ export function Sales() {
 
       // Notify warehouse staff on new invoice (non-blocking)
       if (!editingInvoice && invoice?.id) {
-        supabase.functions.invoke('send-app-notifications', {
-          body: { type: 'invoice_created', data: { invoice_id: invoice.id } }
-        }).catch(() => {});
+        supabase.functions
+          .invoke('send-app-notifications', {
+            body: { type: 'invoice_created', data: { invoice_id: invoice.id } },
+          })
+          .catch(() => {});
       }
 
       setModalOpen(false);
       resetForm();
     } catch (error: any) {
       console.error('Error saving invoice:', error);
-      showToast({ type: 'error', title: 'Error', message: `Failed to save invoice: ${error.message || 'Unknown error'}. Please check console for details.` });
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: `Failed to save invoice: ${error.message || 'Unknown error'}. Please check console for details.`,
+      });
     }
   };
 
@@ -1714,64 +1971,285 @@ export function Sales() {
     const loadedItems = await loadInvoiceItems(invoice.id);
 
     if (loadedItems.length > 0) {
-      setItems(loadedItems.map(item => {
-        const mappedItem = {
-          product_id: item.product_id,
-          batch_id: item.batch_id,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          tax_rate: item.tax_rate,
-          total: 0,
-          delivery_challan_item_id: item.delivery_challan_item_id,
-          challan_id: item.challan_id,
-          dc_number: item.dc_number,
-        };
-        return {
-          ...mappedItem,
-          total: calculateItemTotal(mappedItem)
-        };
-      }));
+      setItems(
+        loadedItems.map((item) => {
+          const mappedItem = {
+            id: item.id,
+            product_id: item.product_id,
+            batch_id: item.batch_id,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            tax_rate: item.tax_rate,
+            total: 0,
+            delivery_challan_item_id: item.delivery_challan_item_id,
+            challan_id: item.challan_id,
+            dc_number: item.dc_number,
+          };
+          return {
+            ...mappedItem,
+            total: calculateItemTotal(mappedItem),
+          };
+        })
+      );
     }
 
     await loadPendingDCOptions(invoice.customer_id);
 
-    const linkedDCIds = [...new Set([
-      ...loadedItems.map((item: any) => item.challan_id).filter(Boolean),
-      ...(invoice.linked_challan_ids ?? []),
-    ])] as string[];
+    const linkedDCIds = [
+      ...new Set([
+        ...loadedItems.map((item: any) => item.challan_id).filter(Boolean),
+        ...(invoice.linked_challan_ids ?? []),
+      ]),
+    ] as string[];
     setSelectedDCIds(linkedDCIds);
     await ensureLinkedDCOptionsVisible(linkedDCIds);
 
     setModalOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
-    const targetInvoice = invoices.find(inv => inv.id === id);
-    if (targetInvoice && isPostedInvoice(targetInvoice)) {
+  const handleCancelInvoice = async (invoice: SalesInvoice) => {
+    if (!isFinancialEditor) {
       showToast({
         type: 'warning',
-        title: 'Invoice Posted',
-        message: 'Financially posted invoices cannot be deleted. Adjustments must be made via Credit Notes.',
+        title: 'Permission Denied',
+        message: 'Only Admin and Accounts can cancel financially posted invoices.',
       });
       return;
     }
-    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this invoice?', variant: 'danger', confirmLabel: 'Delete' })) return;
+
+    const isAlreadyMarkedCancelled = isCancelledInvoice(invoice);
+
+    const paidAmt = Number(invoice.paid_amount || 0);
+    if (paidAmt > 0.01) {
+      showToast({
+        type: 'error',
+        title: 'Payment Allocated',
+        message: `Cannot cancel invoice ${invoice.invoice_number}: payments totaling Rp ${paidAmt.toLocaleString('id-ID')} are allocated. Unallocate or reverse the receipts in Payment Receipts before cancelling.`,
+      });
+      return;
+    }
+
+    const confirmed = await showConfirm({
+      title: isAlreadyMarkedCancelled ? 'Complete Financial Reversal' : 'Cancel Posted Invoice',
+      message: isAlreadyMarkedCancelled
+        ? `Invoice ${invoice.invoice_number} is marked as cancelled, but may have unreversed General Ledger postings (A/R, Revenue, Tax, or COGS).\n\nDo you want to verify and complete the financial reversal now?`
+        : `Cancel invoice ${invoice.invoice_number}?\n\nThis will:\n- Reverse General Ledger postings (A/R, Revenue, Tax, and COGS)\n- Release linked Delivery Challans so they can be adjusted or re-invoiced\n- Preserve invoice number and audit logs\n\nAre you sure you want to proceed?`,
+      variant: 'danger',
+      confirmLabel: isAlreadyMarkedCancelled ? 'Reverse Postings' : 'Cancel Invoice',
+    });
+    if (!confirmed) return;
 
     try {
-      const { error } = await supabase
-        .from('sales_invoices')
-        .delete()
-        .eq('id', id);
+      const cancelDate = new Date().toISOString().split('T')[0];
+      const cancelUser = profile?.full_name || profile?.email || 'Admin';
+      const reasonTag = `[CANCELLED on ${cancelDate} by ${cancelUser}]`;
 
-      if (error) throw error;
-      loadInvoices();
-    } catch (error) {
-      console.error('Error deleting invoice:', error);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to delete invoice. Please try again.' });
+      // Try atomic transactional server RPC first if migration is applied
+      let rpcHandled = false;
+      try {
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('cancel_sales_invoice', {
+          p_invoice_id: invoice.id,
+          p_reason: reasonTag,
+          p_actor: profile?.id || null,
+        });
+        if (!rpcError && (rpcResult as any)?.success) {
+          rpcHandled = true;
+        }
+      } catch (rpcErr) {
+        console.warn(
+          'cancel_sales_invoice RPC not available or failed, using hardened direct reversal:',
+          rpcErr
+        );
+      }
+
+      if (!rpcHandled) {
+        // 1. Reverse Revenue Journal Entry
+        const revenueJeIds: string[] = [];
+        if (invoice.journal_entry_id) {
+          revenueJeIds.push(invoice.journal_entry_id);
+        }
+
+        // Comprehensive search: match by reference_id OR reference_number across known revenue modules
+        const { data: foundRevenueJes, error: revSearchErr } = await supabase
+          .from('journal_entries')
+          .select('id, entry_number, is_reversed')
+          .in('source_module', ['sales_invoice', 'sales', 'sales_invoices'])
+          .or(`reference_id.eq.${invoice.id},reference_number.eq.${invoice.invoice_number}`);
+
+        if (revSearchErr) console.warn('Warning querying revenue journals:', revSearchErr);
+        if (foundRevenueJes) {
+          for (const je of foundRevenueJes) {
+            if (!revenueJeIds.includes(je.id)) revenueJeIds.push(je.id);
+          }
+        }
+
+        for (const jeId of revenueJeIds) {
+          const { error: revUpdateErr } = await supabase
+            .from('journal_entries')
+            .update({
+              is_reversed: true,
+              reversed_by_id: null,
+              description: `${reasonTag} ${invoice.invoice_number}`,
+            })
+            .eq('id', jeId)
+            .eq('is_reversed', false);
+
+          if (revUpdateErr) {
+            throw new Error(
+              `Failed to reverse revenue journal entry (${jeId}): ${revUpdateErr.message}`
+            );
+          }
+        }
+
+        // 2. Reverse COGS Journal Entry if present
+        const { data: cogsJes, error: cogsSearchErr } = await supabase
+          .from('journal_entries')
+          .select('id, entry_number, is_reversed')
+          .eq('source_module', 'sales_invoice_cogs')
+          .or(`reference_id.eq.${invoice.id},reference_number.eq.${invoice.invoice_number}`);
+
+        if (cogsSearchErr) console.warn('Warning querying COGS journals:', cogsSearchErr);
+        if (cogsJes) {
+          for (const cogsJe of cogsJes) {
+            const { error: cogsUpdateErr } = await supabase
+              .from('journal_entries')
+              .update({
+                is_reversed: true,
+                reversed_by_id: null,
+                description: `${reasonTag} ${invoice.invoice_number} COGS`,
+              })
+              .eq('id', cogsJe.id)
+              .eq('is_reversed', false);
+
+            if (cogsUpdateErr) {
+              throw new Error(
+                `Failed to reverse COGS journal entry (${cogsJe.id}): ${cogsUpdateErr.message}`
+              );
+            }
+          }
+        }
+
+        // 3. Unlink invoice items from Delivery Challan items (so DC is unbilled and can be reversed or adjusted)
+        await Promise.resolve(
+          supabase
+            .from('sales_invoice_items')
+            .update({ delivery_challan_item_id: null })
+            .eq('invoice_id', invoice.id)
+        ).catch(() => {});
+
+        // 4. Update sales invoice header to record cancellation
+        const updatedNotes = invoice.notes
+          ? invoice.notes.includes('[CANCELLED')
+            ? invoice.notes
+            : `${reasonTag}\n${invoice.notes}`
+          : reasonTag;
+
+        const { error: invError } = await supabase
+          .from('sales_invoices')
+          .update({
+            notes: updatedNotes,
+            balance_amount: 0,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', invoice.id);
+
+        if (invError) throw invError;
+
+        // 5. Update Faktur Pajak status to cancelled if exists (Indonesian Coretax requirement)
+        await Promise.resolve(
+          supabase
+            .from('faktur_pajak')
+            .update({
+              status: 'cancelled',
+              notes: `${reasonTag} Sales Invoice cancelled`,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('sales_invoice_id', invoice.id)
+        ).catch(() => {});
+
+        // 6. Record detailed audit log
+        await Promise.resolve(
+          supabase.from('audit_logs').insert({
+            table_name: 'sales_invoices',
+            record_id: invoice.id,
+            action: 'INVOICE_CANCELLED',
+            user_id: profile?.id || null,
+            details: {
+              invoice_number: invoice.invoice_number,
+              original_total: invoice.total_amount,
+              cancelled_at: new Date().toISOString(),
+              cancelled_by: profile?.id || null,
+              faktur_pajak_number: invoice.faktur_pajak_number || null,
+              revenue_journal_ids: revenueJeIds,
+              cogs_journal_ids: (cogsJes || []).map((j) => j.id),
+            },
+          })
+        ).catch(() => {});
+      }
+
+      showToast({
+        type: 'success',
+        title: isAlreadyMarkedCancelled ? 'Reversal Completed' : 'Invoice Cancelled',
+        message: `Invoice ${invoice.invoice_number} has been cancelled. Accounting entries reversed and linked Delivery Challan released.`,
+      });
+
+      await loadInvoices();
+    } catch (error: any) {
+      console.error('Error cancelling invoice:', error);
+      showToast({
+        type: 'error',
+        title: 'Cancellation Failed',
+        message: error.message || 'Failed to cancel invoice. Please try again.',
+      });
     }
   };
 
-  const updatePaymentStatus = async (invoice: SalesInvoice, newStatus: SalesInvoice['payment_status']) => {
+  const handleDelete = async (id: string) => {
+    const targetInvoice = invoices.find((inv) => inv.id === id);
+    if (!targetInvoice) return;
+
+    if (isPostedInvoice(targetInvoice)) {
+      await handleCancelInvoice(targetInvoice);
+      return;
+    }
+
+    if (
+      !(await showConfirm({
+        title: 'Confirm',
+        message: 'Are you sure you want to delete this draft invoice?',
+        variant: 'danger',
+        confirmLabel: 'Delete',
+      }))
+    )
+      return;
+
+    try {
+      // Delete child sales_invoice_items first to satisfy guard_posted_sales_invoice_delete trigger
+      await supabase.from('sales_invoice_items').delete().eq('invoice_id', id);
+
+      const { error } = await supabase.from('sales_invoices').delete().eq('id', id);
+
+      if (error) throw error;
+      loadInvoices();
+      showToast({
+        type: 'success',
+        title: 'Success',
+        message: 'Draft invoice deleted successfully.',
+      });
+    } catch (error: any) {
+      console.error('Error deleting invoice:', error);
+      showToast({
+        type: 'error',
+        title: 'Error',
+        message: error.message || 'Failed to delete invoice. Please try again.',
+      });
+    }
+  };
+
+  const updatePaymentStatus = async (
+    invoice: SalesInvoice,
+    newStatus: SalesInvoice['payment_status']
+  ) => {
     try {
       const { error } = await supabase
         .from('sales_invoices')
@@ -1806,21 +2284,23 @@ export function Sales() {
       po_number: '',
       notes: '',
     });
-    setItems([{
-      product_id: '',
-      batch_id: null,
-      quantity: 1,
-      unit_price: 0,
-      tax_rate: 11,
-      total: 0,
-    }]);
+    setItems([
+      {
+        product_id: '',
+        batch_id: null,
+        quantity: 1,
+        unit_price: 0,
+        tax_rate: 11,
+        total: 0,
+      },
+    ]);
   };
 
   const columns = [
     {
       key: 'invoice_date',
       label: t('common.date'),
-      render: (value: any, inv: SalesInvoice) => formatDate(inv.invoice_date)
+      render: (value: any, inv: SalesInvoice) => formatDate(inv.invoice_date),
     },
     {
       key: 'invoice_number',
@@ -1832,46 +2312,74 @@ export function Sales() {
             <div className="text-[10px] font-semibold text-red-700">Missing product rows</div>
           )}
         </div>
-      )
+      ),
     },
     {
       key: 'customer',
       label: t('sales.customer'),
       render: (value: any, inv: SalesInvoice) => (
         <div className="font-medium">{inv.customers?.company_name}</div>
-      )
+      ),
     },
     {
       key: 'total_amount',
       label: t('common.total'),
       render: (value: any, inv: SalesInvoice) => (
-        <span className="font-medium text-sm">Rp {inv.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-      )
+        <span className="font-medium text-sm">
+          Rp{' '}
+          {inv.total_amount.toLocaleString('id-ID', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          })}
+        </span>
+      ),
     },
     {
       key: 'payment_status',
       label: t('sales.paymentStatus'),
-      render: (value: any, inv: SalesInvoice) => (
-        <span className={`inline-block px-1.5 py-0.5 rounded-full text-[11px] leading-tight font-medium ${
-          inv.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
-          inv.payment_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-          'bg-red-100 text-red-800'
-        }`}>
-          {inv.payment_status === 'pending' ? t('common.unpaid') :
-           inv.payment_status === 'partial' ? t('common.partial') : t('common.paid')}
-        </span>
-      )
+      render: (value: any, inv: SalesInvoice) => {
+        if (isCancelledInvoice(inv)) {
+          return (
+            <span className="inline-block px-1.5 py-0.5 rounded-full text-[11px] leading-tight font-medium bg-gray-200 text-gray-700">
+              Cancelled
+            </span>
+          );
+        }
+        return (
+          <span
+            className={`inline-block px-1.5 py-0.5 rounded-full text-[11px] leading-tight font-medium ${
+              inv.payment_status === 'paid'
+                ? 'bg-green-100 text-green-800'
+                : inv.payment_status === 'partial'
+                  ? 'bg-yellow-100 text-yellow-800'
+                  : 'bg-red-100 text-red-800'
+            }`}
+          >
+            {inv.payment_status === 'pending'
+              ? t('common.unpaid')
+              : inv.payment_status === 'partial'
+                ? t('common.partial')
+                : t('common.paid')}
+          </span>
+        );
+      },
     },
     {
       key: 'balance_amount',
       label: t('sales.balance'),
       render: (value: any, inv: SalesInvoice) => (
-        <span className={`font-medium ${
-          (inv.balance_amount || 0) === 0 ? 'text-gray-400' : 'text-orange-600'
-        }`}>
-          Rp {(inv.balance_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+        <span
+          className={`font-medium ${
+            (inv.balance_amount || 0) === 0 ? 'text-gray-400' : 'text-orange-600'
+          }`}
+        >
+          Rp{' '}
+          {(inv.balance_amount || 0).toLocaleString('id-ID', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          })}
         </span>
-      )
+      ),
     },
     {
       key: 'so_dc_link',
@@ -1880,8 +2388,16 @@ export function Sales() {
       tdClassName: 'min-w-[150px]',
       render: (_value: any, inv: SalesInvoice) => (
         <LinkedDocsCell
-          sos={inv.sales_order?.so_number ? [{ id: inv.sales_order_id || '', number: inv.sales_order.so_number, type: 'so' }] : []}
-          dcs={(inv.linked_challans || []).map((dc) => ({ id: dc.id, number: dc.challan_number, type: 'dc' as const }))}
+          sos={
+            inv.sales_order?.so_number
+              ? [{ id: inv.sales_order_id || '', number: inv.sales_order.so_number, type: 'so' }]
+              : []
+          }
+          dcs={(inv.linked_challans || []).map((dc) => ({
+            id: dc.id,
+            number: dc.challan_number,
+            type: 'dc' as const,
+          }))}
           invs={[]}
           show={{ inv: false }}
           onClick={(doc: LinkedDocRef) => {
@@ -1889,7 +2405,7 @@ export function Sales() {
             if (doc.type === 'so') openLinkedSalesOrderView(doc.id);
           }}
         />
-      )
+      ),
     },
     {
       key: 'due_date',
@@ -1907,31 +2423,51 @@ export function Sales() {
         const isUrgent = daysUntilDue <= 7;
         const isOverdue = daysUntilDue < 0;
         return (
-          <span className={`font-medium ${
-            isOverdue ? 'text-red-700' :
-            isUrgent ? 'text-red-500' :
-            'text-gray-700'
-          }`}>
+          <span
+            className={`font-medium ${
+              isOverdue ? 'text-red-700' : isUrgent ? 'text-red-500' : 'text-gray-700'
+            }`}
+          >
             {formatDate(inv.due_date)}
-            {isOverdue && <span className="ml-1 text-[11px] bg-red-100 text-red-700 px-1 py-0.5 rounded">Overdue</span>}
-            {!isOverdue && isUrgent && <span className="ml-1 text-[11px] bg-red-50 text-red-500 px-1 py-0.5 rounded">{daysUntilDue}d left</span>}
+            {isOverdue && (
+              <span className="ml-1 text-[11px] bg-red-100 text-red-700 px-1 py-0.5 rounded">
+                Overdue
+              </span>
+            )}
+            {!isOverdue && isUrgent && (
+              <span className="ml-1 text-[11px] bg-red-50 text-red-500 px-1 py-0.5 rounded">
+                {daysUntilDue}d left
+              </span>
+            )}
           </span>
         );
-      }
+      },
     },
   ];
 
-  const canManage = profile?.role === 'admin' || profile?.role === 'accounts' || profile?.role === 'sales' || profile?.role === 'warehouse';
+  const canManage =
+    profile?.role === 'admin' ||
+    profile?.role === 'accounts' ||
+    profile?.role === 'sales' ||
+    profile?.role === 'warehouse';
 
   const isAdmin = profile?.role === 'admin';
 
   const stats = {
-    total: invoices.length,
-    totalRevenue: invoices.reduce((sum, inv) => sum + inv.total_amount, 0),
-    pending: invoices.filter(inv => inv.payment_status === 'pending').length,
-    pendingValue: invoices.filter(inv => inv.payment_status === 'pending').reduce((sum, inv) => sum + (inv.balance_amount || 0), 0),
-    paid: invoices.filter(inv => inv.payment_status === 'paid').length,
-    paidValue: invoices.filter(inv => inv.payment_status === 'paid').reduce((sum, inv) => sum + inv.total_amount, 0),
+    total: invoices.filter((inv) => !isCancelledInvoice(inv)).length,
+    totalRevenue: invoices
+      .filter((inv) => !isCancelledInvoice(inv))
+      .reduce((sum, inv) => sum + inv.total_amount, 0),
+    pending: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending')
+      .length,
+    pendingValue: invoices
+      .filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending')
+      .reduce((sum, inv) => sum + (inv.balance_amount || 0), 0),
+    paid: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid')
+      .length,
+    paidValue: invoices
+      .filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid')
+      .reduce((sum, inv) => sum + inv.total_amount, 0),
   };
 
   return (
@@ -1939,7 +2475,9 @@ export function Sales() {
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('sales.title')}</h1>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">
+              {t('sales.title')}
+            </h1>
             <p className="text-xs text-gray-500 mt-0.5">{t('sales.invoices')}</p>
           </div>
           {canManage && (
@@ -1948,7 +2486,7 @@ export function Sales() {
                 onClick={async () => {
                   resetForm();
                   const nextInvoiceNumber = await generateNextInvoiceNumber();
-                  setFormData(prev => ({ ...prev, invoice_number: nextInvoiceNumber }));
+                  setFormData((prev) => ({ ...prev, invoice_number: nextInvoiceNumber }));
                   setModalOpen(true);
                 }}
                 className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
@@ -1971,19 +2509,25 @@ export function Sales() {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('sales.invoices')}</span>
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+              {t('sales.invoices')}
+            </span>
             <div className="text-base font-bold text-gray-900 mt-0.5">{stats.total}</div>
           </div>
           {isAdmin && (
             <div className="bg-white rounded-xl border border-blue-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-              <span className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide">{t('common.total')} Revenue</span>
+              <span className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide">
+                {t('common.total')} Revenue
+              </span>
               <div className="text-base font-bold text-blue-700 mt-0.5 leading-tight">
                 Rp {stats.totalRevenue.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
               </div>
             </div>
           )}
           <div className="bg-white rounded-xl border border-red-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">{t('common.pending')}</span>
+            <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">
+              {t('common.pending')}
+            </span>
             <div className="mt-0.5">
               <span className="text-base font-bold text-red-600">{stats.pending}</span>
               <span className="text-[10px] text-red-500 ml-1.5 font-medium">
@@ -1992,7 +2536,9 @@ export function Sales() {
             </div>
           </div>
           <div className="bg-white rounded-xl border border-green-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
-            <span className="text-[11px] font-semibold text-green-600 uppercase tracking-wide">{t('common.paid')}</span>
+            <span className="text-[11px] font-semibold text-green-600 uppercase tracking-wide">
+              {t('common.paid')}
+            </span>
             <div className="mt-0.5">
               <span className="text-base font-bold text-green-600">{stats.paid}</span>
               <span className="text-[10px] text-green-500 ml-1.5 font-medium">
@@ -2019,14 +2565,29 @@ export function Sales() {
               </button>
               {canManage && (
                 <>
-                  <button
-                    onClick={() => handleEdit(invoice)}
-                    className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                    title={t('common.edit')}
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  {!isPostedInvoice(invoice) ? (
+                  {!isCancelledInvoice(invoice) && (
+                    <button
+                      onClick={() => handleEdit(invoice)}
+                      className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                      title={t('common.edit')}
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                  )}
+                  {isCancelledInvoice(invoice) ? (
+                    <span
+                      className={`inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded ${isFinancialEditor ? 'cursor-pointer hover:bg-gray-200' : 'cursor-help'}`}
+                      title={
+                        isFinancialEditor
+                          ? `${invoice.notes?.split('\n')[0] || 'Cancelled Invoice'}. Click to verify or complete financial reversal.`
+                          : invoice.notes?.split('\n')[0] || 'Cancelled Invoice'
+                      }
+                      onClick={() => isFinancialEditor && handleCancelInvoice(invoice)}
+                    >
+                      <Ban className="w-3 h-3 text-gray-400" />
+                      Cancelled
+                    </span>
+                  ) : !isPostedInvoice(invoice) ? (
                     <button
                       onClick={() => handleDelete(invoice.id)}
                       className="p-1 text-red-600 hover:bg-red-50 rounded"
@@ -2035,13 +2596,13 @@ export function Sales() {
                       <Trash2 className="w-4 h-4" />
                     </button>
                   ) : (
-                    <span
-                      className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded cursor-help"
-                      title="Financially posted invoice — product lines & delivery challans locked. Stamp duty, terms, and notes can be edited."
+                    <button
+                      onClick={() => handleCancelInvoice(invoice)}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
+                      title="Cancel Posted Invoice (Reverse Accounting & Unbill Challan)"
                     >
-                      <Lock className="w-3 h-3 text-gray-400" />
-                      Posted
-                    </span>
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   )}
                 </>
               )}
@@ -2055,7 +2616,11 @@ export function Sales() {
             setModalOpen(false);
             resetForm();
           }}
-          title={editingInvoice ? `${isEditingPosted ? 'Edit Invoice (Posted)' : t('sales.editInvoice')}: ${editingInvoice.invoice_number}` : t('sales.createInvoice')}
+          title={
+            editingInvoice
+              ? `${isEditingPosted ? 'Edit Invoice (Posted)' : t('sales.editInvoice')}: ${editingInvoice.invoice_number}`
+              : t('sales.createInvoice')
+          }
           size="xl"
         >
           <form onSubmit={handleSubmit} className="space-y-3">
@@ -2063,10 +2628,12 @@ export function Sales() {
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
                 <Lock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-semibold text-amber-900">Financially Posted Invoice — Controlled Revision Mode</div>
+                  <div className="font-semibold text-amber-900">
+                    Financially Posted Invoice — Controlled Revision Mode
+                  </div>
                   <div>
                     {isFinancialEditor
-                      ? 'Authorized revision: You can update Unit Prices, Tax %, Bea Meterai, Terms, PO Number, and Notes. Customer, Products, Batches, and Quantities remain locked to Delivery Challans to protect inventory conservation and warehouse audit trails.'
+                      ? 'Authorized revision: You can update Quantities, Unit Prices, Tax %, Bea Meterai, Terms, PO Number, and Notes. Warehouse stock and General Ledger postings will be synchronized automatically.'
                       : 'Financially posted invoices are locked. Contact an Administrator or Accounts manager to revise commercial terms.'}
                   </div>
                 </div>
@@ -2074,8 +2641,15 @@ export function Sales() {
             )}
             <div className="space-y-2">
               <SapRow>
-                <FloatingField label={t('sales.invoiceNumber')} required span={4} filled={!!formData.invoice_number}>
-                  <input name="t_sales_invoicenumber" aria-label="{t('sales.invoiceNumber')}"
+                <FloatingField
+                  label={t('sales.invoiceNumber')}
+                  required
+                  span={4}
+                  filled={!!formData.invoice_number}
+                >
+                  <input
+                    name="t_sales_invoicenumber"
+                    aria-label="{t('sales.invoiceNumber')}"
                     type="text"
                     value={formData.invoice_number}
                     className={FLOAT_INPUT + ' bg-gray-100'}
@@ -2084,8 +2658,15 @@ export function Sales() {
                     disabled
                   />
                 </FloatingField>
-                <FloatingField label="Invoice Date" required span={4} filled={!!formData.invoice_date}>
-                  <input name="invoice_date" aria-label="Invoice Date"
+                <FloatingField
+                  label="Invoice Date"
+                  required
+                  span={4}
+                  filled={!!formData.invoice_date}
+                >
+                  <input
+                    name="invoice_date"
+                    aria-label="Invoice Date"
                     type="date"
                     value={formData.invoice_date}
                     onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
@@ -2093,8 +2674,15 @@ export function Sales() {
                     required
                   />
                 </FloatingField>
-                <FloatingField label="Payment Terms" required span={4} filled={!!formData.payment_terms}>
-                  <select name="payment_terms" aria-label="Payment Terms"
+                <FloatingField
+                  label="Payment Terms"
+                  required
+                  span={4}
+                  filled={!!formData.payment_terms}
+                >
+                  <select
+                    name="payment_terms"
+                    aria-label="Payment Terms"
                     value={formData.payment_terms}
                     onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
                     className={FLOAT_INPUT}
@@ -2116,8 +2704,14 @@ export function Sales() {
                   {isEditingPosted ? (
                     <input
                       type="text"
-                      value={customers.find(c => c.id === formData.customer_id)?.company_name || editingInvoice?.customers?.company_name || 'Customer'}
-                      className={FLOAT_INPUT + ' bg-gray-100 text-gray-700 font-medium cursor-not-allowed'}
+                      value={
+                        customers.find((c) => c.id === formData.customer_id)?.company_name ||
+                        editingInvoice?.customers?.company_name ||
+                        'Customer'
+                      }
+                      className={
+                        FLOAT_INPUT + ' bg-gray-100 text-gray-700 font-medium cursor-not-allowed'
+                      }
                       readOnly
                       disabled
                     />
@@ -2132,14 +2726,16 @@ export function Sales() {
                         setSelectedSOId('');
                         setSoAutoLinked(false);
                         setCustomerSalesOrders([]);
-                        setItems([{
-                          product_id: '',
-                          batch_id: null,
-                          quantity: 1,
-                          unit_price: 0,
-                          tax_rate: 11,
-                          total: 0,
-                        }]);
+                        setItems([
+                          {
+                            product_id: '',
+                            batch_id: null,
+                            quantity: 1,
+                            unit_price: 0,
+                            tax_rate: 11,
+                            total: 0,
+                          },
+                        ]);
                         if (customerId) {
                           loadPendingDCOptions(customerId);
                           loadCustomerSalesOrders(customerId);
@@ -2148,7 +2744,7 @@ export function Sales() {
                           setCustomerSalesOrders([]);
                         }
                       }}
-                      options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+                      options={customers.map((c) => ({ value: c.id, label: c.company_name }))}
                       placeholder="Select Customer"
                       className="text-sm"
                       required
@@ -2159,8 +2755,14 @@ export function Sales() {
                   {isEditingPosted ? (
                     <input
                       type="text"
-                      value={editingInvoice?.delivery_challan_number || (editingInvoice?.linked_challans?.map(c => c.challan_number).join(', ')) || 'Linked Delivery Challans'}
-                      className={FLOAT_INPUT + ' bg-gray-100 text-gray-700 font-medium cursor-not-allowed'}
+                      value={
+                        editingInvoice?.delivery_challan_number ||
+                        editingInvoice?.linked_challans?.map((c) => c.challan_number).join(', ') ||
+                        'Linked Delivery Challans'
+                      }
+                      className={
+                        FLOAT_INPUT + ' bg-gray-100 text-gray-700 font-medium cursor-not-allowed'
+                      }
                       readOnly
                       disabled
                     />
@@ -2180,7 +2782,9 @@ export function Sales() {
                   )}
                 </FloatingField>
                 <FloatingField label="PO Number" span={4} filled={!!formData.po_number}>
-                  <input name="po_number" aria-label="PO Number"
+                  <input
+                    name="po_number"
+                    aria-label="PO Number"
                     type="text"
                     value={formData.po_number}
                     onChange={(e) => setFormData({ ...formData, po_number: e.target.value })}
@@ -2191,21 +2795,26 @@ export function Sales() {
               </SapRow>
 
               {customerSalesOrders.length > 0 && !editingInvoice && (
-                <div className={`p-3 rounded-lg border-2 ${soAutoLinked ? 'bg-green-50 border-green-300' : 'bg-blue-50 border-blue-200'}`}>
-                  <label className={`block text-sm font-bold mb-2 ${soAutoLinked ? 'text-green-900' : 'text-blue-900'}`}>
-                    Link to Sales Order {soAutoLinked ? '(auto-linked from DC)' : '(for advance payment tracking)'}
+                <div
+                  className={`p-3 rounded-lg border-2 ${soAutoLinked ? 'bg-green-50 border-green-300' : 'bg-blue-50 border-blue-200'}`}
+                >
+                  <label
+                    className={`block text-sm font-bold mb-2 ${soAutoLinked ? 'text-green-900' : 'text-blue-900'}`}
+                  >
+                    Link to Sales Order{' '}
+                    {soAutoLinked ? '(auto-linked from DC)' : '(for advance payment tracking)'}
                   </label>
                   {soAutoLinked ? (
                     <div className="flex items-center justify-between">
                       <div>
                         {(() => {
-                          const so = customerSalesOrders.find(s => s.id === selectedSOId);
+                          const so = customerSalesOrders.find((s) => s.id === selectedSOId);
                           return so ? (
                             <div>
                               <p className="text-sm font-semibold text-green-800">{so.so_number}</p>
                               {so.items && so.items.length > 0 && (
                                 <p className="text-xs text-green-700 mt-0.5">
-                                  Products: {so.items.map(i => i.product_name).join(', ')}
+                                  Products: {so.items.map((i) => i.product_name).join(', ')}
                                 </p>
                               )}
                               {so.advance_payment_amount > 0 && (
@@ -2219,70 +2828,89 @@ export function Sales() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => { setSelectedSOId(''); setSoAutoLinked(false); }}
+                        onClick={() => {
+                          setSelectedSOId('');
+                          setSoAutoLinked(false);
+                        }}
                         className="text-xs text-green-700 underline hover:text-green-900"
                       >
                         Change
                       </button>
                     </div>
                   ) : (
-                    <select name="s_o_id" aria-label="S O Id"
+                    <select
+                      name="s_o_id"
+                      aria-label="S O Id"
                       value={selectedSOId}
                       onChange={(e) => handleSalesOrderSelect(e.target.value)}
                       className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
                     >
-                      <option value="">-- Select Sales Order (if this invoice is from an SO) --</option>
-                      {customerSalesOrders.map(so => {
-                        const productNames = so.items && so.items.length > 0
-                          ? so.items.map(i => i.product_name).join(', ')
-                          : `Rp ${so.total_amount.toLocaleString('id-ID')}`;
-                        const advanceLabel = so.advance_payment_amount > 0
-                          ? ` | Advance: Rp ${so.advance_payment_amount.toLocaleString('id-ID')}`
-                          : '';
+                      <option value="">
+                        -- Select Sales Order (if this invoice is from an SO) --
+                      </option>
+                      {customerSalesOrders.map((so) => {
+                        const productNames =
+                          so.items && so.items.length > 0
+                            ? so.items.map((i) => i.product_name).join(', ')
+                            : `Rp ${so.total_amount.toLocaleString('id-ID')}`;
+                        const advanceLabel =
+                          so.advance_payment_amount > 0
+                            ? ` | Advance: Rp ${so.advance_payment_amount.toLocaleString('id-ID')}`
+                            : '';
                         return (
                           <option key={so.id} value={so.id}>
-                            {so.so_number} — {productNames}{advanceLabel}
+                            {so.so_number} — {productNames}
+                            {advanceLabel}
                           </option>
                         );
                       })}
                     </select>
                   )}
-                  {selectedSOId && !soAutoLinked && (() => {
-                    const so = customerSalesOrders.find(s => s.id === selectedSOId);
-                    if (so && so.advance_payment_amount > 0) {
-                      return (
-                        <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded">
-                          <p className="text-sm font-bold text-green-800">
-                            Advance Payment: Rp {so.advance_payment_amount.toLocaleString('id-ID')} will be automatically applied to this invoice
+                  {selectedSOId &&
+                    !soAutoLinked &&
+                    (() => {
+                      const so = customerSalesOrders.find((s) => s.id === selectedSOId);
+                      if (so && so.advance_payment_amount > 0) {
+                        return (
+                          <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded">
+                            <p className="text-sm font-bold text-green-800">
+                              Advance Payment: Rp{' '}
+                              {so.advance_payment_amount.toLocaleString('id-ID')} will be
+                              automatically applied to this invoice
+                            </p>
+                            <p className="text-xs text-green-700 mt-1">
+                              The invoice payment status will be updated automatically after saving.
+                            </p>
+                          </div>
+                        );
+                      }
+                      if (selectedSOId) {
+                        return (
+                          <p className="text-xs text-blue-600 mt-2">
+                            This SO has no advance payment recorded.
                           </p>
-                          <p className="text-xs text-green-700 mt-1">
-                            The invoice payment status will be updated automatically after saving.
-                          </p>
-                        </div>
-                      );
-                    }
-                    if (selectedSOId) {
-                      return (
-                        <p className="text-xs text-blue-600 mt-2">
-                          This SO has no advance payment recorded.
+                        );
+                      }
+                      return null;
+                    })()}
+                  {customerSalesOrders.some((so) => so.advance_payment_amount > 0) &&
+                    !selectedSOId &&
+                    !soAutoLinked && (
+                      <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded">
+                        <p className="text-xs font-medium text-amber-800">
+                          This customer has Sales Orders with advance payments. Select the correct
+                          SO above to apply advance payment to this invoice.
                         </p>
-                      );
-                    }
-                    return null;
-                  })()}
-                  {customerSalesOrders.some(so => so.advance_payment_amount > 0) && !selectedSOId && !soAutoLinked && (
-                    <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded">
-                      <p className="text-xs font-medium text-amber-800">
-                        This customer has Sales Orders with advance payments. Select the correct SO above to apply advance payment to this invoice.
-                      </p>
-                    </div>
-                  )}
+                      </div>
+                    )}
                 </div>
               )}
 
               <SapRow>
                 <FloatingField label="Notes" span={6} filled={!!formData.notes}>
-                  <input name="notes" aria-label="Notes"
+                  <input
+                    name="notes"
+                    aria-label="Notes"
                     type="text"
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -2305,7 +2933,12 @@ export function Sales() {
             <div className="border-t pt-3">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-gray-900">
-                  Line Items {isEditingPosted && <span className="text-[11px] font-normal text-amber-700">(Quantities locked to Delivery Challan — Unit Prices editable by Accounts/Admin)</span>}
+                  Line Items{' '}
+                  {isEditingPosted && (
+                    <span className="text-[11px] font-normal text-amber-700">
+                      (Quantities & Unit Prices editable by Accounts/Admin — Stock & GL auto-synced)
+                    </span>
+                  )}
                 </h4>
                 {!isEditingPosted && (
                   <button
@@ -2320,7 +2953,7 @@ export function Sales() {
 
               <div className="space-y-1.5">
                 {items.map((item, index) => {
-                  const availableBatches = batches.filter(b => b.product_id === item.product_id);
+                  const availableBatches = batches.filter((b) => b.product_id === item.product_id);
                   const costPerUnit = getBatchCostPerUnit(item.batch_id);
                   const margin = calculateMargin(item.unit_price, costPerUnit);
                   const suggestedPrice = getSuggestedPrice(item.batch_id);
@@ -2328,7 +2961,11 @@ export function Sales() {
                   const isFromDC = !!item.delivery_challan_item_id;
 
                   return (
-                    <div key={index} className="p-2 bg-gray-50 rounded space-y-1 border-l-2" style={{ borderLeftColor: isFromDC ? '#3b82f6' : '#10b981' }}>
+                    <div
+                      key={index}
+                      className="p-2 bg-gray-50 rounded space-y-1 border-l-2"
+                      style={{ borderLeftColor: isFromDC ? '#3b82f6' : '#10b981' }}
+                    >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           {isFromDC ? (
@@ -2357,146 +2994,225 @@ export function Sales() {
                         )}
                       </div>
                       <div className="overflow-x-auto">
-                      <div className="grid grid-cols-12 gap-2 items-end min-w-[700px]">
-                        <div className="col-span-3">
-                          <label className="block text-xs text-gray-600 mb-1">Product *</label>
-                          <select name="product" aria-label="Product"
-                            value={item.product_id}
-                            onChange={(e) => updateItemTotal(index, { ...item, product_id: e.target.value, batch_id: null })}
-                            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                            disabled={isFromDC || isEditingPosted}
-                            required
-                          >
-                            <option value="">Select Product</option>
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>{p.product_name}</option>
-                            ))}
-                          </select>
-                          <div className="mt-0.5 truncate text-[10px] text-gray-500">
-                            Make: {item.make_name || item.batches?.product_sources?.supplier_name || 'Not recorded'}
+                        <div className="grid grid-cols-12 gap-2 items-end min-w-[700px]">
+                          <div className="col-span-3">
+                            <label className="block text-xs text-gray-600 mb-1">Product *</label>
+                            <select
+                              name="product"
+                              aria-label="Product"
+                              value={item.product_id}
+                              onChange={(e) =>
+                                updateItemTotal(index, {
+                                  ...item,
+                                  product_id: e.target.value,
+                                  batch_id: null,
+                                })
+                              }
+                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                              disabled={isFromDC || isEditingPosted}
+                              required
+                            >
+                              <option value="">Select Product</option>
+                              {products.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.product_name}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="mt-0.5 truncate text-[10px] text-gray-500">
+                              Make:{' '}
+                              {item.make_name ||
+                                item.batches?.product_sources?.supplier_name ||
+                                'Not recorded'}
+                            </div>
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Batch</label>
+                            <select
+                              name="batch"
+                              aria-label="Batch"
+                              value={item.batch_id || ''}
+                              onChange={(e) => {
+                                const batchId = e.target.value || null;
+                                const suggested = getSuggestedPrice(batchId);
+                                updateItemTotal(index, {
+                                  ...item,
+                                  batch_id: batchId,
+                                  unit_price: suggested,
+                                });
+                              }}
+                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                              disabled={
+                                !item.product_id ||
+                                selectedChallanId !== '' ||
+                                isFromDC ||
+                                isEditingPosted
+                              }
+                            >
+                              <option value="">Select Batch</option>
+                              {/* Show only batches with stock > 0 for manual selection */}
+                              {availableBatches
+                                .filter((b) => b.current_stock > 0)
+                                .map((b) => (
+                                  <option key={b.id} value={b.id}>
+                                    {b.batch_number} ({b.current_stock} stock)
+                                  </option>
+                                ))}
+                              {/* Show selected batch even if stock is 0 (from delivery challan) */}
+                              {item.batch_id &&
+                                availableBatches.find(
+                                  (b) => b.id === item.batch_id && b.current_stock === 0
+                                ) && (
+                                  <option key={item.batch_id} value={item.batch_id}>
+                                    {
+                                      availableBatches.find((b) => b.id === item.batch_id)
+                                        ?.batch_number
+                                    }{' '}
+                                    (from challan)
+                                  </option>
+                                )}
+                            </select>
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Quantity *</label>
+                            <input
+                              name="quantity"
+                              aria-label="Quantity"
+                              type="number"
+                              value={item.quantity === 0 ? '' : item.quantity}
+                              onChange={(e) =>
+                                updateItemTotal(index, {
+                                  ...item,
+                                  quantity: e.target.value === '' ? 1 : Number(e.target.value),
+                                })
+                              }
+                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                              required
+                              min="0.001"
+                              step="0.001"
+                              placeholder="0.25"
+                              disabled={isEditingPosted && !isFinancialEditor}
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Unit Price *</label>
+                            <MoneyInput
+                              value={item.unit_price}
+                              onChange={(amount) =>
+                                updateItemTotal(index, { ...item, unit_price: amount })
+                              }
+                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                              required
+                              min="0"
+                              placeholder="0"
+                              disabled={isEditingPosted && !isFinancialEditor}
+                            />
+                          </div>
+
+                          <div className="col-span-1">
+                            <label className="block text-xs text-gray-600 mb-1">Tax %</label>
+                            <input
+                              name="tax"
+                              aria-label="Tax %"
+                              type="number"
+                              value={item.tax_rate === 0 ? '' : item.tax_rate}
+                              onChange={(e) =>
+                                updateItemTotal(index, {
+                                  ...item,
+                                  tax_rate: e.target.value === '' ? 0 : Number(e.target.value),
+                                })
+                              }
+                              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                              min="0"
+                              placeholder="11"
+                              disabled={isEditingPosted && !isFinancialEditor}
+                            />
+                          </div>
+
+                          <div className="col-span-2 flex items-end gap-2">
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-600 mb-1">Total</label>
+                              <input
+                                name="total"
+                                aria-label="Total"
+                                type="text"
+                                value={(item.total || 0).toFixed(2)}
+                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"
+                                disabled
+                              />
+                            </div>
+                            {items.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeItem(index)}
+                                className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                                title="Remove Item"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
-
-                        <div className="col-span-2">
-                          <label className="block text-xs text-gray-600 mb-1">Batch</label>
-                          <select name="batch" aria-label="Batch"
-                            value={item.batch_id || ''}
-                            onChange={(e) => {
-                              const batchId = e.target.value || null;
-                              const suggested = getSuggestedPrice(batchId);
-                              updateItemTotal(index, { ...item, batch_id: batchId, unit_price: suggested });
-                            }}
-                            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                            disabled={!item.product_id || selectedChallanId !== '' || isFromDC || isEditingPosted}
-                          >
-                            <option value="">Select Batch</option>
-                            {/* Show only batches with stock > 0 for manual selection */}
-                            {availableBatches.filter(b => b.current_stock > 0).map((b) => (
-                              <option key={b.id} value={b.id}>{b.batch_number} ({b.current_stock} stock)</option>
-                            ))}
-                            {/* Show selected batch even if stock is 0 (from delivery challan) */}
-                            {item.batch_id && availableBatches.find(b => b.id === item.batch_id && b.current_stock === 0) && (
-                              <option key={item.batch_id} value={item.batch_id}>
-                                {availableBatches.find(b => b.id === item.batch_id)?.batch_number} (from challan)
-                              </option>
-                            )}
-                          </select>
-                        </div>
-
-                      <div className="col-span-2">
-                        <label className="block text-xs text-gray-600 mb-1">Quantity *</label>
-                        <input name="quantity" aria-label="Quantity"
-                          type="number"
-                          value={item.quantity === 0 ? '' : item.quantity}
-                          onChange={(e) => updateItemTotal(index, { ...item, quantity: e.target.value === '' ? 1 : Number(e.target.value) })}
-                          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                          required
-                          min="0.001"
-                          step="0.001"
-                          placeholder="0.25"
-                          disabled={isEditingPosted}
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <label className="block text-xs text-gray-600 mb-1">Unit Price *</label>
-                        <MoneyInput
-                          value={item.unit_price}
-                          onChange={(amount) => updateItemTotal(index, { ...item, unit_price: amount })}
-                          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                          required
-                          min="0"
-                          placeholder="0"
-                          disabled={isEditingPosted && !isFinancialEditor}
-                        />
-                      </div>
-
-                      <div className="col-span-1">
-                        <label className="block text-xs text-gray-600 mb-1">Tax %</label>
-                        <input name="tax" aria-label="Tax %"
-                          type="number"
-                          value={item.tax_rate === 0 ? '' : item.tax_rate}
-                          onChange={(e) => updateItemTotal(index, { ...item, tax_rate: e.target.value === '' ? 0 : Number(e.target.value) })}
-                          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                          min="0"
-                          placeholder="11"
-                          disabled={isEditingPosted && !isFinancialEditor}
-                        />
-                      </div>
-
-                      <div className="col-span-2 flex items-end gap-2">
-                        <div className="flex-1">
-                          <label className="block text-xs text-gray-600 mb-1">Total</label>
-                          <input name="total" aria-label="Total"
-                            type="text"
-                            value={(item.total || 0).toFixed(2)}
-                            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100"
-                            disabled
-                          />
-                        </div>
-                        {items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeItem(index)}
-                            className="p-1.5 text-red-600 hover:bg-red-50 rounded"
-                            title="Remove Item"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                      </div>
                       </div>
 
                       {item.batch_id && costPerUnit > 0 && (
                         <div className="flex items-center gap-2 text-[10px] px-2 py-1 bg-white rounded border border-gray-200">
                           <div className="flex items-center gap-1">
                             <span className="text-gray-600">Cost/Unit:</span>
-                            <span className="font-semibold text-gray-900">Rp {costPerUnit.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="font-semibold text-gray-900">
+                              Rp{' '}
+                              {costPerUnit.toLocaleString('id-ID', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
                           </div>
                           <div className="h-3 w-px bg-gray-300" />
                           <div className="flex items-center gap-1">
                             <span className="text-gray-600">Suggested Price (25%):</span>
-                            <span className="font-semibold text-blue-600">Rp {suggestedPrice.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="font-semibold text-blue-600">
+                              Rp{' '}
+                              {suggestedPrice.toLocaleString('id-ID', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
                           </div>
                           <div className="h-3 w-px bg-gray-300" />
                           <div className="flex items-center gap-1">
-                            <span className="text-gray-600">Margin <span className="text-xs italic">(Provisional)</span>:</span>
-                            <span className={`font-semibold ${
-                              margin >= 20 ? 'text-green-600' :
-                              margin >= 10 ? 'text-yellow-600' :
-                              'text-red-600'
-                            }`}>
+                            <span className="text-gray-600">
+                              Margin <span className="text-xs italic">(Provisional)</span>:
+                            </span>
+                            <span
+                              className={`font-semibold ${
+                                margin >= 20
+                                  ? 'text-green-600'
+                                  : margin >= 10
+                                    ? 'text-yellow-600'
+                                    : 'text-red-600'
+                              }`}
+                            >
                               {margin.toFixed(1)}%
                             </span>
                           </div>
                           <div className="h-3 w-px bg-gray-300" />
                           <div className="flex items-center gap-1">
-                            <span className="text-gray-600">Profit/Unit <span className="text-xs italic">(Provisional)</span>:</span>
-                            <span className={`font-semibold ${
-                              item.unit_price > costPerUnit ? 'text-green-600' : 'text-red-600'
-                            }`}>
-                              Rp {(item.unit_price - costPerUnit).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            <span className="text-gray-600">
+                              Profit/Unit <span className="text-xs italic">(Provisional)</span>:
+                            </span>
+                            <span
+                              className={`font-semibold ${
+                                item.unit_price > costPerUnit ? 'text-green-600' : 'text-red-600'
+                              }`}
+                            >
+                              Rp{' '}
+                              {(item.unit_price - costPerUnit).toLocaleString('id-ID', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
                             </span>
                           </div>
                         </div>
@@ -2510,29 +3226,55 @@ export function Sales() {
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
                     <span>Subtotal:</span>
-                    <span className="font-medium">Rp {calculateTotals().subtotal.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className="font-medium">
+                      Rp{' '}
+                      {calculateTotals().subtotal.toLocaleString('id-ID', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Tax:</span>
-                    <span className="font-medium">Rp {calculateTotals().taxAmount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className="font-medium">
+                      Rp{' '}
+                      {calculateTotals().taxAmount.toLocaleString('id-ID', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Discount:</span>
-                    <span className="font-medium">-Rp {formData.discount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className="font-medium">
+                      -Rp{' '}
+                      {formData.discount.toLocaleString('id-ID', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Bea Meterai:</span>
                     <MoneyInput
                       min="0"
                       value={formData.stamp_duty_amount}
-                      onChange={(amount) => setFormData(prev => ({ ...prev, stamp_duty_amount: amount }))}
+                      onChange={(amount) =>
+                        setFormData((prev) => ({ ...prev, stamp_duty_amount: amount }))
+                      }
                       placeholder="0"
                       className="w-28 text-right px-1.5 py-0.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
                   <div className="flex justify-between text-sm font-bold border-t pt-1">
                     <span>Total:</span>
-                    <span className="text-blue-600">Rp {calculateTotals().total.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className="text-blue-600">
+                      Rp{' '}
+                      {calculateTotals().total.toLocaleString('id-ID', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -2557,28 +3299,28 @@ export function Sales() {
               </button>
             </div>
           </form>
-      </Modal>
+        </Modal>
 
-      {linkedSOPreview && (
-        <ProformaInvoiceView
-          salesOrder={linkedSOPreview}
-          items={linkedSOPreview.sales_order_items || []}
-          onClose={() => setLinkedSOPreview(null)}
-          companyProfile={(linkedSOPreview as any).company_snapshot ?? undefined}
-        />
-      )}
+        {linkedSOPreview && (
+          <ProformaInvoiceView
+            salesOrder={linkedSOPreview}
+            items={linkedSOPreview.sales_order_items || []}
+            onClose={() => setLinkedSOPreview(null)}
+            companyProfile={(linkedSOPreview as any).company_snapshot ?? undefined}
+          />
+        )}
 
-      {selectedFlyChallan && (
-        <DeliveryChallanView
-          challan={selectedFlyChallan}
-          items={selectedFlyChallanItems}
-          onClose={() => {
-            setSelectedFlyChallan(null);
-            setSelectedFlyChallanItems([]);
-          }}
-          companyProfile={(selectedFlyChallan as any).company_snapshot ?? undefined}
-        />
-      )}
+        {selectedFlyChallan && (
+          <DeliveryChallanView
+            challan={selectedFlyChallan}
+            items={selectedFlyChallanItems}
+            onClose={() => {
+              setSelectedFlyChallan(null);
+              setSelectedFlyChallanItems([]);
+            }}
+            companyProfile={(selectedFlyChallan as any).company_snapshot ?? undefined}
+          />
+        )}
 
         {viewModalOpen && selectedInvoice && (
           <InvoiceView

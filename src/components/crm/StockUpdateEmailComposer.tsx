@@ -6,7 +6,8 @@ import { applyEmailTemplateVariables } from '../../utils/crmEmailPersonalization
 
 interface Props { onClose: () => void; onComplete: () => void; }
 interface StockRow {
-  id: string; batch_number: string; current_stock: number; reserved_stock: number;
+  id: string; product_id?: string; batch_number: string; current_stock: number; reserved_stock: number;
+  available_stock?: number;
   packaging_details: string | null; expiry_date: string | null;
   products?: { product_name: string; product_code: string; };
 }
@@ -31,15 +32,24 @@ export function StockUpdateEmailComposer({ onClose, onComplete }: Props) {
   const [manualPrices, setManualPrices] = useState<Record<string, string>>({});
 
   useEffect(() => { (async () => {
-    const [b, cc, cu] = await Promise.all([
-      supabase.from('batches').select('id,batch_number,current_stock,reserved_stock,packaging_details,expiry_date,products(product_name,product_code)').eq('is_active', true).order('expiry_date', { ascending: true }),
+    const [b, sSummary, cc, cu] = await Promise.all([
+      supabase.from('batches').select('id,product_id,batch_number,current_stock,reserved_stock,packaging_details,expiry_date,products(product_name,product_code)').eq('is_active', true).order('expiry_date', { ascending: true }),
+      supabase.from('inventory_v1_stock_summary').select('product_id,available_quantity'),
       supabase.from('crm_contacts').select('id,company_name,email,contact_person').not('email', 'is', null).neq('email', ''),
       supabase.from('customers').select('id,company_name,email,contact_person').not('email', 'is', null).neq('email', '').eq('is_active', true),
     ]);
-    const stockRows = ((b.data || []) as unknown as StockRow[]).map(row => ({
-      ...row,
-      products: Array.isArray(row.products) ? row.products[0] : row.products,
-    })).filter(s => (s.current_stock - (s.reserved_stock || 0)) > 0);
+    const atpMap = new Map<string, number>();
+    (sSummary.data || []).forEach((s: any) => atpMap.set(s.product_id, Number(s.available_quantity || 0)));
+
+    const stockRows = ((b.data || []) as unknown as StockRow[]).map(row => {
+      const atp = atpMap.get((row as any).product_id) ?? Math.max(0, row.current_stock - (row.reserved_stock || 0));
+      const effectiveAvail = Math.max(0, Math.min(row.current_stock - (row.reserved_stock || 0), atp));
+      return {
+        ...row,
+        available_stock: effectiveAvail,
+        products: Array.isArray(row.products) ? row.products[0] : row.products,
+      };
+    }).filter(s => (s.available_stock ?? 0) > 0);
     setStocks(stockRows);
     const all: Recipient[] = [
       ...((cc.data || []) as ContactRow[]).map((r) => ({ id: `crm-${r.id}`, sourceId: r.id, label: `[CRM] ${r.company_name}`, company_name: r.company_name, email: r.email, contact_person: r.contact_person, source: 'crm_contact' as const })),
@@ -52,7 +62,7 @@ export function StockUpdateEmailComposer({ onClose, onComplete }: Props) {
     const q = productSearch.trim().toLowerCase();
     if (!q) return stocks;
     return stocks.filter(s => {
-      const available = s.current_stock - (s.reserved_stock || 0);
+      const available = s.available_stock ?? (s.current_stock - (s.reserved_stock || 0));
       return `${s.products?.product_name || ''} ${s.products?.product_code || ''} ${s.batch_number || ''} ${available}`.toLowerCase().includes(q);
     });
   }, [productSearch, stocks]);
@@ -71,7 +81,7 @@ export function StockUpdateEmailComposer({ onClose, onComplete }: Props) {
         `<td>${s.products?.product_name || '-'}</td>`,
       ];
       if (showBatchNumber) cells.push(`<td>${s.batch_number || '-'}</td>`);
-      cells.push(`<td>${s.current_stock - (s.reserved_stock || 0)}</td>`);
+      cells.push(`<td>${s.available_stock ?? (s.current_stock - (s.reserved_stock || 0))}</td>`);
       cells.push(`<td>${s.packaging_details || '-'}</td>`);
       if (showExpiryDate) cells.push(`<td>${s.expiry_date || '-'}</td>`);
       cells.push(`<td>${manualPrices[s.id] || ''}</td>`);
@@ -182,7 +192,7 @@ export function StockUpdateEmailComposer({ onClose, onComplete }: Props) {
           {filteredStocks.map(s => <div key={s.id} className='flex items-center justify-between gap-2 text-xs border rounded px-2 py-1'>
             <label className='flex items-center gap-2 min-w-0'>
               <input name="selected" aria-label="Select item" type='checkbox' checked={selectedStock.has(s.id)} onChange={() => { const n = new Set(selectedStock); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); setSelectedStock(n); }} />
-              <span className='truncate'>{s.products?.product_name} • {s.current_stock - (s.reserved_stock || 0)} avail</span>
+              <span className='truncate'>{s.products?.product_name} • {s.available_stock ?? (s.current_stock - (s.reserved_stock || 0))} avail</span>
             </label>
             <input name="manual_prices" aria-label="Price" className='w-24 border rounded px-1 py-0.5 text-xs' placeholder='Price' value={manualPrices[s.id] || ''} onChange={e => setManualPrices(prev => ({ ...prev, [s.id]: e.target.value }))} />
           </div>)}

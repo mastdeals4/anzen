@@ -30,9 +30,9 @@ export function ConversionIntelligence() {
       const byProductName = new Map<string, any[]>();
       (products || []).forEach((p: any) => { const key = p.product_name.trim().toLowerCase(); byProductName.set(key, [...(byProductName.get(key) || []), p]); });
       const matchedIds = [...new Set((inquiries || []).flatMap((i: any) => (byProductName.get((i.product_name || '').trim().toLowerCase()) || []).length === 1 ? [byProductName.get((i.product_name || '').trim().toLowerCase())![0].id] : []))];
-      const { data: batches } = matchedIds.length ? await supabase.from('batches').select('product_id,current_stock,reserved_stock').in('product_id', matchedIds).eq('is_active', true) : { data: [] };
+      const { data: stockSummaries } = matchedIds.length ? await supabase.from('inventory_v1_stock_summary').select('product_id,available_quantity').in('product_id', matchedIds) : { data: [] };
       const availability = new Map<string, number>();
-      (batches || []).forEach((b: any) => availability.set(b.product_id, (availability.get(b.product_id) || 0) + Math.max(0, Number(b.current_stock || 0) - Number(b.reserved_stock || 0))));
+      (stockSummaries || []).forEach((s: any) => availability.set(s.product_id, Math.max(0, Number(s.available_quantity || 0))));
       const reminderCount = new Map<string, number>();
       (reminders || []).forEach((r: any) => { if (r.inquiry_id) reminderCount.set(r.inquiry_id, (reminderCount.get(r.inquiry_id) || 0) + 1); });
       const groups = new Map<string, any[]>();

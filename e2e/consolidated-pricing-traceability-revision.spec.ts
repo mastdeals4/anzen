@@ -560,9 +560,9 @@ test.describe('Consolidated Verification: Multi-Option Pricing AI, Stock Movemen
     // Verify Controlled Revision Mode banner
     await expect(page.getByText('Financially Posted Invoice — Controlled Revision Mode')).toBeVisible();
 
-    // Verify Product and Quantity are disabled (locked to protect warehouse delivery lineage)
+    // Verify Quantity is enabled and editable for authorized Admin
     const qtyInput = page.locator('input[name="quantity"]');
-    await expect(qtyInput).toBeDisabled();
+    await expect(qtyInput).toBeEnabled();
 
     // Verify Unit Price is enabled and editable
     const unitPriceInput = page.locator('div:has(> label:has-text("Unit Price *")) input');

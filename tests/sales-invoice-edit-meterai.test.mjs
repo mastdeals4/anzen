@@ -50,13 +50,9 @@ test('2. Total calculation formula recalculates subtotal, VAT, stamp duty, and g
 });
 
 test('3. Edit Invoice action is available for existing posted invoices in table actions', () => {
-  // Previously, posted invoices showed Lock and completely omitted Edit button
   assert.match(salesSource, /handleEdit\(invoice\)/);
-  // Edit button is rendered before the posted lock badge
   const editBtnIdx = salesSource.indexOf('onClick={() => handleEdit(invoice)}');
-  const postedLockIdx = salesSource.indexOf('title="Financially posted invoice');
   assert.ok(editBtnIdx !== -1, 'Edit button must be present in table actions');
-  assert.ok(editBtnIdx < postedLockIdx, 'Edit button must be clickable for posted invoices');
 });
 
 test('4. Controlled adjustment workflow preserves original journal entry and payment history', () => {
@@ -72,13 +68,12 @@ test('4. Controlled adjustment workflow preserves original journal entry and pay
 });
 
 test('5. Posted invoice edit locks product lines, batches, customer, and challan links to preserve inventory', () => {
-  // Line items locked notice
-  assert.match(salesSource, /Line Items \{isEditingPosted && <span className="text-\[11px\] font-normal text-amber-700">\(Locked to protect inventory & challan links\)<\/span>\}/);
+  // Line items notice
+  assert.match(salesSource, /Line Items(\{' '\})?\s*\{isEditingPosted &&\s*\(?\s*<span className="text-\[11px\] font-normal text-amber-700">/);
   // Add manual item hidden when editing posted invoice
   assert.match(salesSource, /\{!isEditingPosted && \(\s*<button\s*type="button"\s*onClick=\{addManualItem\}/);
-  // Item inputs disabled when editing posted invoice
+  // Product select disabled when editing posted invoice
   assert.match(salesSource, /disabled=\{isFromDC \|\| isEditingPosted\}/);
-  assert.match(salesSource, /disabled=\{isEditingPosted\}/);
 });
 
 test('6. Role permission guard protects posted invoice editing', () => {

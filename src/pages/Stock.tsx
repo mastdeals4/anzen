@@ -386,43 +386,71 @@ export function Stock() {
                                   <tbody className="divide-y divide-gray-100">
                                     {makeGroups.map(group => (
                                       <Fragment key={group.key}>
-                                        <tr className="bg-blue-50/60">
-                                          <td className="px-3 py-1.5 font-semibold text-gray-800">{group.name}</td>
-                                          <td className="px-3 py-1.5 text-gray-500" colSpan={4}>{group.batches.length} batch{group.batches.length === 1 ? '' : 'es'}</td>
-                                          <td className="px-3 py-1.5 text-right font-semibold">{group.stock.toLocaleString()} {formatUnit(item.unit)}</td>
-                                          <td className="px-3 py-1.5 text-right">{group.reserved.toLocaleString()} {formatUnit(item.unit)}</td>
-                                          <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(group.stock - group.reserved).toLocaleString()} {formatUnit(item.unit)}</td>
-                                          <td className="px-3 py-1.5"></td>
-                                        </tr>
-                                        {group.batches.map(batch => (
-                                          <tr
-                                            key={batch.id}
-                                            onClick={() => openBatchMovements(batch, item)}
-                                            className="hover:bg-blue-50/60 cursor-pointer transition-colors group/batchrow"
-                                            title="Click to view batch movements"
-                                          >
-                                            <td className="px-3 py-1.5 pl-6 text-gray-500">↳</td>
-                                            <td className="px-3 py-1.5 font-mono text-blue-700 font-medium group-hover/batchrow:underline">
-                                              {batch.batch_number || '—'}
-                                            </td>
-                                            <td className={`px-3 py-1.5 ${batch.expiry_date && isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' : batch.expiry_date && isNearExpiry(batch.expiry_date) ? 'text-orange-600 font-semibold' : 'text-gray-600'}`}>{batch.expiry_date ? formatDate(batch.expiry_date) : '—'}</td>
-                                            <td className="px-3 py-1.5 text-right">{batch.import_quantity.toLocaleString()}</td>
-                                            <td className="px-3 py-1.5">{formatUnit(batch.unit)}</td>
-                                            <td className="px-3 py-1.5 text-right font-semibold">{batch.current_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
-                                            <td className="px-3 py-1.5 text-right">{batch.reserved_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
-                                            <td className="px-3 py-1.5 text-right font-semibold text-green-700">{(batch.current_stock - batch.reserved_stock).toLocaleString()} {formatUnit(batch.unit)}</td>
-                                            <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
-                                              <button
-                                                type="button"
-                                                onClick={() => openBatchMovements(batch, item)}
-                                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors"
-                                              >
-                                                <History className="w-3 h-3" />
-                                                Movements
-                                              </button>
-                                            </td>
-                                          </tr>
-                                        ))}
+                                        {(() => {
+                                          const groupAvailable = Math.max(0, Math.min(group.stock - group.reserved, item.available_quantity));
+                                          return (
+                                            <tr className="bg-blue-50/60">
+                                              <td className="px-3 py-1.5 font-semibold text-gray-800">{group.name}</td>
+                                              <td className="px-3 py-1.5 text-gray-500" colSpan={4}>{group.batches.length} batch{group.batches.length === 1 ? '' : 'es'}</td>
+                                              <td className="px-3 py-1.5 text-right font-semibold">{group.stock.toLocaleString()} {formatUnit(item.unit)}</td>
+                                              <td className="px-3 py-1.5 text-right">
+                                                {group.reserved > 0 ? (
+                                                  `${group.reserved.toLocaleString()} ${formatUnit(item.unit)}`
+                                                ) : item.reserved_stock > 0 ? (
+                                                  <span className="text-amber-600 text-xs font-medium">0 (Pool)</span>
+                                                ) : (
+                                                  <span className="text-gray-300">-</span>
+                                                )}
+                                              </td>
+                                              <td className={`px-3 py-1.5 text-right font-semibold ${groupAvailable <= 0 ? 'text-red-600 font-bold' : 'text-green-700'}`}>
+                                                {groupAvailable.toLocaleString()} {formatUnit(item.unit)}
+                                              </td>
+                                              <td className="px-3 py-1.5"></td>
+                                            </tr>
+                                          );
+                                        })()}
+                                        {group.batches.map(batch => {
+                                          const batchAvailable = Math.max(0, Math.min(batch.current_stock - batch.reserved_stock, item.available_quantity));
+                                          return (
+                                            <tr
+                                              key={batch.id}
+                                              onClick={() => openBatchMovements(batch, item)}
+                                              className="hover:bg-blue-50/60 cursor-pointer transition-colors group/batchrow"
+                                              title="Click to view batch movements"
+                                            >
+                                              <td className="px-3 py-1.5 pl-6 text-gray-500">↳</td>
+                                              <td className="px-3 py-1.5 font-mono text-blue-700 font-medium group-hover/batchrow:underline">
+                                                {batch.batch_number || '—'}
+                                              </td>
+                                              <td className={`px-3 py-1.5 ${batch.expiry_date && isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' : batch.expiry_date && isNearExpiry(batch.expiry_date) ? 'text-orange-600 font-semibold' : 'text-gray-600'}`}>{batch.expiry_date ? formatDate(batch.expiry_date) : '—'}</td>
+                                              <td className="px-3 py-1.5 text-right">{batch.import_quantity.toLocaleString()}</td>
+                                              <td className="px-3 py-1.5">{formatUnit(batch.unit)}</td>
+                                              <td className="px-3 py-1.5 text-right font-semibold">{batch.current_stock.toLocaleString()} {formatUnit(batch.unit)}</td>
+                                              <td className="px-3 py-1.5 text-right">
+                                                {batch.reserved_stock > 0 ? (
+                                                  `${batch.reserved_stock.toLocaleString()} ${formatUnit(batch.unit)}`
+                                                ) : item.reserved_stock > 0 ? (
+                                                  <span className="text-amber-600 text-xs font-medium">0 (Pool)</span>
+                                                ) : (
+                                                  <span className="text-gray-300">-</span>
+                                                )}
+                                              </td>
+                                              <td className={`px-3 py-1.5 text-right font-semibold ${batchAvailable <= 0 ? 'text-red-600 font-bold' : 'text-green-700'}`}>
+                                                {batchAvailable.toLocaleString()} {formatUnit(batch.unit)}
+                                              </td>
+                                              <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => openBatchMovements(batch, item)}
+                                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors"
+                                                >
+                                                  <History className="w-3 h-3" />
+                                                  Movements
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
                                       </Fragment>
                                     ))}
                                   </tbody>

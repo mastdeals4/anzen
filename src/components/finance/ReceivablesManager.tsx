@@ -76,7 +76,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         supabase
           .from('sales_invoices')
           // perf: projected columns (was select('*'))
-          .select('id, invoice_number, customer_id, invoice_date, due_date, total_amount, payment_status, customers(company_name)')
+          .select('id, invoice_number, customer_id, invoice_date, due_date, total_amount, payment_status, notes, balance_amount, customers(company_name)')
           .in('payment_status', ['pending', 'partial'])
           .lte('invoice_date', dateRange.endDate)
           .order('due_date', { ascending: true }),
@@ -162,11 +162,13 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         }
       }
 
-      const invoicesWithPaidAmount = (invoicesRes.data || []).map((invoice) => ({
-        ...invoice,
-        paid_amount: paidByInvoice.get(invoice.id) || 0,
-        customers: firstRelation(invoice.customers),
-      }));
+      const invoicesWithPaidAmount = (invoicesRes.data || [])
+        .filter((inv: any) => !inv.notes?.includes('[CANCELLED') && !inv.notes?.toLowerCase().startsWith('cancelled') && (inv.balance_amount === undefined || inv.balance_amount === null || Number(inv.balance_amount) > 0))
+        .map((invoice) => ({
+          ...invoice,
+          paid_amount: paidByInvoice.get(invoice.id) || 0,
+          customers: firstRelation(invoice.customers),
+        }));
 
       const paymentsWithAllocations = (paymentsRes.data || []).map((voucher) => ({
         ...voucher,

@@ -227,24 +227,26 @@ export default function PartyLedger() {
       const { data: invoices } = await dateRange(
         supabase
           .from('sales_invoices')
-          .select('id, invoice_date, invoice_number, total_amount, payment_status')
+          .select('id, invoice_date, invoice_number, total_amount, payment_status, notes')
           .eq('customer_id', selectedParty),
         'invoice_date',
       ).order('invoice_date');
 
       if (invoices) {
-        invoices.forEach(inv => {
-          entries.push({
-            id: inv.id,
-            entry_date: inv.invoice_date,
-            particulars: `Sales Invoice - ${inv.payment_status || 'Unpaid'}`,
-            reference: inv.invoice_number,
-            debit: inv.total_amount,
-            credit: 0,
-            running_balance: 0,
-            type: 'invoice',
+        invoices
+          .filter(inv => !inv.notes?.includes('[CANCELLED') && !inv.notes?.toLowerCase().startsWith('cancelled'))
+          .forEach(inv => {
+            entries.push({
+              id: inv.id,
+              entry_date: inv.invoice_date,
+              particulars: `Sales Invoice - ${inv.payment_status || 'Unpaid'}`,
+              reference: inv.invoice_number,
+              debit: inv.total_amount,
+              credit: 0,
+              running_balance: 0,
+              type: 'invoice',
+            });
           });
-        });
       }
 
       const { data: receipts } = await dateRange(

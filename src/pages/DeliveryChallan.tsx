@@ -1370,7 +1370,7 @@ export function DeliveryChallan() {
       loadChallans();
     } catch (error: any) {
       console.error('Error rejecting challan:', error.message);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to reject challan' });
+      showToast({ type: 'error', title: 'Error', message: error?.message || 'Failed to reject challan' });
     }
   };
 

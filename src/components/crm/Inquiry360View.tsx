@@ -135,8 +135,16 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
 
       const { data: matchedProducts } = await supabase.from('products').select('id').ilike('product_name', selected.product_name.trim()).limit(2);
       if ((matchedProducts || []).length === 1) {
-        const { data: batches } = await supabase.from('batches').select('current_stock,reserved_stock').eq('product_id', matchedProducts![0].id).eq('is_active', true);
-        setProductAvailability({ matched: true, available: (batches || []).reduce((sum: number, b: any) => sum + Math.max(0, Number(b.current_stock || 0) - Number(b.reserved_stock || 0)), 0), batches: (batches || []).length });
+        const { data: stockSummary } = await supabase
+          .from('inventory_v1_stock_summary')
+          .select('available_quantity,active_batch_count')
+          .eq('product_id', matchedProducts![0].id)
+          .maybeSingle();
+        setProductAvailability({
+          matched: true,
+          available: stockSummary ? Math.max(0, Number(stockSummary.available_quantity || 0)) : 0,
+          batches: stockSummary ? Number(stockSummary.active_batch_count || 0) : 0,
+        });
       } else {
         setProductAvailability({ matched: false, available: 0, batches: 0 });
       }

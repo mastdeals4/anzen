@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatDate } from '../utils/dateFormat';
 import { formatUnit, abbreviateUnit } from '../utils/unitDisplay';
-import { fetchCanonicalStockReservations } from '../utils/stockReservations';
+import { fetchCanonicalStockReservations, fetchProductStockAuditSummary, type ProductStockAuditSummary } from '../utils/stockReservations';
 import { X, Package, AlertTriangle, ChevronDown, ChevronUp, ShoppingCart, Calendar, Layers } from 'lucide-react';
 
 interface StockSummary {
@@ -78,6 +78,7 @@ export function StockDrillDownModal({ product, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'batches' | 'reservations'>('batches');
+  const [productAudit, setProductAudit] = useState<ProductStockAuditSummary | null>(null);
 
   useEffect(() => {
     loadData();
@@ -85,11 +86,13 @@ export function StockDrillDownModal({ product, onClose }: Props) {
 
   const loadData = async () => {
     setLoading(true);
-    await Promise.all([loadBatches(), loadReservations()]);
+    const auditSummary = await fetchProductStockAuditSummary(product.product_id);
+    setProductAudit(auditSummary);
+    await Promise.all([loadBatches(auditSummary), loadReservations()]);
     setLoading(false);
   };
 
-  const loadBatches = async () => {
+  const loadBatches = async (auditSummary?: ProductStockAuditSummary | null) => {
     const { data } = await supabase
       .from('batches')
       .select(`
@@ -117,14 +120,22 @@ export function StockDrillDownModal({ product, onClose }: Props) {
       acc[movement.batch_id] = current;
       return acc;
     }, {});
-    setBatches(batchRows.map((b: any) => ({
-      ...b,
-      available_quantity: b.current_stock - (b.reserved_stock || 0),
-      supplier_name: b.suppliers?.company_name || null,
-      make_name: b.product_sources?.supplier_name || null,
-      received_quantity: movementByBatch[b.id]?.received || 0,
-      out_quantity: movementByBatch[b.id]?.out || 0,
-    })));
+
+    const productATP = auditSummary?.availableToPromise ?? Math.max(0, product.total_current_stock - product.reserved_stock);
+
+    setBatches(batchRows.map((b: any) => {
+      const batchAllocated = Number(b.reserved_stock) || 0;
+      const batchAvailable = Math.max(0, Math.min(Number(b.current_stock) - batchAllocated, productATP));
+      return {
+        ...b,
+        reserved_stock: batchAllocated,
+        available_quantity: batchAvailable,
+        supplier_name: b.suppliers?.company_name || null,
+        make_name: b.product_sources?.supplier_name || null,
+        received_quantity: movementByBatch[b.id]?.received || 0,
+        out_quantity: movementByBatch[b.id]?.out || 0,
+      };
+    }));
   };
 
   const loadReservations = async () => {
@@ -198,23 +209,23 @@ export function StockDrillDownModal({ product, onClose }: Props) {
         </div>
 
         {/* Summary Cards */}
-        <div className={`grid ${product.shortage_quantity && product.shortage_quantity > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-4'} gap-3 px-5 py-3 border-b bg-gray-50`}>
+        <div className={`grid ${(productAudit?.unfulfilledDemand ?? product.shortage_quantity ?? 0) > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-4'} gap-3 px-5 py-3 border-b bg-gray-50`}>
           <div className="bg-white rounded-lg p-3 border border-gray-200">
             <p className="text-xs text-gray-500">Total Stock</p>
-            <p className="text-xl font-bold text-gray-900">{product.total_current_stock.toLocaleString()}</p>
+            <p className="text-xl font-bold text-gray-900">{(productAudit?.totalPhysicalStock ?? product.total_current_stock).toLocaleString()}</p>
             <p className="text-xs text-gray-400">{displayUnit}</p>
           </div>
           <div className="bg-white rounded-lg p-3 border border-orange-200">
             <p className="text-xs text-orange-600">Reserved</p>
-            <p className={`text-xl font-bold ${product.reserved_stock > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
-              {product.reserved_stock.toLocaleString()}
+            <p className={`text-xl font-bold ${(productAudit?.totalReservedStock ?? product.reserved_stock) > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
+              {(productAudit?.totalReservedStock ?? product.reserved_stock).toLocaleString()}
             </p>
             <p className="text-xs text-gray-400">{displayUnit}</p>
           </div>
           <div className="bg-white rounded-lg p-3 border border-green-200">
-            <p className="text-xs text-green-600">Available</p>
-            <p className={`text-xl font-bold ${product.available_quantity > 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {product.available_quantity.toLocaleString()}
+            <p className="text-xs text-green-600">Available (ATP)</p>
+            <p className={`text-xl font-bold ${(productAudit?.availableToPromise ?? product.available_quantity) > 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {(productAudit?.availableToPromise ?? product.available_quantity).toLocaleString()}
             </p>
             <p className="text-xs text-gray-400">{displayUnit}</p>
           </div>
@@ -225,10 +236,10 @@ export function StockDrillDownModal({ product, onClose }: Props) {
               <p className="text-xs text-red-500">{product.expired_batch_count} expired</p>
             )}
           </div>
-          {product.shortage_quantity && product.shortage_quantity > 0 && (
+          {(productAudit?.unfulfilledDemand ?? product.shortage_quantity ?? 0) > 0 && (
             <div className="bg-white rounded-lg p-3 border border-rose-200">
               <p className="text-xs text-rose-600 font-medium">Unfulfilled Shortage</p>
-              <p className="text-xl font-bold text-rose-700">{product.shortage_quantity.toLocaleString()}</p>
+              <p className="text-xl font-bold text-rose-700">{(productAudit?.unfulfilledDemand ?? product.shortage_quantity ?? 0).toLocaleString()}</p>
               <p className="text-xs text-rose-400">{displayUnit}</p>
             </div>
           )}
@@ -337,7 +348,16 @@ export function StockDrillDownModal({ product, onClose }: Props) {
                           </div>
                           <div className="text-right">
                             <p className="text-xs text-orange-500">Reserved</p>
-                            <p className="font-bold text-orange-600">{Number(batch.reserved_stock || 0).toLocaleString()} <span className="text-xs font-normal text-gray-400">{abbrUnit}</span></p>
+                            <p className="font-bold text-orange-600">
+                              {Number(batch.reserved_stock || 0) > 0 ? (
+                                `${Number(batch.reserved_stock).toLocaleString()} `
+                              ) : (productAudit?.totalReservedStock ?? product.reserved_stock) > 0 ? (
+                                <span className="text-xs text-amber-600 font-medium">0 (Pool) </span>
+                              ) : (
+                                '0 '
+                              )}
+                              <span className="text-xs font-normal text-gray-400">{abbrUnit}</span>
+                            </p>
                           </div>
                           <div className="text-right">
                             <p className="text-xs text-green-500">Available</p>

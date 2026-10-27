@@ -1289,12 +1289,12 @@ export default function SalesOrders() {
                           >
                             <DollarSign className="w-4 h-4" />
                           </button>
-                          {!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery'].includes(order.status) &&
-                            (!['approved', 'stock_reserved', 'shortage'].includes(order.status) || profile?.role === 'admin') && (
+                          {((profile?.role === 'admin' && !['closed', 'cancelled'].includes(order.status)) ||
+                            (!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery', 'approved', 'stock_reserved', 'shortage'].includes(order.status))) && (
                             <button
                               onClick={() => handleEditOrder(order)}
                               className="text-indigo-600 hover:text-indigo-800"
-                              title={['approved', 'stock_reserved', 'shortage'].includes(order.status) ? 'Edit (Admin Only)' : 'Edit'}
+                              title={profile?.role === 'admin' ? 'Edit (Admin)' : 'Edit'}
                             >
                               <Edit className="w-4 h-4" />
                             </button>

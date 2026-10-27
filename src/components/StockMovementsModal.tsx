@@ -3,7 +3,7 @@ import { Modal } from './Modal';
 import { supabase } from '../lib/supabase';
 import { formatDate } from '../utils/dateFormat';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
-import { fetchCanonicalStockReservations } from '../utils/stockReservations';
+import { fetchCanonicalStockReservations, fetchProductStockAuditSummary, type ProductStockAuditSummary } from '../utils/stockReservations';
 import { ProformaInvoiceView } from './ProformaInvoiceView';
 import { DeliveryChallanView } from './DeliveryChallanView';
 import { InvoiceView } from './InvoiceView';
@@ -37,6 +37,7 @@ export function StockMovementsModal({
   const [historySearch, setHistorySearch] = useState('');
   const [expandedHistoryRows, setExpandedHistoryRows] = useState<Set<string>>(new Set());
   const [unfulfilledShortage, setUnfulfilledShortage] = useState<number>(0);
+  const [productAudit, setProductAudit] = useState<ProductStockAuditSummary | null>(null);
 
   // Quick view states
   const [quickViewSO, setQuickViewSO] = useState<{ order: any; items: any[] } | null>(null);
@@ -83,11 +84,14 @@ export function StockMovementsModal({
         txnQuery = txnQuery.eq('product_id', effectiveProductId);
       }
 
-      const [txnResult, canonicalResResult] = await Promise.all([
+      const [txnResult, canonicalResResult, auditSummaryResult] = await Promise.all([
         txnQuery,
         effectiveProductId
           ? fetchCanonicalStockReservations(effectiveProductId)
           : Promise.resolve({ activeReservations: [], allReservations: [], totalReserved: 0, unfulfilledDemand: 0 }),
+        effectiveProductId
+          ? fetchProductStockAuditSummary(effectiveProductId)
+          : Promise.resolve(null),
       ]);
 
       if (txnResult.error) {
@@ -96,7 +100,8 @@ export function StockMovementsModal({
         return;
       }
 
-      setUnfulfilledShortage(canonicalResResult.unfulfilledDemand);
+      setProductAudit(auditSummaryResult);
+      setUnfulfilledShortage(auditSummaryResult ? auditSummaryResult.unfulfilledDemand : canonicalResResult.unfulfilledDemand);
 
       // In product-level view, resolve batch numbers from batches table separately
       const batchNumberMap = new Map<string, string>();
@@ -424,7 +429,11 @@ export function StockMovementsModal({
   const totalOut = stockTxns.filter((t: any) => parseFloat(t.quantity) < 0).reduce((s: number, t: any) => s + Math.abs(parseFloat(t.quantity)), 0);
   const totalReserved = activeRes.reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
   const currentStock = totalIn - totalOut;
-  const freeStock = currentStock - totalReserved;
+
+  // Authoritative product-level metrics from canonical audit summary
+  const effectiveReserved = productAudit ? productAudit.totalReservedStock : totalReserved;
+  const effectiveATP = productAudit ? productAudit.availableToPromise : Math.max(0, currentStock - totalReserved);
+  const effectiveShortage = productAudit ? productAudit.unfulfilledDemand : unfulfilledShortage;
 
   const formatQtyValue = (val: number | string) => {
     const num = typeof val === 'string' ? parseFloat(val) : val;
@@ -575,56 +584,62 @@ export function StockMovementsModal({
           <div className="flex flex-col -m-4">
             {/* 1. Top Stock Summary Cards */}
             <div className="p-4 pb-2 bg-gray-50/70 border-b border-gray-200">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                 <div className="bg-emerald-50/90 border border-emerald-200 rounded-lg p-2.5 text-center shadow-xs">
-                  <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">IN</div>
+                  <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">{batchNumber ? 'BATCH IN' : 'IN'}</div>
                   <div className="text-base font-extrabold text-emerald-900 leading-tight mt-0.5">
                     {formatQtyValue(totalIn)} <span className="text-xs font-semibold text-emerald-700">{unit}</span>
                   </div>
                 </div>
                 <div className="bg-rose-50/90 border border-rose-200 rounded-lg p-2.5 text-center shadow-xs">
-                  <div className="text-[11px] font-bold text-rose-700 uppercase tracking-wider">OUT</div>
+                  <div className="text-[11px] font-bold text-rose-700 uppercase tracking-wider">{batchNumber ? 'BATCH OUT' : 'OUT'}</div>
                   <div className="text-base font-extrabold text-rose-900 leading-tight mt-0.5">
                     {formatQtyValue(totalOut)} <span className="text-xs font-semibold text-rose-700">{unit}</span>
                   </div>
                 </div>
-                <div className="bg-amber-50/90 border border-amber-200 rounded-lg p-2.5 text-center shadow-xs">
-                  <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">RESERVED</div>
-                  <div className="text-base font-extrabold text-amber-900 leading-tight mt-0.5">
-                    {formatQtyValue(totalReserved)} <span className="text-xs font-semibold text-amber-700">{unit}</span>
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-center shadow-xs">
+                  <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">{batchNumber ? 'BATCH STOCK' : 'TOTAL STOCK'}</div>
+                  <div className="text-base font-extrabold text-slate-900 leading-tight mt-0.5">
+                    {formatQtyValue(currentStock)} <span className="text-xs font-semibold text-slate-700">{unit}</span>
                   </div>
                 </div>
-                <div className={`${freeStock < 0 ? 'bg-red-50/90 border-red-200' : 'bg-blue-50/90 border-blue-200'} border rounded-lg p-2.5 text-center shadow-xs`}>
-                  <div className={`text-[11px] font-bold uppercase tracking-wider ${freeStock < 0 ? 'text-red-700' : 'text-blue-700'}`}>
-                    FREE
+                <div className="bg-amber-50/90 border border-amber-200 rounded-lg p-2.5 text-center shadow-xs">
+                  <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">{batchNumber ? 'POOL RESERVED' : 'RESERVED'}</div>
+                  <div className="text-base font-extrabold text-amber-900 leading-tight mt-0.5">
+                    {formatQtyValue(effectiveReserved)} <span className="text-xs font-semibold text-amber-700">{unit}</span>
                   </div>
-                  <div className={`text-base font-extrabold leading-tight mt-0.5 ${freeStock < 0 ? 'text-red-900' : 'text-blue-900'}`}>
-                    {formatQtyValue(freeStock)} <span className={`text-xs font-semibold ${freeStock < 0 ? 'text-red-700' : 'text-blue-700'}`}>{unit}</span>
+                </div>
+                <div className={`${effectiveATP <= 0 ? 'bg-red-50/90 border-red-200' : 'bg-blue-50/90 border-blue-200'} border rounded-lg p-2.5 text-center shadow-xs`}>
+                  <div className={`text-[11px] font-bold uppercase tracking-wider ${effectiveATP <= 0 ? 'text-red-700' : 'text-blue-700'}`}>
+                    {batchNumber ? 'PRODUCT ATP' : 'AVAILABLE (ATP)'}
+                  </div>
+                  <div className={`text-base font-extrabold leading-tight mt-0.5 ${effectiveATP <= 0 ? 'text-red-900' : 'text-blue-900'}`}>
+                    {formatQtyValue(effectiveATP)} <span className={`text-xs font-semibold ${effectiveATP <= 0 ? 'text-red-700' : 'text-blue-700'}`}>{unit}</span>
                   </div>
                 </div>
               </div>
 
               {/* Batch Allocation Context & Shortage Banner */}
-              {batchNumber && totalReserved > 0 && (
+              {batchNumber && effectiveReserved > 0 && (
                 <div className="mt-2.5 px-3 py-1.5 bg-blue-50/80 border border-blue-200/80 rounded-md text-[11px] text-blue-900 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 shadow-2xs">
                   <span>
-                    <strong>Batch Allocation Context ({batchNumber}):</strong> Physical batch stock is <strong>{formatQtyValue(currentStock)} {unit}</strong>. Product pool has <strong>{formatQtyValue(totalReserved)} {unit}</strong> in active sales commitments. Product-level reservations hold stock against the product pool and are assigned to specific batches upon Delivery Challan creation.
+                    <strong>Batch Allocation Context ({batchNumber}):</strong> Physical batch stock is <strong>{formatQtyValue(currentStock)} {unit}</strong>. Product pool has <strong>{formatQtyValue(effectiveReserved)} {unit}</strong> in active sales commitments (Available to Promise: <strong>{formatQtyValue(effectiveATP)} {unit}</strong>). Product reservations hold stock against the product pool and are assigned to specific batches upon Delivery Challan dispatch.
                   </span>
-                  {unfulfilledShortage > 0 && (
+                  {effectiveShortage > 0 && (
                     <span className="font-semibold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded text-[10px] shrink-0 self-start sm:self-auto">
-                      Unfulfilled Demand: {formatQtyValue(unfulfilledShortage)} {unit}
+                      Unfulfilled Demand: {formatQtyValue(effectiveShortage)} {unit}
                     </span>
                   )}
                 </div>
               )}
 
-              {!batchNumber && unfulfilledShortage > 0 && (
+              {!batchNumber && effectiveShortage > 0 && (
                 <div className="mt-2.5 px-3 py-1.5 bg-amber-50/90 border border-amber-200 rounded-md text-[11px] text-amber-900 flex items-center justify-between shadow-2xs">
                   <span>
-                    <strong>Demand Notice:</strong> Active customer orders exceed available physical inventory. <strong>{formatQtyValue(unfulfilledShortage)} {unit}</strong> unfulfilled shortage is recorded against approved sales orders.
+                    <strong>Demand Notice:</strong> Active customer orders exceed available physical inventory. <strong>{formatQtyValue(effectiveShortage)} {unit}</strong> unfulfilled shortage is recorded against approved sales orders.
                   </span>
                   <span className="font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-[10px] shrink-0 ml-2">
-                    Shortage: {formatQtyValue(unfulfilledShortage)} {unit}
+                    Shortage: {formatQtyValue(effectiveShortage)} {unit}
                   </span>
                 </div>
               )}
@@ -1065,11 +1080,11 @@ export function StockMovementsModal({
                 </span>
                 <span className="text-gray-300">|</span>
                 <span>
-                  Reserved: <strong className="text-amber-800">{formatQtyValue(totalReserved)} {unit}</strong>
+                  Reserved: <strong className="text-amber-800">{formatQtyValue(effectiveReserved)} {unit}</strong>
                 </span>
                 <span className="text-gray-300">|</span>
                 <span>
-                  Free: <strong className={freeStock < 0 ? 'text-red-700' : 'text-blue-700'}>{formatQtyValue(freeStock)} {unit}</strong>
+                  {batchNumber ? 'Product ATP' : 'Available'}: <strong className={effectiveATP <= 0 ? 'text-red-700 font-bold' : 'text-blue-700'}>{formatQtyValue(effectiveATP)} {unit}</strong>
                 </span>
               </div>
               <div className="text-[11px] text-gray-500 font-medium">

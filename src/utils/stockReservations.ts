@@ -29,11 +29,14 @@ export interface ProductStockAuditSummary {
   totalPhysicalStock: number;
   usablePhysicalStock: number;
   productReservedStock: number;
+  legacyReservedStock: number;
+  totalReservedStock: number;
   batchAllocatedStock: number;
   availableToPromise: number;
   unfulfilledDemand: number;
   activeReservationCount: number;
   reservations: CanonicalReservationItem[];
+  batchSummaries?: Record<string, BatchStockAuditSummary>;
 }
 
 export interface BatchStockAuditSummary {
@@ -47,15 +50,234 @@ export interface BatchStockAuditSummary {
   effectiveFreeStock: number;
   unfulfilledDemand: number;
   isProductLevelCommitment: boolean;
+  isExpired: boolean;
+}
+
+export interface CalculateStockMetricsInput {
+  batches: Array<{
+    id: string;
+    product_id?: string;
+    batch_number?: string;
+    current_stock: number;
+    reserved_stock?: number;
+    expiry_date?: string | null;
+    is_active?: boolean;
+  }>;
+  productReservations: Array<
+    | CanonicalReservationItem
+    | {
+        id: string;
+        product_id?: string;
+        sales_order_id?: string;
+        sales_order_item_id?: string;
+        so_number?: string | null;
+        customer_name?: string | null;
+        so_date?: string | null;
+        so_status?: string | null;
+        reserved_quantity?: number;
+        reservedQuantity?: number;
+        ordered_quantity?: number | null;
+        orderedQuantity?: number | null;
+        delivered_quantity?: number | null;
+        deliveredQuantity?: number | null;
+        shortage_quantity?: number;
+        shortageQuantity?: number;
+        status: string;
+        legacy_reservation_ids?: string[] | null;
+        legacyReservationIds?: string[] | null;
+        created_at?: string;
+        closed_at?: string | null;
+        close_reason?: string | null;
+      }
+  >;
+  legacyReservations?: Array<
+    | CanonicalReservationItem
+    | {
+        id: string;
+        product_id?: string;
+        batch_id?: string | null;
+        batchId?: string | null;
+        batch_number?: string | null;
+        batchNumber?: string | null;
+        sales_order_id?: string;
+        salesOrderId?: string;
+        sales_order_item_id?: string;
+        salesOrderItemId?: string;
+        so_number?: string | null;
+        soNumber?: string | null;
+        customer_name?: string | null;
+        customerName?: string | null;
+        reserved_quantity?: number;
+        reservedQuantity?: number;
+        status: string;
+        is_released?: boolean;
+        isReleased?: boolean;
+        created_at?: string;
+        released_at?: string | null;
+        release_reason?: string | null;
+      }
+  >;
+  importRequirements?: Array<{
+    product_id?: string;
+    shortage_quantity: number;
+    status: string;
+  }>;
+  excludeSalesOrderItemId?: string | null;
+  asOfDate?: string;
+}
+
+export interface StockMetricsResult {
+  totalPhysicalStock: number;
+  usablePhysicalStock: number;
+  productReservedStock: number;
+  legacyReservedStock: number;
+  totalReservedStock: number;
+  availableToPromise: number;
+  unfulfilledDemand: number;
+  activeProductReservationCount: number;
+  activeLegacyReservationCount: number;
+  batchSummaries: Record<string, BatchStockAuditSummary>;
 }
 
 /**
- * Fetch and reconcile product-level commitments and legacy batch reservations.
- * Strictly adheres to canonical product_available_to_promise() logic:
- *   usable_batches - active_so_product_reservations - active_unmigrated_stock_reservations
+ * Pure, deterministic calculation of stock, reservations, ATP, and shortages.
+ * Conforms 100% to PostgreSQL function:
+ *   public.product_available_to_promise(p_product_id, p_exclude_sales_order_item_id)
+ * and view:
+ *   public.inventory_v1_stock_summary
+ */
+export function calculateStockMetrics(input: CalculateStockMetricsInput): StockMetricsResult {
+  const asOf = input.asOfDate || new Date().toISOString().split('T')[0];
+
+  const getReserved = (r: any) => Number(r.reservedQuantity ?? r.reserved_quantity ?? 0);
+  const getOrdered = (r: any) => r.orderedQuantity != null ? Number(r.orderedQuantity) : (r.ordered_quantity != null ? Number(r.ordered_quantity) : null);
+  const getDelivered = (r: any) => Number(r.deliveredQuantity ?? r.delivered_quantity ?? 0);
+  const getShortage = (r: any) => r.shortageQuantity != null ? Number(r.shortageQuantity) : (r.shortage_quantity != null ? Number(r.shortage_quantity) : null);
+  const getSoItemId = (r: any) => r.salesOrderItemId ?? r.sales_order_item_id;
+  const getIsReleased = (r: any) => Boolean(r.isReleased ?? r.is_released);
+  const getLegacyIds = (r: any) => r.legacyReservationIds ?? r.legacy_reservation_ids;
+
+  // 1. Gather all migrated legacy IDs to prevent double counting
+  const migratedLegacyIds = new Set<string>();
+  (input.productReservations || []).forEach(r => {
+    const ids = getLegacyIds(r);
+    if (Array.isArray(ids)) {
+      ids.forEach(id => migratedLegacyIds.add(id));
+    }
+  });
+
+  // 2. Active Batches & Usable Physical Stock
+  const activeBatches = (input.batches || []).filter(b => b.is_active !== false);
+  const totalPhysicalStock = activeBatches.reduce((sum, b) => sum + (Number(b.current_stock) || 0), 0);
+  const usablePhysicalStock = activeBatches
+    .filter(b => !b.expiry_date || b.expiry_date > asOf)
+    .reduce((sum, b) => sum + (Number(b.current_stock) || 0), 0);
+
+  // 3. Active Product-Level Reservations (excluding current order item if requested)
+  const activeProductReservations = (input.productReservations || []).filter(r => {
+    if (r.status !== 'active') return false;
+    const soItemId = getSoItemId(r);
+    if (input.excludeSalesOrderItemId && soItemId === input.excludeSalesOrderItemId) {
+      return false;
+    }
+    return getReserved(r) > 0;
+  });
+
+  const productReservedStock = activeProductReservations.reduce(
+    (sum, r) => sum + getReserved(r),
+    0
+  );
+
+  // 4. Active Legacy Batch Reservations (excluding already migrated rows and excluded SO item)
+  const activeLegacyReservations = (input.legacyReservations || []).filter(sr => {
+    if (sr.status !== 'active' || getIsReleased(sr)) return false;
+    if (migratedLegacyIds.has(sr.id)) return false;
+    const soItemId = getSoItemId(sr);
+    if (input.excludeSalesOrderItemId && soItemId === input.excludeSalesOrderItemId) {
+      return false;
+    }
+    return getReserved(sr) > 0;
+  });
+
+  const legacyReservedStock = activeLegacyReservations.reduce(
+    (sum, sr) => sum + getReserved(sr),
+    0
+  );
+
+  const totalReservedStock = productReservedStock + legacyReservedStock;
+  const availableToPromise = Math.max(0, usablePhysicalStock - totalReservedStock);
+
+  // 5. Shortages and Unfulfilled Demand
+  const reservationShortage = activeProductReservations.reduce((sum, r) => {
+    const explicitShortage = getShortage(r);
+    if (explicitShortage != null) {
+      return sum + explicitShortage;
+    }
+    const ordered = getOrdered(r) ?? 0;
+    const delivered = getDelivered(r);
+    const reserved = getReserved(r);
+    return sum + (ordered > 0 ? Math.max(0, ordered - delivered - reserved) : 0);
+  }, 0);
+
+  const importShortage = (input.importRequirements || [])
+    .filter(ir => ['pending', 'ordered'].includes(ir.status))
+    .reduce((sum, ir) => sum + (Number(ir.shortage_quantity) || 0), 0);
+
+  const unfulfilledDemand = Math.max(reservationShortage, importShortage);
+
+  // 6. Per-batch breakdown
+  const batchSummaries: Record<string, BatchStockAuditSummary> = {};
+  activeBatches.forEach(b => {
+    const batchPhysical = Number(b.current_stock) || 0;
+    // Batch allocated is either b.reserved_stock or unmigrated legacy reservation for this batch
+    const batchLegacyAllocated = activeLegacyReservations
+      .filter(lr => (lr as any).batchId === b.id || (lr as any).batch_id === b.id)
+      .reduce((sum, lr) => sum + getReserved(lr), 0);
+    const batchAllocatedStock = Math.max(Number(b.reserved_stock) || 0, batchLegacyAllocated);
+
+    const isExpired = Boolean(b.expiry_date && b.expiry_date <= asOf);
+    // Effective free stock: batch physical stock minus batch-locked allocations,
+    // strictly capped by the product-level available to promise!
+    const effectiveFreeStock = isExpired
+      ? 0
+      : Math.max(0, Math.min(batchPhysical - batchAllocatedStock, availableToPromise));
+
+    batchSummaries[b.id] = {
+      batchId: b.id,
+      batchNumber: b.batch_number || '',
+      productId: b.product_id || '',
+      batchPhysicalStock: batchPhysical,
+      batchAllocatedStock,
+      productReservedStock: totalReservedStock,
+      productAvailableToPromise: availableToPromise,
+      effectiveFreeStock,
+      unfulfilledDemand,
+      isProductLevelCommitment: batchAllocatedStock === 0 && totalReservedStock > 0,
+      isExpired,
+    };
+  });
+
+  return {
+    totalPhysicalStock,
+    usablePhysicalStock,
+    productReservedStock,
+    legacyReservedStock,
+    totalReservedStock,
+    availableToPromise,
+    unfulfilledDemand,
+    activeProductReservationCount: activeProductReservations.length,
+    activeLegacyReservationCount: activeLegacyReservations.length,
+    batchSummaries,
+  };
+}
+
+/**
+ * Fetch and reconcile product-level commitments and legacy batch reservations from Supabase.
+ * Strictly adheres to canonical product_available_to_promise() logic.
  */
 export async function fetchCanonicalStockReservations(
-  productId: string
+  productId: string,
+  excludeSalesOrderItemId?: string
 ): Promise<{
   activeReservations: CanonicalReservationItem[];
   allReservations: CanonicalReservationItem[];
@@ -170,7 +392,11 @@ export async function fetchCanonicalStockReservations(
   // Active reservations:
   // 1. All active product-level reservations
   // 2. Plus active legacy batch reservations that have NOT been migrated to so_product_reservations
+  // 3. Excluding excludeSalesOrderItemId if provided
   const activeReservations = canonicalItems.filter(item => {
+    if (excludeSalesOrderItemId && item.salesOrderItemId === excludeSalesOrderItemId) {
+      return false;
+    }
     if (item.source === 'product_level') {
       return item.status === 'active' && item.reservedQuantity > 0;
     }
@@ -195,50 +421,53 @@ export async function fetchCanonicalStockReservations(
  * Reconcile full stock availability for a product matching canonical ATP logic.
  */
 export async function fetchProductStockAuditSummary(
-  productId: string
+  productId: string,
+  excludeSalesOrderItemId?: string
 ): Promise<ProductStockAuditSummary> {
   const [batchesRes, reservationsRes, shortageRes] = await Promise.all([
     supabase
       .from('batches')
-      .select('id, batch_number, current_stock, expiry_date, is_active')
+      .select('id, batch_number, current_stock, reserved_stock, expiry_date, is_active, product_id')
       .eq('product_id', productId)
       .eq('is_active', true),
-    fetchCanonicalStockReservations(productId),
+    fetchCanonicalStockReservations(productId, excludeSalesOrderItemId),
     supabase
       .from('import_requirements')
-      .select('shortage_quantity')
+      .select('shortage_quantity, status')
       .eq('product_id', productId)
       .in('status', ['pending', 'ordered']),
   ]);
 
-  const batches = batchesRes.data || [];
-  const now = new Date().toISOString().split('T')[0];
+  const batches = (batchesRes.data || []).map((b: any) => ({
+    id: b.id,
+    product_id: b.product_id,
+    batch_number: b.batch_number,
+    current_stock: Number(b.current_stock) || 0,
+    reserved_stock: Number(b.reserved_stock) || 0,
+    expiry_date: b.expiry_date,
+    is_active: b.is_active,
+  }));
 
-  const totalPhysicalStock = batches.reduce((sum, b) => sum + (parseFloat(b.current_stock) || 0), 0);
-  const usablePhysicalStock = batches
-    .filter(b => !b.expiry_date || b.expiry_date > now)
-    .reduce((sum, b) => sum + (parseFloat(b.current_stock) || 0), 0);
-
-  const productReservedStock = reservationsRes.totalReserved;
-  const availableToPromise = Math.max(0, usablePhysicalStock - productReservedStock);
-
-  // Unfulfilled demand: max of calculated reservation shortages or pending import requirements
-  const importShortage = (shortageRes.data || []).reduce(
-    (sum, ir) => sum + (parseFloat(ir.shortage_quantity) || 0),
-    0
-  );
-  const unfulfilledDemand = Math.max(reservationsRes.unfulfilledDemand, importShortage);
+  const metrics = calculateStockMetrics({
+    batches,
+    productReservations: reservationsRes.allReservations.filter(r => r.source === 'product_level'),
+    legacyReservations: reservationsRes.allReservations.filter(r => r.source === 'legacy_batch'),
+    importRequirements: shortageRes.data || [],
+    excludeSalesOrderItemId,
+  });
 
   return {
     productId,
-    totalPhysicalStock,
-    usablePhysicalStock,
-    productReservedStock,
+    totalPhysicalStock: metrics.totalPhysicalStock,
+    usablePhysicalStock: metrics.usablePhysicalStock,
+    productReservedStock: metrics.productReservedStock,
+    legacyReservedStock: metrics.legacyReservedStock,
+    totalReservedStock: metrics.totalReservedStock,
     batchAllocatedStock: 0,
-    availableToPromise,
-    unfulfilledDemand,
+    availableToPromise: metrics.availableToPromise,
+    unfulfilledDemand: metrics.unfulfilledDemand,
     activeReservationCount: reservationsRes.activeReservations.length,
     reservations: reservationsRes.allReservations,
+    batchSummaries: metrics.batchSummaries,
   };
 }
-

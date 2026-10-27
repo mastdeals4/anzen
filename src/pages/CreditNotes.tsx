@@ -7,7 +7,7 @@ import { CreditNoteView } from '../components/CreditNoteView';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Eye, Trash2, FileX, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Eye, Trash2, AlertCircle, CheckCircle, XCircle, RotateCcw, Filter } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -26,6 +26,9 @@ interface CreditNote {
   customer_id: string;
   original_invoice_id?: string;
   original_invoice_number?: string;
+  sales_invoices?: {
+    invoice_number: string;
+  } | null;
   reason: string;
   notes?: string;
   currency: string;
@@ -41,7 +44,7 @@ interface CreditNote {
     return_date: string;
     status: string;
     restocked: boolean;
-  };
+  } | null;
   customers?: {
     company_name: string;
     address: string;
@@ -49,7 +52,7 @@ interface CreditNote {
     phone: string;
     npwp: string;
     pharmacy_license: string;
-  };
+  } | null;
 }
 
 interface CreditNoteItem {
@@ -106,10 +109,19 @@ export function CreditNotes() {
   const { user, profile } = useAuth();
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
   const [loading, setLoading] = useState(true);
+  const [queryError, setQueryError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNote | null>(null);
   const [selectedCreditNoteItems, setSelectedCreditNoteItems] = useState<any[]>([]);
+
+  // Filtering: defaults to showing all records; date filter filters by commercial credit_note_date
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending_approval' | 'approved' | 'rejected'>('all');
+  const [dateFilter, setDateFilter] = useState({
+    startDate: '',
+    endDate: '',
+  });
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -151,21 +163,76 @@ export function CreditNotes() {
     setLoading(false);
   };
 
+  const generateNextCreditNoteNumber = async (): Promise<string> => {
+    try {
+      // 1. Attempt RPC first if available/permitted
+      const { data: rpcNum, error: rpcErr } = await supabase.rpc('generate_credit_note_number');
+      if (!rpcErr && rpcNum && typeof rpcNum === 'string') {
+        return rpcNum;
+      }
+    } catch {
+      // Fall through to query-based generation
+    }
+
+    try {
+      // 2. Query-based generation matching SAPJ ERP convention: CN-YY-XXXX
+      const { data: yearCode } = await supabase.rpc('get_current_financial_year');
+      const year = yearCode || new Date().getFullYear().toString().slice(-2);
+      const prefix = `CN-${year}`;
+
+      const { data: existingNotes } = await supabase
+        .from('credit_notes')
+        .select('credit_note_number')
+        .like('credit_note_number', `${prefix}-%`);
+
+      let nextSeq = 1;
+      if (existingNotes && existingNotes.length > 0) {
+        const seqs = existingNotes
+          .map(n => {
+            const match = n.credit_note_number?.match(/-(\d+)$/);
+            return match ? parseInt(match[1], 10) : 0;
+          })
+          .filter(n => !isNaN(n));
+        if (seqs.length > 0) {
+          nextSeq = Math.max(...seqs) + 1;
+        }
+      }
+      return `${prefix}-${String(nextSeq).padStart(4, '0')}`;
+    } catch (err) {
+      console.error('Error generating credit note number:', err);
+      const fallbackYear = new Date().getFullYear().toString().slice(-2);
+      return `CN-${fallbackYear}-0001`;
+    }
+  };
+
   const loadCreditNotes = async () => {
     try {
+      setQueryError(null);
+      // Explicit foreign-key disambiguation for material_returns to avoid PGRST201 Multiple Choices error
+      // Also joins sales_invoices to display canonical invoice number even if original_invoice_number was unset
       const { data, error } = await supabase
         .from('credit_notes')
         .select(`
           *,
           customers(company_name, address, city, phone, npwp, pharmacy_license),
-          material_returns(id, return_number, return_date, status, restocked)
+          material_returns:material_return_id(id, return_number, return_date, status, restocked),
+          sales_invoices:original_invoice_id(invoice_number)
         `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setCreditNotes(data || []);
-    } catch (error) {
+      const normalizedData = (data || []).map((cn: any) => ({
+        ...cn,
+        customers: normalizeNestedRelation(cn.customers),
+        material_returns: normalizeNestedRelation(cn.material_returns),
+        sales_invoices: normalizeNestedRelation(cn.sales_invoices),
+      }));
+      setCreditNotes(normalizedData);
+    } catch (error: any) {
       console.error('Error loading credit notes:', error);
+      const errorMsg = error?.message || 'Failed to load credit notes from server';
+      setQueryError(errorMsg);
+      showToast({ type: 'error', title: 'Error Loading Credit Notes', message: errorMsg });
     }
   };
 
@@ -387,6 +454,8 @@ export function CreditNotes() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (isSubmitting) return;
+
     if (!formData.customer_id || !formData.reason || items.length === 0) {
       showToast({ type: 'error', title: 'Error', message: 'Please complete all required fields' });
       return;
@@ -398,11 +467,15 @@ export function CreditNotes() {
       return;
     }
 
+    setIsSubmitting(true);
+    let creditNoteId: string | null = null;
+
     try {
       const totals = calculateTotals();
+      const finalNumber = formData.credit_note_number.trim() || await generateNextCreditNoteNumber();
 
       const insertPayload: Record<string, any> = {
-        credit_note_number: formData.credit_note_number,
+        credit_note_number: finalNumber,
         credit_note_date: formData.credit_note_date,
         customer_id: formData.customer_id,
         original_invoice_id: formData.original_invoice_id || null,
@@ -422,6 +495,7 @@ export function CreditNotes() {
         .single();
 
       if (creditNoteError) throw creditNoteError;
+      creditNoteId = creditNoteData.id;
 
       const itemsWithCreditNoteId = items.map(({ products: _products, batches: _batches, ...item }) => ({
         ...item,
@@ -432,33 +506,49 @@ export function CreditNotes() {
         .from('credit_note_items')
         .insert(itemsWithCreditNoteId);
 
-      if (itemsError) throw itemsError;
+      if (itemsError) {
+        // Safe rollback of orphaned header if item insertion fails
+        await supabase.from('credit_notes').delete().eq('id', creditNoteId);
+        throw new Error(`Failed to save credit note items: ${itemsError.message}`);
+      }
 
-      showToast({ type: 'success', title: 'Created', message: 'Credit note created and is pending approval.' });
+      showToast({ type: 'success', title: 'Created', message: `Credit note ${finalNumber} created and is pending approval.` });
       setModalOpen(false);
       resetForm();
-      loadData();
+      await loadData();
     } catch (error: any) {
       console.error('Error creating credit note:', error);
       showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to create credit note. Please try again.' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleApprove = async (id: string) => {
-    if (!await showConfirm({ title: 'Confirm', message: 'Approve this credit note? Stock will be adjusted accordingly.', variant: 'warning' })) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this credit note? Stock and General Ledger will be adjusted accordingly.', variant: 'warning' })) return;
 
     try {
+      const targetNote = creditNotes.find(cn => cn.id === id);
+      const updatePayload: Record<string, any> = {
+        status: 'approved',
+        approved_by: user?.id,
+        approval_date: new Date().toISOString(),
+      };
+
+      // If existing legacy credit note had a blank number, assign a sequential number upon approval
+      if (!targetNote?.credit_note_number || targetNote.credit_note_number.trim() === '') {
+        const nextNum = await generateNextCreditNoteNumber();
+        updatePayload.credit_note_number = nextNum;
+      }
+
       const { error } = await supabase
         .from('credit_notes')
-        .update({
-          status: 'approved',
-          approved_by: user?.id,
-        })
+        .update(updatePayload)
         .eq('id', id);
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Credit note approved successfully' });
-      loadData();
+      await loadData();
     } catch (error: any) {
       console.error('Error approving credit note:', error);
       showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to approve credit note' });
@@ -481,7 +571,7 @@ export function CreditNotes() {
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Credit note rejected' });
-      loadData();
+      await loadData();
     } catch (error: any) {
       console.error('Error rejecting credit note:', error);
       showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to reject credit note' });
@@ -489,7 +579,7 @@ export function CreditNotes() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this credit note? This will reverse the stock adjustment.', variant: 'danger', confirmLabel: 'Delete' })) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this credit note? This will reverse any linked adjustment.', variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -502,11 +592,21 @@ export function CreditNotes() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: 'Credit note deleted successfully' });
-      loadData();
+      await loadData();
     } catch (error: any) {
       console.error('Error deleting credit note:', error);
       showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to delete credit note' });
     }
+  };
+
+  const handleOpenCreateModal = async () => {
+    resetForm();
+    const nextNumber = await generateNextCreditNoteNumber();
+    setFormData(prev => ({
+      ...prev,
+      credit_note_number: nextNumber,
+    }));
+    setModalOpen(true);
   };
 
   const resetForm = () => {
@@ -538,14 +638,17 @@ export function CreditNotes() {
     const ret = approvedReturns.find(r => r.id === returnId);
     if (!ret) return;
     sessionStorage.removeItem('anzen_originating_return_id');
-    setFormData(prev => ({
-      ...prev,
-      customer_id: ret.customer_id || '',
-      original_invoice_id: ret.original_invoice_id || '',
-      original_invoice_number: ret.sales_invoices?.invoice_number || '',
-      reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}`,
-      material_return_id: ret.id,
-    }));
+    generateNextCreditNoteNumber().then(nextNum => {
+      setFormData(prev => ({
+        ...prev,
+        credit_note_number: nextNum,
+        customer_id: ret.customer_id || '',
+        original_invoice_id: ret.original_invoice_id || '',
+        original_invoice_number: ret.sales_invoices?.invoice_number || '',
+        reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}`,
+        material_return_id: ret.id,
+      }));
+    });
     if (ret.customer_id) loadInvoicesForCustomer(ret.customer_id);
     if (ret.original_invoice_id) loadInvoiceItems(ret.original_invoice_id);
     setModalOpen(true);
@@ -558,7 +661,13 @@ export function CreditNotes() {
     {
       key: 'credit_note_number',
       label: 'Credit Note #',
-      render: (value: any, cn: CreditNote) => cn.credit_note_number || 'Pending'
+      render: (value: any, cn: CreditNote) => cn.credit_note_number?.trim() ? (
+        <span className="font-mono font-medium text-gray-900">{cn.credit_note_number}</span>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-mono">
+          Pending
+        </span>
+      )
     },
     {
       key: 'credit_note_date',
@@ -568,21 +677,30 @@ export function CreditNotes() {
     {
       key: 'customer',
       label: 'Customer',
-      render: (value: any, cn: CreditNote) => cn.customers?.company_name || 'N/A'
+      render: (value: any, cn: CreditNote) => {
+        const customer = normalizeNestedRelation(cn.customers);
+        return customer?.company_name || 'N/A';
+      }
     },
     {
       key: 'original_invoice_number',
       label: 'Original Invoice',
-      render: (value: any, cn: CreditNote) => cn.original_invoice_number || 'N/A'
+      render: (value: any, cn: CreditNote) => {
+        const invoice = normalizeNestedRelation(cn.sales_invoices);
+        return cn.original_invoice_number || invoice?.invoice_number || 'N/A';
+      }
     },
     {
       key: 'linked_return',
       label: 'Linked Return',
-      render: (value: any, cn: CreditNote) => cn.material_returns ? (
-        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
-          {cn.material_returns.return_number}
-        </span>
-      ) : <span className="text-gray-400 text-xs">—</span>
+      render: (value: any, cn: CreditNote) => {
+        const ret = normalizeNestedRelation(cn.material_returns);
+        return ret ? (
+          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
+            {ret.return_number}
+          </span>
+        ) : <span className="text-gray-400 text-xs">—</span>;
+      }
     },
     {
       key: 'total_amount',
@@ -615,6 +733,19 @@ export function CreditNotes() {
 
   const totals = calculateTotals();
 
+  const filteredCreditNotes = creditNotes.filter(cn => {
+    if (statusFilter !== 'all' && (cn.status || 'pending_approval') !== statusFilter) {
+      return false;
+    }
+    if (dateFilter.startDate && cn.credit_note_date < dateFilter.startDate) {
+      return false;
+    }
+    if (dateFilter.endDate && cn.credit_note_date > dateFilter.endDate) {
+      return false;
+    }
+    return true;
+  });
+
   return (
     <Layout>
       <div className="space-y-3">
@@ -625,10 +756,7 @@ export function CreditNotes() {
           </div>
           {canManage && (
             <button
-              onClick={() => {
-                resetForm();
-                setModalOpen(true);
-              }}
+              onClick={handleOpenCreateModal}
               className="flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-red-700 shadow-xs transition"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -636,6 +764,25 @@ export function CreditNotes() {
             </button>
           )}
         </div>
+
+        {queryError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center justify-between text-xs text-red-700">
+            <div className="flex items-center gap-2">
+              <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <div>
+                <span className="font-semibold">Failed to load credit notes: </span>
+                <span>{queryError}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => loadCreditNotes()}
+              className="px-2.5 py-1 bg-red-600 text-white rounded text-xs font-medium hover:bg-red-700 transition flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Retry Query
+            </button>
+          </div>
+        )}
 
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex gap-3">
           <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
@@ -645,9 +792,64 @@ export function CreditNotes() {
           </div>
         </div>
 
+        {/* Filter bar: Defaults to showing all credit notes. Allows narrowing by status and commercial Credit Note Date */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 bg-white p-2.5 rounded-lg border border-gray-200 shadow-xs text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-gray-500 font-medium flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5" /> Status:
+            </span>
+            {(['all', 'pending_approval', 'approved', 'rejected'] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                  statusFilter === status
+                    ? 'bg-red-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {status === 'all' ? 'All' : status.replace('_', ' ')}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-gray-500 font-medium">Date Range (CN Date):</span>
+            <input
+              type="date"
+              aria-label="Filter Start Date"
+              value={dateFilter.startDate}
+              onChange={(e) => setDateFilter(prev => ({ ...prev, startDate: e.target.value }))}
+              className="px-2 py-1 text-xs border border-gray-300 rounded bg-white"
+            />
+            <span className="text-gray-400">to</span>
+            <input
+              type="date"
+              aria-label="Filter End Date"
+              value={dateFilter.endDate}
+              onChange={(e) => setDateFilter(prev => ({ ...prev, endDate: e.target.value }))}
+              className="px-2 py-1 text-xs border border-gray-300 rounded bg-white"
+            />
+            {(statusFilter !== 'all' || dateFilter.startDate || dateFilter.endDate) && (
+              <button
+                onClick={() => {
+                  setStatusFilter('all');
+                  setDateFilter({ startDate: '', endDate: '' });
+                }}
+                className="text-xs text-red-600 hover:text-red-800 underline ml-1"
+              >
+                Reset Filters
+              </button>
+            )}
+            <span className="text-gray-400 text-[11px] ml-2">
+              Showing {filteredCreditNotes.length} of {creditNotes.length}
+            </span>
+          </div>
+        </div>
+
         <DataTable
           columns={columns}
-          data={creditNotes}
+          data={filteredCreditNotes}
           loading={loading}
           actions={(creditNote) => (
             <div className="flex items-center gap-2">
@@ -700,6 +902,32 @@ export function CreditNotes() {
           title="Create Credit Note"
         >
           <form onSubmit={handleSubmit} className="space-y-4">
+            <SapRow>
+              <FloatingField label="Credit Note # (Auto)" span={6} filled={!!formData.credit_note_number} hint="System-assigned sequential ID">
+                <input
+                  name="credit_note_number"
+                  aria-label="Credit Note Number"
+                  type="text"
+                  value={formData.credit_note_number}
+                  readOnly
+                  placeholder="Generating..."
+                  className={`${FLOAT_INPUT} bg-gray-50 font-mono`}
+                />
+              </FloatingField>
+
+              <FloatingField label="Credit Note Date" required span={6} filled={!!formData.credit_note_date}>
+                <input
+                  name="credit_note_date"
+                  aria-label="Credit Note Date"
+                  type="date"
+                  value={formData.credit_note_date}
+                  onChange={(e) => setFormData({ ...formData, credit_note_date: e.target.value })}
+                  required
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+            </SapRow>
+
             <SapRow>
               <FloatingField label="Customer" required span={6} filled={!!formData.customer_id}>
                 <SearchableSelect
@@ -773,16 +1001,6 @@ export function CreditNotes() {
             )}
 
             <SapRow>
-              <FloatingField label="Credit Note Date" required span={6} filled={!!formData.credit_note_date}>
-                <input name="credit_note_date" aria-label="Credit Note Date"
-                  type="date"
-                  value={formData.credit_note_date}
-                  onChange={(e) => setFormData({ ...formData, credit_note_date: e.target.value })}
-                  required
-                  className={FLOAT_INPUT}
-                />
-              </FloatingField>
-
               <FloatingField label="Currency" span={6} filled={!!formData.currency}>
                 <select name="currency" aria-label="Currency"
                   value={formData.currency}
@@ -949,9 +1167,17 @@ export function CreditNotes() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                disabled={isSubmitting}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center gap-2"
               >
-                Create Credit Note
+                {isSubmitting ? (
+                  <>
+                    <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent" />
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  'Create Credit Note'
+                )}
               </button>
             </div>
           </form>
@@ -959,7 +1185,7 @@ export function CreditNotes() {
 
         {viewModalOpen && selectedCreditNote && (
           <CreditNoteView
-            creditNote={selectedCreditNote}
+            creditNote={selectedCreditNote as any}
             items={selectedCreditNoteItems}
             onClose={() => {
               setViewModalOpen(false);

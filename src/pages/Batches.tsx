@@ -123,6 +123,8 @@ export function Batches() {
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [selectedProductForHistory, setSelectedProductForHistory] = useState<{id: string; name: string; code: string; batchId?: string; batchNumber?: string; unit?: string} | null>(null);
   const [productReservationsMap, setProductReservationsMap] = useState<Map<string, number>>(new Map());
+  const [productAtpMap, setProductAtpMap] = useState<Map<string, number>>(new Map());
+  const [productShortageMap, setProductShortageMap] = useState<Map<string, number>>(new Map());
   const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
   const [batchSearch, setBatchSearch] = useState('');
@@ -344,22 +346,28 @@ export function Batches() {
         `)
         .order('import_date', { ascending: false });
 
-      const [batchRes, prodRes] = await Promise.all([
+      const [batchRes, stockSummaryRes] = await Promise.all([
         query,
         supabase
-          .from('so_product_reservations')
-          .select('product_id, reserved_quantity')
-          .eq('status', 'active')
+          .from('inventory_v1_stock_summary')
+          .select('product_id, total_current_stock, reserved_stock, available_quantity, shortage_quantity')
       ]);
 
       if (batchRes.error) throw batchRes.error;
 
       const pMap = new Map<string, number>();
-      (prodRes.data || []).forEach((r: any) => {
-        const cur = pMap.get(r.product_id) || 0;
-        pMap.set(r.product_id, cur + (parseFloat(r.reserved_quantity) || 0));
+      const atpMap = new Map<string, number>();
+      const shortageMap = new Map<string, number>();
+      (stockSummaryRes.data || []).forEach((row: any) => {
+        if (row.product_id) {
+          pMap.set(row.product_id, Number(row.reserved_stock) || 0);
+          atpMap.set(row.product_id, Number(row.available_quantity) || 0);
+          shortageMap.set(row.product_id, Number(row.shortage_quantity) || 0);
+        }
       });
       setProductReservationsMap(pMap);
+      setProductAtpMap(atpMap);
+      setProductShortageMap(shortageMap);
 
       const batchRows = (batchRes.data ?? []) as unknown as Array<Record<string, any> & {
         id: string;
@@ -1040,6 +1048,8 @@ export function Batches() {
                   const activeBatches = group.batches.filter(b => b.is_active);
                   const totalSold = group.batches.reduce((s, b) => s + (b.import_quantity - b.current_stock), 0);
                   const productRes = productReservationsMap.get(group.productId) || 0;
+                  const productATP = productAtpMap.get(group.productId) ?? Math.max(0, totalStock - productRes);
+                  const productShortage = productShortageMap.get(group.productId) || 0;
                   const legacyBatchRes = group.batches.reduce((s, b) => s + (b.reserved_stock || 0), 0);
                   const totalReserved = Math.max(productRes, legacyBatchRes);
                   const zeroStockActive = activeBatches.filter(b => b.current_stock <= 0).length;
@@ -1070,6 +1080,9 @@ export function Batches() {
                                 <span className="text-xs text-gray-600">{totalSold.toLocaleString()}</span>
                                 {totalReserved > 0 && (
                                   <span className="text-xs text-amber-600 ml-1">/ {totalReserved.toLocaleString()}</span>
+                                )}
+                                {productShortage > 0 && (
+                                  <span className="text-[10px] text-red-600 font-semibold ml-1">(-{productShortage.toLocaleString()})</span>
                                 )}
                               </td>
                               <td className={`px-2 py-2 w-28 text-right pr-3 text-sm font-semibold ${totalStock > 0 ? 'text-gray-900' : 'text-red-500'}`}>
@@ -1108,7 +1121,6 @@ export function Batches() {
                                 .sort((a, b) => new Date(b.import_date).getTime() - new Date(a.import_date).getTime())
                                 .map(batch => {
                                   const batchAllocated = batch.reserved_stock || 0;
-                                  const productATP = Math.max(0, totalStock - totalReserved);
                                   const freeStock = Math.max(0, Math.min(batch.current_stock - batchAllocated, productATP));
                                   const landedCostPerUnit = batch.landed_cost_per_unit || batch.import_price;
                                   const containerPerUnit = (batch.import_cost_allocated && batch.import_quantity > 0) ? batch.import_cost_allocated / batch.import_quantity : 0;
