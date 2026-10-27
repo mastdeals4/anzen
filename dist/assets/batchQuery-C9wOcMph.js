@@ -1,0 +1,1 @@
+async function l(f,c,e=60){const s=[...new Set(f.filter(t=>!!t))];if(s.length===0)return[];const o=[];for(let t=0;t<s.length;t+=e)o.push(s.slice(t,t+e));const a=await Promise.all(o.map(t=>c(t))),n=[];for(const{data:t,error:r}of a){if(r)throw r;t&&n.push(...t)}return n}export{l as f};

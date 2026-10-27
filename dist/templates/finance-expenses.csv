@@ -1,0 +1,2 @@
+expense_date,expense_category,supplier_code,staff_code,invoice_number,due_date,description,broker_invoice_amount,reimbursement_total,dpp_amount,recoverable_ppn,pph_amount,stamp_duty_amount,expense_total,transaction_currency,functional_currency,exchange_rate
+31/07/2026,professional_fees,SUP-001,,INV-001,30/08/2026,Example expense,0,0,1000000,110000,20000,0,1000000,IDR,IDR,1

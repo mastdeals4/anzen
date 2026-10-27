@@ -1,0 +1,236 @@
+import React, { useState, useEffect } from 'react';
+import { Modal } from '../../Modal';
+import { useAuth } from '../../../contexts/AuthContext';
+import { supabase } from '../../../lib/supabase';
+import { EnquiryRequestService } from '../../../services/enquiry/EnquiryRequestService';
+import { EnquiryRequestCategory, WaitingForParty } from '../../../types/enquiry';
+import { showToast } from '../../ToastNotification';
+import { Loader2 } from 'lucide-react';
+import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../../finance/FloatingField';
+import { SapRow } from '../../finance/SapLayout';
+
+interface CreateEnquiryRequestModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+  inquiryId: string;
+  inquiryNumber: string;
+  existingRequestCount: number;
+}
+
+interface UserProfile {
+  id: string;
+  full_name: string;
+  email: string;
+}
+
+export const CreateEnquiryRequestModal: React.FC<CreateEnquiryRequestModalProps> = ({
+  isOpen,
+  onClose,
+  onSuccess,
+  inquiryId,
+  inquiryNumber,
+  existingRequestCount,
+}) => {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+
+  const [category, setCategory] = useState<EnquiryRequestCategory>('technical');
+  const [title, setTitle] = useState('');
+  const [customerRequirement, setCustomerRequirement] = useState('');
+  const [assignedTo, setAssignedTo] = useState<string>('');
+  const [waitingFor, setWaitingFor] = useState<WaitingForParty>('INTERNAL');
+  const [dueDate, setDueDate] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setTitle('');
+      setCustomerRequirement('');
+      setCategory('technical');
+      setWaitingFor('INTERNAL');
+      setAssignedTo('');
+
+      const d = new Date();
+      d.setDate(d.getDate() + 3);
+      setDueDate(d.toISOString().split('T')[0]);
+
+      loadUsers();
+    }
+  }, [isOpen]);
+
+  const loadUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('id, full_name, email')
+        .order('full_name');
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (err) {
+      console.error('[CreateEnquiryRequestModal] Error loading users:', err);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      showToast({ title: 'Validation', message: 'Title is required', type: 'error' });
+      return;
+    }
+    if (!customerRequirement.trim()) {
+      showToast({ title: 'Validation', message: 'Customer requirement is required', type: 'error' });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const requestCode = `REQ-${category.slice(0, 3).toUpperCase()}-${existingRequestCount + 1}`;
+
+      await EnquiryRequestService.createRequest({
+        inquiry_id: inquiryId,
+        category,
+        request_code: requestCode,
+        title: title.trim(),
+        customer_requirement: customerRequirement.trim(),
+        assigned_to: assignedTo || null,
+        waiting_for: waitingFor,
+        due_at: dueDate ? `${dueDate}T17:00:00.000Z` : null,
+        actor: {
+          actor_type: 'user',
+          actor_id: user?.id || null,
+        },
+      });
+
+      showToast({
+        title: 'Requirement Added',
+        message: `Request ${requestCode} added to enquiry ${inquiryNumber}.`,
+        type: 'success',
+      });
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      console.error('[CreateEnquiryRequestModal] Error creating request:', err);
+      showToast({
+        title: 'Creation Failed',
+        message: err.message || 'Failed to add requirement',
+        type: 'error',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Add Customer Requirement: ${inquiryNumber}`}
+      size="md"
+    >
+      <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+        <SapRow>
+          <FloatingField label="Category" required filled={!!category} span={6}>
+            <select name="category" aria-label="Category"
+              value={category}
+              onChange={e => setCategory(e.target.value as any)}
+              className={FLOAT_INPUT}
+            >
+              <option value="technical">Technical (Specification, mesh, grade)</option>
+              <option value="commercial">Commercial (Target pricing, terms)</option>
+              <option value="document">Document (COA, MSDS, Halal, TDS)</option>
+              <option value="sample">Sample (Lab sample, trial batch)</option>
+              <option value="logistics">Logistics (Packaging, delivery lead time)</option>
+              <option value="custom">Other / Custom</option>
+            </select>
+          </FloatingField>
+
+          <FloatingField label="Waiting For" filled={!!waitingFor} span={6}>
+            <select name="waiting_for" aria-label="Waiting For"
+              value={waitingFor}
+              onChange={e => setWaitingFor(e.target.value as any)}
+              className={FLOAT_INPUT}
+            >
+              <option value="INTERNAL">INTERNAL</option>
+              <option value="CUSTOMER">CUSTOMER</option>
+              <option value="INDIA">INDIA</option>
+              <option value="MANUFACTURER">MANUFACTURER</option>
+              <option value="NONE">NONE</option>
+            </select>
+          </FloatingField>
+        </SapRow>
+
+        <SapRow>
+          <FloatingField label="Requirement Title" required filled={!!title.trim()} span={12}>
+            <input name="title" aria-label="e.g. COA Batch Verification, 100 Mesh Availability"
+              type="text"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              placeholder="e.g. COA Batch Verification, 100 Mesh Availability"
+              className={FLOAT_INPUT}
+              required
+            />
+          </FloatingField>
+        </SapRow>
+
+        <SapRow>
+          <FloatingField label="Detailed Customer Requirement" required textarea filled={!!customerRequirement.trim()} span={12}>
+            <textarea name="customer_requirement" aria-label="Exact specification or customer need..."
+              value={customerRequirement}
+              onChange={e => setCustomerRequirement(e.target.value)}
+              rows={3}
+              placeholder="Exact specification or customer need..."
+              className={FLOAT_TEXTAREA}
+              required
+            />
+          </FloatingField>
+        </SapRow>
+
+        <SapRow>
+          <FloatingField label="Assign To" filled={!!assignedTo} span={6}>
+            <select name="assign_to" aria-label="Assign To"
+              value={assignedTo}
+              onChange={e => setAssignedTo(e.target.value)}
+              className={FLOAT_INPUT}
+            >
+              <option value="">Unassigned</option>
+              {users.map(u => (
+                <option key={u.id} value={u.id}>
+                  {u.full_name}
+                </option>
+              ))}
+            </select>
+          </FloatingField>
+
+          <FloatingField label="Due Date" filled={!!dueDate} span={6}>
+            <input name="due_date" aria-label="Due Date"
+              type="date"
+              value={dueDate}
+              onChange={e => setDueDate(e.target.value)}
+              className={FLOAT_INPUT}
+            />
+          </FloatingField>
+        </SapRow>
+
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-200">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium cursor-pointer"
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs cursor-pointer disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            <span>Add Requirement</span>
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};

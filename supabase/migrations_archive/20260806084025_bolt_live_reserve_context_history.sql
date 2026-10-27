@@ -1,0 +1,3 @@
+-- Migration-history marker for the Bolt migration already deployed to the
+-- linked database as 20260806084025. Do not duplicate its SQL: the linked
+-- database already contains it and later Repo9 migrations own final behavior.

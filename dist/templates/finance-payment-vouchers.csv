@@ -1,0 +1,2 @@
+voucher_date,supplier_code,staff_code,payment_purpose,payment_method,bank_account_number,invoice_currency,invoice_amount,payment_currency,payment_amount,bank_currency,exchange_rate,converted_amount,bank_charges,pph_withheld,actual_bank_debit,reference_number,description
+31/07/2026,SUP-001,,general,bank_transfer,00930201014,USD,21000,USD,21000,IDR,16990,356790000,50000,0,356840000,TRX-001,USD invoice paid from IDR bank

@@ -1,0 +1,975 @@
+import { useEffect, useState } from 'react';
+import { Layout } from '../components/Layout';
+import { DataTable } from '../components/DataTable';
+import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { CreditNoteView } from '../components/CreditNoteView';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
+import { Plus, Eye, Trash2, FileX, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
+import { MoneyInput } from '../components/MoneyInput';
+import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
+import { SapRow } from '../components/finance/SapLayout';
+
+function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
+interface CreditNote {
+  id: string;
+  credit_note_number: string;
+  credit_note_date: string;
+  customer_id: string;
+  original_invoice_id?: string;
+  original_invoice_number?: string;
+  reason: string;
+  notes?: string;
+  currency: string;
+  subtotal: number;
+  tax_amount: number;
+  total_amount: number;
+  status?: string;
+  approved_by?: string;
+  material_return_id?: string;
+  material_returns?: {
+    id: string;
+    return_number: string;
+    return_date: string;
+    status: string;
+    restocked: boolean;
+  };
+  customers?: {
+    company_name: string;
+    address: string;
+    city: string;
+    phone: string;
+    npwp: string;
+    pharmacy_license: string;
+  };
+}
+
+interface CreditNoteItem {
+  id?: string;
+  product_id: string;
+  batch_id: string;
+  quantity: number;
+  unit_price: number;
+  products?: {
+    product_name: string;
+    product_code: string;
+  };
+  batches?: {
+    batch_number: string;
+    current_stock?: number;
+    product_sources?: {
+      supplier_name: string | null;
+      grade: string | null;
+    } | null;
+  } | null;
+}
+
+interface Customer {
+  id: string;
+  company_name: string;
+}
+
+interface Product {
+  id: string;
+  product_name: string;
+  product_code: string;
+}
+
+interface Batch {
+  id: string;
+  batch_number: string;
+  product_id: string;
+  current_stock: number;
+  product_sources?: {
+    supplier_name: string | null;
+    grade: string | null;
+  } | null;
+}
+
+interface SalesInvoice {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  total_amount: number;
+}
+
+export function CreditNotes() {
+  const { t } = useLanguage();
+  const { user, profile } = useAuth();
+  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNote | null>(null);
+  const [selectedCreditNoteItems, setSelectedCreditNoteItems] = useState<any[]>([]);
+
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
+  const [approvedReturns, setApprovedReturns] = useState<any[]>([]);
+
+  const [formData, setFormData] = useState({
+    credit_note_number: '',
+    credit_note_date: new Date().toISOString().split('T')[0],
+    customer_id: '',
+    original_invoice_id: '',
+    original_invoice_number: '',
+    reason: '',
+    notes: '',
+    currency: 'IDR',
+    material_return_id: '',
+  });
+
+  const [items, setItems] = useState<Omit<CreditNoteItem, 'id'>[]>([
+    {
+      product_id: '',
+      batch_id: '',
+      quantity: 0,
+      unit_price: 0,
+    },
+  ]);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    await loadCreditNotes();
+    await loadCustomers();
+    await loadProducts();
+    await loadApprovedReturns();
+    setLoading(false);
+  };
+
+  const loadCreditNotes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('credit_notes')
+        .select(`
+          *,
+          customers(company_name, address, city, phone, npwp, pharmacy_license),
+          material_returns(id, return_number, return_date, status, restocked)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setCreditNotes(data || []);
+    } catch (error) {
+      console.error('Error loading credit notes:', error);
+    }
+  };
+
+  const loadApprovedReturns = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('material_returns')
+        .select(`
+          id,
+          return_number,
+          return_date,
+          customer_id,
+          original_invoice_id,
+          financial_impact,
+          return_reason,
+          status,
+          restocked,
+          customers(company_name),
+          sales_invoices(invoice_number)
+        `)
+        .eq('status', 'approved')
+        .is('credit_note_id', null)
+        .order('return_date', { ascending: false });
+
+      if (error) throw error;
+      setApprovedReturns(data || []);
+    } catch (error) {
+      console.error('Error loading approved returns:', error);
+    }
+  };
+
+  const loadCustomers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('id, company_name')
+        .eq('is_active', true)
+        .order('company_name');
+
+      if (error) throw error;
+      setCustomers(data || []);
+    } catch (error) {
+      console.error('Error loading customers:', error);
+    }
+  };
+
+  const loadProducts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, product_name, product_code')
+        .eq('is_active', true)
+        .order('product_name');
+
+      if (error) throw error;
+      setProducts(data || []);
+    } catch (error) {
+      console.error('Error loading products:', error);
+    }
+  };
+
+  const loadBatchesForProduct = async (productId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('batches')
+        .select(`
+          id,
+          batch_number,
+          product_id,
+          current_stock,
+          product_sources!batches_make_id_fkey(supplier_name, grade)
+        `)
+        .eq('product_id', productId)
+        .eq('is_active', true)
+        .order('batch_number');
+
+      if (error) throw error;
+      setBatches((data || []).map(batch => ({
+        ...batch,
+        product_sources: normalizeNestedRelation(batch.product_sources),
+      })));
+    } catch (error) {
+      console.error('Error loading batches:', error);
+    }
+  };
+
+  const handleViewCreditNote = async (creditNote: CreditNote) => {
+    setSelectedCreditNote(creditNote);
+    try {
+      const { data, error } = await supabase
+        .from('credit_note_items')
+        .select(`
+          *,
+          products(product_name, product_code),
+          batches(
+            batch_number,
+            product_sources!batches_make_id_fkey(supplier_name, grade)
+          )
+        `)
+        .eq('credit_note_id', creditNote.id);
+
+      if (error) throw error;
+      setSelectedCreditNoteItems(data || []);
+      setViewModalOpen(true);
+    } catch (error) {
+      console.error('Error loading credit note items:', error);
+    }
+  };
+
+  const loadInvoicesForCustomer = async (customerId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('sales_invoices')
+        .select('id, invoice_number, invoice_date, total_amount')
+        .eq('customer_id', customerId)
+        .order('invoice_date', { ascending: false });
+
+      if (error) throw error;
+      setInvoices(data || []);
+    } catch (error) {
+      console.error('Error loading invoices:', error);
+    }
+  };
+
+  const handleCustomerChange = (customerId: string) => {
+    setFormData({ ...formData, customer_id: customerId, original_invoice_id: '', original_invoice_number: '' });
+    if (customerId) {
+      loadInvoicesForCustomer(customerId);
+    } else {
+      setInvoices([]);
+    }
+  };
+
+  const handleInvoiceChange = async (invoiceId: string) => {
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    setFormData({
+      ...formData,
+      original_invoice_id: invoiceId,
+      original_invoice_number: invoice?.invoice_number || '',
+    });
+
+    if (invoiceId) {
+      await loadInvoiceItems(invoiceId);
+    } else {
+      setItems([{ product_id: '', batch_id: '', quantity: 0, unit_price: 0 }]);
+    }
+  };
+
+  const loadInvoiceItems = async (invoiceId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('sales_invoice_items')
+        .select(`
+          product_id,
+          batch_id,
+          quantity,
+          unit_price,
+          products(product_name, product_code),
+          batches(
+            batch_number,
+            current_stock,
+            product_sources!batches_make_id_fkey(supplier_name, grade)
+          )
+        `)
+        .eq('invoice_id', invoiceId);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const invoiceItems = data.map(item => {
+          const batch = normalizeNestedRelation(item.batches);
+          return {
+          product_id: item.product_id,
+          batch_id: item.batch_id || '',
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          batches: batch ? {
+            ...batch,
+            product_sources: normalizeNestedRelation(batch.product_sources),
+          } : null,
+          };
+        });
+        setItems(invoiceItems);
+      }
+    } catch (error) {
+      console.error('Error loading invoice items:', error);
+    }
+  };
+
+  const addItem = () => {
+    setItems([...items, { product_id: '', batch_id: '', quantity: 0, unit_price: 0 }]);
+  };
+
+  const removeItem = (index: number) => {
+    if (items.length > 1) {
+      setItems(items.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateItem = (index: number, field: string, value: any) => {
+    const updated = [...items];
+    updated[index] = { ...updated[index], [field]: value };
+
+    if (field === 'product_id') {
+      loadBatchesForProduct(value);
+      updated[index].batch_id = '';
+    }
+
+    setItems(updated);
+  };
+
+  const calculateTotals = () => {
+    const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    const tax_amount = subtotal * 0.11;
+    const total_amount = subtotal + tax_amount;
+    return { subtotal, tax_amount, total_amount };
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.customer_id || !formData.reason || items.length === 0) {
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all required fields' });
+      return;
+    }
+
+    const hasInvalidItems = items.some(item => !item.product_id || !item.batch_id || item.quantity <= 0 || item.unit_price <= 0);
+    if (hasInvalidItems) {
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all item details' });
+      return;
+    }
+
+    try {
+      const totals = calculateTotals();
+
+      const insertPayload: Record<string, any> = {
+        credit_note_number: formData.credit_note_number,
+        credit_note_date: formData.credit_note_date,
+        customer_id: formData.customer_id,
+        original_invoice_id: formData.original_invoice_id || null,
+        original_invoice_number: formData.original_invoice_number || null,
+        reason: formData.reason,
+        notes: formData.notes || null,
+        currency: formData.currency,
+        ...totals,
+        created_by: user?.id,
+      };
+      if (formData.material_return_id) insertPayload.material_return_id = formData.material_return_id;
+
+      const { data: creditNoteData, error: creditNoteError } = await supabase
+        .from('credit_notes')
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (creditNoteError) throw creditNoteError;
+
+      const itemsWithCreditNoteId = items.map(({ products: _products, batches: _batches, ...item }) => ({
+        ...item,
+        credit_note_id: creditNoteData.id,
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('credit_note_items')
+        .insert(itemsWithCreditNoteId);
+
+      if (itemsError) throw itemsError;
+
+      showToast({ type: 'success', title: 'Created', message: 'Credit note created and is pending approval.' });
+      setModalOpen(false);
+      resetForm();
+      loadData();
+    } catch (error: any) {
+      console.error('Error creating credit note:', error);
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to create credit note. Please try again.' });
+    }
+  };
+
+  const handleApprove = async (id: string) => {
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this credit note? Stock will be adjusted accordingly.', variant: 'warning' })) return;
+
+    try {
+      const { error } = await supabase
+        .from('credit_notes')
+        .update({
+          status: 'approved',
+          approved_by: user?.id,
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+      showToast({ type: 'success', title: 'Success', message: 'Credit note approved successfully' });
+      loadData();
+    } catch (error: any) {
+      console.error('Error approving credit note:', error);
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to approve credit note' });
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    const reason = prompt('Enter reason for rejection:');
+    if (!reason) return;
+
+    try {
+      const { error } = await supabase
+        .from('credit_notes')
+        .update({
+          status: 'rejected',
+          approved_by: user?.id,
+          notes: reason,
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+      showToast({ type: 'success', title: 'Success', message: 'Credit note rejected' });
+      loadData();
+    } catch (error: any) {
+      console.error('Error rejecting credit note:', error);
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to reject credit note' });
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this credit note? This will reverse the stock adjustment.', variant: 'danger', confirmLabel: 'Delete' })) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('credit_notes')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      showToast({ type: 'success', title: 'Success', message: 'Credit note deleted successfully' });
+      loadData();
+    } catch (error: any) {
+      console.error('Error deleting credit note:', error);
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to delete credit note' });
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      credit_note_number: '',
+      credit_note_date: new Date().toISOString().split('T')[0],
+      customer_id: '',
+      original_invoice_id: '',
+      original_invoice_number: '',
+      reason: '',
+      notes: '',
+      currency: 'IDR',
+      material_return_id: '',
+    });
+    setItems([{ product_id: '', batch_id: '', quantity: 0, unit_price: 0 }]);
+  };
+
+  // Auto-populate form when navigated from Material Returns "Issue CN" button
+  useEffect(() => {
+    const returnId = sessionStorage.getItem('anzen_originating_return_id');
+    if (returnId && modalOpen) {
+      sessionStorage.removeItem('anzen_originating_return_id');
+    }
+  }, [modalOpen]);
+
+  useEffect(() => {
+    const returnId = sessionStorage.getItem('anzen_originating_return_id');
+    if (!returnId) return;
+    const ret = approvedReturns.find(r => r.id === returnId);
+    if (!ret) return;
+    sessionStorage.removeItem('anzen_originating_return_id');
+    setFormData(prev => ({
+      ...prev,
+      customer_id: ret.customer_id || '',
+      original_invoice_id: ret.original_invoice_id || '',
+      original_invoice_number: ret.sales_invoices?.invoice_number || '',
+      reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}`,
+      material_return_id: ret.id,
+    }));
+    if (ret.customer_id) loadInvoicesForCustomer(ret.customer_id);
+    if (ret.original_invoice_id) loadInvoiceItems(ret.original_invoice_id);
+    setModalOpen(true);
+  }, [approvedReturns]);
+
+  const canManage = profile?.role === 'admin' || profile?.role === 'sales' || profile?.role === 'warehouse' || profile?.role === 'manager';
+  const isManager = profile?.role === 'admin' || profile?.role === 'manager';
+
+  const columns = [
+    {
+      key: 'credit_note_number',
+      label: 'Credit Note #',
+      render: (value: any, cn: CreditNote) => cn.credit_note_number || 'Pending'
+    },
+    {
+      key: 'credit_note_date',
+      label: 'Date',
+      render: (value: any, cn: CreditNote) => formatDate(cn.credit_note_date)
+    },
+    {
+      key: 'customer',
+      label: 'Customer',
+      render: (value: any, cn: CreditNote) => cn.customers?.company_name || 'N/A'
+    },
+    {
+      key: 'original_invoice_number',
+      label: 'Original Invoice',
+      render: (value: any, cn: CreditNote) => cn.original_invoice_number || 'N/A'
+    },
+    {
+      key: 'linked_return',
+      label: 'Linked Return',
+      render: (value: any, cn: CreditNote) => cn.material_returns ? (
+        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
+          {cn.material_returns.return_number}
+        </span>
+      ) : <span className="text-gray-400 text-xs">—</span>
+    },
+    {
+      key: 'total_amount',
+      label: 'Amount',
+      render: (value: any, cn: CreditNote) => `${cn.currency} ${cn.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2 })}`
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (value: any, cn: CreditNote) => (
+        <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+          cn.status === 'approved' ? 'bg-green-100 text-green-800' :
+          cn.status === 'rejected' ? 'bg-red-100 text-red-800' :
+          'bg-yellow-100 text-yellow-800'
+        }`}>
+          {cn.status?.replace('_', ' ') || 'pending approval'}
+        </span>
+      )
+    },
+    {
+      key: 'reason',
+      label: 'Reason',
+      render: (value: any, cn: CreditNote) => (
+        <span className="text-sm text-gray-600 truncate max-w-xs block">
+          {cn.reason}
+        </span>
+      )
+    },
+  ];
+
+  const totals = calculateTotals();
+
+  return (
+    <Layout>
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('creditNotes.title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Manage credit notes for returns and adjustments after invoicing</p>
+          </div>
+          {canManage && (
+            <button
+              onClick={() => {
+                resetForm();
+                setModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-red-700 shadow-xs transition"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {t('creditNotes.createCreditNote')}
+            </button>
+          )}
+        </div>
+
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex gap-3">
+          <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-yellow-800">
+            <p className="font-medium">When to use Credit Notes:</p>
+            <p className="mt-1">Use Credit Notes for goods returned or price adjustments AFTER an invoice has been issued and filed for tax purposes. For physical returns before invoicing, use Material Returns instead.</p>
+          </div>
+        </div>
+
+        <DataTable
+          columns={columns}
+          data={creditNotes}
+          loading={loading}
+          actions={(creditNote) => (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleViewCreditNote(creditNote)}
+                className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                title="View Credit Note"
+              >
+                <Eye className="w-4 h-4" />
+              </button>
+
+              {isManager && (!creditNote.status || creditNote.status === 'pending_approval') && (
+                <>
+                  <button
+                    onClick={() => handleApprove(creditNote.id)}
+                    className="p-1 text-green-600 hover:bg-green-50 rounded"
+                    title="Approve Credit Note"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleReject(creditNote.id)}
+                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    title="Reject Credit Note"
+                  >
+                    <XCircle className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+
+              {canManage && (!creditNote.status || creditNote.status === 'pending_approval') && (
+                <button
+                  onClick={() => handleDelete(creditNote.id)}
+                  className="p-1 text-red-600 hover:bg-red-50 rounded"
+                  title="Delete Credit Note"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+        />
+
+        <Modal
+          isOpen={modalOpen}
+          onClose={() => {
+            setModalOpen(false);
+            resetForm();
+          }}
+          title="Create Credit Note"
+        >
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <SapRow>
+              <FloatingField label="Customer" required span={6} filled={!!formData.customer_id}>
+                <SearchableSelect
+                  value={formData.customer_id}
+                  onChange={(val) => handleCustomerChange(val)}
+                  options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+                  placeholder="Select Customer"
+                />
+              </FloatingField>
+
+              <FloatingField label="Original Invoice (Optional)" span={6} filled={!!formData.original_invoice_id}>
+                <select name="original_invoice_optional" aria-label="Original Invoice (Optional)"
+                  value={formData.original_invoice_id}
+                  onChange={(e) => handleInvoiceChange(e.target.value)}
+                  disabled={!formData.customer_id}
+                  className={FLOAT_INPUT}
+                >
+                  <option value="">Select Invoice</option>
+                  {invoices.map((invoice) => (
+                    <option key={invoice.id} value={invoice.id}>
+                      {invoice.invoice_number} - {formatDate(invoice.invoice_date)} - Rp {invoice.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </option>
+                  ))}
+                </select>
+              </FloatingField>
+            </SapRow>
+
+            {approvedReturns.filter(r => !formData.customer_id || r.customer_id === formData.customer_id).length > 0 && (
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <p className="text-xs text-purple-600 mb-2">
+                  If this Credit Note is being issued because of a Material Return, link it here for complete financial traceability.
+                </p>
+                <SapRow>
+                  <FloatingField label="Link to Approved Material Return" span={12} filled={!!formData.material_return_id}>
+                    <select
+                      name="material_return_id"
+                      aria-label="Link to Approved Material Return"
+                      value={formData.material_return_id}
+                      onChange={(e) => {
+                        const retId = e.target.value;
+                        const ret = approvedReturns.find(r => r.id === retId);
+                        setFormData(prev => ({
+                          ...prev,
+                          material_return_id: retId,
+                          ...(ret && !formData.customer_id ? { customer_id: ret.customer_id } : {}),
+                          ...(ret?.original_invoice_id && !formData.original_invoice_id ? {
+                            original_invoice_id: ret.original_invoice_id,
+                            original_invoice_number: ret.sales_invoices?.invoice_number || '',
+                          } : {}),
+                          ...(ret && !formData.reason ? { reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}` } : {}),
+                        }));
+                        if (ret?.customer_id && !formData.customer_id) loadInvoicesForCustomer(ret.customer_id);
+                        if (ret?.original_invoice_id && !formData.original_invoice_id) loadInvoiceItems(ret.original_invoice_id);
+                      }}
+                      className={FLOAT_INPUT}
+                    >
+                      <option value="">— No linked return —</option>
+                      {approvedReturns
+                        .filter(r => !formData.customer_id || r.customer_id === formData.customer_id)
+                        .map(ret => (
+                          <option key={ret.id} value={ret.id}>
+                            {ret.return_number} — {ret.customers?.company_name || 'Unknown'} — Rp {(ret.financial_impact || 0).toLocaleString('id-ID')}
+                            {ret.sales_invoices?.invoice_number ? ` (Invoice: ${ret.sales_invoices.invoice_number})` : ''}
+                          </option>
+                        ))
+                      }
+                    </select>
+                  </FloatingField>
+                </SapRow>
+              </div>
+            )}
+
+            <SapRow>
+              <FloatingField label="Credit Note Date" required span={6} filled={!!formData.credit_note_date}>
+                <input name="credit_note_date" aria-label="Credit Note Date"
+                  type="date"
+                  value={formData.credit_note_date}
+                  onChange={(e) => setFormData({ ...formData, credit_note_date: e.target.value })}
+                  required
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+
+              <FloatingField label="Currency" span={6} filled={!!formData.currency}>
+                <select name="currency" aria-label="Currency"
+                  value={formData.currency}
+                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                  className={FLOAT_INPUT}
+                >
+                  <option value="IDR">IDR</option>
+                  <option value="USD">USD</option>
+                </select>
+              </FloatingField>
+            </SapRow>
+
+            <SapRow>
+              <FloatingField label="Reason for Credit Note" required span={12} textarea filled={!!formData.reason}>
+                <textarea name="reason_for_credit_note" aria-label="Reason for Credit Note"
+                  value={formData.reason}
+                  onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+                  required
+                  rows={2}
+                  placeholder="e.g., Goods returned due to quality issue, Price adjustment, etc."
+                  className={FLOAT_TEXTAREA}
+                />
+              </FloatingField>
+            </SapRow>
+
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-semibold text-gray-900">Items Being Credited</h4>
+                {!formData.original_invoice_id && (
+                  <button
+                    type="button"
+                    onClick={addItem}
+                    className="text-sm text-red-600 hover:text-red-700 font-medium"
+                  >
+                    + Add Item
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {items.map((item, index) => {
+                  const selectedBatch = batches.find(batch => batch.id === item.batch_id) || item.batches;
+                  const makeName = selectedBatch?.product_sources?.supplier_name || 'Not recorded';
+
+                  return (
+                  <div key={index} className="p-3 border border-gray-200 rounded-lg space-y-2">
+                    <SapRow>
+                      <FloatingField label="Product" required span={6} filled={!!item.product_id}>
+                        <select name="product_id" aria-label="Product Id"
+                          value={item.product_id}
+                          onChange={(e) => updateItem(index, 'product_id', e.target.value)}
+                          required
+                          disabled={!!formData.original_invoice_id}
+                          className={FLOAT_INPUT}
+                        >
+                          <option value="">Select Product</option>
+                          {products.map((product) => (
+                            <option key={product.id} value={product.id}>
+                              {product.product_name} ({product.product_code})
+                            </option>
+                          ))}
+                        </select>
+                      </FloatingField>
+
+                      <FloatingField label="Batch" required span={6} filled={!!item.batch_id} hint={item.batch_id ? `Make: ${makeName}` : undefined}>
+                        <select name="batch_id" aria-label="Batch Id"
+                          value={item.batch_id}
+                          onChange={(e) => updateItem(index, 'batch_id', e.target.value)}
+                          required
+                          disabled={!item.product_id || !!formData.original_invoice_id}
+                          className={FLOAT_INPUT}
+                        >
+                          <option value="">Select Batch</option>
+                          {batches
+                            .filter(b => b.product_id === item.product_id)
+                            .map((batch) => (
+                              <option key={batch.id} value={batch.id}>
+                                {batch.batch_number} (Stock: {batch.current_stock})
+                              </option>
+                            ))}
+                        </select>
+                      </FloatingField>
+
+                      <FloatingField label="Quantity (Kg)" required span={6} filled={!!item.quantity}>
+                        <input name="quantity_kg" aria-label="Quantity (Kg)"
+                          type="number"
+                          step="0.001"
+                          placeholder="Quantity in Kg"
+                          value={item.quantity || ''}
+                          onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 0)}
+                          required
+                          min="0.001"
+                          className={FLOAT_INPUT}
+                        />
+                      </FloatingField>
+
+                      <FloatingField label="Unit Price (per Kg)" required span={6} filled={!!item.unit_price}>
+                        <MoneyInput
+                          placeholder="Price per Kg"
+                          value={item.unit_price}
+                          onChange={(amount) => updateItem(index, 'unit_price', amount)}
+                          required
+                          min="0"
+                          className={FLOAT_INPUT}
+                          maximumFractionDigits={4}
+                        />
+                      </FloatingField>
+                    </SapRow>
+
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">
+                        Line Total: <span className="font-semibold">{formData.currency} {(item.quantity * item.unit_price).toLocaleString('id-ID', { minimumFractionDigits: 2 })}</span>
+                      </span>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeItem(index)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Subtotal:</span>
+                  <span className="font-semibold">{formData.currency} {totals.subtotal.toLocaleString('id-ID', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-lg font-bold border-t pt-2">
+                  <span>Total Credit:</span>
+                  <span className="text-red-600">{formData.currency} {totals.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+            </div>
+
+            <SapRow>
+              <FloatingField label="Additional Notes" span={12} textarea filled={!!formData.notes}>
+                <textarea name="additional_notes" aria-label="Additional Notes"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  rows={2}
+                  className={FLOAT_TEXTAREA}
+                />
+              </FloatingField>
+            </SapRow>
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalOpen(false);
+                  resetForm();
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+              >
+                Create Credit Note
+              </button>
+            </div>
+          </form>
+        </Modal>
+
+        {viewModalOpen && selectedCreditNote && (
+          <CreditNoteView
+            creditNote={selectedCreditNote}
+            items={selectedCreditNoteItems}
+            onClose={() => {
+              setViewModalOpen(false);
+              setSelectedCreditNote(null);
+              setSelectedCreditNoteItems([]);
+            }}
+            companyProfile={(selectedCreditNote as any).company_snapshot ?? undefined}
+          />
+        )}
+      </div>
+    </Layout>
+  );
+}

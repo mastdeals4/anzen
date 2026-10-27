@@ -1,0 +1,1480 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../../../lib/supabase';
+import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
+import { showToast } from '../../ToastNotification';
+import { getSignedUrlCached } from '../../../utils/signedUrlCache';
+import {
+  Inbox,
+  Mail,
+  MessageSquare,
+  Search,
+  RefreshCw,
+  Send,
+  Paperclip,
+  CheckCircle2,
+  AlertTriangle,
+  User,
+  ArrowRight,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Download,
+  Eye,
+  Sparkles,
+  Link as LinkIcon,
+  Tag,
+  Clock,
+  Check,
+  X,
+  Languages,
+  Globe,
+  Bot,
+  Zap,
+} from 'lucide-react';
+import { analyzeWhatsAppMessage } from '../../../services/crm/whatsappIntelligenceService';
+
+export type ChannelFilter = 'all' | 'email' | 'whatsapp' | 'unlinked';
+export type ActiveMailbox = 'sales@avira.co.id' | 'kunal@avira.co.id';
+export type FolderFilter = 'inbox' | 'sent';
+
+export interface InboxConversation {
+  id: string;
+  channel: 'email' | 'whatsapp';
+  senderName: string;
+  senderAddress: string;
+  recipientAddress?: string;
+  subject: string;
+  snippet: string;
+  timestamp: string;
+  unread: boolean;
+  needsAction: boolean;
+  actionReason?: string;
+  inquiryId?: string | null;
+  inquiryNumber?: string | null;
+  productName?: string | null;
+  customerName?: string | null;
+  customerId?: string | null;
+  ownerName?: string | null;
+  direction?: 'inbound' | 'outbound';
+  mailboxAccount?: string;
+  // Specific payload IDs
+  gmailMessageId?: string;
+  gmailThreadId?: string;
+  whatsAppConversationId?: string;
+  // Universal WhatsApp Intelligence
+  language?: 'id' | 'en' | 'mixed';
+  languageLabel?: string;
+  intent?: string;
+  topic?: string;
+  latestSummary?: string;
+  englishTranslation?: string;
+  linkedContextType?: string;
+  entities?: Record<string, any>;
+  suggestedReply?: string;
+}
+
+export interface ThreadMessage {
+  id: string;
+  from: string;
+  to?: string;
+  cc?: string;
+  date: string | null;
+  subject?: string;
+  body: string;
+  bodyHtml?: string;
+  snippet?: string;
+  attachments?: Array<{
+    filename: string;
+    mimeType?: string;
+    size?: number;
+    attachmentId?: string;
+    storagePath?: string | null;
+    documentType?: string;
+  }>;
+  direction?: 'inbound' | 'outbound';
+  language?: 'id' | 'en' | 'mixed';
+  englishTranslation?: string;
+  entities?: Record<string, any>;
+  intent?: string;
+  aiSummary?: string;
+  aiProposal?: Record<string, any>;
+}
+
+interface Props {
+  onOpenInquiry?: (inquiryId: string) => void;
+  onOpenCustomer?: (customerId: string) => void;
+  onCreateInquiryFromMessage?: (
+    msg: { subject: string; body: string; fromEmail: string; fromName: string; id?: string },
+    parsed?: any,
+  ) => void;
+}
+
+export function CrmOmnichannelInbox({
+  onOpenInquiry,
+  onOpenCustomer,
+  onCreateInquiryFromMessage,
+}: Props) {
+  const [activeMailbox, setActiveMailbox] = useState<ActiveMailbox>('sales@avira.co.id');
+  const [folderFilter, setFolderFilter] = useState<FolderFilter>('inbox');
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all');
+  const [conversations, setConversations] = useState<InboxConversation[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+
+  // Detail view state
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [threadMessages, setThreadMessages] = useState<ThreadMessage[]>([]);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [expandedMsgIds, setExpandedMsgIds] = useState<Record<string, boolean>>({});
+
+  // Reply states
+  const [replyText, setReplyText] = useState('');
+  const [replySubject, setReplySubject] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
+
+  // Link dialog states
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [allInquiries, setAllInquiries] = useState<Array<{ id: string; inquiry_number: string; company_name: string; product_name: string }>>([]);
+  const [selectedInquiryToLink, setSelectedInquiryToLink] = useState('');
+  const [isLinking, setIsLinking] = useState(false);
+  const [isExtractingAi, setIsExtractingAi] = useState(false);
+
+  const handleExtractAndCreate = async (conv: InboxConversation) => {
+    setIsExtractingAi(true);
+    try {
+      const latestMsg = threadMessages[threadMessages.length - 1];
+      const emailBody = latestMsg?.body || conv.snippet;
+      const emailSubject = conv.subject || latestMsg?.subject || '';
+      const fromEmail = conv.senderAddress || latestMsg?.from || '';
+      const fromName = conv.senderName || '';
+
+      let parsedResult = null;
+      try {
+        const { data, error } = await supabase.functions.invoke('parse-pharma-email', {
+          body: {
+            emailSubject,
+            emailBody,
+            fromEmail,
+            fromName,
+          },
+        });
+        if (!error && data) {
+          parsedResult = data.data || data.fallbackData || data;
+        }
+      } catch (invokeErr) {
+        console.warn('AI extraction invoke failed, proceeding with raw email:', invokeErr);
+      }
+
+      if (onCreateInquiryFromMessage) {
+        onCreateInquiryFromMessage(
+          {
+            subject: emailSubject,
+            body: emailBody,
+            fromEmail,
+            fromName,
+            id: conv.id,
+          },
+          parsedResult,
+        );
+      }
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Extraction Error',
+        message: err.message || 'Failed to extract inquiry details.',
+      });
+    } finally {
+      setIsExtractingAi(false);
+    }
+  };
+
+  // Load conversations list
+  const loadConversations = async () => {
+    setLoadingList(true);
+    setListError(null);
+    try {
+      const items: InboxConversation[] = [];
+
+      // 1. Fetch Email conversations from Gmail API via edge function based on activeMailbox & folder
+      try {
+        const gmailQuery = folderFilter === 'sent' ? 'in:sent' : 'in:inbox';
+        const { data: gmailData, error: gmailError } = await supabase.functions.invoke('gmail-inbox-list', {
+          body: {
+            account: activeMailbox === 'kunal@avira.co.id' ? 'pricing' : 'crm',
+            emailAddress: activeMailbox,
+            query: gmailQuery,
+            maxResults: 40,
+          },
+        });
+
+        if (!gmailError && gmailData?.success && Array.isArray(gmailData.messages)) {
+          // Pre-fetch inquiry associations
+          const messageIds = gmailData.messages.map((m: any) => m.messageId).filter(Boolean);
+          const { data: linkedReviews } = await supabase
+            .from('kunal_ai_email_reviews')
+            .select('id, gmail_message_id, gmail_thread_id, inquiry_id, product_name, status, action_reason, crm_inquiries(inquiry_number, company_name)')
+            .in('gmail_message_id', messageIds);
+
+          const reviewMap = new Map((linkedReviews || []).map((r: any) => [r.gmail_message_id, r]));
+
+          for (const msg of gmailData.messages) {
+            const review: any = reviewMap.get(msg.messageId);
+            const inq = review?.crm_inquiries;
+            const isUnlinked = !msg.matchedInquiryId && !review?.inquiry_id;
+
+            // Extract sender name
+            const fromMatch = (msg.from || '').match(/^(.*?)\s*<(.+?)>$/);
+            const senderName = fromMatch ? fromMatch[1].replace(/^"|"$/g, '').trim() : msg.from;
+            const senderAddress = fromMatch ? fromMatch[2].trim() : msg.from;
+            const isOutbound = ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+              (senderAddress || '').toLowerCase().includes(internal)
+            );
+
+            items.push({
+              id: `email-${msg.messageId}`,
+              channel: 'email',
+              direction: isOutbound ? 'outbound' : 'inbound',
+              mailboxAccount: activeMailbox,
+              senderName: senderName || 'Unknown Sender',
+              senderAddress: senderAddress || msg.from,
+              recipientAddress: msg.to,
+              subject: msg.subject || '(No Subject)',
+              snippet: msg.snippet || '',
+              timestamp: msg.date || new Date().toISOString(),
+              unread: (msg.labels || []).includes('UNREAD'),
+              needsAction: review?.status === 'Needs Review' || review?.status === 'Price Received',
+              actionReason: review?.action_reason || undefined,
+              inquiryId: review?.inquiry_id || msg.matchedInquiryId || null,
+              inquiryNumber: inq?.inquiry_number || null,
+              productName: review?.product_name || inq?.product_name || null,
+              customerName: inq?.company_name || null,
+              gmailMessageId: msg.messageId,
+              gmailThreadId: msg.threadId || msg.messageId,
+            });
+          }
+        }
+      } catch (gErr) {
+        console.warn('[CrmOmnichannelInbox] Gmail fetch warning:', gErr);
+      }
+
+      // 2. Fetch WhatsApp & Canonical conversations
+      try {
+        const { data: convRows } = await supabase
+          .from('enquiry_conversations')
+          .select(`
+            id,
+            channel,
+            title,
+            metadata,
+            participant_identifiers,
+            last_message_at,
+            customer_id,
+            customers(id, company_name),
+            enquiry_conversation_links(
+              inquiry_id,
+              crm_inquiries(inquiry_number, company_name, product_name)
+            ),
+            enquiry_conversation_messages(
+              id,
+              sender_name,
+              sender_address,
+              body_text,
+              received_or_sent_at,
+              direction,
+              ai_processed,
+              ai_summary,
+              ai_proposal,
+              attachments
+            )
+          `)
+          .order('last_message_at', { ascending: false })
+          .limit(50);
+
+        if (Array.isArray(convRows)) {
+          for (const c of convRows) {
+            const msgs = (c.enquiry_conversation_messages || []) as any[];
+            const lastMsg = msgs[msgs.length - 1];
+            const link = c.enquiry_conversation_links?.[0];
+            const inq: any = Array.isArray(link?.crm_inquiries) ? link.crm_inquiries[0] : link?.crm_inquiries;
+            const cust: any = Array.isArray(c.customers) ? c.customers[0] : c.customers;
+
+            const meta = (c.metadata || {}) as Record<string, any>;
+            let intel = lastMsg?.ai_proposal || null;
+            if (!intel && lastMsg?.body_text) {
+              intel = analyzeWhatsAppMessage(lastMsg.body_text, {
+                senderName: lastMsg.sender_name || c.title,
+                senderPhone: lastMsg.sender_address,
+                customerCompanyName: inq?.company_name || cust?.company_name,
+                linkedInquiryNumber: inq?.inquiry_number,
+                hasAttachments: lastMsg.attachments?.length > 0,
+              });
+            }
+
+            const language = meta.language || intel?.language || 'id';
+            const intent = meta.intent || intel?.intent || 'General Information';
+            const topic = meta.topic || intel?.topic || c.title || 'WhatsApp Conversation';
+            const needsAction = meta.needs_action ?? intel?.needs_action ?? false;
+            const actionRequired = meta.action_required || intel?.action_required || null;
+            const latestSummary = meta.latest_summary || intel?.running_summary || lastMsg?.ai_summary || null;
+            const englishTranslation = meta.english_translation || intel?.english_translation || null;
+            const linkedContextType = inq ? 'Inquiry' : (cust ? 'Customer' : (meta.linked_context_type || intel?.linked_context_type || 'Unlinked'));
+            const customerName = inq?.company_name || cust?.company_name || null;
+            const suggestedReply = meta.suggested_reply || intel?.suggested_reply || null;
+
+            const isOutbound = lastMsg?.direction === 'outbound' || ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+              (lastMsg?.sender_address || '').toLowerCase().includes(internal)
+            );
+            const recipAddr = Array.isArray(lastMsg?.recipient_addresses) ? lastMsg.recipient_addresses[0] : (lastMsg?.recipient_addresses || '');
+            const extMsgId = lastMsg?.external_message_id || meta.gmail_message_id || meta.message_id || null;
+            const extThreadId = meta.gmail_thread_id || meta.thread_id || extMsgId || null;
+
+            // Determine canonical conversation mailbox ownership
+            const allParticipants = [lastMsg?.sender_address, recipAddr, ...(c.participant_identifiers || [])].filter(Boolean).map((s: string) => s.toLowerCase());
+            const canonicalMailbox = allParticipants.some((p: string) => p.includes('kunal@avira.co.id'))
+              ? 'kunal@avira.co.id'
+              : 'sales@avira.co.id';
+
+            items.push({
+              id: `wa-${c.id}`,
+              channel: c.channel === 'whatsapp' ? 'whatsapp' : 'email',
+              direction: isOutbound ? 'outbound' : 'inbound',
+              mailboxAccount: canonicalMailbox,
+              senderName: isOutbound ? (recipAddr || customerName || c.title || 'Contact') : (customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer'),
+              senderAddress: lastMsg?.sender_address || '',
+              recipientAddress: recipAddr,
+              subject: topic,
+              snippet: latestSummary || lastMsg?.body_text || '(No messages)',
+              timestamp: c.last_message_at || lastMsg?.received_or_sent_at || new Date().toISOString(),
+              unread: false,
+              needsAction,
+              actionReason: actionRequired || undefined,
+              inquiryId: link?.inquiry_id || null,
+              inquiryNumber: inq?.inquiry_number || null,
+              productName: inq?.product_name || intel?.entities?.product || null,
+              customerName,
+              customerId: c.customer_id || null,
+              whatsAppConversationId: c.id,
+              gmailMessageId: extMsgId,
+              gmailThreadId: extThreadId,
+              language,
+              languageLabel: language === 'id' ? 'Indonesian' : (language === 'en' ? 'English' : 'Mixed ID/EN'),
+              intent,
+              topic,
+              latestSummary,
+              englishTranslation,
+              linkedContextType,
+              entities: intel?.entities || meta.entities || undefined,
+              suggestedReply,
+            });
+          }
+        }
+      } catch (wErr) {
+        console.warn('[CrmOmnichannelInbox] WhatsApp fetch warning:', wErr);
+      }
+
+      // Sort by newest timestamp
+      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setConversations(items);
+
+      if (items.length > 0 && !selectedId) {
+        setSelectedId(items[0].id);
+      }
+    } catch (err: any) {
+      console.error('[CrmOmnichannelInbox] Load error:', err);
+      setListError(err.message || 'Failed to load conversations');
+    } finally {
+      setLoadingList(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConversations();
+  }, [activeMailbox, folderFilter]);
+
+  // Pre-fetch inquiry list for quick linking
+  useEffect(() => {
+    supabase
+      .from('crm_inquiries')
+      .select('id, inquiry_number, company_name, product_name')
+      .order('created_at', { ascending: false })
+      .limit(100)
+      .then(({ data }) => {
+        if (data) setAllInquiries(data);
+      });
+  }, []);
+
+  // Filter conversations
+  const filteredConversations = useMemo(() => {
+    return conversations.filter(c => {
+      // 1. Mailbox account filter: if item belongs to a specific mailbox, ensure it matches activeMailbox
+      if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) {
+        return false;
+      }
+
+      // 2. Folder filter: In Inbox, show inbound messages. In Sent, show outbound messages.
+      if (c.channel === 'email') {
+        if (folderFilter === 'inbox' && c.direction === 'outbound') return false;
+        if (folderFilter === 'sent' && c.direction !== 'outbound') return false;
+      }
+
+      // 3. Channel filter
+      if (channelFilter === 'email' && c.channel !== 'email') return false;
+      if (channelFilter === 'whatsapp' && c.channel !== 'whatsapp') return false;
+      if (channelFilter === 'unlinked' && c.inquiryId) return false;
+
+      // Text search
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesText =
+          c.senderName.toLowerCase().includes(q) ||
+          c.senderAddress.toLowerCase().includes(q) ||
+          c.subject.toLowerCase().includes(q) ||
+          c.snippet.toLowerCase().includes(q) ||
+          (c.inquiryNumber && c.inquiryNumber.toLowerCase().includes(q)) ||
+          (c.productName && c.productName.toLowerCase().includes(q)) ||
+          (c.customerName && c.customerName.toLowerCase().includes(q));
+        if (!matchesText) return false;
+      }
+
+      return true;
+    });
+  }, [conversations, activeMailbox, folderFilter, channelFilter, searchQuery]);
+
+  const selectedConversation = useMemo(() => {
+    return conversations.find(c => c.id === selectedId) || null;
+  }, [conversations, selectedId]);
+
+  // Load selected conversation thread
+  const loadThread = useCallback(async () => {
+    if (!selectedConversation) {
+      setThreadMessages([]);
+      return;
+    }
+
+    setLoadingDetail(true);
+    setDetailError(null);
+    setReplyText('');
+    setReplySubject(selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+
+    try {
+      if (selectedConversation.channel === 'email') {
+        let fetchedMsgs: ThreadMessage[] = [];
+        let fetchError: string | null = null;
+
+        // 1. Try live Gmail retrieval if threadId or messageId is present
+        if (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId) {
+          try {
+            const threadMailbox = selectedConversation.mailboxAccount || activeMailbox;
+            const { data, error } = await supabase.functions.invoke('gmail-inbox-message', {
+              body: {
+                account: threadMailbox === 'kunal@avira.co.id' ? 'pricing' : 'crm',
+                emailAddress: threadMailbox,
+                threadId: selectedConversation.gmailThreadId,
+                messageId: selectedConversation.gmailMessageId,
+                includeThread: true,
+              },
+            });
+
+            if (error) {
+              let errMsg = error.message;
+              if ('context' in error && error.context) {
+                try {
+                  const errBody = await (error.context as Response).clone().json();
+                  errMsg = errBody?.error || errBody?.code || errMsg;
+                } catch { /* ignore */ }
+              }
+              fetchError = errMsg;
+            } else if (!data?.success) {
+              fetchError = data?.error || data?.code || 'Gmail message not found';
+            } else if (Array.isArray(data.thread_messages) && data.thread_messages.length > 0) {
+              fetchedMsgs = data.thread_messages.map((m: any) => ({
+                id: m.messageId,
+                from: m.from,
+                to: m.to,
+                cc: m.cc,
+                date: m.date,
+                subject: m.subject,
+                body: m.bodyText || m.body || m.snippet || '(No body text)',
+                bodyHtml: m.bodyHtml,
+                snippet: m.snippet,
+                attachments: m.attachments || [],
+                direction: ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+                  (m.from || '').toLowerCase().includes(internal)
+                ) ? 'outbound' : 'inbound',
+              }));
+            }
+          } catch (invokeErr: any) {
+            fetchError = invokeErr.message || 'Error connecting to Gmail service';
+          }
+        }
+
+        // 2. If Gmail didn't return messages, fall back to canonical database tables
+        if (fetchedMsgs.length === 0) {
+          // Check enquiry_conversation_messages
+          if (selectedConversation.whatsAppConversationId) {
+            const { data: convMsgs } = await supabase
+              .from('enquiry_conversation_messages')
+              .select('*')
+              .eq('conversation_id', selectedConversation.whatsAppConversationId)
+              .order('received_or_sent_at', { ascending: true });
+
+            if (Array.isArray(convMsgs) && convMsgs.length > 0) {
+              fetchedMsgs = convMsgs.map((m: any) => ({
+                id: m.id,
+                from: m.sender_name ? `${m.sender_name} <${m.sender_address}>` : m.sender_address,
+                to: Array.isArray(m.recipient_addresses) ? m.recipient_addresses.join(', ') : m.recipient_addresses,
+                date: m.received_or_sent_at,
+                subject: m.subject || selectedConversation.subject,
+                body: m.body_text || m.body_html || '(No body text)',
+                bodyHtml: m.body_html,
+                direction: m.direction || 'inbound',
+                attachments: m.attachments || [],
+              }));
+            }
+          }
+
+          // Also check crm_email_inbox for matching thread or message ID
+          if (fetchedMsgs.length === 0 && (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId)) {
+            let q = supabase.from('crm_email_inbox').select('*');
+            if (selectedConversation.gmailThreadId) {
+              q = q.eq('thread_id', selectedConversation.gmailThreadId);
+            } else {
+              q = q.eq('message_id', selectedConversation.gmailMessageId);
+            }
+            const { data: inboxRows } = await q.order('received_date', { ascending: true });
+            if (Array.isArray(inboxRows) && inboxRows.length > 0) {
+              fetchedMsgs = inboxRows.map((r: any) => ({
+                id: r.message_id || r.id,
+                from: r.from_name ? `${r.from_name} <${r.from_email}>` : r.from_email,
+                to: r.to_email,
+                date: r.received_date,
+                subject: r.subject,
+                body: r.body || r.body_html || '(No body text)',
+                bodyHtml: r.body_html,
+                direction: ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+                  (r.from_email || '').toLowerCase().includes(internal)
+                ) ? 'outbound' : 'inbound',
+                attachments: [],
+              }));
+            }
+          }
+        }
+
+        if (fetchedMsgs.length > 0) {
+          setThreadMessages(fetchedMsgs);
+          const exp: Record<string, boolean> = {};
+          exp[fetchedMsgs[fetchedMsgs.length - 1].id] = true;
+          setExpandedMsgIds(exp);
+        } else {
+          setThreadMessages([]);
+          setDetailError(fetchError || 'Conversation messages could not be retrieved from Gmail or local records.');
+        }
+      } else {
+        // WhatsApp conversation from canonical tables
+        const { data: waMsgs, error: waError } = await supabase
+          .from('enquiry_conversation_messages')
+          .select('*')
+          .eq('conversation_id', selectedConversation.whatsAppConversationId)
+          .order('received_or_sent_at', { ascending: true });
+
+        if (waError) throw waError;
+
+        const msgs: ThreadMessage[] = (waMsgs || []).map((m: any) => {
+          let intel = m.ai_proposal || null;
+          if (!intel && m.body_text) {
+            intel = analyzeWhatsAppMessage(m.body_text, {
+              senderName: m.sender_name,
+              senderPhone: m.sender_address,
+              hasAttachments: m.attachments?.length > 0,
+            });
+          }
+
+          return {
+            id: m.id,
+            from: m.sender_name || m.sender_address,
+            to: m.recipient_addresses?.[0],
+            date: m.received_or_sent_at,
+            body: m.body_text || m.body_html || '(No text)',
+            bodyHtml: m.body_html,
+            direction: m.direction || 'inbound',
+            attachments: m.attachments || [],
+            language: intel?.language,
+            englishTranslation: intel?.english_translation,
+            entities: intel?.entities,
+            intent: intel?.intent,
+            aiSummary: intel?.running_summary || m.ai_summary,
+            aiProposal: intel,
+          };
+        });
+
+        setThreadMessages(msgs);
+
+        // Expand latest message by default
+        const exp: Record<string, boolean> = {};
+        if (msgs.length > 0) {
+          exp[msgs[msgs.length - 1].id] = true;
+        }
+        setExpandedMsgIds(exp);
+      }
+    } catch (err: any) {
+      console.error('[CrmOmnichannelInbox] Thread load error:', err);
+      setDetailError(err.message || 'Could not load complete conversation thread');
+    } finally {
+      setLoadingDetail(false);
+    }
+  }, [selectedConversation]);
+
+  useEffect(() => {
+    loadThread();
+  }, [loadThread]);
+
+  const getReplyRecipient = () => {
+    if (!selectedConversation) return '';
+    const isOutbound = selectedConversation.direction === 'outbound' ||
+      ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+        (selectedConversation.senderAddress || '').toLowerCase().includes(internal)
+      );
+    if (isOutbound && selectedConversation.recipientAddress) {
+      return selectedConversation.recipientAddress;
+    }
+    return selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
+  };
+
+  // Handle Send Reply
+  const handleSendReply = async () => {
+    if (!selectedConversation || !replyText.trim()) return;
+    setSendingReply(true);
+    try {
+      if (selectedConversation.channel === 'whatsapp') {
+        const res = await EnquiryWhatsAppService.sendWhatsAppMessage({
+          conversationId: selectedConversation.whatsAppConversationId || '',
+          text: replyText.trim(),
+        });
+
+        if (!res.success) throw new Error(res.error || 'Failed to dispatch WhatsApp reply');
+
+        showToast({ type: 'success', title: 'WhatsApp Sent', message: 'Reply sent successfully.' });
+        setReplyText('');
+      } else {
+        // Email reply via send-bulk-email from appropriate mailbox (preserving sourcing vs quote rules)
+        const replyRecipient = getReplyRecipient();
+        if (!replyRecipient) {
+          throw new Error('No recipient email address found for this conversation');
+        }
+        const replySubj = replySubject || (selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+        const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase();
+        const isPricingReply = replySender.includes('kunal@avira.co.id');
+        const resolvedSender = isPricingReply ? 'kunal@avira.co.id' : 'sales@avira.co.id';
+        const senderMailboxParam = isPricingReply
+          ? { requiredSenderEmail: 'kunal@avira.co.id' }
+          : { requiredSenderEmail: 'sales@avira.co.id' };
+
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
+          body: {
+            ...senderMailboxParam,
+            senderEmail: resolvedSender,
+            replyTo: resolvedSender,
+            workflowType: isPricingReply ? 'pricing_sourcing' : 'crm_bulk_email',
+            toEmails: [replyRecipient],
+            subject: replySubj,
+            body: replyText.trim().replace(/\n/g, '<br/>'),
+            isHtml: true,
+            threadId: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId || undefined,
+            inReplyTo: selectedConversation.gmailMessageId || undefined,
+            references: selectedConversation.gmailMessageId || undefined,
+            inquiryId: selectedConversation.inquiryId || undefined,
+          },
+        });
+
+        if (fnErr || !fnData?.success) {
+          throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
+        }
+
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from ${replySender} to ${replyRecipient}` });
+        setReplyText('');
+      }
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Send Failed', message: err.message || 'Could not send message' });
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  // Handle Link to Inquiry
+  const handleConfirmLink = async () => {
+    if (!selectedConversation || !selectedInquiryToLink) return;
+    setIsLinking(true);
+    try {
+      const inq = allInquiries.find(i => i.id === selectedInquiryToLink);
+      if (!inq) throw new Error('Selected inquiry not found');
+
+      if (selectedConversation.gmailMessageId) {
+        await supabase.from('crm_email_inbox').upsert({
+          message_id: selectedConversation.gmailMessageId,
+          thread_id: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId,
+          from_email: selectedConversation.senderAddress,
+          from_name: selectedConversation.senderName,
+          to_email: selectedConversation.recipientAddress || '',
+          subject: selectedConversation.subject,
+          body: selectedConversation.snippet,
+          received_date: selectedConversation.timestamp,
+          is_processed: true,
+          converted_to_inquiry: inq.id,
+        }, { onConflict: 'message_id' });
+
+        await supabase.from('crm_email_activities').insert({
+          inquiry_id: inq.id,
+          email_type: 'received',
+          from_email: selectedConversation.senderAddress,
+          to_email: selectedConversation.recipientAddress ? [selectedConversation.recipientAddress] : [],
+          subject: selectedConversation.subject,
+          body: selectedConversation.snippet,
+          sent_date: selectedConversation.timestamp,
+        });
+      }
+
+      // Update local state
+      setConversations(prev =>
+        prev.map(c =>
+          c.id === selectedConversation.id
+            ? { ...c, inquiryId: inq.id, inquiryNumber: inq.inquiry_number, customerName: inq.company_name, productName: inq.product_name }
+            : c
+        )
+      );
+
+      setShowLinkDialog(false);
+      showToast({ type: 'success', title: 'Inquiry Linked', message: `Successfully linked to ${inq.inquiry_number}` });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Link Failed', message: err.message || 'Could not link inquiry' });
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
+  // Handle open document
+  const handleOpenDoc = async (storagePath?: string | null, filename?: string) => {
+    if (!storagePath) {
+      showToast({ type: 'warning', title: 'File Missing', message: 'Attachment file path not recorded in storage.' });
+      return;
+    }
+    const url = await getSignedUrlCached('crm-documents', storagePath, 600);
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-140px)] min-h-[640px] bg-white border border-gray-200 rounded-lg overflow-hidden shadow-xs">
+      {/* Top Mailbox, Folder & Channel Filter Navigation */}
+      <div className="border-b border-gray-200 bg-gray-50/80 px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 1. Connected Mailbox Selector */}
+          <div className="flex items-center gap-1.5 border-r border-gray-200 pr-3">
+            <span className="text-xs font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1">
+              <Mail className="w-3.5 h-3.5 text-blue-600" />
+              Mailbox:
+            </span>
+            <select
+              aria-label="Active Mailbox"
+              value={activeMailbox}
+              onChange={e => setActiveMailbox(e.target.value as ActiveMailbox)}
+              className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500 shadow-2xs"
+            >
+              <option value="sales@avira.co.id">sales@avira.co.id (CRM / Quotes)</option>
+              <option value="kunal@avira.co.id">kunal@avira.co.id (Pricing / Sourcing)</option>
+            </select>
+          </div>
+
+          {/* 2. Folder Selector: Inbox vs Sent */}
+          <div className="flex items-center gap-1 border-r border-gray-200 pr-3">
+            <button
+              onClick={() => setFolderFilter('inbox')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+                folderFilter === 'inbox'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Inbox className="w-3 h-3" />
+              <span>Inbox</span>
+            </button>
+            <button
+              onClick={() => setFolderFilter('sent')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+                folderFilter === 'sent'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Send className="w-3 h-3" />
+              <span>Sent</span>
+            </button>
+          </div>
+
+          {/* 3. Channel Filters */}
+          <div className="flex items-center gap-1.5">
+            {(['all', 'email', 'whatsapp', 'unlinked'] as const).map(ch => {
+              const isActive = channelFilter === ch;
+              const count = conversations.filter(c => {
+                if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) return false;
+                if (c.channel === 'email') {
+                  if (folderFilter === 'inbox' && c.direction === 'outbound') return false;
+                  if (folderFilter === 'sent' && c.direction !== 'outbound') return false;
+                }
+                if (ch === 'all') return true;
+                if (ch === 'email') return c.channel === 'email';
+                if (ch === 'whatsapp') return c.channel === 'whatsapp';
+                if (ch === 'unlinked') return !c.inquiryId;
+                return true;
+              }).length;
+
+              return (
+                <button
+                  key={ch}
+                  onClick={() => setChannelFilter(ch)}
+                  className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-2xs'
+                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {ch === 'email' && <Mail className="w-3 h-3" />}
+                  {ch === 'whatsapp' && <MessageSquare className="w-3 h-3 text-emerald-400" />}
+                  {ch === 'unlinked' && <AlertTriangle className="w-3 h-3 text-amber-300" />}
+                  <span className="capitalize">{ch}</span>
+                  <span className={`text-[10px] px-1 py-0.2 rounded-full ${isActive ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <button
+          onClick={loadConversations}
+          disabled={loadingList}
+          className="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1 px-2.5 py-1 bg-white border border-gray-200 rounded cursor-pointer disabled:opacity-50"
+          title="Refresh Messages"
+        >
+          <RefreshCw className={`w-3 h-3 ${loadingList ? 'animate-spin' : ''}`} />
+          <span>Sync</span>
+        </button>
+      </div>
+
+      {/* Master-Detail Split Workspace */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* LEFT COLUMN: Conversation List (~400px) */}
+        <div className="w-full md:w-[420px] border-r border-gray-200 flex flex-col bg-white flex-shrink-0">
+          {/* Search Bar */}
+          <div className="p-2.5 border-b border-gray-200 bg-gray-50/50">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search sender, subject, product, inquiry..."
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-gray-200 rounded-md focus:outline-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* List items */}
+          <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+            {loadingList && conversations.length === 0 && (
+              <div className="p-8 text-center text-xs text-gray-500">
+                <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-2 text-blue-600" />
+                Loading communications...
+              </div>
+            )}
+
+            {!loadingList && filteredConversations.length === 0 && (
+              <div className="p-8 text-center text-xs text-gray-500">
+                No conversations found in this filter.
+              </div>
+            )}
+
+            {filteredConversations.map(conv => {
+              const isSelected = conv.id === selectedId;
+              const isEmail = conv.channel === 'email';
+
+              return (
+                <div
+                  key={conv.id}
+                  onClick={() => setSelectedId(conv.id)}
+                  className={`p-3 text-xs cursor-pointer transition select-none flex flex-col gap-1.5 ${
+                    isSelected
+                      ? 'bg-blue-50/80 border-l-3 border-blue-600'
+                      : 'hover:bg-gray-50 border-l-3 border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span
+                        className={`p-1 rounded flex-shrink-0 ${
+                          isEmail ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                        }`}
+                        title={isEmail ? 'Gmail' : 'WhatsApp'}
+                      >
+                        {isEmail ? <Mail className="w-3 h-3" /> : <MessageSquare className="w-3 h-3" />}
+                      </span>
+                      <span className={`font-semibold truncate ${isSelected ? 'text-blue-950 font-bold' : 'text-gray-900'}`}>
+                        {conv.senderName}
+                      </span>
+                      {conv.unread && (
+                        <span className="w-2 h-2 rounded-full bg-blue-600 flex-shrink-0" title="Unread" />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {conv.channel === 'whatsapp' && conv.language && (
+                        <span
+                          className={`text-[9px] font-bold px-1 py-0.2 rounded border ${
+                            conv.language === 'id'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : conv.language === 'mixed'
+                              ? 'bg-purple-50 text-purple-700 border-purple-200'
+                              : 'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}
+                          title={`Language: ${conv.languageLabel || conv.language.toUpperCase()}`}
+                        >
+                          {conv.language === 'id' ? 'ID' : conv.language === 'mixed' ? 'MIXED' : 'EN'}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-gray-400 whitespace-nowrap">
+                        {new Date(conv.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className={`flex items-center gap-1.5 truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                    {conv.intent && conv.channel === 'whatsapp' && (
+                      <span className="text-[9px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded flex-shrink-0">
+                        {conv.intent}
+                      </span>
+                    )}
+                    <span className="truncate">{conv.subject}</span>
+                  </div>
+
+                  <div className="text-[10.5px] text-gray-500 truncate font-sans">
+                    {conv.snippet}
+                  </div>
+
+                  {/* Association & Action badges */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    {conv.inquiryNumber ? (
+                      <span
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (conv.inquiryId && onOpenInquiry) onOpenInquiry(conv.inquiryId);
+                        }}
+                        className="text-[9px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.2 rounded hover:underline cursor-pointer flex items-center gap-0.5"
+                      >
+                        <Tag className="w-2.5 h-2.5" />
+                        {conv.inquiryNumber}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 px-1 py-0.2 rounded">
+                        UNLINKED
+                      </span>
+                    )}
+
+                    {conv.productName && (
+                      <span className="text-[9px] text-gray-600 bg-gray-100 px-1 rounded truncate max-w-[120px]">
+                        {conv.productName}
+                      </span>
+                    )}
+
+                    {conv.needsAction ? (
+                      <span className="text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.2 rounded flex items-center gap-0.5">
+                        ⚡ {conv.actionReason || 'Action Required'}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-medium bg-slate-100 text-slate-500 px-1 py-0.2 rounded">
+                        ✓ No Action
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN: Conversation Detail & Chronological Thread */}
+        <div className="flex-1 flex flex-col bg-white overflow-hidden">
+          {!selectedConversation ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8 text-center">
+              <Inbox className="w-12 h-12 text-gray-200 mb-3" />
+              <div className="font-semibold text-gray-600 text-sm">Select a Conversation</div>
+              <p className="text-xs max-w-sm mt-1">Choose an email or WhatsApp thread from the left panel to review message history, attachments, and reply.</p>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Conversation Top Action Bar */}
+              <div className="p-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-gray-900 truncate">
+                      {selectedConversation.subject}
+                    </span>
+                    <span
+                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${
+                        selectedConversation.channel === 'email'
+                          ? 'bg-blue-50 text-blue-700 border-blue-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      }`}
+                    >
+                      {selectedConversation.channel}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-gray-600 flex items-center gap-2 mt-0.5">
+                    <span>From: <strong className="text-gray-900">{selectedConversation.senderName}</strong> ({selectedConversation.senderAddress})</span>
+                    {selectedConversation.customerName && <span>• Customer: <strong className="text-gray-900">{selectedConversation.customerName}</strong></span>}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedConversation.inquiryId ? (
+                    <button
+                      onClick={() => onOpenInquiry && onOpenInquiry(selectedConversation.inquiryId!)}
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>Open Inquiry ({selectedConversation.inquiryNumber})</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleExtractAndCreate(selectedConversation)}
+                        disabled={isExtractingAi}
+                        className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        title="Extract products, quantities, specifications, and documents using AI"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin' : ''}`} />
+                        <span>{isExtractingAi ? 'Extracting with AI...' : 'AI Extract & Create'}</span>
+                      </button>
+                      <button
+                        onClick={() => setShowLinkDialog(true)}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <LinkIcon className="w-3 h-3" />
+                        <span>Link to Inquiry</span>
+                      </button>
+                      <button
+                        onClick={() =>
+                          onCreateInquiryFromMessage &&
+                          onCreateInquiryFromMessage({
+                            subject: selectedConversation.subject,
+                            body: selectedConversation.snippet,
+                            fromEmail: selectedConversation.senderAddress,
+                            fromName: selectedConversation.senderName,
+                            id: selectedConversation.id,
+                          })
+                        }
+                        className="px-2.5 py-1 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 text-xs font-semibold rounded cursor-pointer"
+                      >
+                        Create Inquiry
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Universal AI Communication Intelligence Banner (WhatsApp) */}
+              {selectedConversation.channel === 'whatsapp' && (
+                <div className="bg-gradient-to-r from-emerald-50/90 via-teal-50/80 to-blue-50/70 border-b border-emerald-200/80 p-3.5 px-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                        <Bot className="w-4 h-4 text-emerald-600" />
+                        Universal Communication Intelligence
+                      </span>
+                      {selectedConversation.language && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white border border-emerald-300 text-emerald-800 flex items-center gap-1">
+                          <Globe className="w-3 h-3 text-emerald-600" />
+                          {selectedConversation.languageLabel || selectedConversation.language.toUpperCase()}
+                        </span>
+                      )}
+                      {selectedConversation.intent && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100/80 text-emerald-900 border border-emerald-300">
+                          {selectedConversation.intent}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {selectedConversation.needsAction ? (
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
+                          <Zap className="w-3 h-3 text-rose-600" />
+                          Needs Action: {selectedConversation.actionReason || 'Action Required'}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          No Pending Action (Noted)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* English Running Summary */}
+                  {selectedConversation.latestSummary && (
+                    <div className="bg-white/90 border border-emerald-200/60 rounded p-2 text-xs text-slate-800 leading-relaxed font-sans shadow-2xs">
+                      <div className="text-[10px] font-bold text-emerald-800 uppercase flex items-center gap-1 mb-0.5">
+                        <Sparkles className="w-3 h-3 text-amber-500" />
+                        <span>English Running Summary:</span>
+                      </div>
+                      <p className="text-slate-900 font-medium">{selectedConversation.latestSummary}</p>
+                    </div>
+                  )}
+
+                  {/* Extracted Entity Tags */}
+                  {selectedConversation.entities && (
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      {selectedConversation.entities.product && (
+                        <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold">
+                          📦 Product: {selectedConversation.entities.product}
+                        </span>
+                      )}
+                      {selectedConversation.entities.make && (
+                        <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 font-semibold">
+                          🏭 Make: {selectedConversation.entities.make}
+                        </span>
+                      )}
+                      {selectedConversation.entities.quantity && (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200 font-semibold">
+                          ⚖️ Qty: {selectedConversation.entities.quantity} {selectedConversation.entities.unit || 'kg'}
+                        </span>
+                      )}
+                      {selectedConversation.entities.batch && (
+                        <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-200 font-semibold">
+                          🔖 Batch: {selectedConversation.entities.batch}
+                        </span>
+                      )}
+                      {selectedConversation.entities.document_requested && (
+                        <span className="text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded border border-teal-200 font-semibold">
+                          📄 Document: {selectedConversation.entities.document_requested}
+                        </span>
+                      )}
+                      {selectedConversation.entities.payment_info && (
+                        <span className="text-[10px] bg-cyan-50 text-cyan-700 px-2 py-0.5 rounded border border-cyan-200 font-semibold">
+                          💳 Payment: {selectedConversation.entities.payment_info}
+                        </span>
+                      )}
+                      {selectedConversation.entities.delivery_details && (
+                        <span className="text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded border border-orange-200 font-semibold">
+                          🚚 Delivery: {selectedConversation.entities.delivery_details}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Unlinked Alert Notice */}
+              {!selectedConversation.inquiryId && (
+                <div className="bg-amber-50 border-b border-amber-200 p-2.5 px-4 flex items-center justify-between text-xs text-amber-900">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <span>This communication is not yet linked to an inquiry. It is tracked under <strong>{selectedConversation.customerName || 'General Communication'}</strong>.</span>
+                  </div>
+                  <button
+                    onClick={() => setShowLinkDialog(true)}
+                    className="text-xs font-bold text-amber-800 hover:underline cursor-pointer"
+                  >
+                    Link to Inquiry →
+                  </button>
+                </div>
+              )}
+
+              {/* Scrollable Message Thread */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/40">
+                {loadingDetail && (
+                  <div className="p-12 text-center text-xs text-gray-500">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
+                    Loading complete thread...
+                  </div>
+                )}
+
+                {detailError && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-bold mb-1">Thread Retrieval Notice</div>
+                      <div>{detailError}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadThread()}
+                      className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-medium flex items-center gap-1 cursor-pointer flex-shrink-0"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Retry
+                    </button>
+                  </div>
+                )}
+
+                {!loadingDetail && threadMessages.length === 0 && !detailError && (
+                  <div className="p-8 text-center text-xs text-gray-500 bg-white border border-gray-200 rounded">
+                    No messages recorded in this conversation.
+                  </div>
+                )}
+
+                {threadMessages.map((msg, idx) => {
+                  const isExpanded = Boolean(expandedMsgIds[msg.id]);
+
+                  return (
+                    <div
+                      key={msg.id || idx}
+                      className="border border-gray-200 rounded-lg bg-white shadow-2xs overflow-hidden"
+                    >
+                      {/* Message Accordion Header */}
+                      <div
+                        onClick={() => setExpandedMsgIds(prev => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                        className="p-3 bg-gray-50/60 hover:bg-gray-50 flex items-center justify-between gap-3 cursor-pointer select-none"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 font-bold text-[10px] flex items-center justify-center flex-shrink-0">
+                            {msg.from.slice(0, 1).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-semibold text-xs text-gray-900 truncate block">
+                              {msg.from}
+                            </span>
+                            {!isExpanded && (
+                              <span className="text-[11px] text-gray-500 truncate block font-sans">
+                                {msg.snippet || msg.body?.slice(0, 80)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-[10px] text-gray-400">
+                            {msg.date ? new Date(msg.date).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                          </span>
+                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                        </div>
+                      </div>
+
+                      {/* Expanded Message Body */}
+                      {isExpanded && (
+                        <div className="p-3.5 border-t border-gray-100 space-y-3">
+                          {msg.subject && (
+                            <div className="text-xs font-bold text-gray-900">
+                              Subject: {msg.subject}
+                            </div>
+                          )}
+
+                          {/* Original Message Body */}
+                          {msg.bodyHtml ? (
+                            <div
+                              className="text-xs leading-relaxed text-gray-800 font-sans selection:bg-blue-100 overflow-x-auto"
+                              dangerouslySetInnerHTML={{ __html: msg.bodyHtml }}
+                            />
+                          ) : (
+                            <div className="text-xs leading-relaxed text-gray-800 whitespace-pre-wrap font-sans selection:bg-blue-100">
+                              {msg.body}
+                            </div>
+                          )}
+
+                          {/* English Translation Box for Inbound WhatsApp */}
+                          {selectedConversation.channel === 'whatsapp' && msg.direction === 'inbound' && msg.englishTranslation && (
+                            <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-700 space-y-1">
+                              <div className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                                <Globe className="w-3 h-3 text-blue-500" />
+                                <span>English Translation / Normalization (Internal ERP):</span>
+                              </div>
+                              <p className="font-medium text-slate-900 whitespace-pre-wrap">{msg.englishTranslation}</p>
+                            </div>
+                          )}
+
+                          {/* Message Level Entity Chips */}
+                          {msg.entities && (
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                              {msg.entities.product && (
+                                <span className="text-[9px] bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded border border-blue-200 font-semibold">
+                                  📦 {msg.entities.product}
+                                </span>
+                              )}
+                              {msg.entities.quantity && (
+                                <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200 font-semibold">
+                                  ⚖️ {msg.entities.quantity} {msg.entities.unit || 'kg'}
+                                </span>
+                              )}
+                              {msg.entities.batch && (
+                                <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded border border-amber-200 font-semibold">
+                                  🔖 Batch {msg.entities.batch}
+                                </span>
+                              )}
+                              {msg.entities.document_requested && (
+                                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.2 rounded border border-teal-200 font-semibold">
+                                  📄 Doc: {msg.entities.document_requested}
+                                </span>
+                              )}
+                              {msg.entities.payment_info && (
+                                <span className="text-[9px] bg-cyan-50 text-cyan-700 px-1.5 py-0.2 rounded border border-cyan-200 font-semibold">
+                                  💳 {msg.entities.payment_info}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Attachments */}
+                          {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                              <div className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
+                                <Paperclip className="w-3 h-3" />
+                                <span>Attachments ({msg.attachments.length}):</span>
+                              </div>
+                              <div className="space-y-1">
+                                {msg.attachments.map((att, aIdx) => (
+                                  <div
+                                    key={att.attachmentId || aIdx}
+                                    className="bg-gray-50 border border-gray-200 rounded p-1.5 px-2 flex items-center justify-between gap-2"
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                                      <span className="text-xs font-medium text-gray-800 truncate" title={att.filename}>
+                                        {att.filename}
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenDoc(att.storagePath, att.filename)}
+                                      className="px-2 py-0.5 bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 rounded text-[10px] flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      <span>View</span>
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Bottom Quick Reply Composer */}
+              <div className="p-3 border-t border-gray-200 bg-white space-y-2">
+                {(() => {
+                  const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase();
+                  const isPricingReply = replySender.includes('kunal@avira.co.id');
+                  return (
+                    <>
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <span className="font-semibold flex items-center gap-1.5 flex-wrap">
+                          {selectedConversation.channel === 'whatsapp' ? (
+                            <>
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                              Reply via WhatsApp to {selectedConversation.senderAddress}
+                            </>
+                          ) : (
+                            <>
+                              <Mail className="w-3.5 h-3.5 text-blue-600" />
+                              Reply via Email to {getReplyRecipient()}
+                              <span className="text-[10.5px] font-mono bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 select-none">
+                                {isPricingReply ? 'Sending from: kunal@avira.co.id' : 'Sending from: sales@avira.co.id'}
+                              </span>
+                            </>
+                          )}
+                        </span>
+
+                  {selectedConversation.channel === 'whatsapp' && selectedConversation.suggestedReply && (
+                    <button
+                      type="button"
+                      onClick={() => setReplyText(selectedConversation.suggestedReply || '')}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3 text-emerald-600" />
+                      <span>Draft Reply in Customer Language ({selectedConversation.language === 'en' ? 'English' : 'Indonesian'})</span>
+                    </button>
+                  )}
+                </div>
+
+                <textarea
+                  rows={2}
+                  value={replyText}
+                  onChange={e => setReplyText(e.target.value)}
+                  placeholder={`Type your reply to ${selectedConversation.senderName}...`}
+                  className="w-full text-xs p-2.5 border border-gray-300 rounded-md focus:outline-blue-500 font-sans"
+                />
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={handleSendReply}
+                    disabled={sendingReply || !replyText.trim()}
+                    className={`px-3.5 py-1.5 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                      selectedConversation.channel === 'whatsapp'
+                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>{sendingReply ? 'Sending...' : 'Send Reply'}</span>
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Link to Inquiry Dialog */}
+      {showLinkDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-4 space-y-3">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-sm font-bold text-gray-900">Link Communication to Inquiry</h3>
+              <button onClick={() => setShowLinkDialog(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-600">
+              Select an existing inquiry to link this message from <strong>{selectedConversation?.senderName}</strong>:
+            </p>
+
+            <select
+              value={selectedInquiryToLink}
+              onChange={e => setSelectedInquiryToLink(e.target.value)}
+              className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
+            >
+              <option value="">Select an Inquiry ▼</option>
+              {allInquiries.map(i => (
+                <option key={i.id} value={i.id}>
+                  {i.inquiry_number} — {i.company_name} ({i.product_name})
+                </option>
+              ))}
+            </select>
+
+            <div className="pt-2 flex justify-end gap-2 border-t">
+              <button
+                onClick={() => setShowLinkDialog(false)}
+                className="px-3 py-1.5 border rounded text-xs text-gray-600 hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmLink}
+                disabled={!selectedInquiryToLink || isLinking}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold disabled:opacity-50"
+              >
+                {isLinking ? 'Linking...' : 'Confirm Link'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default CrmOmnichannelInbox;

@@ -1,0 +1,29 @@
+/*
+# Add include_in_landed_cost Column to finance_expenses
+
+## Purpose
+Adds a nullable boolean column `include_in_landed_cost` to the `finance_expenses`
+table. This column lets the user control whether each linked expense participates
+in the landed-cost allocation for its import container.
+
+## Column
+- `include_in_landed_cost` (boolean, nullable, default NULL)
+  - NULL  → not yet decided (treated as "not included" in allocation sums)
+  - TRUE  → this actual expense is included in the container's landed-cost pool
+  - FALSE → this actual expense is excluded from the container's landed-cost pool
+  The expense itself remains a valid finance expense regardless of this flag.
+  Unchecking does NOT delete or unlink the expense — it only excludes it from
+  the landed-cost calculation.
+
+## Safety
+- No existing columns changed or removed.
+- No historical data overwritten.
+- NULL default preserves existing behaviour (expenses are not auto-included).
+- No triggers, no journal changes, no tax changes.
+*/
+
+ALTER TABLE finance_expenses
+  ADD COLUMN IF NOT EXISTS include_in_landed_cost BOOLEAN DEFAULT NULL;
+
+COMMENT ON COLUMN finance_expenses.include_in_landed_cost IS
+  'Controls whether this expense is included in its import container''s landed-cost allocation. NULL = not yet decided, TRUE = included, FALSE = excluded. The expense remains a valid finance expense regardless of this flag.';

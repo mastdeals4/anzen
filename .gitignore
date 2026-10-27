@@ -1,0 +1,37 @@
+.env
+.env.local
+.env.*
+node_modules
+dist
+.DS_Store
+**/.DS_Store
+# WhatsApp / OpenWA session credentials & tokens
+**/whatsapp-sessions/
+**/.openwa/
+**/openwa-session/
+**/_sessions/
+**/_IGNORE_*
+*.session.data.json
+# Test & Build Caches
+.cache/
+test-results/
+playwright-report/
+blob-report/
+
+# managed by open-wa
+**.data.json
+**.node-persist**
+**_IGNORE_**
+_sessions/
+services/whatsapp-adapter/_sessions/
+services/whatsapp-adapter/bin/
+services/whatsapp-adapter/*.tar.gz
+*.tar.gz
+wa_qr_extracted.png
+# end managed by open-wa
+
+# Local daemons, logs, configs & verification screenshots
+services/whatsapp-adapter/*.plist
+services/whatsapp-adapter/config.yml
+services/whatsapp-adapter/logs/
+/*.png

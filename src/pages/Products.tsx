@@ -1,0 +1,1276 @@
+import { useEffect, useState } from 'react';
+import { Layout } from '../components/Layout';
+import { DataTable } from '../components/DataTable';
+import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
+import { SapRow } from '../components/finance/SapLayout';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
+import { Plus, Pencil as Edit, Trash2, Upload, X, ExternalLink, Download, FileText, Eye } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { resolveStorageUrlCached } from '../utils/signedUrlCache';
+import {
+  PACKAGING_TYPES,
+  COUNTRIES,
+  normalizePackagingType,
+  normalizeCountry,
+  formatProductPackaging,
+} from '../constants/masterData';
+
+interface Product {
+  id: string;
+  product_name: string;
+  product_code: string | null;
+  hsn_code: string;
+  category: string;
+  unit: string;
+  packaging_type: string;
+  pack_type?: string | null;
+  per_pack_weight?: number | null;
+  default_supplier: string;
+  description: string;
+  min_stock_level: number | null;
+  duty_a1: string | null;
+  duty_percent?: number | null;
+  current_stock?: number | string | null;
+  is_active: boolean;
+}
+
+interface ProductSource {
+  id?: string;
+  source_name: string;
+  grade: string;
+  supplier_id: string | null;
+  country: string;
+  remarks: string;
+  files: File[];
+  existing_docs: SourceDocument[];
+}
+
+interface SourceDocument {
+  id: string;
+  doc_type: string;
+  original_filename: string;
+  file_url: string;
+  file_size: number;
+}
+
+interface ProductDocument extends SourceDocument {
+  product_id: string;
+}
+
+export function Products() {
+  const { t } = useLanguage();
+  const { profile } = useAuth();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
+  const [viewingSources, setViewingSources] = useState<Array<{
+    id: string;
+    supplier_name: string | null;
+    grade: string | null;
+    country: string | null;
+    remarks: string | null;
+    documents: SourceDocument[];
+  }>>([]);
+  const [viewingProductDocuments, setViewingProductDocuments] = useState<ProductDocument[]>([]);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+
+  const [formData, setFormData] = useState({
+    product_name: '',
+    hsn_code: '',
+    category: 'api',
+    unit: 'kg',
+    packaging_type: 'Bag',
+    default_pack_size: '',
+    default_supplier: '',
+    description: '',
+    min_stock_level: '',
+    duty_a1: '',
+  });
+
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+
+  // Inline document viewer state
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [docViewName, setDocViewName] = useState('');
+  const [docViewUrl, setDocViewUrl] = useState<string | null>(null);
+  const [docBlobUrl, setDocBlobUrl] = useState<string | null>(null);
+  const [docLoading, setDocLoading] = useState(false);
+
+  const [sources, setSources] = useState<ProductSource[]>([{
+    source_name: '',
+    grade: 'BP',
+    supplier_id: null,
+    country: '',
+    remarks: '',
+    files: [],
+    existing_docs: [],
+  }]);
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
+  const loadProducts = async () => {
+    try {
+      setLoading(true);
+      const [{ data, error }, { data: stockData, error: stockError }] = await Promise.all([
+        supabase
+        .from('products')
+        .select('*')
+        .eq('is_active', true)
+        .order('product_name'),
+        supabase
+          .from('inventory_v1_stock_summary')
+          .select('product_id, total_current_stock')
+      ]);
+
+      if (error) throw error;
+      if (stockError) throw stockError;
+      const stockByProduct = new Map((stockData || []).map((row: any) => [row.product_id, Number(row.total_current_stock ?? 0)]));
+      const normalize = (v: any): string => {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'object') return v.name ?? v.category_name ?? v.label ?? v.unit_name ?? v.short_name ?? '';
+        return String(v);
+      };
+      setProducts((data || []).map((product: any) => ({
+        ...product,
+        category: normalize(product.category),
+        unit: normalize(product.unit),
+        current_stock: stockByProduct.get(product.id) ?? 0,
+      })));
+    } catch (error) {
+      console.error('Error loading products:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadProductSources = async (productId: string) => {
+    try {
+      const { data: sourcesData, error } = await supabase
+        .from('product_sources')
+        .select(`
+          id,
+          supplier_name,
+          grade,
+          country,
+          remarks,
+          created_at,
+          product_source_documents(id, doc_type, original_filename, file_url, file_size)
+        `)
+        .eq('product_id', productId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const sourcesWithDocs = (sourcesData || []).map(source => ({
+        ...source,
+        documents: source.product_source_documents || [],
+      }));
+
+      // Also load product documents (legacy/default)
+      const { data: productDocs } = await supabase
+        .from('product_documents')
+        .select('*')
+        .eq('product_id', productId);
+
+      setViewingSources(sourcesWithDocs);
+      setViewingProductDocuments((productDocs || []).map(doc => ({
+        id: doc.id,
+        product_id: doc.product_id,
+        doc_type: doc.document_type,
+        original_filename: doc.file_name,
+        file_url: doc.file_url,
+        file_size: doc.file_size || 0,
+      })));
+    } catch (error) {
+      console.error('Error loading sources:', error);
+    }
+  };
+
+  const handleViewProduct = async (product: Product) => {
+    setViewingProduct(product);
+    await loadProductSources(product.id);
+    setViewModalOpen(true);
+  };
+
+  const addSourceRow = () => {
+    setSources([...sources, { source_name: '', grade: 'BP', supplier_id: null, country: '', remarks: '', files: [], existing_docs: [] }]);
+  };
+
+  const removeSourceRow = (index: number) => {
+    if (sources.length > 1) {
+      setSources(sources.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateSource = (index: number, field: keyof ProductSource, value: any) => {
+    const updated = [...sources];
+    updated[index] = { ...updated[index], [field]: value };
+    setSources(updated);
+  };
+
+  const handleFileSelect = (index: number, files: FileList | null) => {
+    if (!files) return;
+    const updated = [...sources];
+    updated[index].files = [...updated[index].files, ...Array.from(files)];
+    setSources(updated);
+  };
+
+  const removeFile = (sourceIndex: number, fileIndex: number) => {
+    const updated = [...sources];
+    updated[sourceIndex].files = updated[sourceIndex].files.filter((_, i) => i !== fileIndex);
+    setSources(updated);
+  };
+
+  const handleEdit = async (product: Product) => {
+    setEditingProduct(product);
+    const cat = product.category || 'api';
+    const unt = product.unit || '';
+    const normPackaging = normalizePackagingType(product.packaging_type || product.pack_type) || product.packaging_type || 'Bag';
+    const packSize = product.per_pack_weight != null ? String(product.per_pack_weight) : '';
+    setFormData({
+      product_name: product.product_name,
+      hsn_code: product.hsn_code,
+      category: cat,
+      unit: unt,
+      packaging_type: normPackaging,
+      default_pack_size: packSize,
+      default_supplier: product.default_supplier || '',
+      description: product.description || '',
+      min_stock_level: product.min_stock_level?.toString() || '',
+      duty_a1: product.duty_a1 || '',
+    });
+
+    // Load existing sources
+    const { data: existingSources, error: sourcesError } = await supabase
+      .from('product_sources')
+      .select(`
+        id,
+        supplier_name,
+        grade,
+        supplier_id,
+        country,
+        remarks,
+        product_source_documents(id, doc_type, original_filename, file_url, file_size)
+      `)
+      .eq('product_id', product.id);
+
+    if (sourcesError) {
+      showToast({ type: 'error', title: 'Unable to edit product', message: `Could not load existing Make records: ${sourcesError.message}` });
+      setEditingProduct(null);
+      return;
+    }
+
+    if (existingSources && existingSources.length > 0) {
+      const sourcesWithDocs = existingSources.map(source => ({
+        id: source.id,
+        source_name: source.supplier_name || '',
+        grade: source.grade || 'BP',
+        supplier_id: source.supplier_id,
+        country: source.country || '',
+        remarks: source.remarks || '',
+        files: [],
+        existing_docs: source.product_source_documents || [],
+      }));
+      setSources(sourcesWithDocs);
+    } else {
+      setSources([{ source_name: '', grade: 'BP', supplier_id: null, country: '', remarks: '', files: [], existing_docs: [] }]);
+    }
+
+    setModalOpen(true);
+  };
+
+  const handleDelete = async (product: Product) => {
+    try {
+      const { data: salesItems } = await supabase
+        .from('sales_invoice_items')
+        .select('id')
+        .eq('product_id', product.id)
+        .limit(1);
+
+      if (salesItems && salesItems.length > 0) {
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in sales invoices. Please use the "Deactivate" option instead or contact your administrator.' });
+        return;
+      }
+
+      const { data: salesOrderItems } = await supabase
+        .from('sales_order_items')
+        .select('id')
+        .eq('product_id', product.id)
+        .limit(1);
+
+      if (salesOrderItems && salesOrderItems.length > 0) {
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in sales orders. Please deactivate it instead.' });
+        return;
+      }
+
+      const { data: challanItems } = await supabase
+        .from('delivery_challan_items')
+        .select('id')
+        .eq('product_id', product.id)
+        .limit(1);
+
+      if (challanItems && challanItems.length > 0) {
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in delivery challans. Please use the "Deactivate" option instead.' });
+        return;
+      }
+
+      const { data: poItems } = await supabase
+        .from('purchase_order_items')
+        .select('id')
+        .eq('product_id', product.id)
+        .limit(1);
+
+      if (poItems && poItems.length > 0) {
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this product. It has been used in purchase orders. Please use the "Deactivate" option instead.' });
+        return;
+      }
+
+      const { data: batches } = await supabase
+        .from('batches')
+        .select('id, batch_number')
+        .eq('product_id', product.id);
+
+      if (batches && batches.length > 0) {
+        showToast({
+          type: 'error',
+          title: 'Cannot Delete',
+          message: `This product has ${batches.length} batch(es) with inventory history. Deactivate the product instead.`,
+        });
+        return;
+      }
+
+      const { count: movementCount } = await supabase
+        .from('inventory_operational_physical_ledger')
+        .select('source_id', { count: 'exact', head: true })
+        .eq('product_id', product.id);
+
+      if ((movementCount || 0) > 0) {
+        showToast({
+          type: 'error',
+          title: 'Cannot Delete',
+          message: 'This product has inventory history. Deactivate the product instead.',
+        });
+        return;
+      }
+
+      if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this unused product?', variant: 'danger', confirmLabel: 'Delete' })) return;
+
+      await supabase.from('product_files').delete().eq('product_id', product.id);
+
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', product.id);
+
+      if (error) throw error;
+
+      showToast({ type: 'success', title: 'Success', message: 'Product deleted successfully' });
+      await loadProducts();
+    } catch (error: any) {
+      console.error('Error deleting product:', error);
+      const errorMessage = error?.message || 'Unknown error occurred';
+      showToast({ type: 'error', title: 'Error', message: `Failed to delete product: ${errorMessage}\n\nIf this product is in use, consider deactivating it instead.` });
+    }
+  };
+
+  const resetForm = () => {
+    setEditingProduct(null);
+    setDuplicateError(null);
+    setFormData({
+      product_name: '',
+      hsn_code: '',
+      category: 'api',
+      unit: 'kg',
+      packaging_type: 'Bag',
+      default_pack_size: '',
+      default_supplier: '',
+      description: '',
+      min_stock_level: '',
+      duty_a1: '',
+    });
+    setSources([{ source_name: '', grade: 'BP', supplier_id: null, country: '', remarks: '', files: [], existing_docs: [] }]);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    try {
+      const minStock = parseFloat(formData.min_stock_level) || null;
+      const perPack = parseFloat(formData.default_pack_size) || null;
+      const canonicalPackaging = normalizePackagingType(formData.packaging_type) || formData.packaging_type || 'Bag';
+
+      const dataToSave = {
+        product_name: formData.product_name,
+        hsn_code: formData.hsn_code,
+        category: formData.category,
+        unit: formData.unit,
+        packaging_type: canonicalPackaging,
+        pack_type: canonicalPackaging,
+        per_pack_weight: perPack,
+        default_supplier: formData.default_supplier,
+        description: formData.description,
+        min_stock_level: minStock,
+        duty_a1: formData.duty_a1 || null,
+        duty_percent: formData.duty_a1 === '' ? 0 : (parseFloat(formData.duty_a1) || 0),
+      };
+
+      let productId: string;
+
+      const { data: duplicates } = await supabase
+        .from('products')
+        .select('id, product_code, product_name, hsn_code')
+        .ilike('product_name', formData.product_name.trim())
+        .eq('is_active', true);
+
+      const existingDuplicate = (duplicates || []).find(d =>
+        d.product_name.toLowerCase() === formData.product_name.trim().toLowerCase() &&
+        d.hsn_code === formData.hsn_code.trim() &&
+        d.id !== editingProduct?.id
+      );
+
+      if (existingDuplicate) {
+        const msg = `A product named "${formData.product_name}" with HSN code "${formData.hsn_code}" already exists (${existingDuplicate.product_code || 'existing product'}). Please use a different name or HSN code.`;
+        setDuplicateError(msg);
+        showToast({ type: 'error', title: 'Duplicate Product', message: msg });
+        return;
+      }
+
+      setDuplicateError(null);
+
+      if (editingProduct) {
+        const { error } = await supabase
+          .from('products')
+          .update(dataToSave)
+          .eq('id', editingProduct.id);
+
+        if (error) throw error;
+        productId = editingProduct.id;
+      } else {
+        const { data, error } = await supabase
+          .from('products')
+          .insert([{ ...dataToSave, created_by: profile?.id }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        productId = data.id;
+      }
+
+      // Save sources
+      for (const source of sources) {
+        if (!source.source_name.trim()) continue;
+
+        let sourceId: string;
+        const canonicalCountry = normalizeCountry(source.country) || (source.country ? source.country.trim() : null);
+
+        if (source.id) {
+          // Update existing source
+          const { data: updatedSource, error } = await supabase
+            .from('product_sources')
+            .update({
+              supplier_name: source.source_name,
+              grade: source.grade,
+              supplier_id: source.supplier_id,
+              country: canonicalCountry,
+              remarks: source.remarks || null,
+            })
+            .eq('id', source.id)
+            .eq('product_id', productId)
+            .select('id')
+            .maybeSingle();
+
+          if (error) throw error;
+          if (!updatedSource) throw new Error('Existing Make record no longer belongs to this Product');
+          sourceId = source.id;
+        } else {
+          // Create new source
+          const { data: newSource, error } = await supabase
+            .from('product_sources')
+            .insert([{
+              product_id: productId,
+              supplier_name: source.source_name,
+              grade: source.grade,
+              supplier_id: source.supplier_id,
+              country: canonicalCountry,
+              remarks: source.remarks || null,
+              created_by: profile?.id
+            }])
+            .select()
+            .single();
+
+          if (error) throw error;
+          sourceId = newSource.id;
+        }
+
+        // Upload files for this source
+        for (const file of source.files) {
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${productId}/${sourceId}/${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('product-source-documents')
+            .upload(fileName, file);
+
+          if (uploadError) {
+            console.error('Upload error:', uploadError);
+            continue;
+          }
+
+          const { data: urlData } = supabase.storage
+            .from('product-source-documents')
+            .getPublicUrl(fileName);
+
+          const { error: documentError } = await supabase
+            .from('product_source_documents')
+            .insert([{
+              source_id: sourceId,
+              doc_type: 'Other',
+              file_url: urlData.publicUrl,
+              original_filename: file.name,
+              file_size: file.size,
+              uploaded_by: profile?.id
+            }]);
+          if (documentError) {
+            await supabase.storage.from('product-source-documents').remove([fileName]);
+            throw documentError;
+          }
+        }
+      }
+
+      showToast({ type: 'success', title: 'Success', message: editingProduct ? 'Product updated successfully' : 'Product added successfully' });
+      setModalOpen(false);
+      resetForm();
+      await loadProducts();
+    } catch (error: any) {
+      console.error('Error saving product:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save product: ' + error.message });
+    }
+  };
+
+  const getSignedUrl = (fileUrl: string): Promise<string> =>
+    resolveStorageUrlCached(fileUrl, 3600);
+
+  const viewDocument = async (fileUrl: string, filename = 'Document') => {
+    setShowDocModal(true);
+    setDocViewName(filename);
+    setDocViewUrl(fileUrl);
+    setDocBlobUrl(null);
+    setDocLoading(true);
+    try {
+      const signedUrl = await getSignedUrl(fileUrl);
+      const response = await fetch(signedUrl);
+      if (!response.ok) {
+        setDocBlobUrl(null);
+        return;
+      }
+      const blob = await response.blob();
+      setDocBlobUrl(URL.createObjectURL(blob));
+    } catch {
+      setDocBlobUrl(null);
+    } finally {
+      setDocLoading(false);
+    }
+  };
+
+  const downloadDocument = async (fileUrl: string, filename: string) => {
+    try {
+      const signedUrl = await getSignedUrl(fileUrl);
+      const response = await fetch(signedUrl);
+      if (!response.ok) {
+        showToast({ type: 'error', title: 'Download Failed', message: 'File not found or bucket not accessible.' });
+        return;
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Error downloading:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to download file' });
+    }
+  };
+
+  const deleteDocument = async (docId: string, sourceId: string) => {
+    if (!await showConfirm({ title: 'Confirm', message: 'Delete this document?', variant: 'danger', confirmLabel: 'Delete' })) return;
+
+    try {
+      const { error } = await supabase
+        .from('product_source_documents')
+        .delete()
+        .eq('id', docId)
+        .eq('source_id', sourceId);
+
+      if (error) throw error;
+
+      showToast({ type: 'success', title: 'Success', message: 'Document deleted' });
+      setSources(current => current.map(source => source.id === sourceId
+        ? { ...source, existing_docs: source.existing_docs.filter(doc => doc.id !== docId) }
+        : source));
+      if (viewingProduct) {
+        await loadProductSources(viewingProduct.id);
+      }
+    } catch (error: any) {
+      console.error('Error deleting document:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete: ' + error.message });
+    }
+  };
+
+  const displayValue = (value: unknown, objectKeys: string[] = []): string => {
+    if (value === null || value === undefined || value === '') return '-';
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const property = objectKeys.find(key => typeof record[key] === 'string' || typeof record[key] === 'number');
+      return property ? String(record[property]) : '-';
+    }
+    return '-';
+  };
+
+  const columns = [
+    {
+      key: 'product_name',
+      label: t('products.productName'),
+      render: (value: string, row: Product) => (
+        <button
+          onClick={() => handleViewProduct(row)}
+          className="text-blue-600 hover:text-blue-800 font-medium text-left"
+        >
+          {value || '-'}
+        </button>
+      )
+    },
+    { key: 'hsn_code', label: t('products.hsnCode') },
+    { key: 'category', label: t('products.category'), render: (value: unknown, _row: Product) => displayValue(value, ['name', 'category_name', 'label']) },
+    { key: 'unit', label: t('products.unit'), render: (value: unknown, _row: Product) => displayValue(value, ['name', 'unit_name', 'label', 'short_name']) },
+    {
+      key: 'packaging_type',
+      label: t('products.packagingType'),
+      render: (_value: unknown, row: Product) => (
+        <span className="text-gray-700 text-xs font-medium">
+          {formatProductPackaging(row.packaging_type || row.pack_type, row.per_pack_weight, row.unit)}
+        </span>
+      )
+    },
+    {
+      key: 'current_stock',
+      label: t('products.currentStock'),
+      render: (value: unknown, _row: Product) => {
+        const numeric = Number(value ?? 0);
+        return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
+      }
+    },
+    { key: 'duty_a1', label: t('products.dutyA1') }
+  ];
+
+  return (
+    <Layout>
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-gray-200">
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">{t('products.title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Manage your product catalog with packaging details</p>
+          </div>
+          <button
+            onClick={() => {
+              resetForm();
+              setModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-xs transition"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            {t('products.addProduct')}
+          </button>
+        </div>
+
+        <DataTable
+          data={products}
+          columns={columns}
+          loading={loading}
+          actions={(product) => (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleEdit(product)}
+                className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
+              >
+                <Edit className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => handleDelete(product)}
+                className="p-1 text-red-600 hover:bg-red-50 rounded transition"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        />
+      </div>
+
+      {/* Add/Edit Product Modal */}
+      <Modal
+        isOpen={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          resetForm();
+        }}
+        title={editingProduct ? t('products.editProduct') : t('products.addProduct')}
+        maxWidth="max-w-4xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Product Details */}
+          <div className="bg-gray-50 p-4 rounded-lg space-y-4">
+            <h3 className="font-semibold text-gray-900">Product Details</h3>
+
+            <SapRow>
+              <FloatingField label={t('products.productName')} span={6} required filled={!!formData.product_name}>
+                <input
+                  name="product_name"
+                  aria-label={t('products.productName')}
+                  type="text"
+                  required
+                  value={formData.product_name}
+                  onChange={(e) => { setFormData({ ...formData, product_name: e.target.value }); setDuplicateError(null); }}
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+
+              <FloatingField label={t('products.hsnCode')} span={6} required filled={!!formData.hsn_code}>
+                <input
+                  name="hsn_code"
+                  aria-label={t('products.hsnCode')}
+                  type="text"
+                  required
+                  value={formData.hsn_code}
+                  onChange={(e) => { setFormData({ ...formData, hsn_code: e.target.value }); setDuplicateError(null); }}
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+            </SapRow>
+
+            {duplicateError && (
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <span className="font-semibold shrink-0">Already exists:</span>
+                <span>{duplicateError}</span>
+              </div>
+            )}
+
+            <SapRow>
+              <FloatingField label={t('products.category')} span={6} required filled={!!formData.category}>
+                <select
+                  name="category"
+                  aria-label={t('products.category')}
+                  required
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className={FLOAT_INPUT}
+                >
+                  <option value="api">API</option>
+                  <option value="excipient">Excipients</option>
+                  <option value="solvent">Solvent</option>
+                  <option value="other">Other</option>
+                </select>
+              </FloatingField>
+
+              <FloatingField label={t('products.unit')} span={6} required filled={!!formData.unit}>
+                <select
+                  name="unit"
+                  aria-label={t('products.unit')}
+                  required
+                  value={formData.unit}
+                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                  className={FLOAT_INPUT}
+                >
+                  <option value="kg">KG</option>
+                  <option value="litre">Liter</option>
+                  <option value="piece">Piece</option>
+                  <option value="g">Gram</option>
+                  <option value="mg">Milligram</option>
+                  <option value="ton">Ton</option>
+                  <option value="ml">Millilitre</option>
+                  <option value="bottle">Bottle</option>
+                  <option value="pack">Pack</option>
+                  <option value="box">Box</option>
+                </select>
+              </FloatingField>
+            </SapRow>
+
+            <SapRow>
+              <FloatingField label={t('products.packagingType')} span={6} required filled={!!formData.packaging_type}>
+                <SearchableSelect
+                  value={formData.packaging_type}
+                  onChange={(value) => setFormData({ ...formData, packaging_type: value })}
+                  options={PACKAGING_TYPES.map(type => ({
+                    value: type,
+                    label: t(`products.packagingTypes.${type.toLowerCase()}`) || type,
+                  }))}
+                  placeholder={t('products.selectPackagingType') || 'Select Packaging Type'}
+                  className="text-sm"
+                  required
+                />
+              </FloatingField>
+
+              <FloatingField
+                label={t('products.defaultPackSize') || 'Default Pack Size'}
+                span={6}
+                filled={!!formData.default_pack_size}
+                right={<span className="text-[10px] font-semibold text-gray-500 uppercase">{formData.unit || 'KG'}</span>}
+              >
+                <input
+                  name="default_pack_size"
+                  aria-label="Default Pack Size"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.default_pack_size}
+                  onChange={(e) => setFormData({ ...formData, default_pack_size: e.target.value })}
+                  placeholder="e.g., 25"
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+            </SapRow>
+
+            <SapRow>
+              <FloatingField label={t('products.minStockLevel')} span={6} filled={!!formData.min_stock_level}>
+                <input
+                  name="min_stock_level"
+                  aria-label={t('products.minStockLevel')}
+                  type="number"
+                  step="0.01"
+                  value={formData.min_stock_level}
+                  onChange={(e) => setFormData({ ...formData, min_stock_level: e.target.value })}
+                  placeholder="e.g., 100"
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+
+              <FloatingField label={`${t('products.dutyA1')} (%)`} span={6} filled={!!formData.duty_a1}>
+                <input
+                  name="duty_a1"
+                  aria-label={`${t('products.dutyA1')} (%)`}
+                  type="text"
+                  value={formData.duty_a1}
+                  onChange={(e) => setFormData({ ...formData, duty_a1: e.target.value })}
+                  placeholder="e.g., 5.0"
+                  className={FLOAT_INPUT}
+                />
+              </FloatingField>
+            </SapRow>
+
+            <SapRow>
+              <FloatingField label="Description" span={12} textarea filled={!!formData.description}>
+                <textarea
+                  name="description"
+                  aria-label="Description"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  rows={2}
+                  className={FLOAT_TEXTAREA}
+                />
+              </FloatingField>
+            </SapRow>
+          </div>
+
+          {/* Make / Manufacturer Section */}
+          <div className="bg-blue-50 p-4 rounded-lg space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="font-semibold text-sm text-gray-900">{t('products.makeManufacturer') || 'Make / Manufacturer'}</h3>
+              <button
+                type="button"
+                onClick={addSourceRow}
+                className="flex items-center gap-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
+              >
+                <Plus className="w-3 h-3" />
+                Add Make
+              </button>
+            </div>
+
+            {sources.map((source, index) => (
+              <div key={source.id || `new-source-${index}`} className="bg-white p-4 rounded-lg border border-blue-200 space-y-3">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <SapRow>
+                      <FloatingField label="Make / Supplier Name" span={6} filled={!!source.source_name}>
+                        <input
+                          name="make_supplier_name"
+                          aria-label="Make / Supplier Name"
+                          type="text"
+                          value={source.source_name}
+                          onChange={(e) => updateSource(index, 'source_name', e.target.value)}
+                          placeholder="e.g., Anqiu Luan Pharmaceutical Co., Ltd."
+                          className={FLOAT_INPUT}
+                        />
+                      </FloatingField>
+
+                      <FloatingField label="Grade" span={6} filled={!!source.grade}>
+                        <select
+                          name="grade"
+                          aria-label="Grade"
+                          value={source.grade}
+                          onChange={(e) => updateSource(index, 'grade', e.target.value)}
+                          className={FLOAT_INPUT}
+                        >
+                          <option value="BP">BP (British Pharmacopoeia)</option>
+                          <option value="USP">USP (United States Pharmacopeia)</option>
+                          <option value="EP">EP (European Pharmacopoeia)</option>
+                          <option value="IP">IP (Indian Pharmacopoeia)</option>
+                          <option value="Tech">Tech Grade</option>
+                          <option value="Food Grade">Food Grade</option>
+                          <option value="Industrial">Industrial</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </FloatingField>
+                    </SapRow>
+                  </div>
+
+                  {sources.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeSourceRow(index)}
+                      className="ml-2 p-1 text-red-600 hover:bg-red-50 rounded"
+                      title="Remove Make"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                <SapRow>
+                  <FloatingField label={t('products.country') || 'Country'} span={6} filled={!!source.country}>
+                    <SearchableSelect
+                      value={source.country}
+                      onChange={(value) => updateSource(index, 'country', value)}
+                      options={COUNTRIES.map(c => ({
+                        value: c.name,
+                        label: `${c.name} (${c.code})`,
+                        keywords: [c.code, c.code3, ...(c.aliases || [])],
+                      }))}
+                      placeholder={t('products.selectCountry') || 'Select Country (e.g. CN, IN, ID)'}
+                      className="text-sm"
+                    />
+                  </FloatingField>
+                  <FloatingField label="Remarks" span={6} filled={!!source.remarks}>
+                    <input
+                      name="remarks"
+                      aria-label="Remarks"
+                      type="text"
+                      value={source.remarks}
+                      onChange={(e) => updateSource(index, 'remarks', e.target.value)}
+                      placeholder="Optional remarks"
+                      className={FLOAT_INPUT}
+                    />
+                  </FloatingField>
+                </SapRow>
+
+                {/* File Upload */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Upload Documents
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-100">
+                      <Upload className="w-4 h-4 text-gray-600" />
+                      <span className="text-sm text-gray-600">Choose Files</span>
+                      <input name="file_upload" aria-label="Upload file"
+                        type="file"
+                        multiple
+                        onChange={(e) => handleFileSelect(index, e.target.files)}
+                        className="hidden"
+                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                      />
+                    </label>
+                    <span className="text-xs text-gray-500">
+                      PDF, DOC, JPG (Max 10MB each)
+                    </span>
+                  </div>
+
+                  {/* Show selected files */}
+                  {source.files.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {source.files.map((file, fileIndex) => (
+                        <div
+                          key={fileIndex}
+                          className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded text-sm"
+                        >
+                          <span className="text-gray-700">{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(index, fileIndex)}
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Show existing documents */}
+                  {source.existing_docs && source.existing_docs.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-xs font-medium text-gray-600">Existing Documents:</p>
+                      {source.existing_docs.map((doc) => (
+                        <div
+                          key={doc.id}
+                          className="flex items-center justify-between px-3 py-2 bg-green-50 rounded text-sm"
+                        >
+                          <span className="text-gray-700">{doc.original_filename}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-500 mr-1">{(Number(doc.file_size || 0) / 1024).toFixed(1)} KB</span>
+                            <button type="button" onClick={() => viewDocument(doc.file_url, doc.original_filename)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="View"><Eye className="w-3.5 h-3.5" /></button>
+                            <button type="button" onClick={() => downloadDocument(doc.file_url, doc.original_filename)} className="p-1 text-green-600 hover:bg-green-50 rounded" title="Download"><Download className="w-3.5 h-3.5" /></button>
+                            {source.id && <button type="button" onClick={() => deleteDocument(doc.id, source.id!)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button
+              type="button"
+              onClick={() => {
+                setModalOpen(false);
+                resetForm();
+              }}
+              className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              {editingProduct ? 'Update Product' : 'Add Product'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* View Product Modal - Compact */}
+      <Modal
+        isOpen={viewModalOpen}
+        onClose={() => {
+          setViewModalOpen(false);
+          setViewingProduct(null);
+          setViewingSources([]);
+          setViewingProductDocuments([]);
+        }}
+        title={viewingProduct?.product_name || 'Product Details'}
+        maxWidth="max-w-5xl"
+      >
+        {viewingProduct && (
+          <div className="space-y-6">
+            {/* Compact Product Details */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-4 bg-gray-50 rounded-lg">
+              <div>
+                <p className="text-xs text-gray-500">HSN Code</p>
+                <p className="font-medium text-sm">{viewingProduct.hsn_code}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Category</p>
+                <p className="font-medium text-sm">{(() => {
+                  return displayValue(viewingProduct.category).toUpperCase();
+                })()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Unit</p>
+                <p className="font-medium text-sm">{(() => {
+                  return displayValue(viewingProduct.unit).toUpperCase();
+                })()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Packaging</p>
+                <p className="font-medium text-sm text-blue-700">
+                  {formatProductPackaging(viewingProduct.packaging_type || viewingProduct.pack_type, viewingProduct.per_pack_weight, viewingProduct.unit)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Current Stock</p>
+                <p className="font-medium text-sm">{(() => {
+                  const n = Number(viewingProduct.current_stock ?? 0);
+                  return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+                })()}</p>
+              </div>
+            </div>
+
+            {/* Sources Table */}
+            <div>
+              <h3 className="text-lg font-semibold mb-3">Make / Manufacturer & Documents</h3>
+
+              {viewingSources.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No sources added yet. Edit the product to add sources.
+                </div>
+              ) : (
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Make / Manufacturer
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Grade
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Country
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          Documents
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {viewingSources.map((source) => (
+                        <tr key={source.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium text-sm">{source.supplier_name}</td>
+                          <td className="px-4 py-3 text-sm">{source.grade}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{source.country || '—'}</td>
+                          <td className="px-4 py-3">
+                            {source.documents.length === 0 ? (
+                              <span className="text-gray-400 text-sm">No documents</span>
+                            ) : (
+                              <div className="space-y-1">
+                                {source.documents.map((doc: SourceDocument) => (
+                                  <div
+                                    key={doc.id}
+                                    className="flex items-center gap-2 text-sm"
+                                  >
+                                    <span className="flex-1 text-gray-700 truncate text-xs">{doc.original_filename}</span>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => viewDocument(doc.file_url, doc.original_filename)}
+                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                        title="View"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => downloadDocument(doc.file_url, doc.original_filename)}
+                                        className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                        title="Download"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => deleteDocument(doc.id, source.id)}
+                                        className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                        title="Delete"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {viewingProductDocuments.length > 0 && (
+              <div>
+                <h3 className="text-lg font-semibold mb-3">Product Documents</h3>
+                <p className="text-xs text-gray-500 mb-2">General historical product documents that are not linked to a specific Make.</p>
+                <div className="border rounded-lg divide-y">
+                  {viewingProductDocuments.map(doc => (
+                    <div key={doc.id} className="flex items-center gap-2 px-4 py-2 text-sm">
+                      <span className="flex-1 text-gray-700 truncate">{doc.original_filename}</span>
+                      <button onClick={() => viewDocument(doc.file_url, doc.original_filename)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="View"><Eye className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => downloadDocument(doc.file_url, doc.original_filename)} className="p-1 text-green-600 hover:bg-green-50 rounded" title="Download"><Download className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Inline Document Viewer Modal */}
+      {showDocModal && (
+        <Modal
+          isOpen={showDocModal}
+          onClose={() => {
+            setShowDocModal(false);
+            setDocViewUrl(null);
+            setDocViewName('');
+            if (docBlobUrl) { URL.revokeObjectURL(docBlobUrl); setDocBlobUrl(null); }
+          }}
+          title={docViewName || 'Document'}
+          size="xl"
+        >
+          <div className="flex flex-col gap-2" style={{ height: '75vh' }}>
+            <div className="flex justify-end gap-2">
+              {docViewUrl && (
+                <button
+                  onClick={() => downloadDocument(docViewUrl, docViewName)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-green-700 border border-green-200 rounded-lg hover:bg-green-50 transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
+                </button>
+              )}
+            </div>
+            {docLoading && (
+              <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-center text-gray-500">
+                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  <p className="text-sm">Loading document...</p>
+                </div>
+              </div>
+            )}
+            {!docLoading && docBlobUrl && (
+              <iframe
+                src={docBlobUrl}
+                className="flex-1 w-full rounded-lg border border-gray-200"
+                title={docViewName}
+              />
+            )}
+            {!docLoading && !docBlobUrl && (
+              <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-center text-gray-500 px-6">
+                  <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
+                  <p className="text-sm font-medium mb-2">Document cannot be previewed</p>
+                  <p className="text-xs text-gray-400 mb-5">The file may have been moved or the storage bucket is not accessible.</p>
+                  {docViewUrl && (
+                    <button
+                      onClick={() => downloadDocument(docViewUrl, docViewName)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition"
+                    >
+                      <Download className="w-4 h-4" />
+                      Try Download
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </Layout>
+  );
+}

@@ -1,0 +1,4 @@
+-- Migration-history marker for the Bolt migration already deployed to the
+-- linked database as 20260806083942. Its live function definitions were
+-- inspected before this fix. They are intentionally not replayed here because
+-- Repo9's canonical Inventory V1 engine remains authoritative.

@@ -1,0 +1,2 @@
+voucher_date,customer_code,receipt_method,bank_account_number,invoice_currency,invoice_amount,receipt_currency,receipt_amount,bank_currency,exchange_rate,converted_amount,bank_charges,actual_bank_credit,reference_number,description
+31/07/2026,CUST-001,bank_transfer,00930201014,USD,1000,USD,1000,IDR,16990,16990000,0,16990000,RCPT-001,Customer receipt

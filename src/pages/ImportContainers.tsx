@@ -1,0 +1,1041 @@
+import { useState, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
+import { Layout } from '../components/Layout';
+import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, FileText, X, Search, ChevronDown } from 'lucide-react';
+import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { MoneyInput } from '../components/MoneyInput';
+import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
+import { SapRow } from '../components/finance/SapLayout';
+import { showToast } from '../components/ToastNotification';
+
+import { formatDate } from '../utils/dateFormat';
+import { canSeeInventoryCosting } from '../utils/permissions';
+import { calculateCanonicalExpenseTotal } from '../utils/taxCalculations';
+import type { BrokerItem } from '../utils/taxCalculations';
+import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../services/expensePostingLifecycle';
+
+interface Supplier {
+  id: string;
+  company_name: string;
+}
+
+interface ImportContainer {
+  id: string;
+  container_ref: string;
+  supplier_id: string;
+  import_date: string;
+  import_invoice_value: number;
+  currency: string;
+  exchange_rate: number;
+  other_import_costs: number;
+  total_import_expenses: number;
+  allocated_expenses: number;
+  allocation_method: string;
+  status: string;
+  locked_at: string | null;
+  notes: string;
+  purchase_invoice_ids?: string[] | null;
+  suppliers?: Supplier;
+  linked_expenses_total?: number;
+  linked_petty_cash_total?: number;
+  canonical_landed_cost_pool?: number;
+}
+
+interface SelectablePI {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  supplier_id: string;
+  supplier_name: string;
+  currency: string;
+  exchange_rate: number;
+  subtotal: number;
+  total_amount: number;
+  po_number?: string;
+  lines_count?: number;
+}
+
+interface LinkedExpense {
+  id: string;
+  expense_category: string;
+  amount: number;
+  expense_date: string;
+  description: string | null;
+  ppn_amount?: number | null;
+  pph_amount?: number | null;
+  stamp_duty_amount?: number | null;
+  bank_charges_amount?: number | null;
+  broker_items?: BrokerItem[] | null;
+  include_in_landed_cost?: boolean | null;
+  pib_bm_amount?: number | null;
+  pib_ppn_amount?: number | null;
+  pib_pph_amount?: number | null;
+}
+
+interface LinkedPettyCash {
+  id: string;
+  transaction_number: string;
+  transaction_type: string;
+  amount: number;
+  description: string;
+  transaction_date: string;
+  expense_category: string | null;
+  include_in_landed_cost?: boolean | null;
+}
+
+type SourceType = 'expense' | 'petty_cash';
+
+interface UnifiedLinkedItem {
+  id: string;
+  source: SourceType;
+  category: string;
+  amount: number;
+  date: string;
+  description: string;
+  include_in_landed_cost: boolean;
+  isPIB: boolean;
+  pib_bm_amount?: number | null;
+  pib_ppn_amount?: number | null;
+  pib_pph_amount?: number | null;
+  rawExpense?: LinkedExpense;
+}
+
+export default function ImportContainers() {
+  const { user, profile } = useAuth();
+  const { t } = useLanguage();
+  const canViewCosting = canSeeInventoryCosting(profile?.role);
+  const [containers, setContainers] = useState<ImportContainer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [availablePIs, setAvailablePIs] = useState<SelectablePI[]>([]);
+  const [selectedPiIds, setSelectedPiIds] = useState<string[]>([]);
+  const [piSearchQuery, setPiSearchQuery] = useState('');
+  const [isPiDropdownOpen, setIsPiDropdownOpen] = useState(false);
+  const piDropdownRef = useRef<HTMLDivElement>(null);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingContainer, setEditingContainer] = useState<ImportContainer | null>(null);
+  const [linkedExpenses, setLinkedExpenses] = useState<LinkedExpense[]>([]);
+  const [linkedPettyCash, setLinkedPettyCash] = useState<LinkedPettyCash[]>([]);
+  const [inclusionMap, setInclusionMap] = useState<Record<string, boolean>>({});
+  const [canonicalLandedCostPool, setCanonicalLandedCostPool] = useState(0);
+  const [savingInclusion, setSavingInclusion] = useState(false);
+  const [formData, setFormData] = useState({
+    container_ref: '',
+    supplier_id: '',
+    import_date: new Date().toISOString().split('T')[0],
+    import_invoice_value: 0,
+    currency: 'USD',
+    exchange_rate: 15000,
+    other_import_costs: 0,
+    notes: ''
+  });
+
+  useEffect(() => {
+    fetchContainers();
+    fetchSuppliers();
+    fetchAvailablePIs();
+
+    const containerSubscription = supabase
+      .channel('container-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'import_containers' }, () => fetchContainers())
+      .subscribe();
+
+    const expenseSubscription = supabase
+      .channel('expense-container-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finance_expenses' }, () => fetchContainers())
+      .subscribe();
+
+    const pettyCashSubscription = supabase
+      .channel('petty-cash-container-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'petty_cash_transactions' }, () => fetchContainers())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(containerSubscription);
+      supabase.removeChannel(expenseSubscription);
+      supabase.removeChannel(pettyCashSubscription);
+    };
+  }, [canViewCosting]);
+
+  // Close PI multi-select dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (piDropdownRef.current && !piDropdownRef.current.contains(event.target as Node)) {
+        setIsPiDropdownOpen(false);
+      }
+    };
+    if (isPiDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isPiDropdownOpen]);
+
+  const fetchContainers = async () => {
+    try {
+      setLoading(true);
+      const containerColumns = canViewCosting
+        ? '*, suppliers(id, company_name)'
+        : `id, container_ref, supplier_id, import_date, status, locked_at, notes, purchase_invoice_ids, suppliers(id, company_name)`;
+      const { data: containersData, error } = await supabase
+        .from('import_containers')
+        .select(containerColumns)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const containerRows = (containersData ?? []) as unknown as ImportContainer[];
+      const containersWithExpenses = canViewCosting
+        ? await Promise.all(
+            containerRows.map(async (container) => {
+              const [{ data: expenses }, { data: pettyCash }] = await Promise.all([
+                supabase.from('finance_expenses').select('id, amount, expense_category, ppn_amount, stamp_duty_amount, broker_items, include_in_landed_cost').eq('import_container_id', container.id),
+                supabase.from('petty_cash_transactions').select('id, amount, include_in_landed_cost').eq('import_container_id', container.id),
+              ]);
+              const states = await getEffectiveExpensePostingStates((expenses || []).map(e => e.id));
+              const linkedExpensesTotal = (expenses || [])
+                .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
+                .filter(e => e.expense_category !== 'pib_import')
+                .filter(e => e.include_in_landed_cost === true)
+                .reduce((sum, e) => sum + calculateCanonicalExpenseTotal(e), 0) || 0;
+              const linkedPettyCashTotal = (pettyCash || [])
+                .filter(pc => pc.include_in_landed_cost === true)
+                .reduce((sum, pc) => sum + (pc.amount || 0), 0) || 0;
+              const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
+              return { ...container, linked_expenses_total: linkedExpensesTotal, linked_petty_cash_total: linkedPettyCashTotal, canonical_landed_cost_pool: Number(canonicalPool) || 0 };
+            })
+          )
+        : containerRows;
+
+      setContainers(containersWithExpenses);
+    } catch {
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to load import containers' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSuppliers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('id, company_name')
+        .order('company_name');
+      if (error) throw error;
+      setSuppliers(data || []);
+    } catch (error: any) {
+      console.error('Error fetching suppliers:', error.message);
+    }
+  };
+
+  const fetchAvailablePIs = async () => {
+    try {
+      // Query existing import relationships: import containers and receiving allocations
+      const [{ data: icRows }, { data: piraRows }] = await Promise.all([
+        supabase.from('import_containers').select('purchase_invoice_ids'),
+        supabase
+          .from('purchase_invoice_receiving_allocations')
+          .select('purchase_invoice_id')
+          .not('import_container_id', 'is', null),
+      ]);
+
+      const importPiIds = new Set<string>();
+      (icRows || []).forEach((ic: any) => {
+        if (Array.isArray(ic.purchase_invoice_ids)) {
+          ic.purchase_invoice_ids.forEach((id: string) => {
+            if (id) importPiIds.add(id);
+          });
+        }
+      });
+      (piraRows || []).forEach((r: any) => {
+        if (r.purchase_invoice_id) importPiIds.add(r.purchase_invoice_id);
+      });
+
+      const { data, error } = await supabase
+        .from('purchase_invoices')
+        .select(`
+          id,
+          invoice_number,
+          invoice_date,
+          supplier_id,
+          currency,
+          exchange_rate,
+          subtotal,
+          total_amount,
+          purchase_type,
+          purchase_orders(po_number),
+          suppliers(company_name),
+          purchase_invoice_items(id)
+        `)
+        .order('invoice_date', { ascending: false });
+
+      if (error) throw error;
+
+      // Filter only to PIs belonging to the SAPJ Import workflow:
+      // Either purchase_type === 'import' OR linked to an import container / receiving allocation
+      // Strictly excludes domestic/local purchase invoices (e.g. PT. Kairos Tritunggal, PT. Anugerah Mentari Distrindo)
+      const importPIs = (data || []).filter((pi: any) =>
+        pi.purchase_type === 'import' || importPiIds.has(pi.id)
+      );
+
+      const formatted: SelectablePI[] = importPIs.map((pi: any) => ({
+        id: pi.id,
+        invoice_number: pi.invoice_number,
+        invoice_date: pi.invoice_date,
+        supplier_id: pi.supplier_id,
+        supplier_name: pi.suppliers?.company_name || 'Unknown Supplier',
+        currency: pi.currency || 'USD',
+        exchange_rate: Number(pi.exchange_rate) || 15000,
+        subtotal: Number(pi.subtotal) || Number(pi.total_amount) || 0,
+        total_amount: Number(pi.total_amount) || 0,
+        po_number: pi.purchase_orders?.po_number,
+        lines_count: Array.isArray(pi.purchase_invoice_items) ? pi.purchase_invoice_items.length : 0,
+      }));
+
+      setAvailablePIs(formatted);
+    } catch (error: any) {
+      console.error('Error fetching purchase invoices:', error.message);
+    }
+  };
+
+  // When a user toggles / selects a PI in the multi-select
+  const handleSelectPI = (piId: string) => {
+    const targetPI = availablePIs.find(p => p.id === piId);
+    if (!targetPI) return;
+
+    if (selectedPiIds.includes(piId)) {
+      // Deselect
+      const updated = selectedPiIds.filter(id => id !== piId);
+      setSelectedPiIds(updated);
+      recalculateFromSelectedPIs(updated);
+      return;
+    }
+
+    // Validate consistency with already selected PIs
+    if (selectedPiIds.length > 0) {
+      const firstSelected = availablePIs.find(p => p.id === selectedPiIds[0]);
+      if (firstSelected) {
+        if (firstSelected.supplier_id !== targetPI.supplier_id) {
+          showToast({
+            type: 'error',
+            title: 'Supplier Mismatch',
+            message: `Selected PI has supplier "${targetPI.supplier_name}", but this container is for "${firstSelected.supplier_name}". All PIs in a container must share the same supplier.`
+          });
+          return;
+        }
+        if (firstSelected.currency !== targetPI.currency) {
+          showToast({
+            type: 'error',
+            title: 'Currency Mismatch',
+            message: `Selected PI currency (${targetPI.currency}) does not match container currency (${firstSelected.currency}).`
+          });
+          return;
+        }
+      }
+    }
+
+    const updated = [...selectedPiIds, piId];
+    setSelectedPiIds(updated);
+    recalculateFromSelectedPIs(updated);
+  };
+
+  const handleRemovePI = (piId: string) => {
+    const updated = selectedPiIds.filter(id => id !== piId);
+    setSelectedPiIds(updated);
+    recalculateFromSelectedPIs(updated);
+  };
+
+  const recalculateFromSelectedPIs = (piIds: string[]) => {
+    if (piIds.length === 0) return;
+    const selectedObjects = availablePIs.filter(p => piIds.includes(p.id));
+    if (selectedObjects.length === 0) return;
+
+    const first = selectedObjects[0];
+    const totalGoodsSubtotal = selectedObjects.reduce((sum, p) => sum + (p.subtotal || 0), 0);
+
+    setFormData(prev => ({
+      ...prev,
+      supplier_id: first.supplier_id,
+      currency: first.currency,
+      exchange_rate: first.exchange_rate || prev.exchange_rate,
+      import_invoice_value: Math.round(totalGoodsSubtotal * 100) / 100,
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const operationalData = {
+        container_ref: formData.container_ref,
+        supplier_id: formData.supplier_id,
+        import_date: formData.import_date,
+        notes: formData.notes,
+        purchase_invoice_ids: selectedPiIds,
+        created_by: user?.id
+      };
+      const costingData = canViewCosting ? {
+        import_invoice_value: formData.import_invoice_value,
+        currency: formData.currency,
+        exchange_rate: formData.exchange_rate,
+        other_import_costs: formData.other_import_costs,
+      } : editingContainer ? {} : { import_invoice_value: 0, currency: 'USD', exchange_rate: 15000, other_import_costs: 0 };
+      const containerData = { ...operationalData, ...costingData };
+
+      let containerId = editingContainer?.id;
+
+      if (editingContainer) {
+        const { error } = await supabase.from('import_containers').update(containerData).eq('id', editingContainer.id);
+        if (error) throw error;
+        showToast({ type: 'success', title: t('common.success'), message: t('success.updated') });
+      } else {
+        const { data: newContainer, error } = await supabase.from('import_containers').insert([containerData]).select().single();
+        if (error) throw error;
+        containerId = newContainer.id;
+        showToast({ type: 'success', title: t('common.success'), message: t('success.created') });
+      }
+
+      // Sync links in purchase_invoice_receiving_allocations
+      if (containerId) {
+        const uniquePiIds = Array.from(new Set(selectedPiIds));
+        if (uniquePiIds.length > 0) {
+          await supabase
+            .from('purchase_invoice_receiving_allocations')
+            .update({ import_container_id: containerId })
+            .in('purchase_invoice_id', uniquePiIds);
+        }
+        if (editingContainer) {
+          const prevIds = (editingContainer.purchase_invoice_ids || []) as string[];
+          const removedIds = prevIds.filter(id => !selectedPiIds.includes(id));
+          if (removedIds.length > 0) {
+            await supabase
+              .from('purchase_invoice_receiving_allocations')
+              .update({ import_container_id: null })
+              .in('purchase_invoice_id', removedIds)
+              .eq('import_container_id', containerId);
+          }
+        }
+      }
+
+      setShowModal(false);
+      setEditingContainer(null);
+      resetForm();
+      fetchContainers();
+    } catch (error: any) {
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to save container: ' + error.message });
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      container_ref: '',
+      supplier_id: '',
+      import_date: new Date().toISOString().split('T')[0],
+      import_invoice_value: 0,
+      currency: 'USD',
+      exchange_rate: 15000,
+      other_import_costs: 0,
+      notes: ''
+    });
+    setSelectedPiIds([]);
+    setPiSearchQuery('');
+    setIsPiDropdownOpen(false);
+    setLinkedExpenses([]);
+    setLinkedPettyCash([]);
+    setInclusionMap({});
+    setCanonicalLandedCostPool(0);
+  };
+
+  const loadLinkedExpenses = async (containerId: string) => {
+    try {
+      const [{ data: expData, error: expError }, { data: pcData, error: pcError }] = await Promise.all([
+        supabase.from('finance_expenses').select('id, expense_category, amount, expense_date, description, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, include_in_landed_cost, pib_bm_amount, pib_ppn_amount, pib_pph_amount').eq('import_container_id', containerId).order('expense_date', { ascending: false }),
+        supabase.from('petty_cash_transactions').select('id, transaction_number, transaction_type, amount, description, transaction_date, expense_category, include_in_landed_cost').eq('import_container_id', containerId).order('transaction_date', { ascending: false }),
+      ]);
+      if (expError) throw expError;
+      if (pcError) throw pcError;
+
+      // Filter to import shipment categories only to exclude any domestic/local purchase costs
+      const importExpenseCategories = new Set([
+        'pib_import', 'freight_charges', 'clearing_forwarding', 'port_charges',
+        'container_handling', 'transportation', 'loading_import', 'bpom_ski_fees',
+        'import_broker', 'other_import_costs'
+      ]);
+
+      const states = await getEffectiveExpensePostingStates((expData || []).map(e => e.id));
+      const activeExpenses = (expData || [])
+        .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
+        .filter(e => importExpenseCategories.has(e.expense_category));
+
+      const filteredPettyCash = (pcData || [])
+        .filter((pc: any) => !pc.expense_category || importExpenseCategories.has(pc.expense_category));
+
+      setLinkedExpenses(activeExpenses);
+      setLinkedPettyCash(filteredPettyCash as LinkedPettyCash[]);
+
+      const map: Record<string, boolean> = {};
+      for (const e of activeExpenses) map[e.id] = e.include_in_landed_cost === true;
+      for (const pc of filteredPettyCash) map[pc.id] = pc.include_in_landed_cost === true;
+      setInclusionMap(map);
+    } catch {
+      setLinkedExpenses([]);
+      setLinkedPettyCash([]);
+      setInclusionMap({});
+    }
+  };
+
+  const handleToggleInclusion = async (itemId: string, source: SourceType, checked: boolean) => {
+    setInclusionMap(prev => ({ ...prev, [itemId]: checked }));
+    setSavingInclusion(true);
+    try {
+      const table = source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
+      const { error } = await supabase.from(table).update({ include_in_landed_cost: checked }).eq('id', itemId);
+      if (error) throw error;
+    } catch (error: any) {
+      setInclusionMap(prev => ({ ...prev, [itemId]: !checked }));
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to update: ' + error.message });
+    } finally {
+      setSavingInclusion(false);
+    }
+  };
+
+  const handleSelectAll = async () => {
+    const updates: Record<string, boolean> = {};
+    for (const item of unifiedItems) {
+      if (!item.isPIB) { updates[item.id] = true; }
+    }
+    setInclusionMap(prev => ({ ...prev, ...updates }));
+    setSavingInclusion(true);
+    try {
+      for (const item of unifiedItems) {
+        if (!item.isPIB && !updates[item.id]) continue;
+        if (!item.isPIB) {
+          const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
+          await supabase.from(table).update({ include_in_landed_cost: true }).eq('id', item.id);
+        }
+      }
+    } catch (error: any) {
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to select all: ' + error.message });
+    } finally {
+      setSavingInclusion(false);
+    }
+  };
+
+  const handleClearAll = async () => {
+    const updates: Record<string, boolean> = {};
+    for (const item of unifiedItems) {
+      if (!item.isPIB) { updates[item.id] = false; }
+    }
+    setInclusionMap(prev => ({ ...prev, ...updates }));
+    setSavingInclusion(true);
+    try {
+      for (const item of unifiedItems) {
+        if (!item.isPIB) {
+          const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
+          await supabase.from(table).update({ include_in_landed_cost: false }).eq('id', item.id);
+        }
+      }
+    } catch (error: any) {
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to clear all: ' + error.message });
+    } finally {
+      setSavingInclusion(false);
+    }
+  };
+
+  const getCategoryLabel = (category: string): string => {
+    const labels: Record<string, string> = {
+      duty_customs: 'Duty & Customs (BM)', duty_import: 'Import Duty', ppn_import: 'PPN Import', pph_import: 'PPh Import',
+      pib_import: 'PIB Import', freight_import: 'Freight (Import)', clearing_forwarding: 'Clearing & Forwarding',
+      port_charges: 'Port Charges', container_handling: 'Container Handling', transport_import: 'Transportation (Import)',
+      loading_import: 'Loading / Unloading', bpom_ski_fees: 'BPOM / SKI Fees', import_broker: 'Import Broker',
+      other_import: 'Other Import Cost', staff_welfare: 'Staff Welfare', staff_salary: 'Staff Salary',
+      staff_advance: 'Staff Advance', office: 'Office', utilities: 'Utilities', salary: 'Salary',
+    };
+    return labels[category] || category;
+  };
+
+  const handleEdit = async (container: ImportContainer) => {
+    setEditingContainer(container);
+    const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
+    setCanonicalLandedCostPool(Number(canonicalPool) || 0);
+
+    // Fetch linked PIs from receiving allocations or container array
+    const { data: allocPIs } = await supabase
+      .from('purchase_invoice_receiving_allocations')
+      .select('purchase_invoice_id')
+      .eq('import_container_id', container.id);
+
+    const directPiIds = (container.purchase_invoice_ids || []) as string[];
+    const allocPiIds = (allocPIs || []).map((a: any) => a.purchase_invoice_id).filter(Boolean);
+    const combinedPiIds = Array.from(new Set([...directPiIds, ...allocPiIds]));
+    setSelectedPiIds(combinedPiIds);
+
+    setFormData({
+      container_ref: container.container_ref,
+      supplier_id: container.supplier_id,
+      import_date: container.import_date,
+      import_invoice_value: container.import_invoice_value || 0,
+      currency: container.currency || 'USD',
+      exchange_rate: container.exchange_rate || 15000,
+      other_import_costs: container.other_import_costs || 0,
+      notes: container.notes || ''
+    });
+
+    await loadLinkedExpenses(container.id);
+    setShowModal(true);
+  };
+
+  const getStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { color: string; label: string; icon: any }> = {
+      draft: { color: 'bg-gray-100 text-gray-800', label: t('common.draft'), icon: Edit },
+      allocated: { color: 'bg-green-100 text-green-800', label: t('common.approved'), icon: CheckCircle },
+      locked: { color: 'bg-blue-100 text-blue-800', label: t('importContainers.locked'), icon: Lock },
+    };
+    const config = statusConfig[status] || statusConfig.draft;
+    const Icon = config.icon;
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded ${config.color}`}>
+        <Icon className="w-3 h-3" />{config.label}
+      </span>
+    );
+  };
+
+  const formatCurrency = (amount: number, currency: string = 'IDR') => {
+    if (currency === 'USD') return `$ ${amount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `Rp ${amount?.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const unifiedItems: UnifiedLinkedItem[] = [
+    ...linkedExpenses.filter(e => e.expense_category !== 'pib_import').map(e => ({
+      id: e.id,
+      source: 'expense' as SourceType,
+      category: e.expense_category,
+      amount: calculateCanonicalExpenseTotal(e),
+      date: e.expense_date,
+      description: e.description || '',
+      include_in_landed_cost: inclusionMap[e.id] ?? false,
+      isPIB: false,
+      rawExpense: e,
+    })),
+    ...linkedPettyCash.map(pc => ({
+      id: pc.id,
+      source: 'petty_cash' as SourceType,
+      category: pc.expense_category || pc.transaction_type,
+      amount: pc.amount,
+      date: pc.transaction_date,
+      description: `${pc.transaction_number}: ${pc.description}`,
+      include_in_landed_cost: inclusionMap[pc.id] ?? false,
+      isPIB: false,
+    }))
+  ];
+
+  const pibExpenses = linkedExpenses.filter(e => e.expense_category === 'pib_import');
+  const pibDutyTotal = pibExpenses.reduce((sum, e) => sum + (e.pib_bm_amount || 0), 0);
+  const pibPpnTotal = pibExpenses.reduce((sum, e) => sum + (e.pib_ppn_amount || 0), 0);
+  const pibPphTotal = pibExpenses.reduce((sum, e) => sum + (e.pib_pph_amount || 0), 0);
+  const pibPaymentTotal = pibExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  const selectedLinkedTotal = unifiedItems
+    .filter(i => i.include_in_landed_cost)
+    .reduce((sum, i) => sum + i.amount, 0);
+
+  const hasLinkedItems = unifiedItems.length > 0;
+
+  const filteredPIs = availablePIs.filter(pi => {
+    if (!piSearchQuery.trim()) return true;
+    const q = piSearchQuery.toLowerCase();
+    return (
+      pi.invoice_number.toLowerCase().includes(q) ||
+      pi.supplier_name.toLowerCase().includes(q) ||
+      (pi.po_number && pi.po_number.toLowerCase().includes(q))
+    );
+  });
+
+  const selectedPiObjects = availablePIs.filter(pi => selectedPiIds.includes(pi.id));
+
+  return (
+    <Layout>
+      <div className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{t('importContainers.title')}</h1>
+            <p className="text-sm text-gray-600 mt-1">{t('importContainers.subtitle')}</p>
+          </div>
+          <button
+            onClick={() => { setEditingContainer(null); resetForm(); setShowModal(true); }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm self-start sm:self-auto shadow-sm"
+          >
+            <Plus className="w-4 h-4" />{t('importContainers.newContainer')}
+          </button>
+        </div>
+
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('importContainers.containerRef')}</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('common.supplier')}</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Linked PIs</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">{t('importContainers.importDate')}</th>
+                  {canViewCosting && (<>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase hidden md:table-cell">{t('importContainers.invoiceValue')}</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Landed-Cost Pool</th>
+                  </>)}
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.status')}</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.actions')}</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {loading ? (
+                  <tr><td colSpan={canViewCosting ? 8 : 6} className="px-4 py-8 text-center text-gray-500">{t('common.loading')}</td></tr>
+                ) : containers.length === 0 ? (
+                  <tr><td colSpan={canViewCosting ? 8 : 6} className="px-4 py-8 text-center text-gray-500">{t('importContainers.noContainers')}</td></tr>
+                ) : containers.map((container) => (
+                  <tr key={container.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">{container.container_ref}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{container.suppliers?.company_name}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">
+                      {container.purchase_invoice_ids && container.purchase_invoice_ids.length > 0 ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
+                          <FileText className="w-3 h-3" /> {container.purchase_invoice_ids.length} PI(s)
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 hidden sm:table-cell">{formatDate(container.import_date)}</td>
+                    {canViewCosting && (<>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right hidden md:table-cell">{formatCurrency(container.import_invoice_value, container.currency)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-right">
+                        <div className="text-sm text-gray-900 font-semibold">{formatCurrency(container.canonical_landed_cost_pool || 0, 'IDR')}</div>
+                        <div className="text-xs text-gray-500">Canonical dynamic pool</div>
+                      </td>
+                    </>)}
+                    <td className="px-4 py-3 whitespace-nowrap text-center">{getStatusBadge(container.status)}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button onClick={() => handleEdit(container)} className="text-blue-600 hover:text-blue-800" title={t('common.edit')}>
+                          <Edit className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* MODAL */}
+        {showModal && (
+          <Modal
+            isOpen={showModal}
+            onClose={() => { setShowModal(false); setEditingContainer(null); resetForm(); }}
+            title={editingContainer ? t('importContainers.editContainer') : t('importContainers.addContainer')}
+            maxWidth="max-w-4xl"
+          >
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* COMPACT SEARCHABLE MULTI-PI SELECTOR DROPDOWN */}
+              <div className="space-y-1 relative" ref={piDropdownRef}>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Link Purchase Invoices (PIs)
+                </label>
+
+                {/* Single-line compact dropdown trigger */}
+                <button
+                  type="button"
+                  onClick={() => setIsPiDropdownOpen(prev => !prev)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition shadow-2xs"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    <span className="text-gray-700 truncate font-normal">
+                      {selectedPiIds.length === 0
+                        ? 'Select Purchase Invoices (PIs)...'
+                        : `${selectedPiIds.length} PI${selectedPiIds.length > 1 ? 's' : ''} selected`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-500 shrink-0 ml-2">
+                    {selectedPiIds.length > 0 && (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                        {selectedPiIds.length} selected
+                      </span>
+                    )}
+                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isPiDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+                </button>
+
+                {/* Floating Multi-Select Dropdown Panel */}
+                {isPiDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden divide-y divide-gray-100">
+                    {/* Search box inside dropdown */}
+                    <div className="p-2.5 bg-gray-50 border-b border-gray-200 relative">
+                      <Search className="w-3.5 h-3.5 text-gray-400 absolute left-5 top-4.5" />
+                      <input
+                        type="text"
+                        placeholder="Search PI #, Supplier, or PO #..."
+                        value={piSearchQuery}
+                        onChange={(e) => setPiSearchQuery(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none"
+                        autoFocus
+                      />
+                    </div>
+
+                    {/* Scrollable Checkbox List of Available Import PIs */}
+                    <div className="max-h-56 overflow-y-auto divide-y divide-gray-50">
+                      {filteredPIs.length === 0 ? (
+                        <div className="p-4 text-xs text-gray-500 text-center">No matching import purchase invoices found.</div>
+                      ) : (
+                        filteredPIs.map(pi => {
+                          const isSelected = selectedPiIds.includes(pi.id);
+                          return (
+                            <div
+                              key={pi.id}
+                              onClick={() => handleSelectPI(pi.id)}
+                              className={`p-2.5 flex items-center justify-between text-xs cursor-pointer transition ${
+                                isSelected ? 'bg-blue-50 font-medium' : 'hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {}}
+                                  className="rounded border-gray-300 text-blue-600 pointer-events-none shrink-0"
+                                />
+                                <div className="truncate">
+                                  <span className="font-semibold text-gray-900">{pi.invoice_number}</span>
+                                  <span className="text-gray-500 ml-1.5 truncate">— {pi.supplier_name}</span>
+                                  {pi.po_number && <span className="text-blue-600 ml-1.5 font-mono text-[10px]">PO: {pi.po_number}</span>}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="font-semibold text-gray-800">
+                                  {formatCurrency(pi.subtotal, pi.currency)}
+                                </span>
+                                <span className="text-gray-400 ml-1.5 text-[10px]">({formatDate(pi.invoice_date)})</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Footer summary & close button */}
+                    <div className="p-2 bg-gray-50 flex items-center justify-between text-xs text-gray-500">
+                      <span>{selectedPiIds.length} PI(s) selected</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsPiDropdownOpen(false)}
+                        className="text-blue-600 hover:text-blue-800 font-semibold px-2 py-0.5 rounded hover:bg-blue-100 transition"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <SapRow>
+                <FloatingField label={t('importContainers.containerRef')} filled={!!formData.container_ref} required span={6}>
+                  <input
+                    name="container_ref"
+                    aria-label="Container Ref"
+                    type="text"
+                    value={formData.container_ref}
+                    onChange={(e) => setFormData({ ...formData, container_ref: e.target.value })}
+                    className={FLOAT_INPUT}
+                    required
+                  />
+                </FloatingField>
+                <FloatingField label={t('common.supplier')} filled={!!formData.supplier_id} required span={6}>
+                  <SearchableSelect
+                    value={formData.supplier_id}
+                    onChange={(val) => setFormData({ ...formData, supplier_id: val })}
+                    options={suppliers.map(s => ({ value: s.id, label: s.company_name }))}
+                    placeholder={t('finance.selectSupplier')}
+                  />
+                </FloatingField>
+              </SapRow>
+
+              <SapRow>
+                <FloatingField label={t('importContainers.importDate')} filled={!!formData.import_date} required span={canViewCosting ? 4 : 12}>
+                  <input
+                    name="import_date"
+                    aria-label="Import Date"
+                    type="date"
+                    value={formData.import_date}
+                    onChange={(e) => setFormData({ ...formData, import_date: e.target.value })}
+                    className={FLOAT_INPUT}
+                    required
+                  />
+                </FloatingField>
+                {canViewCosting && (<>
+                  <FloatingField label={t('salesOrders.currency')} filled={!!formData.currency} span={4}>
+                    <select
+                      name="currency"
+                      aria-label="Currency"
+                      value={formData.currency}
+                      onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                      className={FLOAT_INPUT}
+                    >
+                      <option>USD</option>
+                      <option>IDR</option>
+                      <option>CNY</option>
+                      <option>INR</option>
+                    </select>
+                  </FloatingField>
+                  <FloatingField label={`Exchange Rate (IDR per ${formData.currency})`} filled={!!formData.exchange_rate} span={4}>
+                    <input
+                      name="exchange_rate"
+                      aria-label="Exchange Rate"
+                      type="number"
+                      step="0.01"
+                      value={formData.exchange_rate}
+                      onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 0 })}
+                      className={FLOAT_INPUT}
+                    />
+                  </FloatingField>
+                </>)}
+              </SapRow>
+
+              {canViewCosting && (
+                <SapRow>
+                  <FloatingField
+                    label={`${t('importContainers.invoiceValue')} (Goods Subtotal)`}
+                    filled={!!formData.import_invoice_value}
+                    required
+                    span={12}
+                    hint={selectedPiIds.length > 0 ? `Auto-derived goods subtotal from ${selectedPiIds.length} linked PI(s).` : undefined}
+                  >
+                    <MoneyInput
+                      value={formData.import_invoice_value}
+                      onChange={(amount) => setFormData({ ...formData, import_invoice_value: amount })}
+                      className={FLOAT_INPUT}
+                      required
+                    />
+                  </FloatingField>
+                </SapRow>
+              )}
+
+              {/* Linked Expenses + Petty Cash */}
+              {canViewCosting && editingContainer && hasLinkedItems && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-semibold text-green-900 uppercase">Linked Costs — select to include in landed cost</h3>
+                    {unifiedItems.length > 0 && (
+                      <div className="flex gap-2">
+                        <button type="button" onClick={handleSelectAll} disabled={savingInclusion} className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700">Select All</button>
+                        <button type="button" onClick={handleClearAll} disabled={savingInclusion} className="text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">Clear All</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1 max-h-60 overflow-y-auto">
+                    {unifiedItems.map((item) => (
+                      <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 bg-white rounded text-xs">
+                        <input
+                          name="include_in_landed_cost"
+                          aria-label="Include In Landed Cost"
+                          type="checkbox"
+                          checked={item.include_in_landed_cost}
+                          onChange={(e) => handleToggleInclusion(item.id, item.source, e.target.checked)}
+                          disabled={savingInclusion}
+                          className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                        />
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${item.source === 'expense' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {item.source === 'expense' ? 'Expense' : 'Petty Cash'}
+                        </span>
+                        <span className="font-medium text-gray-800 truncate flex-1">{getCategoryLabel(item.category)}</span>
+                        <span className="text-gray-500 truncate hidden sm:inline max-w-[200px]">{item.description}</span>
+                        <span className={`font-semibold whitespace-nowrap ${item.include_in_landed_cost ? 'text-green-700' : 'text-gray-400'}`}>
+                          {formatCurrency(item.amount, 'IDR')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-green-200 space-y-0.5 text-xs">
+                    <div className="flex justify-between"><span className="font-semibold text-green-900">Selected Linked Costs:</span><span className="font-bold text-green-900">{formatCurrency(selectedLinkedTotal, 'IDR')}</span></div>
+                    <div className="flex justify-between"><span className="font-semibold text-green-900">Other Import Costs:</span><span className="font-bold text-green-900">{formatCurrency(formData.other_import_costs || 0, 'IDR')}</span></div>
+                    <div className="flex justify-between pt-1 border-t border-green-200"><span className="font-bold text-green-900">Container Landed-Cost Pool:</span><span className="text-sm font-bold text-green-900">{formatCurrency(canonicalLandedCostPool, 'IDR')}</span></div>
+                  </div>
+                </div>
+              )}
+
+              {/* PIB Breakdown */}
+              {canViewCosting && editingContainer && pibExpenses.length > 0 && (pibDutyTotal > 0 || pibPpnTotal > 0 || pibPphTotal > 0) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <h3 className="text-xs font-semibold text-amber-900 uppercase mb-1">PIB / Customs Breakdown</h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <div><div className="text-amber-700 font-medium">Import Duty (BM)</div><div className="font-bold text-amber-900">{formatCurrency(pibDutyTotal)}</div></div>
+                        <div><div className="text-amber-700 font-medium">Import PPN</div><div className="font-bold text-gray-500">{formatCurrency(pibPpnTotal)}</div><div className="text-[9px] text-gray-400">Excluded</div></div>
+                        <div><div className="text-amber-700 font-medium">Import PPh22</div><div className="font-bold text-gray-500">{formatCurrency(pibPphTotal)}</div><div className="text-[9px] text-gray-400">Excluded</div></div>
+                        <div><div className="text-amber-700 font-medium">PIB Total</div><div className="font-bold text-amber-900">{formatCurrency(pibPaymentTotal)}</div><div className="text-[9px] text-gray-400">Not landed cost</div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Other Import Costs */}
+              {canViewCosting && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <SapRow>
+                    <FloatingField
+                      label="Other Import Costs"
+                      filled={!!formData.other_import_costs}
+                      span={12}
+                      hint="Miscellaneous costs not covered by linked expenses. Does not create a finance expense or journal."
+                    >
+                      <MoneyInput
+                        value={formData.other_import_costs}
+                        onChange={(amount) => setFormData({ ...formData, other_import_costs: amount })}
+                        className={FLOAT_INPUT}
+                      />
+                    </FloatingField>
+                  </SapRow>
+                </div>
+              )}
+
+              <SapRow>
+                <FloatingField label={t('common.notes')} filled={!!formData.notes} span={12} textarea>
+                  <textarea
+                    name="notes"
+                    aria-label="Notes"
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    rows={2}
+                    className={FLOAT_TEXTAREA}
+                  />
+                </FloatingField>
+              </SapRow>
+
+              <div className="flex justify-end gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setShowModal(false); setEditingContainer(null); resetForm(); }}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                >
+                  {editingContainer ? t('common.update') : t('common.create')}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
+      </div>
+    </Layout>
+  );
+}
