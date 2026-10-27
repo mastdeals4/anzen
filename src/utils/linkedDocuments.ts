@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-export interface LinkedDocRef { id: string; number: string; type: 'so' | 'dc' | 'inv'; }
+export interface LinkedDocRef { id: string; number: string; type: 'so' | 'dc' | 'inv'; isCancelled?: boolean; }
 
 export interface LinkedDocsBySo { soId: string; sos: LinkedDocRef[]; dcs: LinkedDocRef[]; invs: LinkedDocRef[] }
 export interface LinkedDocsByDc { dcId: string; sos: LinkedDocRef[]; dcs: LinkedDocRef[]; invs: LinkedDocRef[] }
@@ -10,7 +10,7 @@ export async function fetchLinkedDocumentsBundle() {
   const [soRes, dcRes, invRes, invItemsRes, dcItemsRes] = await Promise.all([
     supabase.from('sales_orders').select('id, so_number'),
     supabase.from('delivery_challans').select('id, challan_number, sales_order_id'),
-    supabase.from('sales_invoices').select('id, invoice_number, sales_order_id, linked_challan_ids'),
+    supabase.from('sales_invoices').select('id, invoice_number, sales_order_id, linked_challan_ids, notes'),
     supabase.from('sales_invoice_items').select('invoice_id, delivery_challan_item_id'),
     supabase.from('delivery_challan_items').select('id, challan_id')
   ]);
@@ -60,15 +60,19 @@ export async function fetchLinkedDocumentsBundle() {
     if (!docs.some((existing) => existing.id === doc.id && existing.type === doc.type)) docs.push(doc);
   };
 
+  const isCancelledInvoice = (notes: string | null | undefined): boolean =>
+    Boolean(notes && (notes.startsWith('[CANCELLED') || notes.toLowerCase().startsWith('cancelled')));
+
   (dcRes.data || []).forEach((dc: any) => {
     (dcToSoIds.get(dc.id) || new Set<string>()).forEach((soId) => {
       if (soMap.has(soId)) addDocOnce(soMap.get(soId)!.dcs, { id: dc.id, number: dc.challan_number, type: 'dc' });
     });
   });
   (invRes.data || []).forEach((inv: any) => {
+    const isCancelled = isCancelledInvoice(inv.notes);
     const addedToSos = new Set<string>();
     if (inv.sales_order_id && soMap.has(inv.sales_order_id)) {
-      addDocOnce(soMap.get(inv.sales_order_id)!.invs, { id: inv.id, number: inv.invoice_number, type: 'inv' });
+      addDocOnce(soMap.get(inv.sales_order_id)!.invs, { id: inv.id, number: inv.invoice_number, type: 'inv', isCancelled });
       addedToSos.add(inv.sales_order_id);
     }
     // Also link invoice to SO through its DCs
@@ -77,12 +81,12 @@ export async function fetchLinkedDocumentsBundle() {
       linkedDcIds.forEach((dcId) => {
         const dc = dcById.get(dcId);
         if (dc?.sales_order_id && soMap.has(dc.sales_order_id) && !addedToSos.has(dc.sales_order_id)) {
-          addDocOnce(soMap.get(dc.sales_order_id)!.invs, { id: inv.id, number: inv.invoice_number, type: 'inv' });
+          addDocOnce(soMap.get(dc.sales_order_id)!.invs, { id: inv.id, number: inv.invoice_number, type: 'inv', isCancelled });
           addedToSos.add(dc.sales_order_id);
         }
         (dcToSoIds.get(dcId) || new Set<string>()).forEach((soId) => {
           if (soMap.has(soId) && !addedToSos.has(soId)) {
-            addDocOnce(soMap.get(soId)!.invs, { id: inv.id, number: inv.invoice_number, type: 'inv' });
+            addDocOnce(soMap.get(soId)!.invs, { id: inv.id, number: inv.invoice_number, type: 'inv', isCancelled });
             addedToSos.add(soId);
           }
         });
@@ -94,7 +98,14 @@ export async function fetchLinkedDocumentsBundle() {
   (dcRes.data || []).forEach((dc: any) => {
     const invs: LinkedDocRef[] = [];
     (invRes.data || []).forEach((inv: any) => {
-      if (invToDcIds.get(inv.id)?.has(dc.id)) invs.push({ id: inv.id, number: inv.invoice_number, type: 'inv' });
+      if (invToDcIds.get(inv.id)?.has(dc.id)) {
+        invs.push({
+          id: inv.id,
+          number: inv.invoice_number,
+          type: 'inv',
+          isCancelled: isCancelledInvoice(inv.notes)
+        });
+      }
     });
     const sos = Array.from(dcToSoIds.get(dc.id) || [])
       .filter((soId) => soById.get(soId))

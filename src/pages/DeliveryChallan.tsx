@@ -257,7 +257,7 @@ export function DeliveryChallan() {
           partially_invoiced_items: inv.partially_invoiced_items,
           fully_invoiced_items: inv.fully_invoiced_items,
           total_remaining_quantity: inv.total_remaining_quantity,
-          linked_invoices: inv.linked_invoice_numbers || []
+          linked_invoices: inv.linked_invoices || inv.linked_invoice_numbers || []
         });
       });
 
@@ -277,10 +277,19 @@ export function DeliveryChallan() {
       const bundle = await fetchLinkedDocumentsBundle();
       const enrichedBase = challansWithStatus.map((c: any) => {
         const l = bundle.dcMap.get(c.id);
+        const invs = l?.invs || [];
+        const allInvoicesCancelled = invs.length > 0 && invs.every((i: any) => i.isCancelled);
+
+        // If all linked invoices are cancelled, the DC is unbilled and available for re-invoicing
+        const resolvedInvoicingStatus = allInvoicesCancelled
+          ? 'not_invoiced'
+          : c.invoicing_status;
+
         return {
           ...c,
+          invoicing_status: resolvedInvoicingStatus,
           linked_so_number: l?.sos?.[0]?.number || c.sales_orders?.so_number || null,
-          linked_invoices: (l?.invs || []).map((i) => i.number)
+          linked_invoices: invs.map((i) => i.number)
         };
       });
 
@@ -1347,6 +1356,9 @@ export function DeliveryChallan() {
       return;
     }
 
+    const targetChallan = challans.find(c => c.id === challanToReject);
+    const wasApproved = targetChallan?.approval_status === 'approved';
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
@@ -1363,7 +1375,13 @@ export function DeliveryChallan() {
 
       if (error) throw error;
 
-      showToast({ type: 'success', title: 'Success', message: 'Delivery Challan rejected' });
+      showToast({
+        type: 'success',
+        title: 'Success',
+        message: wasApproved
+          ? 'Approved Delivery Challan reversed and stock restored successfully'
+          : 'Delivery Challan rejected'
+      });
       setShowRejectModal(false);
       setRejectionReason('');
       setChallanToReject(null);
@@ -1943,50 +1961,76 @@ export function DeliveryChallan() {
           />
         )}
 
-        {showRejectModal && (
-          <Modal
-            isOpen={showRejectModal}
-            onClose={() => {
-              setShowRejectModal(false);
-              setRejectionReason('');
-              setChallanToReject(null);
-            }}
-            title="Reject Delivery Challan"
-          >
-            <div className="space-y-4">
-              <SapRow>
-                <FloatingField label="Rejection Reason" filled={!!rejectionReason} required textarea span={12}>
-                  <textarea name="rejection_reason" aria-label="Enter reason for rejecting this delivery challan..."
-                    value={rejectionReason}
-                    onChange={(e) => setRejectionReason(e.target.value)}
-                    rows={4}
-                    className={FLOAT_TEXTAREA}
-                    placeholder="Enter reason for rejecting this delivery challan..."
-                  />
-                </FloatingField>
-              </SapRow>
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => {
-                    setShowRejectModal(false);
-                    setRejectionReason('');
-                    setChallanToReject(null);
-                  }}
-                  className="px-4 py-2 border rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleRejectChallan}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                  disabled={!rejectionReason.trim()}
-                >
-                  Reject Challan
-                </button>
+        {showRejectModal && (() => {
+          const target = challans.find(c => c.id === challanToReject);
+          const wasApproved = target?.approval_status === 'approved';
+          return (
+            <Modal
+              isOpen={showRejectModal}
+              onClose={() => {
+                setShowRejectModal(false);
+                setRejectionReason('');
+                setChallanToReject(null);
+              }}
+              title={wasApproved ? "Admin Correction: Reverse Approved Delivery Challan" : "Reject Delivery Challan"}
+            >
+              <div className="space-y-4">
+                {wasApproved && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 space-y-1">
+                    <p className="font-semibold">Attention: Stock & Sales Order Reversal</p>
+                    <p>Reversing this approved delivery challan will restore physical batch stock, recompute sales order delivered quantities, and restore sales order reservations. Active (uncancelled) invoices must be cancelled first.</p>
+                  </div>
+                )}
+                <SapRow>
+                  <FloatingField
+                    label={wasApproved ? "Reversal Reason" : "Rejection Reason"}
+                    filled={!!rejectionReason}
+                    required
+                    textarea
+                    span={12}
+                  >
+                    <textarea
+                      name="rejection_reason"
+                      aria-label="Enter reason..."
+                      value={rejectionReason}
+                      onChange={(e) => setRejectionReason(e.target.value)}
+                      rows={4}
+                      className={FLOAT_TEXTAREA}
+                      placeholder={
+                        wasApproved
+                          ? "Enter reason for reversing this approved delivery challan..."
+                          : "Enter reason for rejecting this delivery challan..."
+                      }
+                    />
+                  </FloatingField>
+                </SapRow>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => {
+                      setShowRejectModal(false);
+                      setRejectionReason('');
+                      setChallanToReject(null);
+                    }}
+                    className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRejectChallan}
+                    className={`px-4 py-2 text-white rounded-lg ${
+                      wasApproved
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                    disabled={!rejectionReason.trim()}
+                  >
+                    {wasApproved ? 'Confirm Reversal' : 'Reject Challan'}
+                  </button>
+                </div>
               </div>
-            </div>
-          </Modal>
-        )}
+            </Modal>
+          );
+        })()}
         </>
       </div>
     </Layout>

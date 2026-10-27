@@ -346,12 +346,15 @@ export function CreditNotes() {
     try {
       const { data, error } = await supabase
         .from('sales_invoices')
-        .select('id, invoice_number, invoice_date, total_amount')
+        .select('id, invoice_number, invoice_date, total_amount, notes')
         .eq('customer_id', customerId)
         .order('invoice_date', { ascending: false });
 
       if (error) throw error;
-      setInvoices(data || []);
+      const activeInvoices = (data || []).filter(
+        (inv: any) => !inv.notes?.includes('[CANCELLED') && !inv.notes?.toLowerCase().startsWith('cancelled')
+      );
+      setInvoices(activeInvoices);
     } catch (error) {
       console.error('Error loading invoices:', error);
     }

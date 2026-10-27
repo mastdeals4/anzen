@@ -101,7 +101,7 @@ interface SalesOrder {
   sales_order_items?: SalesOrderItem[];
 }
 interface LinkedDeliveryChallan { id: string; challan_number: string; challan_date: string; status: string; total_amount: number; }
-interface LinkedSalesInvoice { id: string; invoice_number: string; invoice_date: string; payment_status: string; total_amount: number; }
+interface LinkedSalesInvoice { id: string; invoice_number: string; invoice_date: string; payment_status: string; total_amount: number; is_cancelled?: boolean; }
 type SortField = 'status' | 'date' | 'so_number' | 'customer' | 'amount';
 type SortDirection = 'asc' | 'desc';
 
@@ -277,7 +277,7 @@ export default function SalesOrders() {
       orderIds.forEach((id) => {
         const linked = soMap.get(id);
         dcMap.set(id, (linked?.dcs || []).map((dc) => ({ id: dc.id, challan_number: dc.number, challan_date: '', status: '', total_amount: 0 })));
-        invMap.set(id, (linked?.invs || []).map((inv) => ({ id: inv.id, invoice_number: inv.number, invoice_date: '', payment_status: '', total_amount: 0 })));
+        invMap.set(id, (linked?.invs || []).map((inv) => ({ id: inv.id, invoice_number: inv.number, invoice_date: '', payment_status: '', total_amount: 0, is_cancelled: inv.isCancelled })));
       });
       setSoLinkedChallans(dcMap);
       setSoLinkedInvoices(invMap);
@@ -1233,7 +1233,7 @@ export default function SalesOrders() {
                         <LinkedDocsCell
                           sos={[]}
                           dcs={(soLinkedChallans.get(order.id) || []).map((dc) => ({ id: dc.id, number: dc.challan_number, type: 'dc' as const }))}
-                          invs={(soLinkedInvoices.get(order.id) || []).map((inv) => ({ id: inv.id, number: inv.invoice_number, type: 'inv' as const }))}
+                          invs={(soLinkedInvoices.get(order.id) || []).map((inv) => ({ id: inv.id, number: inv.invoice_number, type: 'inv' as const, isCancelled: inv.is_cancelled }))}
                           show={{ so: false }}
                           onClick={(doc: LinkedDocRef) => { if (doc.type === 'dc') openLinkedChallanView(doc.id); if (doc.type === 'inv') openLinkedInvoiceView(doc.id); }}
                         />

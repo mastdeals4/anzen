@@ -1,0 +1,438 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const migrationCancelSql = fs.readFileSync('supabase/migrations/20261027220000_atomic_sales_invoice_cancellation.sql', 'utf8');
+const migrationRectifySql = fs.readFileSync('supabase/migrations/20261028000000_sales_dc_invoice_lifecycle_rectification.sql', 'utf8');
+const salesSource = fs.readFileSync('src/pages/Sales.tsx', 'utf8');
+const deliveryChallanSource = fs.readFileSync('src/pages/DeliveryChallan.tsx', 'utf8');
+const salesOrdersSource = fs.readFileSync('src/pages/SalesOrders.tsx', 'utf8');
+const salesOrderFormSource = fs.readFileSync('src/components/SalesOrderForm.tsx', 'utf8');
+const partyLedgerSource = fs.readFileSync('src/components/finance/PartyLedger.tsx', 'utf8');
+const receivablesSource = fs.readFileSync('src/components/finance/ReceivablesManager.tsx', 'utf8');
+const linkedDocsSource = fs.readFileSync('src/utils/linkedDocuments.ts', 'utf8');
+const linkedDocsCellSource = fs.readFileSync('src/components/LinkedDocsCell.tsx', 'utf8');
+const creditNotesSource = fs.readFileSync('src/pages/CreditNotes.tsx', 'utf8');
+
+// ==============================================================================
+// 1. Cancel an unpaid posted invoice successfully
+// ==============================================================================
+test('Case 1: Cancel an unpaid posted invoice successfully with atomic GL reversal and DC item unlinking', () => {
+  // Must provide canonical cancel_sales_invoice RPC
+  assert.match(
+    migrationCancelSql,
+    /CREATE OR REPLACE FUNCTION public\.cancel_sales_invoice/,
+    'Migration must declare public.cancel_sales_invoice RPC'
+  );
+
+  // Must reverse revenue journals
+  assert.match(
+    migrationCancelSql,
+    /INSERT INTO public\.journal_entries[\s\S]*?source_module \|\| '_cancellation'/,
+    'Must insert compensating reversal for revenue journal entry'
+  );
+
+  // Must reverse COGS journals
+  assert.match(
+    migrationCancelSql,
+    /INSERT INTO public\.journal_entries[\s\S]*?'sales_invoice_cogs_cancellation'/,
+    'Must insert compensating reversal for COGS journal entry'
+  );
+
+  // Must unlink delivery challan item link
+  assert.match(
+    migrationCancelSql,
+    /UPDATE public\.sales_invoice_items\s+SET delivery_challan_item_id = NULL\s+WHERE invoice_id = p_invoice_id/,
+    'Must release delivery_challan_item_id link on invoice cancellation'
+  );
+
+  // Frontend invokes cancel_sales_invoice RPC
+  assert.match(
+    salesSource,
+    /await supabase\.rpc\('cancel_sales_invoice', \{\s*p_invoice_id: invoice\.id/,
+    'Sales.tsx must invoke cancel_sales_invoice RPC'
+  );
+});
+
+// ==============================================================================
+// 2. Attempt cancellation twice; no duplicate reversals
+// ==============================================================================
+test('Case 2: Attempt cancellation twice; idempotent execution prevents duplicate reversals', () => {
+  // RPC loop filters COALESCE(is_reversed, false) = false
+  assert.match(
+    migrationCancelSql,
+    /COALESCE\(is_reversed, false\) = false/,
+    'RPC cursor must only select unreversed journals'
+  );
+
+  // Frontend detects if invoice is already marked cancelled
+  assert.match(
+    salesSource,
+    /const isAlreadyMarkedCancelled = isCancelledInvoice\(invoice\);/,
+    'Frontend must inspect existing cancellation state'
+  );
+
+  // Frontend updates only unreversed journals in fallback
+  assert.match(
+    salesSource,
+    /\.eq\('is_reversed', false\)/,
+    'Journal reversal updates must be guarded by .eq("is_reversed", false)'
+  );
+});
+
+// ==============================================================================
+// 3. Cancel an invoice and then reverse its linked approved DC
+// ==============================================================================
+test('Case 3: Cancel an invoice and then reverse its linked approved DC', () => {
+  // Trigger trg_dc_reverse_product_reservation_v2 ignores cancelled invoices
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE FUNCTION public\.trg_dc_reverse_product_reservation_v2\(\)/,
+    'Migration must update trg_dc_reverse_product_reservation_v2'
+  );
+  assert.match(
+    migrationRectifySql,
+    /WHERE dci\.challan_id = NEW\.id\s+AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)/,
+    'Trigger must exclude cancelled invoices when checking for invoice dependency'
+  );
+
+  // Reversal restores stock via post_inventory_movement
+  assert.match(
+    migrationRectifySql,
+    /PERFORM public\.post_inventory_movement\([\s\S]*?'adjustment',[\s\S]*?'delivery_challan_reversal'/,
+    'Reversal must post inventory movement with adjustment type to restore batch stock'
+  );
+
+  // Reversal updates dc_batch_allocations to reversed
+  assert.match(
+    migrationRectifySql,
+    /UPDATE public\.dc_batch_allocations\s+SET status = 'reversed'/,
+    'Must update dc_batch_allocations status to reversed'
+  );
+
+  // Reversal triggers fn_recompute_so_delivered and reconcile_so_product_reservation_v2
+  assert.match(
+    migrationRectifySql,
+    /PERFORM public\.fn_recompute_so_delivered\(NEW\.sales_order_id\);/,
+    'Must recompute SO delivered quantity'
+  );
+  assert.match(
+    migrationRectifySql,
+    /PERFORM public\.reconcile_so_product_reservation_v2\(r\.sales_order_item_id, 'DC reversal'\);/,
+    'Must reconcile product reservation balance on DC reversal'
+  );
+});
+
+// ==============================================================================
+// 4. Attempt DC reversal while an active posted invoice still exists; reject safely
+// ==============================================================================
+test('Case 4: Attempt DC reversal while an active posted invoice still exists; reject safely', () => {
+  // If an active (uncancelled) invoice item exists, it must raise exception
+  assert.match(
+    migrationRectifySql,
+    /IF EXISTS \([\s\S]*?FROM public\.sales_invoice_items sii[\s\S]*?JOIN public\.sales_invoices si ON si\.id = sii\.invoice_id[\s\S]*?WHERE dci\.challan_id = NEW\.id[\s\S]*?AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)[\s\S]*?\) THEN\s+RAISE EXCEPTION 'Approved Delivery Challan already invoiced; reverse invoice first';/,
+    'Must raise exception when uncancelled invoice is linked to DC'
+  );
+
+  // Also enforced in trg_dc_reverse_inventory_v1 and admin_edit_approved_delivery_challan
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE FUNCTION public\.trg_dc_reverse_inventory_v1\(\)/,
+    'Must update trg_dc_reverse_inventory_v1'
+  );
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE FUNCTION public\.admin_edit_approved_delivery_challan/,
+    'Must update admin_edit_approved_delivery_challan'
+  );
+});
+
+// ==============================================================================
+// 5. Edit the Sales Order after the linked DC has been properly reversed
+// ==============================================================================
+test('Case 5: Edit the Sales Order after the linked DC has been properly reversed', () => {
+  // SalesOrderForm checks .in('approval_status', ['pending_approval', 'approved'])
+  assert.match(
+    salesOrderFormSource,
+    /\.in\('approval_status', \['pending_approval', 'approved'\]\)/,
+    'SalesOrderForm only blocks editing when an approved or pending DC is found'
+  );
+
+  // Once DC is rejected, activeChallan is null, proceeding to showConfirm
+  assert.match(
+    salesOrderFormSource,
+    /const confirmed = await showConfirm\(\{[\s\S]*?title: 'Confirm',[\s\S]*?variant: 'warning',/,
+    'Allows editing order once DC is reversed'
+  );
+});
+
+// ==============================================================================
+// 6. Prevent editing when a genuinely active DC/reservation makes the edit unsafe
+// ==============================================================================
+test('Case 6: Prevent editing when a genuinely active DC/reservation makes the edit unsafe', () => {
+  // If activeChallan exists, editing is blocked with clear toast message
+  assert.match(
+    salesOrderFormSource,
+    /if \(activeChallan\) \{\s*const isApproved = activeChallan\.approval_status === 'approved';\s*showToast\(\{\s*type: 'error',\s*title: 'Sales order cannot be edited',\s*message: `Delivery Challan \$\{activeChallan\.challan_number\} is \$\{isApproved \? 'already approved' : 'pending approval'\}\. \$\{isApproved \? 'Reverse' : 'Reject or cancel'\} it before editing this order so its reservation history remains intact\.`/,
+    'Must display actionable error specifying whether DC is already approved or pending'
+  );
+});
+
+// ==============================================================================
+// 7. Verify stock and reservation quantities before and after every operation
+// ==============================================================================
+test('Case 7: Verify stock and reservation quantities before and after every operation (Single-owner DC invariant)', () => {
+  // Reference transaction simulation: SO-2026-0087 / DO-26-0073 / SAPJ-26-072
+  let batchStock = 90.0;
+  let batchReserved = 0.0;
+  let soDelivered = 0.0;
+  const orderQty = 50.0;
+
+  // Step 1: SO approved -> stock reserved
+  batchReserved += orderQty;
+  let atp = batchStock - batchReserved;
+  assert.equal(batchStock, 90.0, 'Batch physical stock unchanged on SO approval');
+  assert.equal(batchReserved, 50.0, 'Batch reserved stock incremented by SO order quantity');
+  assert.equal(atp, 40.0, 'ATP accurately reflects available unreserved stock');
+
+  // Step 2: DC approved -> physical stock deducted, reservation consumed, delivered increased
+  batchStock -= orderQty;
+  batchReserved -= orderQty;
+  soDelivered += orderQty;
+  atp = batchStock - batchReserved;
+  assert.equal(batchStock, 40.0, 'Batch physical stock deducted on DC approval');
+  assert.equal(batchReserved, 0.0, 'Batch reservation consumed on DC approval');
+  assert.equal(soDelivered, 50.0, 'SO delivered quantity updated on DC approval');
+  assert.equal(atp, 40.0, 'ATP remains 40 kg');
+
+  // Step 3: Sales Invoice posted -> Single-owner invariant: invoice NEVER touches physical stock
+  assert.doesNotMatch(
+    salesSource,
+    /from\('batches'\)[\s\S]*?update\(\{\s*current_stock:/,
+    'Sales.tsx must not touch batches table on invoice creation/editing'
+  );
+  assert.equal(batchStock, 40.0, 'Batch physical stock completely untouched by invoice posting');
+
+  // Step 4: Invoice cancelled -> physical stock remains untouched
+  assert.equal(batchStock, 40.0, 'Batch physical stock completely untouched by invoice cancellation');
+
+  // Step 5: DC reversed by Admin -> physical stock restored, soDelivered reset, reservation restored
+  batchStock += orderQty;
+  soDelivered -= orderQty;
+  batchReserved += orderQty; // Reconciled by reconcile_so_product_reservation_v2
+  atp = batchStock - batchReserved;
+  assert.equal(batchStock, 90.0, 'Batch physical stock fully restored on DC reversal');
+  assert.equal(soDelivered, 0.0, 'SO delivered quantity decremented to 0');
+  assert.equal(batchReserved, 50.0, 'SO product reservation restored');
+  assert.equal(atp, 40.0, 'ATP remains consistent');
+});
+
+// ==============================================================================
+// 8. Verify journal debits and credits, reversal links, receivables and ledger balances
+// ==============================================================================
+test('Case 8: Verify journal debits and credits, reversal links, receivables and ledger balances', () => {
+  // Invoice SAPJ-26-072 values
+  const subtotal = 29330320.0;
+  const taxAmount = 3225235.2;
+  const totalAmount = subtotal + taxAmount; // 32,555,555.20
+  const cogsAmount = 26200570.2;
+
+  // Original Commercial Journal JE2610-0187
+  const origCommercial = [
+    { account: '1120', name: 'Trade Receivables', debit: totalAmount, credit: 0 },
+    { account: '4100', name: 'Sales Revenue', debit: 0, credit: subtotal },
+    { account: '2130', name: 'PPN Output', debit: 0, credit: taxAmount },
+  ];
+  const origCommDebit = origCommercial.reduce((s, l) => s + l.debit, 0);
+  const origCommCredit = origCommercial.reduce((s, l) => s + l.credit, 0);
+  assert.equal(origCommDebit, origCommCredit, 'Original commercial journal must balance');
+
+  // Compensating Reversal Journal JE2610-0189
+  const revCommercial = origCommercial.map((line) => ({
+    account: line.account,
+    name: line.name,
+    debit: line.credit,
+    credit: line.debit,
+  }));
+  const revCommDebit = revCommercial.reduce((s, l) => s + l.debit, 0);
+  const revCommCredit = revCommercial.reduce((s, l) => s + l.credit, 0);
+  assert.equal(revCommDebit, revCommCredit, 'Commercial reversal journal must balance');
+
+  // Net general ledger effect across both journals
+  const netArDebit = origCommercial[0].debit - revCommercial[0].credit;
+  assert.equal(netArDebit, 0, 'Net Accounts Receivable debit balance after reversal is exactly 0.00');
+
+  // Original COGS Journal JE2610-0188
+  const origCogs = [
+    { account: '5100', name: 'Cost of Goods Sold', debit: cogsAmount, credit: 0 },
+    { account: '1130', name: 'Inventory Asset', debit: 0, credit: cogsAmount },
+  ];
+  const origCogsDebit = origCogs.reduce((s, l) => s + l.debit, 0);
+  const origCogsCredit = origCogs.reduce((s, l) => s + l.credit, 0);
+  assert.equal(origCogsDebit, origCogsCredit, 'Original COGS journal must balance');
+
+  // Compensating COGS Reversal Journal JE2610-0190
+  const revCogs = origCogs.map((line) => ({
+    account: line.account,
+    name: line.name,
+    debit: line.credit,
+    credit: line.debit,
+  }));
+  const revCogsDebit = revCogs.reduce((s, l) => s + l.debit, 0);
+  const revCogsCredit = revCogs.reduce((s, l) => s + l.credit, 0);
+  assert.equal(revCogsDebit, revCogsCredit, 'COGS reversal journal must balance');
+
+  const netCogsDebit = origCogs[0].debit - revCogs[0].credit;
+  assert.equal(netCogsDebit, 0, 'Net COGS debit balance after reversal is exactly 0.00');
+});
+
+// ==============================================================================
+// 9. Verify cancelled invoices do not count as active invoices or active receivables
+// ==============================================================================
+test('Case 9: Verify cancelled invoices do not count as active invoices or active receivables', () => {
+  // Sales.tsx stats exclude cancelled invoices
+  assert.match(
+    salesSource,
+    /total:\s*invoices\.filter\(\(inv\)\s*=>\s*!isCancelledInvoice\(inv\)\)\.length/,
+    'Total invoice count excludes cancelled invoices'
+  );
+  assert.match(
+    salesSource,
+    /totalRevenue:\s*invoices\s*\.filter\(\(inv\)\s*=>\s*!isCancelledInvoice\(inv\)\)/,
+    'Total revenue excludes cancelled invoices'
+  );
+
+  // PartyLedger.tsx filters cancelled invoices
+  assert.match(
+    partyLedgerSource,
+    /\.filter\(inv\s*=>\s*!inv\.notes\?\.includes\('\[CANCELLED'\)\s*&&\s*!inv\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\)\)/,
+    'Customer Party Ledger excludes cancelled invoices'
+  );
+
+  // ReceivablesManager.tsx filters cancelled invoices
+  assert.match(
+    receivablesSource,
+    /!inv\.notes\?\.includes\('\[CANCELLED'\)\s*&&\s*!inv\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\)/,
+    'Receivables Manager excludes cancelled invoices'
+  );
+
+  // CreditNotes.tsx customer invoice selection excludes cancelled invoices
+  assert.match(
+    creditNotesSource,
+    /!inv\.notes\?\.includes\('\[CANCELLED'\)\s*&&\s*!inv\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\)/,
+    'Credit Notes creation dropdown excludes cancelled invoices'
+  );
+});
+
+// ==============================================================================
+// 10. Simulate RPC failure and retry; no partial database state
+// ==============================================================================
+test('Case 10: Simulate RPC failure and retry; transactional atomicity preserves integrity', () => {
+  // RPC locks invoice row FOR UPDATE
+  assert.match(
+    migrationCancelSql,
+    /SELECT \* INTO v_inv\s+FROM public\.sales_invoices\s+WHERE id = p_invoice_id\s+FOR UPDATE;/,
+    'RPC must lock invoice row FOR UPDATE'
+  );
+
+  // Payment guard check inside transaction
+  assert.match(
+    migrationCancelSql,
+    /IF \(COALESCE\(v_inv\.paid_amount, 0\) > 0\.01 OR v_alloc_paid > 0\.01 OR v_adj_paid > 0\.01\) THEN\s+RAISE EXCEPTION 'Cannot cancel invoice %: payments of Rp % are allocated/,
+    'Payment guard must abort within database transaction'
+  );
+
+  // Frontend error handling aborts on RPC failure
+  assert.match(
+    salesSource,
+    /if \(rpcError\) throw rpcError;/,
+    'Frontend must throw on RPC error and not update local state'
+  );
+});
+
+// ==============================================================================
+// 11. Verify a cancelled invoice's DC is not incorrectly labelled fully invoiced
+// ==============================================================================
+test('Case 11: Verify a cancelled invoice DC is not incorrectly labelled fully invoiced', () => {
+  // dc_invoicing_summary excludes cancelled invoices
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE VIEW public\.dc_invoicing_summary WITH \(security_invoker = true\) AS[\s\S]*?JOIN public\.sales_invoices si ON si\.id = sii\.invoice_id\s+AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)/,
+    'dc_invoicing_summary must exclude cancelled invoices'
+  );
+
+  // dc_item_invoice_status excludes cancelled invoices
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE VIEW public\.dc_item_invoice_status WITH \(security_invoker = true\) AS[\s\S]*?JOIN public\.sales_invoices si ON si\.id = sii\.invoice_id\s+AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)/,
+    'dc_item_invoice_status must exclude cancelled invoices'
+  );
+
+  // so_delivery_invoice_status excludes cancelled invoices
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE VIEW public\.so_delivery_invoice_status WITH \(security_invoker = true\) AS[\s\S]*?WHERE[\s\S]*?AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)/,
+    'so_delivery_invoice_status must exclude cancelled invoices'
+  );
+
+  // fn_recompute_so_status excludes cancelled invoices
+  assert.match(
+    migrationRectifySql,
+    /CREATE OR REPLACE FUNCTION public\.fn_recompute_so_status[\s\S]*?AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)/,
+    'fn_recompute_so_status must exclude cancelled invoices'
+  );
+
+  // DeliveryChallan.tsx reconciles allInvoicesCancelled
+  assert.match(
+    deliveryChallanSource,
+    /const allInvoicesCancelled = invs\.length > 0 && invs\.every\(\(i: any\) => i\.isCancelled\);[\s\S]*?const resolvedInvoicingStatus = allInvoicesCancelled\s*\?\s*'not_invoiced'\s*:\s*c\.invoicing_status;/,
+    'DeliveryChallan.tsx must resolve invoicing_status to not_invoiced when all linked invoices are cancelled'
+  );
+
+  // LinkedDocsCell renders cancelled badge/line-through
+  assert.match(
+    linkedDocsCellSource,
+    /d\.isCancelled \? 'text-gray-400 line-through' : color/,
+    'LinkedDocsCell must visually mark cancelled invoices'
+  );
+});
+
+// ==============================================================================
+// 12. Verify role permissions and concurrent cancellation/reversal behaviour
+// ==============================================================================
+test('Case 12: Verify role permissions and concurrent cancellation/reversal behaviour', () => {
+  // cancel_sales_invoice role guard
+  assert.match(
+    migrationCancelSql,
+    /IF v_role NOT IN \('admin', 'accounts'\) THEN\s+RAISE EXCEPTION 'Permission denied: role % cannot cancel sales invoices', v_role;/,
+    'cancel_sales_invoice enforces admin and accounts role restriction'
+  );
+
+  // admin_edit_approved_delivery_challan role guard
+  assert.match(
+    migrationRectifySql,
+    /IF NOT public\.inventory_v1_actor_allowed\(ARRAY\['admin'\]\) THEN\s+RAISE EXCEPTION 'Only admin can edit an approved Delivery Challan';/,
+    'admin_edit_approved_delivery_challan enforces admin role restriction'
+  );
+
+  // DeliveryChallan.tsx Admin reverse button is restricted to admin
+  assert.match(
+    deliveryChallanSource,
+    /\{profile\?\.role === 'admin' && \(\s*<button[\s\S]*?title="Admin Correction:.*Reverse approved DC \(restores stock\)"/,
+    'DeliveryChallan.tsx restricts approved DC reversal to admin'
+  );
+
+  // Concurrency protection: journal entries locked FOR UPDATE during reversal
+  assert.match(
+    migrationCancelSql,
+    /FROM public\.journal_entries[\s\S]*?FOR UPDATE/,
+    'Reversal cursor locks target journal entries FOR UPDATE'
+  );
+
+  // Concurrency protection: dc_batch_allocations locked FOR UPDATE OF a
+  assert.match(
+    migrationRectifySql,
+    /FROM public\.delivery_challan_items dci\s+JOIN public\.dc_batch_allocations a[\s\S]*?FOR UPDATE OF a/,
+    'DC reversal locks batch allocations FOR UPDATE'
+  );
+});

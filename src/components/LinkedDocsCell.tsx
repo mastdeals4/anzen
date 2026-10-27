@@ -13,9 +13,9 @@ export function LinkedDocsCell({ sos, dcs, invs, onClick, show = { so: true, dc:
               <button
                 key={d.id}
                 onClick={() => onClick(d)}
-                className={`block text-left ${color} hover:underline p-0 m-0 font-normal whitespace-nowrap`}
+                className={`block text-left ${d.isCancelled ? 'text-gray-400 line-through' : color} hover:underline p-0 m-0 font-normal whitespace-nowrap`}
                 type="button"
-                title={d.number}
+                title={d.isCancelled ? `${d.number} (Cancelled)` : d.number}
                 style={{ fontSize: '9px', lineHeight: '13px' }}
               >
                 {d.number}

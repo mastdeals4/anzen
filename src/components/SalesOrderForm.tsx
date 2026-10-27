@@ -502,7 +502,7 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       // already prepared DC and its source item together until it is reversed.
       const { data: activeChallan, error: challanError } = await supabase
         .from('delivery_challans')
-        .select('challan_number')
+        .select('challan_number, approval_status')
         .eq('sales_order_id', existingOrder.id)
         .in('approval_status', ['pending_approval', 'approved'])
         .limit(1)
@@ -514,10 +514,11 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       }
 
       if (activeChallan) {
+        const isApproved = activeChallan.approval_status === 'approved';
         showToast({
           type: 'error',
           title: 'Sales order cannot be edited',
-          message: `Delivery Challan ${activeChallan.challan_number} is still pending or approved. Reject or cancel it before editing this order so its reservation history remains intact.`,
+          message: `Delivery Challan ${activeChallan.challan_number} is ${isApproved ? 'already approved' : 'pending approval'}. ${isApproved ? 'Reverse' : 'Reject or cancel'} it before editing this order so its reservation history remains intact.`,
         });
         return;
       }
