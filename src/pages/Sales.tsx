@@ -1375,8 +1375,8 @@ export function Sales() {
           }
 
           // Controlled posted invoice adjustment:
-          // Keep original journal entries, payments, products, batches, and DC links intact.
-          // Recalculate financial totals consistently.
+          // Keep products, batches, quantities, and DC links intact to protect physical warehouse stock.
+          // Recalculate financial totals and synchronize GL revenue entries consistently.
           const subtotal = validItems.length > 0
             ? items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0)
             : Number(editingInvoice.subtotal || 0);
@@ -1388,6 +1388,15 @@ export function Sales() {
           const total = subtotal + taxAmount - discount + stampDuty;
 
           const currentPaid = Number(editingInvoice.paid_amount || 0);
+          if (total < currentPaid - 0.01) {
+            showToast({
+              type: 'error',
+              title: 'Revision Conflict',
+              message: `Revised invoice total (${total.toLocaleString()}) cannot be less than already collected payments (${currentPaid.toLocaleString()}).`,
+            });
+            return;
+          }
+
           const newBalance = Math.max(0, total - currentPaid);
           let nextPaymentStatus: 'pending' | 'partial' | 'paid' = 'pending';
           if (newBalance <= 0.01 && currentPaid > 0) {
@@ -1398,6 +1407,21 @@ export function Sales() {
             nextPaymentStatus = 'pending';
           }
 
+          // 1. Update sales invoice items with revised unit prices
+          for (const item of items) {
+            if (item.id) {
+              await supabase
+                .from('sales_invoice_items')
+                .update({
+                  unit_price: item.unit_price,
+                  tax_rate: item.tax_rate,
+                  total_amount: item.quantity * item.unit_price,
+                })
+                .eq('id', item.id);
+            }
+          }
+
+          // 2. Update sales invoice header
           const { error: updateError } = await supabase
             .from('sales_invoices')
             .update({
@@ -1417,6 +1441,75 @@ export function Sales() {
             .eq('id', editingInvoice.id);
 
           if (updateError) throw updateError;
+
+          // 3. Synchronize General Ledger (Revenue Journal Entry lines)
+          let targetJeId = editingInvoice.journal_entry_id;
+          if (!targetJeId) {
+            const { data: foundJe } = await supabase
+              .from('journal_entries')
+              .select('id')
+              .eq('source_module', 'sales_invoice')
+              .eq('reference_id', editingInvoice.id)
+              .maybeSingle();
+            if (foundJe) targetJeId = foundJe.id;
+          }
+
+          if (targetJeId) {
+            await supabase
+              .from('journal_entries')
+              .update({
+                total_debit: total,
+                total_credit: total,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', targetJeId);
+
+            const { data: jeLines } = await supabase
+              .from('journal_entry_lines')
+              .select('id, account_id, debit, credit, chart_of_accounts(code)')
+              .eq('journal_entry_id', targetJeId);
+
+            for (const line of jeLines || []) {
+              const coaCode = (line.chart_of_accounts as any)?.code;
+              if (coaCode === '1120') {
+                // A/R line: Debit = total invoice amount
+                await supabase
+                  .from('journal_entry_lines')
+                  .update({ debit: total, credit: 0 })
+                  .eq('id', line.id);
+              } else if (coaCode === '4100' || coaCode === '4110') {
+                // Sales Revenue line: Credit = subtotal
+                await supabase
+                  .from('journal_entry_lines')
+                  .update({ debit: 0, credit: subtotal })
+                  .eq('id', line.id);
+              } else if (coaCode === '2130') {
+                // PPN Keluaran line: Credit = taxAmount
+                await supabase
+                  .from('journal_entry_lines')
+                  .update({ debit: 0, credit: taxAmount })
+                  .eq('id', line.id);
+              }
+            }
+          }
+
+          // 4. Audit Log entry for the price revision
+          await Promise.resolve(
+            supabase.from('audit_logs').insert({
+              table_name: 'sales_invoices',
+              record_id: editingInvoice.id,
+              action: 'PRICE_REVISION',
+              user_id: profile?.id || null,
+              details: {
+                invoice_number: editingInvoice.invoice_number,
+                old_total: editingInvoice.total_amount,
+                new_total: total,
+                old_subtotal: editingInvoice.subtotal,
+                new_subtotal: subtotal,
+                notes: formData.notes || 'Controlled price revision',
+              },
+            })
+          ).catch(() => {});
 
           showToast({
             type: 'success',
@@ -1970,8 +2063,12 @@ export function Sales() {
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
                 <Lock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-semibold text-amber-900">Financially Posted Invoice — Controlled Correction</div>
-                  <div>Customer, products, batches, and Delivery Challan links are locked to preserve accounting and inventory history. You can adjust Bea Meterai, Due Date / Terms, PO Number, and Notes.</div>
+                  <div className="font-semibold text-amber-900">Financially Posted Invoice — Controlled Revision Mode</div>
+                  <div>
+                    {isFinancialEditor
+                      ? 'Authorized revision: You can update Unit Prices, Tax %, Bea Meterai, Terms, PO Number, and Notes. Customer, Products, Batches, and Quantities remain locked to Delivery Challans to protect inventory conservation and warehouse audit trails.'
+                      : 'Financially posted invoices are locked. Contact an Administrator or Accounts manager to revise commercial terms.'}
+                  </div>
                 </div>
               </div>
             )}
@@ -2208,7 +2305,7 @@ export function Sales() {
             <div className="border-t pt-3">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-gray-900">
-                  Line Items {isEditingPosted && <span className="text-[11px] font-normal text-amber-700">(Locked to protect inventory & challan links)</span>}
+                  Line Items {isEditingPosted && <span className="text-[11px] font-normal text-amber-700">(Quantities locked to Delivery Challan — Unit Prices editable by Accounts/Admin)</span>}
                 </h4>
                 {!isEditingPosted && (
                   <button
@@ -2330,7 +2427,7 @@ export function Sales() {
                           required
                           min="0"
                           placeholder="0"
-                          disabled={isEditingPosted}
+                          disabled={isEditingPosted && !isFinancialEditor}
                         />
                       </div>
 
@@ -2343,7 +2440,7 @@ export function Sales() {
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                           min="0"
                           placeholder="11"
-                          disabled={isEditingPosted}
+                          disabled={isEditingPosted && !isFinancialEditor}
                         />
                       </div>
 

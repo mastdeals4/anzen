@@ -37,12 +37,25 @@ export interface KunalReplySourceOption {
   offered_make: string | null;
 }
 
+export interface KunalReplyMultiOption {
+  optionLabel?: string;
+  offered_make: string | null;
+  india_price: string;
+  india_price_currency: string;
+  purchase_price: string;
+  purchase_currency: string;
+  offered_price: string;
+  offered_currency: string;
+  kunal_remark?: string;
+}
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   inquiry: KunalReplyInquiry;
   draft: KunalReplyDraft;
   sourceOption: KunalReplySourceOption | null;
+  options?: KunalReplyMultiOption[];
 }
 
 function parseRecipients(raw: string): string[] {
@@ -64,25 +77,45 @@ function buildBody(
   sourceOption: KunalReplySourceOption | null,
   userName: string,
   co?: CompanySnapshot | null,
+  options?: KunalReplyMultiOption[],
 ): string {
-  const row: InternalPriceRow = {
-    inquiryNumber: inquiry.inquiry_number,
-    aceerpNo: inquiry.aceerp_no,
-    product: inquiry.product_name,
-    requiredMake: inquiry.supplier_name,
-    offeredMake: sourceOption?.offered_make ?? null,
-    qty: inquiry.quantity,
-    inrSourcePrice: fmtPrice(draft.india_price, draft.india_price_currency),
-    usdLandedCost: fmtPrice(draft.purchase_price, draft.purchase_currency),
-    quotePrice: fmtPrice(draft.offered_price, draft.offered_currency),
-    remarks: draft.kunal_remark || inquiry.remarks || null,
-  };
+  const rows: InternalPriceRow[] = options && options.length > 0
+    ? options.map((opt, idx) => {
+        const letter = String.fromCharCode(65 + idx);
+        const optMake = opt.offered_make
+          ? `${opt.offered_make} (Option ${letter})`
+          : `Option ${letter}`;
+        return {
+          inquiryNumber: inquiry.inquiry_number,
+          aceerpNo: inquiry.aceerp_no,
+          product: inquiry.product_name,
+          requiredMake: inquiry.supplier_name,
+          offeredMake: optMake,
+          qty: inquiry.quantity,
+          inrSourcePrice: fmtPrice(opt.india_price, opt.india_price_currency),
+          usdLandedCost: fmtPrice(opt.purchase_price, opt.purchase_currency),
+          quotePrice: fmtPrice(opt.offered_price, opt.offered_currency),
+          remarks: opt.kunal_remark || draft.kunal_remark || inquiry.remarks || null,
+        };
+      })
+    : [{
+        inquiryNumber: inquiry.inquiry_number,
+        aceerpNo: inquiry.aceerp_no,
+        product: inquiry.product_name,
+        requiredMake: inquiry.supplier_name,
+        offeredMake: sourceOption?.offered_make ?? null,
+        qty: inquiry.quantity,
+        inrSourcePrice: fmtPrice(draft.india_price, draft.india_price_currency),
+        usdLandedCost: fmtPrice(draft.purchase_price, draft.purchase_currency),
+        quotePrice: fmtPrice(draft.offered_price, draft.offered_currency),
+        remarks: draft.kunal_remark || inquiry.remarks || null,
+      }];
 
   const safeUserName = escapeHtml(userName);
   return (
     `<p>Hi team,</p>` +
     `<p>Please find the pricing details below for <strong>${escapeHtml(inquiry.product_name)}</strong> (${escapeHtml(inquiry.inquiry_number)}):</p>` +
-    buildInternalPriceTable([row]) +
+    buildInternalPriceTable(rows) +
     `<p>Please proceed with the customer quotation.</p>` +
     `<p>Thanks,<br>${safeUserName}</p>` +
     buildCompanySignature(userName, co)
@@ -96,7 +129,7 @@ function buildSubject(inquiry: KunalReplyInquiry): string {
   return `Internal Pricing: ${inquiry.product_name} — ${inquiry.inquiry_number}`;
 }
 
-export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourceOption }: Props) {
+export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourceOption, options }: Props) {
   const [toEmail, setToEmail] = useState('');
   const [ccEmail, setCcEmail] = useState('');
   const [bccEmail, setBccEmail] = useState('');
@@ -132,7 +165,7 @@ export function KunalInternalReplyModal({ isOpen, onClose, inquiry, draft, sourc
       const co = (coResult.data as CompanySnapshot | null) ?? FALLBACK_COMPANY;
 
       setSubject(buildSubject(inquiry));
-      setBody(buildBody(inquiry, draft, sourceOption, name, co));
+      setBody(buildBody(inquiry, draft, sourceOption, name, co, options));
     };
     init();
   }, [isOpen, inquiry.id]);

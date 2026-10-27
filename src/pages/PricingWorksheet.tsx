@@ -19,6 +19,7 @@ import {
   type KunalReplyInquiry,
   type KunalReplyDraft,
   type KunalReplySourceOption,
+  type KunalReplyMultiOption,
 } from '../components/crm/KunalInternalReplyModal';
 import { KunalEmailEvidenceDrawer } from '../components/pricing/KunalEmailEvidenceDrawer';
 import { ImportInfo } from '../components/ImportInfo';
@@ -71,6 +72,27 @@ export type PricingRowStatus =
 
 import { isProductMatch } from '../services/sourceReplyParser';
 export { isProductMatch };
+
+export interface InquiryPricingOptionItem {
+  id?: string;
+  inquiry_id?: string;
+  source_type?: 'india' | 'china' | 'local';
+  offered_make: string;
+  source_price: number | null;
+  source_currency: 'INR' | 'USD';
+  selling_price: number | null;
+  selling_currency: 'USD' | 'IDR';
+  landed_cost_usd?: number | null;
+  suggested_quote_usd?: number | null;
+  margin_pct?: number;
+  is_selected: boolean;
+  supplier?: string;
+  moq?: string;
+  lead_time?: string;
+  specification?: string;
+  remark?: string;
+  availability?: 'available' | 'partial' | 'na';
+}
 
 export interface UnifiedPricingRow {
   id: string; // unique row id (inquiry id or ai review id)
@@ -142,7 +164,7 @@ export interface UnifiedPricingRow {
 
   // Preserved atomic extraction rows from source email
   rawExtractionRows?: any[];
-  allPricingOptions?: any[];
+  allPricingOptions?: InquiryPricingOptionItem[];
 
   evidence?: {
     hasRealGmail: boolean;
@@ -389,6 +411,7 @@ export function PricingWorksheet() {
     inquiry: KunalReplyInquiry;
     draft: KunalReplyDraft;
     sourceOption: KunalReplySourceOption | null;
+    options?: KunalReplyMultiOption[];
   } | null>(null);
 
   // Internal Email Evidence Drawer target
@@ -786,7 +809,79 @@ export function PricingWorksheet() {
 
       // First pass: Active Inquiries
       for (const inq of inqs) {
-        const inqOpts = optionsMap[inq.id] || [];
+        const rawOpts = optionsMap[inq.id] || [];
+        const inqOpts: InquiryPricingOptionItem[] = rawOpts.map((opt: any) => {
+          const optSourcePrice = opt.source_price != null ? Number(opt.source_price) : null;
+          const optSourceCurr: 'INR' | 'USD' = (opt.source_currency === 'USD') ? 'USD' : 'INR';
+          const optSellingPrice = (opt.selling_price != null && Number(opt.selling_price) > 0) ? Number(opt.selling_price) : null;
+
+          let optLanded: number | null = null;
+          let optSuggested: number | null = null;
+
+          if (optSourcePrice !== null && optSourcePrice > 0) {
+            const optCalc = calculateCanonicalPricing(
+              optSourcePrice,
+              optSourceCurr,
+              inq.quantity,
+              loadedConfig,
+              {
+                containerType: '20ft',
+                packingType: 'mixed',
+                effectiveInrRate: effectiveInr,
+                indiaMarginPct: 4.0,
+                freightUsdPerKg: 0.08,
+                dutyPct: 4.0,
+                insurancePct: 0.1,
+                clearanceUsd: clearance20ft,
+                indonesiaMarginPct: Number(opt.margin_pct) || 4.0,
+                quotePriceOverride: optSellingPrice,
+              }
+            );
+            optLanded = optCalc.landedCostUsd;
+            optSuggested = optCalc.suggestedQuoteUsd;
+          }
+
+          return {
+            id: opt.id,
+            inquiry_id: inq.id,
+            source_type: opt.source_type || 'india',
+            offered_make: opt.offered_make || '',
+            source_price: optSourcePrice,
+            source_currency: optSourceCurr,
+            selling_price: optSellingPrice,
+            selling_currency: (opt.selling_currency === 'IDR' ? 'IDR' : 'USD') as 'USD' | 'IDR',
+            landed_cost_usd: optLanded,
+            suggested_quote_usd: optSuggested,
+            margin_pct: Number(opt.margin_pct) || 4.0,
+            is_selected: Boolean(opt.is_selected),
+            supplier: opt.supplier || '',
+            moq: opt.moq || '',
+            lead_time: opt.lead_time || '',
+            specification: opt.specification || inq.specification || '',
+            remark: opt.remark || '',
+            availability: (opt.availability as any) || 'available',
+          };
+        });
+
+        // Initialize fallback option if none exist yet
+        if (inqOpts.length === 0 && (inq.supplier_name || inq.purchase_price || inq.offered_price)) {
+          const initSourcePrice = inq.purchase_price != null ? Number(inq.purchase_price) : null;
+          const initSellingPrice = inq.offered_price != null ? Number(inq.offered_price) : null;
+          inqOpts.push({
+            inquiry_id: inq.id,
+            source_type: 'india',
+            offered_make: inq.supplier_name || '',
+            source_price: initSourcePrice,
+            source_currency: (inq.purchase_price_currency as any) === 'INR' ? 'INR' : 'USD',
+            selling_price: initSellingPrice,
+            selling_currency: (inq.offered_price_currency as any) === 'IDR' ? 'IDR' : 'USD',
+            is_selected: true,
+            supplier: inq.supplier_name || '',
+            specification: inq.specification || '',
+            availability: 'available',
+          });
+        }
+
         const selectedOpt = inqOpts.find(o => o.is_selected) || inqOpts[0] || null;
 
         // CRITICAL FIX: Only use actual source_price from pricing_options.
@@ -1805,7 +1900,7 @@ export function PricingWorksheet() {
   };
 
   // Switch alternate source option for an inquiry
-  const handleSwitchPricingOption = (row: UnifiedPricingRow, opt: any) => {
+  const handleSwitchPricingOption = (row: UnifiedPricingRow, opt: InquiryPricingOptionItem) => {
     const nextPrice = opt.source_price != null ? Number(opt.source_price) : null;
     const nextCurrency: 'INR' | 'USD' = opt.source_currency === 'USD' ? 'USD' : 'INR';
     const nextMake = opt.offered_make || row.requestedMake || '';
@@ -1814,13 +1909,17 @@ export function PricingWorksheet() {
     const nextLeadTime = opt.lead_time || row.leadTime;
     const nextSpec = opt.specification || row.specification;
     const nextAvailability = (opt.availability as any) || row.availability;
+    const nextQuotePrice = (opt.selling_price !== undefined && opt.selling_price !== null && Number(opt.selling_price) > 0)
+      ? Number(opt.selling_price)
+      : null;
+    const nextQuoteCurrency = opt.selling_currency || row.quoteCurrency;
 
     // Recalculate canonical pricing for new source
     let calc = {
       purchasePriceUsdPerKg: null as number | null,
-      landedCostUsd: null as number | null,
-      suggestedQuoteUsd: null as number | null,
-      quotePrice: row.quotePrice,
+      landedCostUsd: opt.landed_cost_usd ?? null,
+      suggestedQuoteUsd: opt.suggested_quote_usd ?? null,
+      quotePrice: nextQuotePrice,
       totalQuoteAmount: null as number | null,
       calcBreakdown: null as Record<string, number> | null,
     };
@@ -1840,15 +1939,23 @@ export function PricingWorksheet() {
           dutyPct: row.dutyPct,
           insurancePct: row.insurancePct,
           clearanceUsd: row.clearanceUsd,
-          indonesiaMarginPct: row.indonesiaMarginPct,
-          quotePriceOverride: row.quotePrice,
+          indonesiaMarginPct: opt.margin_pct || row.indonesiaMarginPct,
+          quotePriceOverride: nextQuotePrice,
         },
       );
     }
 
     setPriceDrafts(prev => ({
       ...prev,
-      [row.id]: { ...prev[row.id], sourcePrice: nextPrice !== null ? String(nextPrice) : '' },
+      [row.id]: {
+        sourcePrice: nextPrice !== null ? String(nextPrice) : '',
+        quotePrice: nextQuotePrice !== null ? String(nextQuotePrice) : '',
+      },
+    }));
+
+    const updatedOptions = (row.allPricingOptions || []).map(o => ({
+      ...o,
+      is_selected: o.id && opt.id ? o.id === opt.id : (o.offered_make === opt.offered_make && Number(o.source_price) === Number(opt.source_price)),
     }));
 
     updateRow(row.id, {
@@ -1864,9 +1971,106 @@ export function PricingWorksheet() {
       purchasePriceUsdPerKg: calc.purchasePriceUsdPerKg,
       landedCostUsd: calc.landedCostUsd,
       suggestedQuoteUsd: calc.suggestedQuoteUsd,
+      quotePrice: calc.quotePrice,
+      quoteCurrency: nextQuoteCurrency,
       totalQuoteAmount: calc.totalQuoteAmount,
       calcBreakdown: calc.calcBreakdown,
+      allPricingOptions: updatedOptions,
+      alternativeMakeDetected: Boolean(
+        row.requestedMake && nextMake && row.requestedMake.toLowerCase() !== nextMake.toLowerCase()
+      ),
     });
+  };
+
+  // Update specific option in allPricingOptions with independent calculation
+  const handleUpdateOption = (rowId: string, optionIndex: number, patch: Partial<InquiryPricingOptionItem>) => {
+    setRows(prev => prev.map(r => {
+      if (r.id !== rowId) return r;
+      const options = [...(r.allPricingOptions || [])];
+      if (!options[optionIndex]) return r;
+
+      const updatedOpt = { ...options[optionIndex], ...patch };
+
+      if (patch.source_price !== undefined || patch.source_currency !== undefined || patch.margin_pct !== undefined) {
+        if (updatedOpt.source_price && updatedOpt.source_price > 0) {
+          const calc = calculateCanonicalPricing(
+            updatedOpt.source_price,
+            updatedOpt.source_currency,
+            r.quantity,
+            config,
+            {
+              containerType: r.containerType,
+              packingType: r.packingType,
+              effectiveInrRate: r.effectiveInrRate,
+              indiaMarginPct: r.indiaMarginPct,
+              freightUsdPerKg: r.freightUsdPerKg,
+              dutyPct: r.dutyPct,
+              insurancePct: r.insurancePct,
+              clearanceUsd: r.clearanceUsd,
+              indonesiaMarginPct: updatedOpt.margin_pct || r.indonesiaMarginPct,
+              quotePriceOverride: updatedOpt.selling_price,
+            }
+          );
+          updatedOpt.landed_cost_usd = calc.landedCostUsd;
+          updatedOpt.suggested_quote_usd = calc.suggestedQuoteUsd;
+        } else {
+          updatedOpt.landed_cost_usd = null;
+          updatedOpt.suggested_quote_usd = null;
+        }
+      }
+
+      options[optionIndex] = updatedOpt;
+
+      const isCurrent = updatedOpt.id ? updatedOpt.id === r.pricingOptionId : (updatedOpt.is_selected || options.length === 1);
+      const rowPatch: Partial<UnifiedPricingRow> = { allPricingOptions: options };
+
+      if (isCurrent) {
+        if (patch.offered_make !== undefined) rowPatch.offeredMake = patch.offered_make;
+        if (patch.source_price !== undefined) rowPatch.sourcePrice = patch.source_price;
+        if (patch.source_currency !== undefined) rowPatch.sourceCurrency = patch.source_currency;
+        if (patch.selling_price !== undefined) rowPatch.quotePrice = patch.selling_price;
+        if (updatedOpt.landed_cost_usd !== undefined) rowPatch.landedCostUsd = updatedOpt.landed_cost_usd;
+        if (updatedOpt.suggested_quote_usd !== undefined) rowPatch.suggestedQuoteUsd = updatedOpt.suggested_quote_usd;
+      }
+
+      return { ...r, ...rowPatch };
+    }));
+  };
+
+  const handleAddOption = (rowId: string) => {
+    setRows(prev => prev.map(r => {
+      if (r.id !== rowId) return r;
+      const options = [...(r.allPricingOptions || [])];
+      const newOption: InquiryPricingOptionItem = {
+        inquiry_id: r.inquiryId || undefined,
+        source_type: r.sourceType || 'india',
+        offered_make: '',
+        source_price: null,
+        source_currency: 'INR',
+        selling_price: null,
+        selling_currency: 'USD',
+        is_selected: false,
+        supplier: '',
+        specification: r.specification,
+        availability: 'available',
+      };
+      return {
+        ...r,
+        allPricingOptions: [...options, newOption],
+      };
+    }));
+  };
+
+  const handleDeleteOption = async (rowId: string, optionIndex: number) => {
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+    const options = [...(row.allPricingOptions || [])];
+    const targetOpt = options[optionIndex];
+    if (targetOpt?.id) {
+      await supabase.from('crm_inquiry_pricing_options').delete().eq('id', targetOpt.id);
+    }
+    options.splice(optionIndex, 1);
+    updateRow(rowId, { allPricingOptions: options });
   };
 
   // DELETE / IGNORE FROM NEED ACTION (Requirement #4)
@@ -1931,52 +2135,76 @@ export function PricingWorksheet() {
 
       const now = new Date().toISOString();
 
-      // 1. Save pricing option correctly without invalid onConflict constraint
+      // 1. Save all pricing options for this inquiry
       let optionId = row.pricingOptionId;
-      const optionPayload = {
-        inquiry_id: targetInquiryId,
-        source_type: row.sourceType || 'india',
-        offered_make: row.offeredMake || row.requestedMake,
-        source_price: row.sourcePrice,
-        source_currency: row.sourceCurrency,
-        specification: row.specification || null,
-        availability: row.availability,
-        document_status: row.documents.length > 0 ? 'received' : 'pending',
-        supplier: row.supplierName,
-        moq: row.moq,
-        lead_time: row.leadTime,
-        margin_pct: row.indonesiaMarginPct,
-        selling_price: row.quotePrice,
-        selling_currency: row.quoteCurrency,
-        is_selected: true,
-        updated_at: now,
-      };
+      const optionsToSave = (row.allPricingOptions && row.allPricingOptions.length > 0)
+        ? row.allPricingOptions
+        : [{
+            id: row.pricingOptionId || undefined,
+            inquiry_id: targetInquiryId,
+            source_type: row.sourceType || 'india',
+            offered_make: row.offeredMake || row.requestedMake,
+            source_price: row.sourcePrice,
+            source_currency: row.sourceCurrency,
+            specification: row.specification || null,
+            availability: row.availability,
+            supplier: row.supplierName,
+            moq: row.moq,
+            lead_time: row.leadTime,
+            margin_pct: row.indonesiaMarginPct,
+            selling_price: row.quotePrice,
+            selling_currency: row.quoteCurrency,
+            is_selected: true,
+          }];
 
-      // Unselect siblings under the same inquiry
-      await supabase
-        .from('crm_inquiry_pricing_options')
-        .update({ is_selected: false })
-        .eq('inquiry_id', targetInquiryId);
+      for (let i = 0; i < optionsToSave.length; i++) {
+        const opt = optionsToSave[i];
+        const isCurrentSelected = opt.id
+          ? opt.id === row.pricingOptionId
+          : (opt.offered_make === row.offeredMake || (!row.pricingOptionId && i === 0));
 
-      if (optionId) {
-        const { error: optUpdateErr } = await supabase
-          .from('crm_inquiry_pricing_options')
-          .update(optionPayload)
-          .eq('id', optionId);
-        if (optUpdateErr) console.warn('Pricing option update warning:', optUpdateErr);
-      } else {
-        const { data: newOpt, error: optInsertErr } = await supabase
-          .from('crm_inquiry_pricing_options')
-          .insert({
-            ...optionPayload,
-            created_by: profile?.id || null,
-          })
-          .select('id')
-          .single();
-        if (optInsertErr) console.warn('Pricing option insert warning:', optInsertErr);
-        if (newOpt) {
-          optionId = newOpt.id;
-          updateRow(row.id, { pricingOptionId: optionId });
+        const optPayload = {
+          inquiry_id: targetInquiryId,
+          source_type: opt.source_type || row.sourceType || 'india',
+          offered_make: opt.offered_make || row.requestedMake,
+          source_price: isCurrentSelected ? row.sourcePrice : opt.source_price,
+          source_currency: isCurrentSelected ? row.sourceCurrency : (opt.source_currency || 'INR'),
+          specification: opt.specification || row.specification || null,
+          availability: opt.availability || row.availability,
+          document_status: row.documents.length > 0 ? 'received' : 'pending',
+          supplier: opt.supplier || row.supplierName,
+          moq: opt.moq || row.moq,
+          lead_time: opt.lead_time || row.leadTime,
+          margin_pct: opt.margin_pct || row.indonesiaMarginPct,
+          selling_price: isCurrentSelected ? row.quotePrice : opt.selling_price,
+          selling_currency: isCurrentSelected ? row.quoteCurrency : (opt.selling_currency || 'USD'),
+          is_selected: isCurrentSelected,
+          updated_at: now,
+        };
+
+        if (opt.id) {
+          const { error: optUpdateErr } = await supabase
+            .from('crm_inquiry_pricing_options')
+            .update(optPayload)
+            .eq('id', opt.id);
+          if (optUpdateErr) console.warn('Pricing option update warning:', optUpdateErr);
+        } else {
+          const { data: newOpt, error: optInsertErr } = await supabase
+            .from('crm_inquiry_pricing_options')
+            .insert({
+              ...optPayload,
+              created_by: profile?.id || null,
+            })
+            .select('id')
+            .single();
+          if (optInsertErr) console.warn('Pricing option insert warning:', optInsertErr);
+          if (newOpt) {
+            opt.id = newOpt.id;
+            if (isCurrentSelected) {
+              optionId = newOpt.id;
+              updateRow(row.id, { pricingOptionId: optionId });
+            }
+          }
         }
       }
 
@@ -2082,6 +2310,26 @@ export function PricingWorksheet() {
 
   // SEND TO TEAM action
   const handleSendToTeam = (row: UnifiedPricingRow) => {
+    const multiOptions: KunalReplyMultiOption[] = (row.allPricingOptions || [])
+      .filter(o => o.offered_make || o.source_price || o.selling_price)
+      .map((o, idx) => {
+        const isCurrent = o.id ? o.id === row.pricingOptionId : (o.offered_make === row.offeredMake);
+        const srcP = isCurrent && row.sourcePrice ? row.sourcePrice : o.source_price;
+        const landP = isCurrent && row.landedCostUsd ? row.landedCostUsd : o.landed_cost_usd;
+        const quoteP = isCurrent && row.quotePrice ? row.quotePrice : o.selling_price;
+        return {
+          optionLabel: `Option ${String.fromCharCode(65 + idx)}`,
+          offered_make: o.offered_make || (isCurrent ? row.offeredMake : row.requestedMake),
+          india_price: srcP ? String(srcP) : '',
+          india_price_currency: o.source_currency || row.sourceCurrency,
+          purchase_price: landP ? String(landP) : '',
+          purchase_currency: 'USD',
+          offered_price: quoteP ? String(quoteP) : '',
+          offered_currency: o.selling_currency || row.quoteCurrency,
+          kunal_remark: o.remark || row.remarks,
+        };
+      });
+
     setReplyTarget({
       inquiry: {
         id: row.inquiryId || '',
@@ -2104,6 +2352,7 @@ export function PricingWorksheet() {
       sourceOption: {
         offered_make: row.offeredMake,
       },
+      options: multiOptions.length > 1 ? multiOptions : undefined,
     });
   };
 
@@ -2792,21 +3041,33 @@ export function PricingWorksheet() {
                                       )}
                                     </div>
 
-                                    {/* Alternate Sourcing Options (Multiple Sources under SAME CRM Inquiry) */}
-                                    {row.allPricingOptions && row.allPricingOptions.length > 0 && (
-                                      <div className="bg-blue-50/60 border border-blue-200 rounded p-1.5 space-y-1">
-                                        <div className="text-[10px] font-bold text-blue-900 flex items-center justify-between">
-                                          <span>Sourcing Options ({row.allPricingOptions.length}):</span>
-                                          <span className="text-[9px] text-blue-600 font-normal">Click to switch active price & source</span>
+                                    {/* Alternate Sourcing Options (Multiple Sources / Competing Makes under SAME CRM Inquiry) */}
+                                    <div className="bg-slate-50 border border-slate-200 rounded-md p-2.5 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                          <span>Sourcing Options & Competing Makes ({(row.allPricingOptions || []).length})</span>
+                                          <span className="text-[10px] text-gray-500 font-normal">Independent landed cost and customer quote per make/supplier</span>
                                         </div>
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {row.allPricingOptions.map((opt: any) => {
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAddOption(row.id)}
+                                          className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-0.5 cursor-pointer"
+                                        >
+                                          <Plus className="w-3 h-3" /> Add Option
+                                        </button>
+                                      </div>
+
+                                      {/* Quick switcher pill buttons */}
+                                      {row.allPricingOptions && row.allPricingOptions.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 pb-1 border-b border-gray-200/60">
+                                          {row.allPricingOptions.map((opt, optIdx) => {
+                                            const optLetter = String.fromCharCode(65 + optIdx);
                                             const isCurrent = opt.id
                                               ? opt.id === row.pricingOptionId
                                               : (opt.offered_make === row.offeredMake && Number(opt.source_price) === Number(row.sourcePrice));
                                             return (
                                               <button
-                                                key={opt.id || `${opt.offered_make}-${opt.source_price}`}
+                                                key={opt.id || `opt-pill-${optIdx}`}
                                                 type="button"
                                                 onClick={() => handleSwitchPricingOption(row, opt)}
                                                 className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all ${
@@ -2815,15 +3076,147 @@ export function PricingWorksheet() {
                                                     : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 hover:border-gray-400'
                                                 }`}
                                               >
-                                                {opt.offered_make || 'Unknown'} • {opt.source_currency || 'INR'} {Number(opt.source_price || 0).toLocaleString()}
-                                                {opt.specification ? ` (${opt.specification})` : ''}
+                                                Option {optLetter}: {opt.offered_make || 'Unknown'} • {opt.source_currency || 'INR'} {Number(opt.source_price || 0).toLocaleString()}
+                                                {opt.selling_price ? ` → Quote: $${Number(opt.selling_price).toFixed(2)}` : ''}
                                                 {isCurrent ? ' ✓ Active' : ''}
                                               </button>
                                             );
                                           })}
                                         </div>
+                                      )}
+
+                                      {/* Detailed editable option cards */}
+                                      <div className="space-y-1.5">
+                                        {(row.allPricingOptions || []).map((opt, optIdx) => {
+                                          const optLetter = String.fromCharCode(65 + optIdx);
+                                          const isCurrent = opt.id
+                                            ? opt.id === row.pricingOptionId
+                                            : (opt.offered_make === row.offeredMake && Number(opt.source_price) === Number(row.sourcePrice));
+
+                                          return (
+                                            <div
+                                              key={opt.id || `opt-card-${optIdx}`}
+                                              className={`p-2 rounded border transition-all text-xs ${
+                                                isCurrent
+                                                  ? 'bg-blue-50/70 border-blue-300 ring-1 ring-blue-300'
+                                                  : 'bg-white border-gray-200 hover:border-gray-300'
+                                              }`}
+                                            >
+                                              <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                                                <div className="flex items-center gap-2">
+                                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                                    isCurrent ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
+                                                  }`}>
+                                                    Option {optLetter}
+                                                  </span>
+                                                  <span className="font-semibold text-gray-900">
+                                                    {opt.offered_make || 'Unspecified Make'}
+                                                  </span>
+                                                  {opt.supplier && (
+                                                    <span className="text-[11px] text-gray-500 font-normal">
+                                                      ({opt.supplier})
+                                                    </span>
+                                                  )}
+                                                  {isCurrent && (
+                                                    <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1 py-0.2 rounded">
+                                                      ✓ Active for Main Quote
+                                                    </span>
+                                                  )}
+                                                </div>
+
+                                                <div className="flex items-center gap-1.5">
+                                                  {!isCurrent && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleSwitchPricingOption(row, opt)}
+                                                      className="px-2 py-0.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded text-[10px] font-medium cursor-pointer"
+                                                    >
+                                                      Set as Active
+                                                    </button>
+                                                  )}
+                                                  {(row.allPricingOptions || []).length > 1 && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleDeleteOption(row.id, optIdx)}
+                                                      className="text-gray-400 hover:text-red-600 p-0.5 cursor-pointer"
+                                                      title="Remove Option"
+                                                    >
+                                                      <Trash2 className="w-3 h-3" />
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              </div>
+
+                                              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-center">
+                                                {/* Make / Brand */}
+                                                <div>
+                                                  <span className="text-[10px] text-gray-500 block mb-0.5">Offered Make</span>
+                                                  <input
+                                                    type="text"
+                                                    list="make-options-list"
+                                                    value={opt.offered_make}
+                                                    onChange={(e) => handleUpdateOption(row.id, optIdx, { offered_make: e.target.value })}
+                                                    placeholder="e.g. JRC, IPCA"
+                                                    className="w-full px-2 py-1 text-xs border border-gray-300 rounded font-medium focus:ring-1 focus:ring-blue-500"
+                                                  />
+                                                </div>
+
+                                                {/* Source Price */}
+                                                <div>
+                                                  <span className="text-[10px] text-gray-500 block mb-0.5">Source Rate ({opt.source_currency})</span>
+                                                  <div className="flex gap-1">
+                                                    <select
+                                                      value={opt.source_currency}
+                                                      onChange={(e) => handleUpdateOption(row.id, optIdx, { source_currency: e.target.value as any })}
+                                                      className="px-1 py-1 text-[11px] border border-gray-300 rounded bg-gray-50"
+                                                    >
+                                                      <option value="INR">INR</option>
+                                                      <option value="USD">USD</option>
+                                                    </select>
+                                                    <input
+                                                      type="number"
+                                                      value={opt.source_price ?? ''}
+                                                      onChange={(e) => handleUpdateOption(row.id, optIdx, { source_price: e.target.value ? Number(e.target.value) : null })}
+                                                      placeholder="Rate"
+                                                      className="w-full px-2 py-1 text-xs border border-gray-300 rounded font-mono focus:ring-1 focus:ring-blue-500"
+                                                    />
+                                                  </div>
+                                                </div>
+
+                                                {/* Landed Cost (USD) */}
+                                                <div>
+                                                  <span className="text-[10px] text-gray-500 block mb-0.5">Est. Landed (USD/kg)</span>
+                                                  <div className="font-mono text-xs py-1 px-1.5 bg-gray-100 rounded border border-gray-200 text-gray-800 font-semibold">
+                                                    {opt.landed_cost_usd !== null && opt.landed_cost_usd !== undefined ? `$${opt.landed_cost_usd.toFixed(2)}` : '—'}
+                                                  </div>
+                                                </div>
+
+                                                {/* Suggested Quote */}
+                                                <div>
+                                                  <span className="text-[10px] text-gray-500 block mb-0.5">Suggested Quote</span>
+                                                  <div className="font-mono text-xs py-1 px-1.5 bg-gray-100 rounded border border-gray-200 text-emerald-800 font-semibold">
+                                                    {opt.suggested_quote_usd !== null && opt.suggested_quote_usd !== undefined ? `$${opt.suggested_quote_usd.toFixed(2)}` : '—'}
+                                                  </div>
+                                                </div>
+
+                                                {/* Customer Quote Price */}
+                                                <div>
+                                                  <span className="text-[10px] text-blue-700 font-bold block mb-0.5">Customer Quote ({opt.selling_currency})</span>
+                                                  <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={opt.selling_price ?? ''}
+                                                    onChange={(e) => handleUpdateOption(row.id, optIdx, { selling_price: e.target.value ? Number(e.target.value) : null })}
+                                                    placeholder="Quote Price"
+                                                    className="w-full px-2 py-1 text-xs border border-blue-400 bg-white rounded font-mono font-bold text-blue-900 focus:ring-1 focus:ring-blue-500"
+                                                  />
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
                                       </div>
-                                    )}
+                                    </div>
 
                                     {/* Alternative Make Alert Banner */}
                                     {row.alternativeMakeDetected && (
@@ -3424,6 +3817,7 @@ export function PricingWorksheet() {
           inquiry={replyTarget.inquiry}
           draft={replyTarget.draft}
           sourceOption={replyTarget.sourceOption}
+          options={replyTarget.options}
         />
       )}
 

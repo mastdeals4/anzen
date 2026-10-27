@@ -3,6 +3,7 @@ import { Modal } from './Modal';
 import { supabase } from '../lib/supabase';
 import { formatDate } from '../utils/dateFormat';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
+import { fetchCanonicalStockReservations } from '../utils/stockReservations';
 import { ProformaInvoiceView } from './ProformaInvoiceView';
 import { DeliveryChallanView } from './DeliveryChallanView';
 import { InvoiceView } from './InvoiceView';
@@ -35,11 +36,13 @@ export function StockMovementsModal({
   const [historyFilter, setHistoryFilter] = useState<'all' | 'in' | 'out' | 'reservations' | 'adjustments'>('all');
   const [historySearch, setHistorySearch] = useState('');
   const [expandedHistoryRows, setExpandedHistoryRows] = useState<Set<string>>(new Set());
+  const [unfulfilledShortage, setUnfulfilledShortage] = useState<number>(0);
 
   // Quick view states
   const [quickViewSO, setQuickViewSO] = useState<{ order: any; items: any[] } | null>(null);
   const [quickViewDC, setQuickViewDC] = useState<{ challan: any; items: any[] } | null>(null);
   const [quickViewInvoice, setQuickViewInvoice] = useState<{ invoice: any; items: any[] } | null>(null);
+  const [quickViewPI, setQuickViewPI] = useState<{ invoice: any; items: any[] } | null>(null);
 
   useEffect(() => {
     if (isOpen && (batchId || productId)) {
@@ -55,6 +58,18 @@ export function StockMovementsModal({
   const loadMovements = async () => {
     setLoading(true);
     try {
+      let effectiveProductId = productId;
+      if (!effectiveProductId && batchId) {
+        const { data: bData } = await supabase
+          .from('batches')
+          .select('product_id')
+          .eq('id', batchId)
+          .maybeSingle();
+        if (bData?.product_id) {
+          effectiveProductId = bData.product_id;
+        }
+      }
+
       let txnQuery = supabase
         .from('inventory_v1_effective_ledger')
         .select('*')
@@ -64,28 +79,24 @@ export function StockMovementsModal({
 
       if (batchId) {
         txnQuery = txnQuery.eq('batch_id', batchId);
-      } else if (productId) {
-        txnQuery = txnQuery.eq('product_id', productId);
+      } else if (effectiveProductId) {
+        txnQuery = txnQuery.eq('product_id', effectiveProductId);
       }
 
-      let resQuery = supabase
-        .from('stock_reservations')
-        .select('id, batch_id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason, batches(batch_number), sales_orders(so_number, customers(company_name))')
-        .order('reserved_at', { ascending: false });
-
-      if (batchId) {
-        resQuery = resQuery.eq('batch_id', batchId);
-      } else if (productId) {
-        resQuery = resQuery.eq('product_id', productId);
-      }
-
-      const [txnResult, resResult] = await Promise.all([txnQuery, resQuery]);
+      const [txnResult, canonicalResResult] = await Promise.all([
+        txnQuery,
+        effectiveProductId
+          ? fetchCanonicalStockReservations(effectiveProductId)
+          : Promise.resolve({ activeReservations: [], allReservations: [], totalReserved: 0, unfulfilledDemand: 0 }),
+      ]);
 
       if (txnResult.error) {
         console.error('Error loading transaction history:', txnResult.error);
         showToast({ type: 'error', title: 'Error', message: 'Error loading transaction history: ' + txnResult.error.message });
         return;
       }
+
+      setUnfulfilledShortage(canonicalResResult.unfulfilledDemand);
 
       // In product-level view, resolve batch numbers from batches table separately
       const batchNumberMap = new Map<string, string>();
@@ -112,18 +123,83 @@ export function StockMovementsModal({
         }
       }
 
+      // Collect Purchase Invoice IDs and reference numbers for batch lookup
+      const piIdsToFetch = new Set<string>();
+      const piNumbersToFetch = new Set<string>();
+
+      (txnResult.data || []).forEach((txn: any) => {
+        const isPiType =
+          txn.reference_type === 'purchase_invoice_receiving' ||
+          txn.reference_type === 'purchase_invoice' ||
+          txn.transaction_type === 'purchase';
+
+        if (isPiType) {
+          if (txn.reference_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(txn.reference_id)) {
+            piIdsToFetch.add(txn.reference_id);
+          }
+          if (txn.reference_number && !txn.reference_number.startsWith('000/') && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(txn.reference_number)) {
+            piNumbersToFetch.add(txn.reference_number);
+          }
+        }
+      });
+
+      const piMapById = new Map<string, any>();
+      const piMapByNumber = new Map<string, any>();
+
+      if (piIdsToFetch.size > 0 || piNumbersToFetch.size > 0) {
+        let piQuery = supabase
+          .from('purchase_invoices')
+          .select('id, invoice_number, invoice_date, currency, total_amount, receiving_approval_status, status, suppliers(company_name, address, phone, tax_id)');
+
+        if (piIdsToFetch.size > 0 && piNumbersToFetch.size > 0) {
+          piQuery = piQuery.or(`id.in.(${Array.from(piIdsToFetch).join(',')}),invoice_number.in.(${Array.from(piNumbersToFetch).map(n => `"${n}"`).join(',')})`);
+        } else if (piIdsToFetch.size > 0) {
+          piQuery = piQuery.in('id', Array.from(piIdsToFetch));
+        } else {
+          piQuery = piQuery.in('invoice_number', Array.from(piNumbersToFetch));
+        }
+
+        const { data: piList } = await piQuery;
+        (piList || []).forEach((pi: any) => {
+          if (pi.id) piMapById.set(pi.id, pi);
+          if (pi.invoice_number) piMapByNumber.set(pi.invoice_number, pi);
+        });
+      }
+
       const enrichedTxns = await Promise.all((txnResult.data || []).map(async (txn: any) => {
         let dcData = null;
         let soData = null;
         let customerData = null;
+        let supplierData = null;
         let invoiceData = null;
+        let purchaseInvoiceData = null;
+        let cleanRefNumber = txn.reference_number;
+
+        // For Purchase Invoice Receiving transactions
+        const isPiMovement =
+          txn.reference_type === 'purchase_invoice_receiving' ||
+          txn.reference_type === 'purchase_invoice' ||
+          txn.transaction_type === 'purchase';
+
+        if (isPiMovement) {
+          const matchedPI = (txn.reference_id && piMapById.get(txn.reference_id)) ||
+                            (txn.reference_number && piMapByNumber.get(txn.reference_number));
+          if (matchedPI) {
+            purchaseInvoiceData = matchedPI;
+            supplierData = matchedPI.suppliers;
+            // Normalize degraded or incomplete references
+            if (!cleanRefNumber || cleanRefNumber.startsWith('000/') || /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(cleanRefNumber)) {
+              cleanRefNumber = matchedPI.invoice_number;
+            }
+          }
+        }
 
         // For DC-type transactions
-        if (txn.reference_number && txn.reference_number.startsWith('DO-')) {
+        if (cleanRefNumber && cleanRefNumber.startsWith('DO-')) {
           const { data: dc } = await supabase
             .from('delivery_challans')
             .select('challan_number, sales_order_id, customer_id, customers(company_name), sales_orders(so_number)')
-            .eq('challan_number', txn.reference_number)
+            .eq('challan_number', cleanRefNumber)
             .maybeSingle();
           dcData = dc;
           if (dc?.customers) customerData = dc.customers;
@@ -173,34 +249,46 @@ export function StockMovementsModal({
 
         return {
           ...txn,
+          reference_number: cleanRefNumber,
           batch_number: resolvedBatchNumber,
           delivery_challans: dcData,
           sales_orders: soData,
           customer: customerData,
+          supplier: supplierData,
+          purchase_invoice: purchaseInvoiceData,
           invoice: invoiceData,
           _type: 'transaction' as const
         };
       }));
 
-      const reservationEntries = (resResult.data || []).map((r: any) => {
-        const resolvedBatchNumber = batchId
-          ? batchNumber
-          : (r.batches?.batch_number || batchNumberMap.get(r.batch_id) || batchNumber);
+      const reservationEntries = canonicalResResult.allReservations.map((r) => {
+        const isProductCommitment = r.source === 'product_level';
+        const resolvedBatchNumber = r.batchNumber || (
+          isProductCommitment
+            ? (batchNumber ? `Product Pool (${batchNumber})` : 'Product Pool (Unassigned)')
+            : (batchNumber || 'Unassigned')
+        );
 
         return {
           id: r.id,
           _type: 'reservation' as const,
-          quantity: r.reserved_quantity,
+          source: r.source,
+          quantity: r.reservedQuantity,
+          ordered_quantity: r.orderedQuantity,
+          delivered_quantity: r.deliveredQuantity,
+          shortage_quantity: r.shortageQuantity,
           status: r.status,
-          is_released: r.is_released,
-          released_at: r.released_at,
-          release_reason: r.release_reason,
-          created_at: r.reserved_at,
-          transaction_date: r.reserved_at?.split('T')[0] || '',
+          is_released: r.isReleased,
+          is_migrated: r.isMigrated,
+          released_at: r.closedAt,
+          release_reason: r.closeReason,
+          created_at: r.createdAt,
+          transaction_date: r.createdAt?.split('T')[0] || '',
           transaction_type: r.status === 'active' ? 'reserved' : 'reservation_released',
           batch_number: resolvedBatchNumber,
-          so_number: r.sales_orders?.so_number,
-          customer_name: r.sales_orders?.customers?.company_name,
+          so_number: r.soNumber,
+          customer_name: r.customerName,
+          so_status: r.soStatus,
         };
       });
 
@@ -298,6 +386,28 @@ export function StockMovementsModal({
     setQuickViewInvoice({ invoice, items: items || [] });
   };
 
+  const openQuickViewPI = async (idOrNumber: string) => {
+    let query = supabase
+      .from('purchase_invoices')
+      .select('*, suppliers(company_name, address, phone, tax_id)');
+
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrNumber)) {
+      query = query.eq('id', idOrNumber);
+    } else {
+      query = query.eq('invoice_number', idOrNumber);
+    }
+
+    const { data: invoice } = await query.maybeSingle();
+    if (!invoice) return;
+
+    const { data: items } = await supabase
+      .from('purchase_invoice_items')
+      .select('*, products(product_name, product_code, unit)')
+      .eq('purchase_invoice_id', invoice.id);
+
+    setQuickViewPI({ invoice, items: items || [] });
+  };
+
   const toggleRow = (id: string) => {
     setExpandedHistoryRows(prev => {
       const next = new Set(prev);
@@ -379,13 +489,20 @@ export function StockMovementsModal({
   const renderTypeBadge = (item: any) => {
     if (item._type === 'reservation') {
       const isActive = item.status === 'active';
+      const isProduct = item.source === 'product_level';
+      const isMigrated = item.is_migrated;
+
+      const label = isActive
+        ? (isProduct ? 'PRODUCT RESERVATION' : 'BATCH RESERVATION')
+        : (isMigrated ? 'LEGACY (MIGRATED)' : 'RESERVATION RELEASED');
+
+      const style = isActive
+        ? 'bg-amber-50 text-amber-800 border-amber-300/70'
+        : 'bg-slate-100 text-slate-600 border-slate-300/70';
+
       return (
-        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase ${
-          isActive
-            ? 'bg-amber-50 text-amber-800 border border-amber-300/70'
-            : 'bg-slate-100 text-slate-600 border border-slate-300/70'
-        }`}>
-          {isActive ? 'RESERVATION' : 'RESERVATION RELEASED'}
+        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase border ${style}`}>
+          {label}
         </span>
       );
     }
@@ -486,6 +603,31 @@ export function StockMovementsModal({
                   </div>
                 </div>
               </div>
+
+              {/* Batch Allocation Context & Shortage Banner */}
+              {batchNumber && totalReserved > 0 && (
+                <div className="mt-2.5 px-3 py-1.5 bg-blue-50/80 border border-blue-200/80 rounded-md text-[11px] text-blue-900 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 shadow-2xs">
+                  <span>
+                    <strong>Batch Allocation Context ({batchNumber}):</strong> Physical batch stock is <strong>{formatQtyValue(currentStock)} {unit}</strong>. Product pool has <strong>{formatQtyValue(totalReserved)} {unit}</strong> in active sales commitments. Product-level reservations hold stock against the product pool and are assigned to specific batches upon Delivery Challan creation.
+                  </span>
+                  {unfulfilledShortage > 0 && (
+                    <span className="font-semibold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded text-[10px] shrink-0 self-start sm:self-auto">
+                      Unfulfilled Demand: {formatQtyValue(unfulfilledShortage)} {unit}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {!batchNumber && unfulfilledShortage > 0 && (
+                <div className="mt-2.5 px-3 py-1.5 bg-amber-50/90 border border-amber-200 rounded-md text-[11px] text-amber-900 flex items-center justify-between shadow-2xs">
+                  <span>
+                    <strong>Demand Notice:</strong> Active customer orders exceed available physical inventory. <strong>{formatQtyValue(unfulfilledShortage)} {unit}</strong> unfulfilled shortage is recorded against approved sales orders.
+                  </span>
+                  <span className="font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-[10px] shrink-0 ml-2">
+                    Shortage: {formatQtyValue(unfulfilledShortage)} {unit}
+                  </span>
+                </div>
+              )}
 
               {/* 2. Compact Filter Pills & Search Input */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-3">
@@ -610,6 +752,17 @@ export function StockMovementsModal({
                                     {item.reference_number}
                                     <ExternalLink className="w-2.5 h-2.5" />
                                   </button>
+                                ) : (item.reference_type === 'purchase_invoice_receiving' || item.purchase_invoice || item.transaction_type === 'purchase') ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openQuickViewPI(item.purchase_invoice?.id || item.reference_id || item.reference_number);
+                                    }}
+                                    className="font-mono font-medium text-emerald-700 hover:text-emerald-900 hover:underline inline-flex items-center gap-0.5"
+                                  >
+                                    {item.purchase_invoice?.invoice_number || item.reference_number}
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </button>
                                 ) : item.reference_number.startsWith('INV-') || item.reference_number.startsWith('SAPJ-') || item.transaction_type === 'sale' ? (
                                   <button
                                     onClick={(e) => {
@@ -632,9 +785,17 @@ export function StockMovementsModal({
                                     {item.reference_number}
                                     <ExternalLink className="w-2.5 h-2.5" />
                                   </button>
+                                ) : item.transaction_type === 'certified_opening' ? (
+                                  <span className="font-mono text-[11px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                                    Opening Balance
+                                  </span>
                                 ) : (
                                   <span className="font-mono text-gray-700">{item.reference_number}</span>
                                 )
+                              ) : item.transaction_type === 'certified_opening' ? (
+                                <span className="font-mono text-[11px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                                  Opening Balance
+                                </span>
                               ) : item.so_number ? (
                                 <button
                                   onClick={(e) => {
@@ -659,19 +820,27 @@ export function StockMovementsModal({
                             </div>
                           </td>
 
-                          <td className="py-2 px-3 max-w-[220px] truncate">
+                          <td className="py-2 px-3 max-w-[240px] truncate">
                             {isReservation ? (
                               isReleasedRes ? (
                                 <span className="text-gray-600">
                                   <strong className="font-medium text-gray-700">{formatQtyValue(qty)} {unit} released</strong>
                                   {item.customer_name ? ` · ${item.customer_name}` : ''}
+                                  {item.is_migrated && <span className="text-[10px] text-gray-400 ml-1">(Migrated)</span>}
                                 </span>
                               ) : (
-                                <span className="text-gray-800 font-medium">{item.customer_name || 'Active Reservation'}</span>
+                                <span className="text-gray-800 font-medium">
+                                  {item.customer_name || 'Active Reservation'}
+                                  {item.shortage_quantity > 0 && (
+                                    <span className="text-rose-600 ml-1 text-[11px] font-semibold">
+                                      (Shortage: {formatQtyValue(item.shortage_quantity)} {unit})
+                                    </span>
+                                  )}
+                                </span>
                               )
                             ) : (
                               <span className="text-gray-800 font-medium">
-                                {item.customer?.company_name || (item.notes && !item.notes.includes('[backfilled]') ? item.notes : 'Stock Movement')}
+                                {item.customer?.company_name || item.supplier?.company_name || (item.notes && !item.notes.includes('[backfilled]') ? item.notes : (item.transaction_type === 'certified_opening' ? 'Opening Balance Certification' : 'Stock Movement'))}
                               </span>
                             )}
                           </td>
@@ -746,7 +915,7 @@ export function StockMovementsModal({
                         <span className="text-gray-500">Movement Qty:</span>
                         <span className="font-mono font-semibold">
                           {item._type === 'reservation' ? (
-                            <span className="text-amber-700">{formatQtyValue(item.quantity)} {unit} (Reservation)</span>
+                            <span className="text-amber-700">{formatQtyValue(item.quantity)} {unit} ({item.source === 'product_level' ? 'Product Commitment' : 'Batch Reservation'})</span>
                           ) : parseFloat(item.quantity) > 0 ? (
                             <span className="text-emerald-700">+{formatQtyValue(item.quantity)} {unit}</span>
                           ) : (
@@ -758,6 +927,11 @@ export function StockMovementsModal({
                         <span className="text-gray-700 font-medium">Stock After:</span>
                         <span className="font-mono font-bold text-gray-900">{formatQtyValue(item.stock_after)} {unit}</span>
                       </div>
+                      {item._type === 'reservation' && (
+                        <div className="text-[10px] text-gray-400 italic pt-0.5">
+                          * Reservations reserve stock against ATP without mutating physical warehouse balances.
+                        </div>
+                      )}
                     </div>
 
                     {/* Col 2: Document Lineage & Customer */}
@@ -765,13 +939,25 @@ export function StockMovementsModal({
                       <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
                         Document References
                       </div>
-                      {(item.customer?.company_name || item.customer_name) && (
+                      {(item.customer?.company_name || item.customer_name || item.supplier?.company_name) && (
                         <div className="flex justify-between">
-                          <span className="text-gray-500">Customer:</span>
-                          <span className="font-medium text-gray-800 text-right">{item.customer?.company_name || item.customer_name}</span>
+                          <span className="text-gray-500">{item.supplier ? 'Supplier:' : 'Customer:'}</span>
+                          <span className="font-medium text-gray-800 text-right">{item.customer?.company_name || item.customer_name || item.supplier?.company_name}</span>
                         </div>
                       )}
-                      {item.reference_number && (
+                      {item.purchase_invoice?.invoice_number && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-500">Purchase Invoice:</span>
+                          <button
+                            onClick={() => openQuickViewPI(item.purchase_invoice.id || item.purchase_invoice.invoice_number)}
+                            className="font-mono text-emerald-700 hover:text-emerald-900 hover:underline font-semibold inline-flex items-center gap-0.5"
+                          >
+                            {item.purchase_invoice.invoice_number}
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      )}
+                      {item.reference_number && !item.purchase_invoice?.invoice_number && (
                         <div className="flex justify-between items-center">
                           <span className="text-gray-500">Reference:</span>
                           <span className="font-mono font-medium text-gray-800">{item.reference_number}</span>
@@ -917,6 +1103,63 @@ export function StockMovementsModal({
           items={quickViewInvoice.items}
           onClose={() => setQuickViewInvoice(null)}
         />
+      )}
+
+      {quickViewPI && (
+        <Modal
+          isOpen={Boolean(quickViewPI)}
+          onClose={() => setQuickViewPI(null)}
+          title={`Purchase Invoice: ${quickViewPI.invoice.invoice_number}`}
+          size="lg"
+        >
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-gray-50 p-3 rounded border border-gray-200">
+              <div>
+                <span className="text-gray-500 block">Supplier</span>
+                <strong className="text-gray-900 text-sm">{quickViewPI.invoice.suppliers?.company_name || '—'}</strong>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Invoice Date</span>
+                <span className="font-mono text-gray-800">{formatDate(quickViewPI.invoice.invoice_date)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Total Amount</span>
+                <span className="font-mono font-semibold text-gray-900">
+                  {quickViewPI.invoice.currency || 'IDR'} {Number(quickViewPI.invoice.total_amount || 0).toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Receiving Status</span>
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-green-100 text-green-800">
+                  {quickViewPI.invoice.receiving_approval_status || 'Received'}
+                </span>
+              </div>
+            </div>
+            <div>
+              <h5 className="font-semibold text-gray-800 mb-1.5">Invoice Line Items</h5>
+              <table className="w-full text-left border border-gray-200 rounded">
+                <thead className="bg-gray-100 text-[11px] text-gray-600 font-semibold">
+                  <tr>
+                    <th className="py-1.5 px-2.5">Product</th>
+                    <th className="py-1.5 px-2.5 text-right">Invoiced Qty</th>
+                    <th className="py-1.5 px-2.5 text-right">Unit Price</th>
+                    <th className="py-1.5 px-2.5 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {quickViewPI.items.map((it: any) => (
+                    <tr key={it.id}>
+                      <td className="py-1.5 px-2.5 font-medium">{it.products?.product_name || 'Product'}</td>
+                      <td className="py-1.5 px-2.5 text-right font-mono">{Number(it.quantity || 0).toLocaleString()} {it.products?.unit || unit}</td>
+                      <td className="py-1.5 px-2.5 text-right font-mono">{Number(it.unit_price || 0).toLocaleString()}</td>
+                      <td className="py-1.5 px-2.5 text-right font-mono font-semibold">{Number(it.total_amount || (it.quantity * it.unit_price) || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Modal>
       )}
     </>
   );

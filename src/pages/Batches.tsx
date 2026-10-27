@@ -122,6 +122,7 @@ export function Batches() {
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [selectedProductForHistory, setSelectedProductForHistory] = useState<{id: string; name: string; code: string; batchId?: string; batchNumber?: string; unit?: string} | null>(null);
+  const [productReservationsMap, setProductReservationsMap] = useState<Map<string, number>>(new Map());
   const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
   const [batchSearch, setBatchSearch] = useState('');
@@ -343,11 +344,24 @@ export function Batches() {
         `)
         .order('import_date', { ascending: false });
 
-      const { data, error } = await query;
+      const [batchRes, prodRes] = await Promise.all([
+        query,
+        supabase
+          .from('so_product_reservations')
+          .select('product_id, reserved_quantity')
+          .eq('status', 'active')
+      ]);
 
-      if (error) throw error;
+      if (batchRes.error) throw batchRes.error;
 
-      const batchRows = (data ?? []) as unknown as Array<Record<string, any> & {
+      const pMap = new Map<string, number>();
+      (prodRes.data || []).forEach((r: any) => {
+        const cur = pMap.get(r.product_id) || 0;
+        pMap.set(r.product_id, cur + (parseFloat(r.reserved_quantity) || 0));
+      });
+      setProductReservationsMap(pMap);
+
+      const batchRows = (batchRes.data ?? []) as unknown as Array<Record<string, any> & {
         id: string;
         stock_reservations?: Array<{ status: string }>;
       }>;
@@ -1025,7 +1039,9 @@ export function Batches() {
                   const totalStock = group.batches.reduce((s, b) => s + b.current_stock, 0);
                   const activeBatches = group.batches.filter(b => b.is_active);
                   const totalSold = group.batches.reduce((s, b) => s + (b.import_quantity - b.current_stock), 0);
-                  const totalReserved = group.batches.reduce((s, b) => s + (b.reserved_stock || 0), 0);
+                  const productRes = productReservationsMap.get(group.productId) || 0;
+                  const legacyBatchRes = group.batches.reduce((s, b) => s + (b.reserved_stock || 0), 0);
+                  const totalReserved = Math.max(productRes, legacyBatchRes);
                   const zeroStockActive = activeBatches.filter(b => b.current_stock <= 0).length;
 
                   return (
@@ -1091,7 +1107,9 @@ export function Batches() {
                               {group.batches
                                 .sort((a, b) => new Date(b.import_date).getTime() - new Date(a.import_date).getTime())
                                 .map(batch => {
-                                  const freeStock = batch.current_stock - (batch.reserved_stock || 0);
+                                  const batchAllocated = batch.reserved_stock || 0;
+                                  const productATP = Math.max(0, totalStock - totalReserved);
+                                  const freeStock = Math.max(0, Math.min(batch.current_stock - batchAllocated, productATP));
                                   const landedCostPerUnit = batch.landed_cost_per_unit || batch.import_price;
                                   const containerPerUnit = (batch.import_cost_allocated && batch.import_quantity > 0) ? batch.import_cost_allocated / batch.import_quantity : 0;
                                   const fullLandedIDR = landedCostPerUnit;
@@ -1118,8 +1136,10 @@ export function Batches() {
                                         </span>
                                       </td>
                                       <td className="px-3 py-1.5 text-right">
-                                        {batch.reserved_stock > 0 ? (
-                                          <span className="text-amber-600 font-medium">{batch.reserved_stock.toLocaleString()}</span>
+                                        {batchAllocated > 0 ? (
+                                          <span className="text-amber-600 font-medium">{batchAllocated.toLocaleString()}</span>
+                                        ) : productRes > 0 ? (
+                                          <span className="text-amber-600/80 text-[10px] font-medium" title={`Product pool has ${productRes.toLocaleString()} reserved across orders`}>pool</span>
                                         ) : (
                                           <span className="text-gray-300">-</span>
                                         )}

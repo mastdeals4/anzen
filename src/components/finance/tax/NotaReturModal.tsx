@@ -266,7 +266,7 @@ export function NotaReturModal({
       if (retErr) throw retErr;
 
       // 2. Fetch invoice items if invoice is available to double-check unit prices and invoice quantities
-      let invoiceMap = new Map<string, { unit_price: number; quantity: number }>();
+      const invoiceMap = new Map<string, { unit_price: number; quantity: number }>();
       if (invoiceId) {
         const { data: invItems } = await supabase
           .from('sales_invoice_items')
