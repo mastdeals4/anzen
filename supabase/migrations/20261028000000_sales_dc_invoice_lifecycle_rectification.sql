@@ -22,18 +22,21 @@ SET search_path TO 'public', 'pg_temp'
 AS $$
 DECLARE
   r record;
+  v_blocking_invoices text;
 BEGIN
   IF OLD.approval_status = 'approved' AND NEW.approval_status IN ('rejected', 'cancelled') THEN
     -- Only block DC reversal if there is an active (uncancelled) invoice item referencing it
-    IF EXISTS (
-      SELECT 1
-      FROM public.sales_invoice_items sii
-      JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
-      JOIN public.sales_invoices si ON si.id = sii.invoice_id
-      WHERE dci.challan_id = NEW.id
-        AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%')
-    ) THEN
-      RAISE EXCEPTION 'Approved Delivery Challan already invoiced; reverse invoice first';
+    SELECT string_agg(DISTINCT si.invoice_number, ', ')
+    INTO v_blocking_invoices
+    FROM public.sales_invoice_items sii
+    JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
+    JOIN public.sales_invoices si ON si.id = sii.invoice_id
+    WHERE dci.challan_id = NEW.id
+      AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%');
+
+    IF v_blocking_invoices IS NOT NULL AND v_blocking_invoices <> '' THEN
+      RAISE EXCEPTION 'Approved Delivery Challan % already invoiced by active invoice(s) %; reverse or cancel the invoice(s) first',
+        COALESCE(NEW.challan_number, NEW.id::text), v_blocking_invoices;
     END IF;
 
     -- Reverse consumed allocations and restore inventory
@@ -122,18 +125,21 @@ SET search_path TO 'public', 'pg_temp'
 AS $$
 DECLARE
   v_item record;
+  v_blocking_invoices text;
 BEGIN
   IF OLD.approval_status = 'approved'
      AND NEW.approval_status IN ('rejected', 'cancelled') THEN
-    IF EXISTS (
-      SELECT 1
-      FROM public.sales_invoice_items sii
-      JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
-      JOIN public.sales_invoices si ON si.id = sii.invoice_id
-      WHERE dci.challan_id = NEW.id
-        AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%')
-    ) THEN
-      RAISE EXCEPTION 'Approved Delivery Challan already invoiced; reverse the invoice before cancelling';
+    SELECT string_agg(DISTINCT si.invoice_number, ', ')
+    INTO v_blocking_invoices
+    FROM public.sales_invoice_items sii
+    JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
+    JOIN public.sales_invoices si ON si.id = sii.invoice_id
+    WHERE dci.challan_id = NEW.id
+      AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%');
+
+    IF v_blocking_invoices IS NOT NULL AND v_blocking_invoices <> '' THEN
+      RAISE EXCEPTION 'Approved Delivery Challan % already invoiced by active invoice(s) %; reverse or cancel the invoice(s) before cancelling',
+        COALESCE(NEW.challan_number, NEW.id::text), v_blocking_invoices;
     END IF;
 
     FOR v_item IN
@@ -176,7 +182,7 @@ $$;
 -- 3. Update admin_edit_approved_delivery_challan
 CREATE OR REPLACE FUNCTION public.admin_edit_approved_delivery_challan(
   p_challan_id uuid,
-  p_items jsonb,
+  p_new_items jsonb,
   p_operation_id uuid DEFAULT gen_random_uuid()
 )
 RETURNS jsonb
@@ -192,6 +198,7 @@ DECLARE
   v_product_id uuid;
   v_batch_id uuid;
   v_quantity numeric;
+  v_blocking_invoices text;
 BEGIN
   IF NOT public.inventory_v1_actor_allowed(ARRAY['admin']) THEN
     RAISE EXCEPTION 'Only admin can edit an approved Delivery Challan';
@@ -220,15 +227,17 @@ BEGIN
     RAISE EXCEPTION 'Historical DC movement is ambiguous; manual review is required';
   END IF;
 
-  IF EXISTS (
-    SELECT 1
-    FROM public.sales_invoice_items sii
-    JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
-    JOIN public.sales_invoices si ON si.id = sii.invoice_id
-    WHERE dci.challan_id = p_challan_id
-      AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%')
-  ) THEN
-    RAISE EXCEPTION 'Approved Delivery Challan already invoiced; reverse the invoice before editing';
+  SELECT string_agg(DISTINCT si.invoice_number, ', ')
+  INTO v_blocking_invoices
+  FROM public.sales_invoice_items sii
+  JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
+  JOIN public.sales_invoices si ON si.id = sii.invoice_id
+  WHERE dci.challan_id = p_challan_id
+    AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%');
+
+  IF v_blocking_invoices IS NOT NULL AND v_blocking_invoices <> '' THEN
+    RAISE EXCEPTION 'Approved Delivery Challan % already invoiced by active invoice(s) %; reverse or cancel the invoice(s) before editing',
+      v_challan.challan_number, v_blocking_invoices;
   END IF;
 
   FOR v_old_item IN
@@ -260,7 +269,7 @@ BEGIN
   DELETE FROM public.delivery_challan_items
   WHERE challan_id = p_challan_id;
 
-  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_new_items)
   LOOP
     v_item_id := COALESCE(
       NULLIF(v_item->>'id', '')::uuid,
@@ -582,3 +591,4 @@ BEGIN
      AND status NOT IN ('closed', 'cancelled', 'rejected');
 END;
 $$;
+

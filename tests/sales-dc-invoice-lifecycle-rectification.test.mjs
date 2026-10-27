@@ -13,6 +13,7 @@ const receivablesSource = fs.readFileSync('src/components/finance/ReceivablesMan
 const linkedDocsSource = fs.readFileSync('src/utils/linkedDocuments.ts', 'utf8');
 const linkedDocsCellSource = fs.readFileSync('src/components/LinkedDocsCell.tsx', 'utf8');
 const creditNotesSource = fs.readFileSync('src/pages/CreditNotes.tsx', 'utf8');
+const invoiceViewSource = fs.readFileSync('src/components/InvoiceView.tsx', 'utf8');
 
 // ==============================================================================
 // 1. Cancel an unpaid posted invoice successfully
@@ -126,12 +127,17 @@ test('Case 3: Cancel an invoice and then reverse its linked approved DC', () => 
 // ==============================================================================
 // 4. Attempt DC reversal while an active posted invoice still exists; reject safely
 // ==============================================================================
-test('Case 4: Attempt DC reversal while an active posted invoice still exists; reject safely', () => {
-  // If an active (uncancelled) invoice item exists, it must raise exception
+test('Case 4: Attempt DC reversal while an active posted invoice still exists; reject safely and explain blocking invoice', () => {
+  // If an active (uncancelled) invoice item exists, it must identify blocking invoice numbers and raise exception
   assert.match(
     migrationRectifySql,
-    /IF EXISTS \([\s\S]*?FROM public\.sales_invoice_items sii[\s\S]*?JOIN public\.sales_invoices si ON si\.id = sii\.invoice_id[\s\S]*?WHERE dci\.challan_id = NEW\.id[\s\S]*?AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\)[\s\S]*?\) THEN\s+RAISE EXCEPTION 'Approved Delivery Challan already invoiced; reverse invoice first';/,
-    'Must raise exception when uncancelled invoice is linked to DC'
+    /SELECT string_agg\(DISTINCT si\.invoice_number, ', '\)\s+INTO v_blocking_invoices[\s\S]*?WHERE dci\.challan_id = NEW\.id\s+AND NOT \(si\.notes LIKE '\[CANCELLED%' OR LOWER\(si\.notes\) LIKE 'cancelled%'\);/,
+    'Must aggregate blocking active invoice numbers'
+  );
+  assert.match(
+    migrationRectifySql,
+    /RAISE EXCEPTION 'Approved Delivery Challan % already invoiced by active invoice\(s\) %; reverse or cancel the invoice\(s\) first'/,
+    'Must raise exception with exact blocking invoice numbers'
   );
 
   // Also enforced in trg_dc_reverse_inventory_v1 and admin_edit_approved_delivery_challan
@@ -434,5 +440,62 @@ test('Case 12: Verify role permissions and concurrent cancellation/reversal beha
     migrationRectifySql,
     /FROM public\.delivery_challan_items dci\s+JOIN public\.dc_batch_allocations a[\s\S]*?FOR UPDATE OF a/,
     'DC reversal locks batch allocations FOR UPDATE'
+  );
+});
+
+// ==============================================================================
+// 13. Cancelled invoice watermark in preview and print/PDF (Requirement B)
+// ==============================================================================
+test('Case 13: Cancelled invoice watermark, void banner, and status display in preview and print/PDF', () => {
+  // Must detect cancellation status from notes
+  assert.match(
+    invoiceViewSource,
+    /const isCancelled = Boolean\(\s*invoice\.notes\?\.includes\('\[CANCELLED'\)\s*\|\|\s*invoice\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\)\s*\);/,
+    'InvoiceView must detect cancelled invoice state'
+  );
+
+  // Must parse cancellation date
+  assert.match(
+    invoiceViewSource,
+    /const cancellationDateMatch = invoice\.notes\?\.match\(\/\\\[CANCELLED on \(\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}\)\/i\);/,
+    'InvoiceView must parse cancellation date'
+  );
+
+  // Must render prominent diagonal CANCELLED watermark inside printable content
+  assert.match(
+    invoiceViewSource,
+    /<div[\s\S]*?className="[^"]*border-8[^"]*text-red-500[^"]*font-extrabold[^"]*"[\s\S]*?>\s*CANCELLED\s*<\/div>/,
+    'InvoiceView must render prominent CANCELLED watermark inside printable container'
+  );
+  assert.match(
+    invoiceViewSource,
+    /transform:\s*'rotate\(-30deg\)'/,
+    'Watermark must be rotated diagonally'
+  );
+
+  // Must render prominent cancellation void banner with cancellation date
+  assert.match(
+    invoiceViewSource,
+    /VOID \/ CANCELLED/,
+    'InvoiceView must render VOID / CANCELLED banner'
+  );
+  assert.match(
+    invoiceViewSource,
+    /INVOICE CANCELLED & VOID/,
+    'InvoiceView must display INVOICE CANCELLED & VOID notice'
+  );
+
+  // Must render CANCELLED badge in modal top bar
+  assert.match(
+    invoiceViewSource,
+    /\{isCancelled && \(\s*<span className="[^"]*bg-red-100 text-red-700[^"]*">\s*CANCELLED\s*<\/span>\s*\)\}/,
+    'Modal top bar must show CANCELLED badge'
+  );
+
+  // Must render Status: Cancelled in invoice details box
+  assert.match(
+    invoiceViewSource,
+    /\{isCancelled && \(\s*<div className="pt-1 text-red-600 font-bold">\s*<span>Status:<\/span>\s*<span className="ml-2 uppercase tracking-wide">Cancelled<\/span>\s*<\/div>\s*\)\}/,
+    'Invoice details section must explicitly display Status: Cancelled'
   );
 });

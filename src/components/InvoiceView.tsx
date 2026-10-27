@@ -311,6 +311,17 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
   const customer = invoice.customers;
   const paymentTermsDays = invoice.payment_terms_days || 30;
 
+  const isCancelled = Boolean(
+    invoice.notes?.includes('[CANCELLED') ||
+    invoice.notes?.toLowerCase().startsWith('cancelled')
+  );
+
+  const cancellationDateMatch = invoice.notes?.match(/\[CANCELLED on ([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
+  const cancellationDate = cancellationDateMatch ? cancellationDateMatch[1] : null;
+  const cancellationUserMatch = invoice.notes?.match(/\[CANCELLED on [0-9]{4}-[0-9]{2}-[0-9]{2} by ([^\]]+)\]/i);
+  const cancellationActor = cancellationUserMatch ? cancellationUserMatch[1] : null;
+  const cancellationNoteLine = isCancelled ? invoice.notes?.split('\n')[0] : null;
+
   const getPaymentTermsText = () => {
     if (paymentTermsDays === 0) {
       return language === 'id' ? 'Advance / Immediate' : 'Advance / Immediate';
@@ -324,9 +335,16 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
         <div className="doc-print-sheet relative w-full max-w-5xl bg-white shadow-xl print:shadow-none print:max-w-full">
           {/* Action Buttons - Hidden on print */}
           <div className="doc-print-hide sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-4" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
-            <h2 className="text-xl font-bold text-gray-900">
-              {language === 'id' ? 'Faktur' : 'Invoice'} {invoice.invoice_number}
-            </h2>
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-xl font-bold text-gray-900">
+                {language === 'id' ? 'Faktur' : 'Invoice'} {invoice.invoice_number}
+              </h2>
+              {isCancelled && (
+                <span className="px-2.5 py-0.5 rounded text-xs font-bold uppercase bg-red-100 text-red-700 border border-red-300">
+                  CANCELLED
+                </span>
+              )}
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={handlePrint}
@@ -356,7 +374,61 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
           </div>
 
           {/* Invoice Content */}
-          <div id="invoice-print-content" ref={printRef} className="p-8">
+          <div id="invoice-print-content" ref={printRef} className="p-8 relative overflow-hidden">
+            {/* Prominent Diagonal CANCELLED Watermark */}
+            {isCancelled && (
+              <div
+                className="pointer-events-none absolute inset-0 flex items-center justify-center select-none z-10"
+                style={{ overflow: 'hidden' }}
+                aria-hidden="true"
+              >
+                <div
+                  className="border-8 border-red-500 text-red-500 font-extrabold tracking-widest uppercase rounded-3xl p-8 select-none print:border-red-600 print:text-red-600"
+                  style={{
+                    fontSize: '7rem',
+                    lineHeight: '1',
+                    opacity: 0.16,
+                    letterSpacing: '0.25em',
+                    transform: 'rotate(-30deg)',
+                    WebkitPrintColorAdjust: 'exact',
+                    printColorAdjust: 'exact',
+                  }}
+                >
+                  CANCELLED
+                </div>
+              </div>
+            )}
+
+            {/* Prominent Cancellation Banner */}
+            {isCancelled && (
+              <div
+                className="mb-3 p-3 bg-red-50 border-2 border-red-500 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-red-900 print:mb-2 print:p-2 print:border-red-600 print:bg-red-50"
+                style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2.5 py-1 bg-red-600 text-white font-bold text-xs rounded tracking-wider uppercase shrink-0">
+                    VOID / CANCELLED
+                  </span>
+                  <div className="text-xs">
+                    <span className="font-bold">INVOICE CANCELLED & VOID</span>
+                    {cancellationDate && (
+                      <span className="ml-1.5 font-medium text-red-800">
+                        ({formatDate(cancellationDate)}{cancellationActor ? ` by ${cancellationActor}` : ''})
+                      </span>
+                    )}
+                    <p className="text-[11px] text-red-600 mt-0.5">
+                      Accounting journals reversed. Not valid for commercial payment or tax deduction.
+                    </p>
+                  </div>
+                </div>
+                {cancellationNoteLine && (
+                  <div className="text-right text-[11px] font-mono text-red-700 shrink-0">
+                    {cancellationNoteLine}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Header Section - Your Company Details */}
             <DocumentHeader co={co} title={language === 'id' ? 'INVOICE' : 'INVOICE'} />
 
@@ -405,6 +477,12 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
                     <span className="font-bold">{language === 'id' ? 'Payment Terms:' : 'Payment Terms:'}</span>
                     <span className="ml-2">{getPaymentTermsText()}</span>
                   </div>
+                  {isCancelled && (
+                    <div className="pt-1 text-red-600 font-bold">
+                      <span>Status:</span>
+                      <span className="ml-2 uppercase tracking-wide">Cancelled</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
