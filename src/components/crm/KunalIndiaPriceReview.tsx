@@ -611,7 +611,7 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
     setExtractionRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
   };
 
-  const reLinkExtractionRow = async (idx: number, hint: { inquiry_number?: string; aceerp_no?: string; product_name?: string }) => {
+  const reLinkExtractionRow = async (idx: number, hint: { inquiry_number?: string | null; aceerp_no?: string | null; product_name?: string; customerName?: string }) => {
     const candidates = await findInquiryCandidates(hint);
     updateExtractionRow(idx, { candidates, selectedInquiryId: candidates[0]?.id || null, needsManualLink: !candidates[0] });
   };
@@ -621,7 +621,12 @@ export function KunalIndiaPriceReview({ onChange, activeBucket, onClearBucket, o
     if (!text) return;
     setManualSearching(prev => ({ ...prev, [idx]: true }));
     try {
-      await reLinkExtractionRow(idx, { inquiry_number: text });
+      const isExplicitInq = /^INQ[-\d]/i.test(text);
+      await reLinkExtractionRow(idx, {
+        inquiry_number: isExplicitInq ? text : null,
+        product_name: isExplicitInq ? undefined : text,
+        customerName: isExplicitInq ? undefined : text,
+      });
       // If candidates were found, dismiss the manual search panel so the user sees the dropdown
       setExtractionRows(prev => {
         const found = prev[idx]?.candidates?.length > 0;

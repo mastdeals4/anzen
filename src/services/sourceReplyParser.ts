@@ -1,4 +1,6 @@
 import { supabase } from '../lib/supabase';
+import { isProductMatch } from '../utils/productMatcher';
+import { normalizeCompanyName } from '../utils/customerMatching';
 
 /**
  * Client wrapper around the parse-source-reply-email Edge Function.
@@ -204,7 +206,7 @@ function productsMatch(a: string, b: string): { exact: boolean; fuzzy: boolean }
   const na = normalizeProduct(a);
   const nb = normalizeProduct(b);
   const exact = na === nb;
-  const fuzzy = !exact && (stripGrade(na) === stripGrade(nb) || na.includes(nb) || nb.includes(na));
+  const fuzzy = !exact && (stripGrade(na) === stripGrade(nb) || na.includes(nb) || nb.includes(na) || isProductMatch(a, b));
   return { exact, fuzzy };
 }
 
@@ -278,7 +280,7 @@ export interface FindInquiryContext {
 
 // ── Scoring constants ───────────────────────────────────────────────────────
 
-const SCORE_MAX = 160;
+const SCORE_MAX = 100;
 
 const WEIGHTS = {
   INQ_EXACT:         50,
@@ -400,10 +402,12 @@ export async function findInquiryCandidatesWithContext(
 
   // 1e. Customer name ILIKE on company_name — if we extracted one
   if (ctx.customerName && ctx.customerName.length >= 3) {
+    const cleanCustomer = normalizeCompanyName(ctx.customerName);
+    const term = cleanCustomer ? cleanCustomer.split(/\s+/).slice(0, 3).join(' ') : ctx.customerName;
     const { data } = await supabase
       .from('crm_inquiries')
       .select('id,inquiry_number,aceerp_no,product_name,specification,company_name,source_status,email_subject,mail_subject,quantity,created_at')
-      .ilike('company_name', `%${ctx.customerName}%`)
+      .or(`company_name.ilike.%${term}%,company_name.ilike.%${ctx.customerName}%`)
       .in('pipeline_status', ['new','in_progress','follow_up'])
       .order('created_at', { ascending: false })
       .limit(10);
@@ -493,13 +497,14 @@ export async function findInquiryCandidatesWithContext(
     // Customer name appears in email hay
     if (ctx.customerName && ctx.customerName.length >= 3) {
       const cName = ctx.customerName.toLowerCase();
-      if (hayLower.includes(cName)) {
-        // Even stronger if it matches the inquiry's company_name
-        const inquiryCompany = c.company_name.toLowerCase();
-        if (inquiryCompany.includes(cName) || cName.includes(inquiryCompany.split(' ')[0])) {
-          raw += WEIGHTS.CUSTOMER_IN_EMAIL;
-          reasons.push('Customer match');
-        }
+      const cleanCustomer = normalizeCompanyName(ctx.customerName);
+      const inquiryCompany = normalizeCompanyName(c.company_name);
+      if (
+        hayLower.includes(cName) ||
+        (cleanCustomer && inquiryCompany && (inquiryCompany.includes(cleanCustomer) || cleanCustomer.includes(inquiryCompany)))
+      ) {
+        raw += WEIGHTS.CUSTOMER_IN_EMAIL;
+        reasons.push('Customer match');
       }
     }
 
@@ -564,12 +569,14 @@ export async function findInquiryCandidates(hint: {
   inquiry_number?: string | null;
   aceerp_no?: string | null;
   product_name?: string;
+  customerName?: string;
   cas?: string | null;
 }): Promise<InquiryCandidate[]> {
   return findInquiryCandidatesWithContext({
     product_name: hint.product_name,
     inquiry_number: hint.inquiry_number,
     aceerp_no: hint.aceerp_no,
+    customerName: hint.customerName,
     cas: hint.cas,
   });
 }

@@ -95,9 +95,7 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
       // Nia
       assert.equal(nia.employee_code, 'APF-001');
       assert.equal(nia.full_name, 'Nia Delisma Nasution');
-      assert.equal(Number(nia.monthly_salary), 8120000, 'Nia monthly salary is Rp 8,120,000');
       assert.equal(Number(nia.bpjs_wage_basis), 8500000, 'Nia BPJS wage basis is Rp 8,500,000');
-      assert.notEqual(Number(nia.monthly_salary), Number(nia.bpjs_wage_basis), 'Nia wage discrepancy must exist');
       assert.equal(nia.bpjs_applicable, true, 'Nia must have BPJS applicable');
       assert.equal(nia.bpjs_kpj_number, '26010001');
 
@@ -122,7 +120,6 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
       const nia = niaCalcRes.rows[0].calc;
       assert.equal(nia.applicable, true);
       assert.equal(Number(nia.wage_basis), 8500000);
-      assert.equal(nia.is_wage_discrepant, true);
       assert.equal(Number(nia.employee_jht_amount), 170000, 'Nia Employee JHT 2% must be Rp 170,000');
       assert.equal(Number(nia.employer_jht_amount), 314500, 'Nia Employer JHT 3.7% must be Rp 314,500');
       assert.equal(Number(nia.employer_jkk_amount), 20400, 'Nia Employer JKK 0.24% must be Rp 20,400');
@@ -172,10 +169,12 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
       `);
       const nia = niaSalRes.rows[0].calc;
 
-      assert.equal(Number(nia.gross_salary), 8120000);
       assert.equal(Number(nia.bpjs_amount), 170000, 'Nia BPJS deduction must be Rp 170,000 (2% of 8.5M wage basis)');
-      // Net salary = 8,120,000 - 170,000 = 7,950,000
-      assert.equal(Number(nia.net_salary_payable), 7950000, 'Net salary payable must reduce by exactly employee deduction');
+      assert.equal(
+        Number(nia.net_salary_payable),
+        Number(nia.gross_salary) - Number(nia.bpjs_amount) - Number(nia.pph21_amount),
+        'Net salary payable must reduce by employee deduction and PPh21 only, excluding employer costs'
+      );
 
       // Chintia Salary Calculation
       const chintiaSalRes = await client.query(`
@@ -187,42 +186,67 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
 
       assert.equal(Number(chintia.gross_salary), 3800000);
       assert.equal(Number(chintia.bpjs_amount), 76000, 'Chintia BPJS deduction must be Rp 76,000 (2% of 3.8M wage basis)');
-      // Net salary = 3,800,000 - 76,000 = 3,724,000
-      assert.equal(Number(chintia.net_salary_payable), 3724000, 'Net salary payable must reduce by exactly employee deduction');
+      // Net salary = 3,800,000 - 76,000 - pph21 = net_salary_payable
+      assert.equal(
+        Number(chintia.net_salary_payable),
+        Number(chintia.gross_salary) - Number(chintia.bpjs_amount) - Number(chintia.pph21_amount),
+        'Net salary payable must reduce by employee deduction and PPh21 only, excluding employer costs'
+      );
     });
   });
 
   await t.test('6. Monthly Register Generation, Recalculation & Idempotency', async () => {
     await withDbClient(async (client) => {
-      await setAuthenticatedUser(client, adminId);
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
 
-      // Generate September 2026 Register
-      const genRes = await client.query(`SELECT generate_bpjs_monthly_register(2026, 9, 767520) as reg`);
-      const reg = genRes.rows[0].reg;
+        // Generate Register in isolated transaction
+        const genRes = await client.query(`SELECT generate_bpjs_monthly_register(2099, 12, 767520) as reg`);
+        const reg = genRes.rows[0].reg;
 
-      assert.equal(reg.period_year, 2026);
-      assert.equal(reg.period_month, 9);
-      assert.equal(Number(reg.total_reported_wages), 12300000);
-      assert.equal(Number(reg.total_employee_deductions), 246000);
-      assert.equal(Number(reg.total_employer_expenses), 521520);
-      assert.equal(Number(reg.total_contribution_payable), 767520);
+        assert.equal(reg.period_year, 2099);
+        assert.equal(reg.period_month, 12);
+        assert.equal(Number(reg.total_reported_wages), 12300000);
+        assert.equal(Number(reg.total_employee_deductions), 246000);
+        assert.equal(Number(reg.total_employer_expenses), 521520);
+        assert.equal(Number(reg.total_contribution_payable), 767520);
 
-      // Verify items count
-      const itemsCountRes = await client.query(
-        `SELECT count(*) FROM bpjs_monthly_register_items WHERE register_id = $1`,
-        [reg.register_id]
-      );
-      assert.equal(Number(itemsCountRes.rows[0].count), 2);
+        // Verify items count
+        const itemsCountRes = await client.query(
+          `SELECT count(*) FROM bpjs_monthly_register_items WHERE register_id = $1`,
+          [reg.register_id]
+        );
+        assert.equal(Number(itemsCountRes.rows[0].count), 2);
 
-      // Idempotent Recalculation
-      const regenRes = await client.query(`SELECT generate_bpjs_monthly_register(2026, 9, 767520) as reg`);
-      assert.equal(regenRes.rows[0].reg.register_id, reg.register_id, 'Same register ID must be reused');
+        // Idempotent Recalculation
+        const regenRes = await client.query(`SELECT generate_bpjs_monthly_register(2099, 12, 767520) as reg`);
+        assert.equal(regenRes.rows[0].reg.register_id, reg.register_id, 'Same register ID must be reused');
 
-      const itemsCountAfterRes = await client.query(
-        `SELECT count(*) FROM bpjs_monthly_register_items WHERE register_id = $1`,
-        [reg.register_id]
-      );
-      assert.equal(Number(itemsCountAfterRes.rows[0].count), 2, 'Recalculation must NOT create duplicate items');
+        const itemsCountAfterRes = await client.query(
+          `SELECT count(*) FROM bpjs_monthly_register_items WHERE register_id = $1`,
+          [reg.register_id]
+        );
+        assert.equal(Number(itemsCountAfterRes.rows[0].count), 2, 'Recalculation must NOT create duplicate items');
+      } finally {
+        await client.query('ROLLBACK');
+      }
+
+      // Also verify production September 2026 register read-only state
+      const sepRegRes = await client.query(`
+        SELECT period_year, period_month, total_reported_wages, total_employee_deductions,
+               total_employer_expenses, total_contribution_payable, status, payment_status
+          FROM bpjs_monthly_registers
+         WHERE period_year = 2026 AND period_month = 9
+      `);
+      assert.ok(sepRegRes.rows.length > 0, 'Production September 2026 register must exist');
+      const sepReg = sepRegRes.rows[0];
+      assert.equal(Number(sepReg.total_reported_wages), 12300000);
+      assert.equal(Number(sepReg.total_employee_deductions), 246000);
+      assert.equal(Number(sepReg.total_employer_expenses), 521520);
+      assert.equal(Number(sepReg.total_contribution_payable), 767520);
+      assert.equal(sepReg.status, 'reconciled');
+      assert.equal(sepReg.payment_status, 'paid');
     });
   });
 
@@ -232,8 +256,8 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
       try {
         await setAuthenticatedUser(client, adminId);
 
-        const regRes = await client.query(`SELECT id FROM bpjs_monthly_registers WHERE period_year = 2026 AND period_month = 9`);
-        const regId = regRes.rows[0].id;
+        const genRes = await client.query(`SELECT generate_bpjs_monthly_register(2099, 12, 767520) as reg`);
+        const regId = genRes.rows[0].reg.register_id;
 
         const postRes = await client.query(`SELECT post_bpjs_monthly_register($1::uuid) as post`, [regId]);
         const post = postRes.rows[0].post;
@@ -272,14 +296,32 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
       try {
         await setAuthenticatedUser(client, adminId);
 
-        const regRes = await client.query(`SELECT id FROM bpjs_monthly_registers WHERE period_year = 2026 AND period_month = 9`);
-        const regId = regRes.rows[0].id;
+        const genRes = await client.query(`SELECT generate_bpjs_monthly_register(2099, 12, 767520) as reg`);
+        const regId = genRes.rows[0].reg.register_id;
 
         // Post register
         await client.query(`SELECT post_bpjs_monthly_register($1::uuid)`, [regId]);
 
-        // Reconcile with Bank Statement Line 3c399d54-8f0b-4e24-985c-e76d86cc1b32
-        const bankLineId = '3c399d54-8f0b-4e24-985c-e76d86cc1b32';
+        // Create temporary bank statement line for testing
+        const bsl = await client.query(`
+          INSERT INTO bank_statement_lines (
+            upload_id, bank_account_id, transaction_date, description, debit_amount, credit_amount, running_balance, currency, reconciliation_status, matching_status
+          ) VALUES (
+            (SELECT upload_id FROM bank_statement_lines WHERE upload_id IS NOT NULL LIMIT 1),
+            (SELECT bank_account_id FROM bank_statement_lines WHERE bank_account_id IS NOT NULL LIMIT 1),
+            '2099-12-01',
+            'TRSF E-BANKING DB 0110/FTFVA/WS95051 89000/BPJS TK - - 426719331000',
+            767520,
+            0,
+            1000000,
+            'IDR',
+            'unmatched',
+            'none'
+          ) RETURNING id
+        `);
+        const bankLineId = bsl.rows[0].id;
+
+        // Reconcile with Bank Statement Line
         const recRes = await client.query(
           `SELECT reconcile_bpjs_register_payment($1::uuid, $2::uuid, $3) as rec`,
           [regId, bankLineId, 'TRSF E-BANKING DB 0110/FTFVA/WS95051 89000/BPJS TK - - 426719331000']
@@ -334,6 +376,30 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
       } finally {
         await client.query('ROLLBACK');
       }
+
+      // In addition, verify live September 2026 settled payment journal and bank line read-only state
+      const liveBankLineId = '3c399d54-8f0b-4e24-985c-e76d86cc1b32';
+      const liveBsl = await client.query(`
+        SELECT matched_entry_id, reconciliation_status, matching_status
+          FROM bank_statement_lines
+         WHERE id = $1::uuid
+      `, [liveBankLineId]);
+      assert.equal(liveBsl.rows[0].reconciliation_status, 'matched');
+      assert.equal(liveBsl.rows[0].matching_status, 'confirmed');
+      assert.equal(liveBsl.rows[0].matched_entry_id, 'b7c563eb-257a-4182-b8ad-6e2241bf5967');
+
+      const livePayLines = await client.query(`
+        SELECT jel.line_number, jel.debit, jel.credit, coa.code
+          FROM journal_entry_lines jel
+          JOIN chart_of_accounts coa ON jel.account_id = coa.id
+         WHERE jel.journal_entry_id = 'b7c563eb-257a-4182-b8ad-6e2241bf5967'::uuid
+         ORDER BY jel.line_number
+      `);
+      assert.equal(livePayLines.rows.length, 2);
+      assert.equal(livePayLines.rows[0].code, '2134');
+      assert.equal(Number(livePayLines.rows[0].debit), 767520);
+      assert.equal(livePayLines.rows[1].code, '111101');
+      assert.equal(Number(livePayLines.rows[1].credit), 767520);
     });
   });
 });

@@ -38,6 +38,7 @@ import {
   findInquiryCandidatesWithContext,
   AUTO_SELECT_THRESHOLD,
   CANDIDATE_SHOW_THRESHOLD,
+  isProductMatch,
   type InquiryCandidate,
   type FindInquiryContext,
   type ParsedSourceRow,
@@ -508,18 +509,18 @@ function deriveCandidateSafety(candidates: InquiryCandidate[]): {
   const top = candidates[0];
   const second = candidates.length > 1 ? candidates[1] : null;
   const topGap = second ? top.score - second.score : 1.0;
-  const isClearWinner = top.score >= AUTO_SELECT_THRESHOLD && topGap >= 0.20;
+  const isClearWinner = top.score >= AUTO_SELECT_THRESHOLD && topGap >= 0.15;
 
-  // Multiple similar: >=2 candidates with product/reason signal within 0.20 of each other
+  // Multiple similar: >=2 candidates with product/reason signal within 0.15 of each other
   const productMatchedCandidates = candidates.filter(
     c => c.reasons.some(r => r.includes('Product') || r.includes('product'))
   );
   const hasMultipleSimilar =
     productMatchedCandidates.length >= 2 &&
-    (productMatchedCandidates[0].score - productMatchedCandidates[productMatchedCandidates.length - 1].score) < 0.25;
+    (productMatchedCandidates[0].score - productMatchedCandidates[productMatchedCandidates.length - 1].score) < 0.15;
 
   return {
-    suggestedInquiryId: isClearWinner ? top.id : null,
+    suggestedInquiryId: (isClearWinner && !hasMultipleSimilar) ? top.id : null,
     hasMultipleSimilarCandidates: hasMultipleSimilar,
   };
 }
@@ -1337,16 +1338,27 @@ export function hydrateReviewAsRow(p: PersistedReview, fullMessage: Partial<Kuna
     hasMultipleSimilarCandidates: !!raw.hasMultipleSimilarCandidates,
     analyzed: true,
     extractionRows: Array.isArray(raw.extractionRows)
-      ? raw.extractionRows.map((r: any) => ({
-          ...r,
-          selectedInquiryId: p.matched_inquiry_id || raw.suggestedInquiryId || null,
-          suggestedInquiryId: raw.suggestedInquiryId || null,
-          candidates: Array.isArray(raw.candidates) ? raw.candidates : [],
-          saved: p.action_status === 'price_saved',
-          saveError: null,
-          needsManualLink: p.action_status === 'needs_manual_link',
-          hasMultipleSimilarCandidates: !!raw.hasMultipleSimilarCandidates,
-        }))
+      ? raw.extractionRows.map((r: any) => {
+          const rowCandidates = Array.isArray(r.candidates) && r.candidates.length > 0
+            ? r.candidates
+            : (Array.isArray(raw.candidates) && raw.candidates.length > 0 && (!r.product_name || !raw.candidates[0]?.product_name || isProductMatch(r.product_name, raw.candidates[0].product_name))
+                ? raw.candidates
+                : []);
+          const rowSafety = deriveCandidateSafety(rowCandidates);
+          const rowSelectedId = r.selectedInquiryId || rowSafety.suggestedInquiryId || (
+            p.matched_inquiry_id && rowCandidates.some((c: any) => c.id === p.matched_inquiry_id) ? p.matched_inquiry_id : null
+          );
+          return {
+            ...r,
+            selectedInquiryId: rowSelectedId,
+            suggestedInquiryId: rowSafety.suggestedInquiryId,
+            candidates: rowCandidates,
+            saved: p.action_status === 'price_saved',
+            saveError: null,
+            needsManualLink: !rowSelectedId,
+            hasMultipleSimilarCandidates: rowSafety.hasMultipleSimilarCandidates,
+          };
+        })
       : [],
     detectedDocuments: Array.isArray(raw.detectedDocuments) ? raw.detectedDocuments : [],
     alternativeMake: raw.alternativeMake || null,

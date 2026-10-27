@@ -13,20 +13,22 @@
  * 7. On-demand loading without N+1 queries on Stock page
  */
 
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import pg from 'pg';
 
-function runSql(sql) {
-  const stdout = execFileSync('supabase', ['db', 'query', '--linked', '--output-format', 'json', sql], {
-    cwd: '/Users/Kunal/Documents/anzen-main',
-    encoding: 'utf8',
-    maxBuffer: 50 * 1024 * 1024,
-  });
-  const jsonStart = stdout.indexOf('{');
-  if (jsonStart === -1) throw new Error(`No JSON output: ${stdout}`);
-  const res = JSON.parse(stdout.slice(jsonStart));
-  if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+const DB_CONNECTION =
+  process.env.DATABASE_URL ||
+  'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+
+const client = new pg.Client({
+  connectionString: DB_CONNECTION,
+  ssl: { rejectUnauthorized: false },
+});
+await client.connect();
+
+async function runSql(sql) {
+  const res = await client.query(sql);
   return res.rows || [];
 }
 
@@ -56,7 +58,7 @@ console.log('   ✅ PASS: Query correctly queries select("*") without invalid Po
 
 // 3. Query Corn Starch BP Batch E441/2026
 console.log('3. Querying Corn Starch BP Batch E441/2026 in canonical database...');
-const batchE441Rows = runSql(`
+const batchE441Rows = await runSql(`
   SELECT b.id AS batch_id, b.batch_number, b.product_id, p.product_name, p.product_code, p.unit
   FROM batches b
   JOIN products p ON p.id = b.product_id
@@ -67,7 +69,7 @@ const batchE441Rows = runSql(`
 assert(batchE441Rows.length > 0, 'Batch E441/2026 must exist');
 const batchE441 = batchE441Rows[0];
 
-const ledgerE441 = runSql(`
+const ledgerE441 = await runSql(`
   SELECT id, transaction_type, quantity, reference_type, reference_id, reference_number,
          notes, created_at, transaction_date, metadata
   FROM inventory_v1_effective_ledger
@@ -76,7 +78,7 @@ const ledgerE441 = runSql(`
   ORDER BY transaction_date ASC, created_at ASC;
 `);
 
-const reservationsE441 = runSql(`
+const reservationsE441 = await runSql(`
   SELECT id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason
   FROM stock_reservations
   WHERE batch_id = '${batchE441.batch_id}'
@@ -110,7 +112,7 @@ console.log('   ✅ PASS: Batch E441/2026 matches 9000 IN / 9000 OUT / 0 RESERVE
 
 // 4. Query Batch M1CFX10003725N
 console.log('4. Querying Batch M1CFX10003725N in canonical database...');
-const batchM1Rows = runSql(`
+const batchM1Rows = await runSql(`
   SELECT b.id AS batch_id, b.batch_number, b.product_id, p.product_name, p.product_code, p.unit
   FROM batches b
   JOIN products p ON p.id = b.product_id
@@ -121,7 +123,7 @@ const batchM1Rows = runSql(`
 assert(batchM1Rows.length > 0, 'Batch M1CFX10003725N must exist');
 const batchM1 = batchM1Rows[0];
 
-const ledgerM1 = runSql(`
+const ledgerM1 = await runSql(`
   SELECT id, transaction_type, quantity, reference_type, reference_id, reference_number,
          notes, created_at, transaction_date, metadata
   FROM inventory_v1_effective_ledger
@@ -130,7 +132,7 @@ const ledgerM1 = runSql(`
   ORDER BY transaction_date ASC, created_at ASC;
 `);
 
-const reservationsM1 = runSql(`
+const reservationsM1 = await runSql(`
   SELECT id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason
   FROM stock_reservations
   WHERE batch_id = '${batchM1.batch_id}'
@@ -164,7 +166,7 @@ console.log('   ✅ PASS: Batch M1CFX10003725N matches 100 IN / 0 OUT / 0 RESERV
 
 // 5. Product-level movements verification (Corn Starch BP across all batches)
 console.log('5. Verifying product-level movements across all batches for Corn Starch BP...');
-const productLedger = runSql(`
+const productLedger = await runSql(`
   SELECT id, batch_id, quantity, transaction_date
   FROM inventory_v1_effective_ledger
   WHERE product_id = '${batchE441.product_id}'
@@ -175,7 +177,7 @@ const productLedger = runSql(`
 const uniqueBatchIds = Array.from(new Set(productLedger.map(r => r.batch_id).filter(Boolean)));
 assert(uniqueBatchIds.length > 0, 'Must have batches for product');
 
-const batchList = runSql(`
+const batchList = await runSql(`
   SELECT id, batch_number FROM batches WHERE id IN ('${uniqueBatchIds.join("','")}');
 `);
 const batchMap = new Map(batchList.map(b => [b.id, b.batch_number]));
@@ -203,6 +205,8 @@ console.log('7. Verifying Stock page load query integrity (no N+1 per batch)...'
 assert(!stockSrc.includes("inventory_v1_effective_ledger"), 'Stock.tsx itself must not query effective ledger on initial render');
 assert(modalSrc.includes("inventory_v1_effective_ledger"), 'StockMovementsModal must query effective ledger on demand');
 console.log('   ✅ PASS: Movement data loaded strictly on-demand when drill-down is opened.\n');
+
+await client.end();
 
 console.log('====================================================================');
 console.log('ALL REGRESSION CHECKS PASSED SUCCESSFULLY!');
