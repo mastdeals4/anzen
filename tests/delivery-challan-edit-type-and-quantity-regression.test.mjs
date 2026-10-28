@@ -46,6 +46,12 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
 
   // Helper to isolate pending draft state inside rollbacked test transactions
   const setupPendingScenario = async (client) => {
+    // Isolate active live invoice SAPJ-26-073 within this transaction so tests can simulate pre-invoiced DC lifecycle
+    await client.query(`
+      UPDATE sales_invoices
+      SET notes = '[CANCELLED on 2026-10-28 for test isolation]'
+      WHERE invoice_number = 'SAPJ-26-073'
+    `);
     await client.query("UPDATE delivery_challans SET approval_status = 'pending_approval' WHERE id = $1", [DC_ID]);
     await client.query("UPDATE sales_order_items SET delivered_quantity = 0 WHERE id = $1", [SO_ITEM_ID]);
   };
