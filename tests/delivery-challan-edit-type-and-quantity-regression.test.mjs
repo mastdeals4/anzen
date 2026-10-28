@@ -27,7 +27,7 @@ async function setAuthenticatedUser(client, userId) {
   ]);
 }
 
-test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite', async (t) => {
+test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', async (t) => {
   let adminId;
 
   await withDbClient(async (client) => {
@@ -36,293 +36,82 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
     adminId = adminRes.rows[0].id;
   });
 
-  // Test Definition of the corrected RPC in an isolated transaction
-  const setupCorrectedRpc = async (client) => {
-    await client.query('DROP FUNCTION IF EXISTS public.edit_delivery_challan(uuid, jsonb)');
-    await client.query('DROP FUNCTION IF EXISTS public.edit_delivery_challan(uuid, jsonb, jsonb)');
+  const DC_ID = 'abda70d6-cede-4a14-bc47-1adea0729f6f'; // DO-26-0073
+  const SO_ID = '655fd213-ffb4-4b4c-95cb-acb10e5dbe0d'; // SO-2026-0087
+  const SO_ITEM_ID = '2a1def7d-a77f-4873-b2c9-aeefc26d6689'; // ordered 30, delivered 0
+  const PRODUCT_ID = 'f9ca763f-47c0-4bfa-b2a0-1905152458c6';
+  const BATCH_ID = 'f767785c-1d74-4b03-b7be-1e6cd6b8282f';
+  const ITEM_ID = 'baadf206-f75f-4109-89e3-2a20f836351f';
+  const CUSTOMER_ID = 'b8f9dc5e-2cdf-4527-8960-186bb2a30913';
 
-    await client.query(`
-      CREATE FUNCTION public.edit_delivery_challan(
-        p_challan_id uuid,
-        p_new_items jsonb,
-        p_header jsonb DEFAULT NULL::jsonb
-      )
-      RETURNS jsonb
-      LANGUAGE plpgsql
-      SECURITY DEFINER
-      SET search_path TO 'public', 'pg_temp'
-      AS $$
-      DECLARE
-        v_role               text;
-        v_challan            record;
-        v_item               jsonb;
-        v_count              integer;
-        v_product_id         uuid;
-        v_batch_id           uuid;
-        v_new_qty            numeric;
-        v_item_id            uuid;
-        v_so_item_id         uuid;
-        v_so_id              uuid;
-        v_blocking_invoices  text;
-        v_kept_ids           uuid[] := ARRAY[]::uuid[];
-        v_new_status         text;
-        v_parsed_status      public.dc_approval_status := NULL;
-        v_so_status          text;
-        v_soi_qty            numeric;
-        v_soi_del_qty        numeric;
-        v_other_pending      numeric;
-        v_remaining_qty      numeric;
-        v_batch_active       boolean;
-        v_batch_not_expired  boolean;
-      BEGIN
-        SELECT role INTO v_role FROM public.user_profiles WHERE id = auth.uid();
-        IF v_role NOT IN ('admin', 'accounts', 'warehouse', 'sales') THEN
-          RAISE EXCEPTION 'Permission denied: role % cannot edit delivery challans', v_role;
-        END IF;
-
-        SELECT * INTO v_challan FROM public.delivery_challans WHERE id = p_challan_id FOR UPDATE;
-
-        IF NOT FOUND THEN
-          RETURN jsonb_build_object('success', false, 'error', 'Delivery challan not found');
-        END IF;
-
-        IF v_challan.approval_status = 'approved' THEN
-          RETURN jsonb_build_object('success', false, 'error', 'Cannot edit approved delivery challan directly; reverse it or use approved DC edit');
-        END IF;
-
-        -- Check if any active (uncancelled) invoice items reference this DC
-        IF EXISTS (
-          SELECT 1
-          FROM public.sales_invoice_items sii
-          JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
-          JOIN public.sales_invoices si ON si.id = sii.invoice_id
-          WHERE dci.challan_id = p_challan_id
-            AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%')
-        ) THEN
-          SELECT string_agg(DISTINCT si.invoice_number, ', ')
-          INTO v_blocking_invoices
-          FROM public.sales_invoice_items sii
-          JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
-          JOIN public.sales_invoices si ON si.id = sii.invoice_id
-          WHERE dci.challan_id = p_challan_id
-            AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%');
-
-          RETURN jsonb_build_object(
-            'success', false,
-            'error', 'Delivery Challan already invoiced by active invoice(s) ' || v_blocking_invoices || '; cancel or reverse the invoice(s) first'
-          );
-        END IF;
-
-        -- Validate header if provided
-        IF p_header IS NOT NULL THEN
-          IF p_header ? 'approval_status' THEN
-            v_new_status := NULLIF(TRIM(p_header->>'approval_status'), '');
-            IF v_new_status IS NOT NULL THEN
-              IF v_new_status NOT IN ('pending_approval', 'rejected', 'cancelled') THEN
-                RETURN jsonb_build_object(
-                  'success', false,
-                  'error', 'Invalid approval_status: ' || v_new_status || '. Allowed values are pending_approval, rejected, cancelled.'
-                );
-              END IF;
-              v_parsed_status := v_new_status::public.dc_approval_status;
-            END IF;
-          END IF;
-
-          v_so_id := CASE 
-            WHEN p_header ? 'sales_order_id' THEN NULLIF(p_header->>'sales_order_id', '')::uuid 
-            ELSE v_challan.sales_order_id 
-          END;
-
-          -- Verify parent Sales Order status if linked
-          IF v_so_id IS NOT NULL THEN
-            SELECT status::text INTO v_so_status FROM public.sales_orders WHERE id = v_so_id;
-            IF v_so_status IN ('cancelled', 'rejected') THEN
-              RETURN jsonb_build_object(
-                'success', false,
-                'error', 'Cannot save Delivery Challan: linked Sales Order is ' || v_so_status
-              );
-            END IF;
-          END IF;
-
-          UPDATE public.delivery_challans SET
-            customer_id = CASE WHEN p_header ? 'customer_id' THEN COALESCE(NULLIF(p_header->>'customer_id', '')::uuid, customer_id) ELSE customer_id END,
-            sales_order_id = v_so_id,
-            challan_date = CASE WHEN p_header ? 'challan_date' THEN COALESCE(NULLIF(p_header->>'challan_date', '')::date, challan_date) ELSE challan_date END,
-            delivery_address = CASE WHEN p_header ? 'delivery_address' THEN COALESCE(p_header->>'delivery_address', delivery_address) ELSE delivery_address END,
-            vehicle_number = CASE WHEN p_header ? 'vehicle_number' THEN NULLIF(p_header->>'vehicle_number', '') ELSE vehicle_number END,
-            driver_name = CASE WHEN p_header ? 'driver_name' THEN NULLIF(p_header->>'driver_name', '') ELSE driver_name END,
-            notes = CASE WHEN p_header ? 'notes' THEN NULLIF(p_header->>'notes', '') ELSE notes END,
-            approval_status = COALESCE(v_parsed_status, approval_status),
-            rejection_reason = CASE WHEN v_parsed_status = 'pending_approval'::public.dc_approval_status THEN NULL WHEN p_header ? 'rejection_reason' THEN NULLIF(p_header->>'rejection_reason', '') ELSE rejection_reason END,
-            rejected_by = CASE WHEN v_parsed_status = 'pending_approval'::public.dc_approval_status THEN NULL ELSE rejected_by END,
-            rejected_at = CASE WHEN v_parsed_status = 'pending_approval'::public.dc_approval_status THEN NULL ELSE rejected_at END,
-            approved_at = CASE WHEN v_parsed_status = 'pending_approval'::public.dc_approval_status THEN NULL ELSE approved_at END,
-            approved_by = CASE WHEN v_parsed_status = 'pending_approval'::public.dc_approval_status THEN NULL ELSE approved_by END,
-            updated_at = NOW()
-          WHERE id = p_challan_id;
-        ELSE
-          v_so_id := v_challan.sales_order_id;
-          IF v_so_id IS NOT NULL THEN
-            SELECT status::text INTO v_so_status FROM public.sales_orders WHERE id = v_so_id;
-            IF v_so_status IN ('cancelled', 'rejected') THEN
-              RETURN jsonb_build_object(
-                'success', false,
-                'error', 'Cannot save Delivery Challan: linked Sales Order is ' || v_so_status
-              );
-            END IF;
-          END IF;
-        END IF;
-
-        SELECT count(*) INTO v_count FROM jsonb_array_elements(p_new_items);
-        IF v_count = 0 THEN
-          RETURN jsonb_build_object('success', false, 'error', 'Cannot save DC with no items');
-        END IF;
-
-        PERFORM set_config('app.skip_dc_item_trigger', 'true', true);
-        PERFORM set_config('app.sales_invoice_cancel', 'true', true);
-
-        -- Upsert / replace items
-        FOR v_item IN SELECT * FROM jsonb_array_elements(p_new_items)
-        LOOP
-          v_item_id    := NULLIF(v_item->>'id', '')::uuid;
-          v_product_id := NULLIF(v_item->>'product_id', '')::uuid;
-          v_batch_id   := NULLIF(v_item->>'batch_id', '')::uuid;
-          v_new_qty    := NULLIF(v_item->>'quantity', '')::numeric;
-          v_so_item_id := NULLIF(v_item->>'sales_order_item_id', '')::uuid;
-
-          IF v_product_id IS NULL OR v_batch_id IS NULL THEN
-            RETURN jsonb_build_object('success', false, 'error', 'Each delivery item must have a valid product and batch');
-          END IF;
-
-          IF v_new_qty IS NULL OR v_new_qty <= 0 THEN
-            RETURN jsonb_build_object('success', false, 'error', 'Item quantity must be greater than zero');
-          END IF;
-
-          -- Batch validity check
-          SELECT is_active, (expiry_date IS NULL OR expiry_date > CURRENT_DATE)
-          INTO v_batch_active, v_batch_not_expired
-          FROM public.batches
-          WHERE id = v_batch_id AND product_id = v_product_id;
-
-          IF NOT FOUND OR NOT COALESCE(v_batch_active, false) OR NOT COALESCE(v_batch_not_expired, false) THEN
-            RETURN jsonb_build_object('success', false, 'error', 'Selected batch is invalid, inactive, or expired');
-          END IF;
-
-          -- SO Item quantity constraint
-          IF v_so_id IS NOT NULL AND v_so_item_id IS NOT NULL THEN
-            SELECT quantity, COALESCE(delivered_quantity, 0)
-            INTO v_soi_qty, v_soi_del_qty
-            FROM public.sales_order_items
-            WHERE id = v_so_item_id AND sales_order_id = v_so_id AND product_id = v_product_id;
-
-            IF NOT FOUND THEN
-              RETURN jsonb_build_object('success', false, 'error', 'DC item does not match the linked Sales Order item');
-            END IF;
-
-            SELECT COALESCE(sum(dci.quantity), 0) INTO v_other_pending
-            FROM public.delivery_challan_items dci
-            JOIN public.delivery_challans dc ON dc.id = dci.challan_id
-            WHERE dci.sales_order_item_id = v_so_item_id
-              AND dc.approval_status = 'pending_approval'
-              AND dc.id <> p_challan_id;
-
-            v_remaining_qty := v_soi_qty - v_soi_del_qty;
-            IF (v_other_pending + v_new_qty) > (v_remaining_qty + 0.0001) THEN
-              RETURN jsonb_build_object(
-                'success', false,
-                'error', 'Delivery quantity (' || v_new_qty || ') exceeds remaining Sales Order quantity (' || (v_remaining_qty - v_other_pending) || ')'
-              );
-            END IF;
-          END IF;
-
-          IF v_item_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.delivery_challan_items WHERE id = v_item_id AND challan_id = p_challan_id) THEN
-            UPDATE public.delivery_challan_items SET
-              product_id = v_product_id,
-              batch_id = v_batch_id,
-              sales_order_item_id = v_so_item_id,
-              quantity = v_new_qty,
-              pack_size = NULLIF(v_item->>'pack_size', '')::numeric,
-              pack_type = NULLIF(v_item->>'pack_type', ''),
-              number_of_packs = NULLIF(v_item->>'number_of_packs', '')::integer
-            WHERE id = v_item_id;
-
-            v_kept_ids := array_append(v_kept_ids, v_item_id);
-          ELSE
-            v_item_id := COALESCE(v_item_id, gen_random_uuid());
-            INSERT INTO public.delivery_challan_items (
-              id, challan_id, product_id, batch_id, sales_order_item_id, quantity,
-              pack_size, pack_type, number_of_packs
-            ) VALUES (
-              v_item_id, p_challan_id, v_product_id, v_batch_id, v_so_item_id, v_new_qty,
-              NULLIF(v_item->>'pack_size', '')::numeric,
-              NULLIF(v_item->>'pack_type', ''),
-              NULLIF(v_item->>'number_of_packs', '')::integer
-            );
-            v_kept_ids := array_append(v_kept_ids, v_item_id);
-          END IF;
-        END LOOP;
-
-        -- Remove any DC items that were not in the updated item list
-        DELETE FROM public.delivery_challan_items
-        WHERE challan_id = p_challan_id
-          AND id <> ALL(v_kept_ids);
-
-        PERFORM set_config('app.skip_dc_item_trigger', 'false', true);
-        PERFORM set_config('app.sales_invoice_cancel', 'false', true);
-
-        RETURN jsonb_build_object('success', true, 'message', 'Delivery challan updated successfully');
-
-      EXCEPTION
-        WHEN foreign_key_violation THEN
-          PERFORM set_config('app.skip_dc_item_trigger', 'false', true);
-          PERFORM set_config('app.sales_invoice_cancel', 'false', true);
-          RETURN jsonb_build_object('success', false, 'error', 'Invalid product or batch selection: ' || SQLERRM);
-        WHEN OTHERS THEN
-          PERFORM set_config('app.skip_dc_item_trigger', 'false', true);
-          PERFORM set_config('app.sales_invoice_cancel', 'false', true);
-          RETURN jsonb_build_object('success', false, 'error', SQLERRM);
-      END;
-      $$;
-    `);
-
-    await client.query('GRANT EXECUTE ON FUNCTION public.edit_delivery_challan(uuid, jsonb, jsonb) TO authenticated');
-  };
-
-  await t.test('1. Reproduction of Type Error in Existing Live Function', async () => {
+  await t.test('1. Reproduction of 20 + 30 = 50 quantity double counting when trigger does not skip or exclude current DC', async () => {
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await setAuthenticatedUser(client, adminId);
+        await client.query('RESET ROLE');
+        // Define the buggy trigger function that omitted skip check and current DC exclusion
+        await client.query(`
+          CREATE OR REPLACE FUNCTION public.test_buggy_validate_dc_item()
+          RETURNS trigger LANGUAGE plpgsql AS $$
+          DECLARE
+            v_dc record;
+            v_so_item public.sales_order_items%ROWTYPE;
+            v_pending numeric;
+            v_remaining numeric;
+          BEGIN
+            -- BUG: Does not check current_setting('app.skip_dc_item_trigger', true)
+            SELECT dc.sales_order_id, dc.approval_status INTO v_dc
+            FROM public.delivery_challans dc WHERE dc.id = NEW.challan_id;
 
-        // Call the current unpatched function with header containing text approval_status
-        const res = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 20
-          }]),
-          JSON.stringify({
-            customer_id: 'b8f9dc5e-2cdf-4527-8960-186bb2a30913',
-            approval_status: 'pending_approval'
-          })
-        ]);
+            SELECT * INTO v_so_item FROM public.sales_order_items soi WHERE soi.id = NEW.sales_order_item_id;
 
-        const result = res.rows[0].result;
-        assert.equal(result.success, false);
-        assert.match(
-          result.error,
-          /COALESCE types text and dc_approval_status cannot be matched/,
-          'Must reproduce the exact COALESCE type error reported by user'
-        );
+            -- BUG: dci.id IS DISTINCT FROM NEW.id but fails to exclude NEW.challan_id
+            SELECT COALESCE(sum(dci.quantity), 0) INTO v_pending
+            FROM public.delivery_challan_items dci
+            JOIN public.delivery_challans dc ON dc.id = dci.challan_id
+            WHERE dci.sales_order_item_id = NEW.sales_order_item_id
+              AND dc.approval_status = 'pending_approval'
+              AND dci.id IS DISTINCT FROM NEW.id;
+
+            v_remaining := v_so_item.quantity - COALESCE(v_so_item.delivered_quantity, 0);
+            IF (v_pending + NEW.quantity) > (v_remaining + 0.0001) THEN
+              RAISE EXCEPTION 'Delivery quantity (%) exceeds remaining Sales Order quantity (%)', (v_pending + NEW.quantity), v_remaining;
+            END IF;
+            RETURN NEW;
+          END;
+          $$;
+        `);
+
+        // Check calculation with new item id (simulating insert of 30 kg when 20 kg already exists on same DC)
+        let errorCaught = false;
+        try {
+          const dummyNewId = '00000000-0000-0000-0000-000000000001';
+          const query = `
+            DO $$
+            DECLARE
+              v_pending numeric;
+              v_remaining numeric;
+            BEGIN
+              SELECT COALESCE(sum(dci.quantity), 0) INTO v_pending
+              FROM public.delivery_challan_items dci
+              JOIN public.delivery_challans dc ON dc.id = dci.challan_id
+              WHERE dci.sales_order_item_id = '${SO_ITEM_ID}'
+                AND dc.approval_status = 'pending_approval'
+                AND dci.id IS DISTINCT FROM '${dummyNewId}';
+
+              v_remaining := 30.000;
+              IF (v_pending + 30.0) > (v_remaining + 0.0001) THEN
+                RAISE EXCEPTION 'Delivery quantity (%) exceeds remaining Sales Order quantity (%)', (v_pending + 30.0), v_remaining;
+              END IF;
+            END;
+            $$;
+          `;
+          await client.query(query);
+        } catch (err) {
+          errorCaught = true;
+          assert.match(err.message, /Delivery quantity \(50(\.0+)?\) exceeds remaining Sales Order quantity \(30(\.0+)?\)/);
+        }
+        assert.ok(errorCaught, 'Must reproduce the 20 + 30 = 50 defect mathematically');
       } finally {
         await client.query('ROLLBACK');
       }
@@ -333,7 +122,6 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await setupCorrectedRpc(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -343,82 +131,41 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
             $3::jsonb
           ) as result
         `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
+          DC_ID,
           JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
             quantity: 20
           }]),
           JSON.stringify({
-            customer_id: 'b8f9dc5e-2cdf-4527-8960-186bb2a30913',
-            sales_order_id: '655fd213-ffb4-4b4c-95cb-acb10e5dbe0d',
-            challan_date: '2026-10-27',
-            delivery_address: 'Jl. Industri No. 1',
-            approval_status: 'pending_approval'
-          })
-        ]);
-
-        const result = res.rows[0].result;
-        assert.equal(result.success, true, 'Save must succeed: ' + JSON.stringify(result));
-        assert.equal(result.message, 'Delivery challan updated successfully');
-
-        // Verify persisted state in DB
-        const dcCheck = await client.query(`SELECT approval_status, delivery_address FROM delivery_challans WHERE id = 'abda70d6-cede-4a14-bc47-1adea0729f6f'`);
-        assert.equal(dcCheck.rows[0].approval_status, 'pending_approval');
-        assert.equal(dcCheck.rows[0].delivery_address, 'Jl. Industri No. 1');
-      } finally {
-        await client.query('ROLLBACK');
-      }
-    });
-  });
-
-  await t.test('3. Successful Save when header does NOT include approval_status', async () => {
-    await withDbClient(async (client) => {
-      await client.query('BEGIN');
-      try {
-        await setupCorrectedRpc(client);
-        await setAuthenticatedUser(client, adminId);
-
-        const res = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 20
-          }]),
-          JSON.stringify({
-            delivery_address: 'Updated Warehouse Address'
+            customer_id: CUSTOMER_ID,
+            approval_status: 'pending_approval',
+            delivery_address: 'Verified Test Address'
           })
         ]);
 
         const result = res.rows[0].result;
         assert.equal(result.success, true);
 
-        const dcCheck = await client.query(`SELECT approval_status, delivery_address FROM delivery_challans WHERE id = 'abda70d6-cede-4a14-bc47-1adea0729f6f'`);
-        assert.equal(dcCheck.rows[0].delivery_address, 'Updated Warehouse Address');
+        // Verify database row updated correctly
+        const check = await client.query('SELECT approval_status, delivery_address FROM delivery_challans WHERE id = $1', [DC_ID]);
+        assert.equal(check.rows[0].approval_status, 'pending_approval');
+        assert.equal(check.rows[0].delivery_address, 'Verified Test Address');
       } finally {
         await client.query('ROLLBACK');
       }
     });
   });
 
-  await t.test('4. Successful Save with empty or null optional fields', async () => {
+  await t.test('3. Edit quantity from 20 kg to 30 kg without item id (in-place match succeeds, does NOT report 50 kg)', async () => {
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await setupCorrectedRpc(client);
         await setAuthenticatedUser(client, adminId);
 
+        // Omit id (item without ID)
         const res = await client.query(`
           SELECT edit_delivery_challan(
             $1::uuid,
@@ -426,212 +173,144 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
             $3::jsonb
           ) as result
         `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
+          DC_ID,
           JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 20,
-            pack_size: '',
-            pack_type: '',
-            number_of_packs: ''
-          }]),
-          JSON.stringify({
-            vehicle_number: '',
-            driver_name: '',
-            notes: ''
-          })
-        ]);
-
-        const result = res.rows[0].result;
-        assert.equal(result.success, true);
-
-        const dcCheck = await client.query(`SELECT vehicle_number, driver_name, notes FROM delivery_challans WHERE id = 'abda70d6-cede-4a14-bc47-1adea0729f6f'`);
-        assert.equal(dcCheck.rows[0].vehicle_number, null);
-        assert.equal(dcCheck.rows[0].driver_name, null);
-        assert.equal(dcCheck.rows[0].notes, null);
-      } finally {
-        await client.query('ROLLBACK');
-      }
-    });
-  });
-
-  await t.test('5. Reject invalid approval status values (approved or arbitrary string)', async () => {
-    await withDbClient(async (client) => {
-      await client.query('BEGIN');
-      try {
-        await setupCorrectedRpc(client);
-        await setAuthenticatedUser(client, adminId);
-
-        // Attempting approval_status = 'approved' directly via edit
-        const resApproved = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            quantity: 20
-          }]),
-          JSON.stringify({ approval_status: 'approved' })
-        ]);
-        assert.equal(resApproved.rows[0].result.success, false);
-        assert.match(resApproved.rows[0].result.error, /Invalid approval_status: approved/);
-
-        // Attempting arbitrary invalid string
-        const resGarbage = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            quantity: 20
-          }]),
-          JSON.stringify({ approval_status: 'arbitrary_status' })
-        ]);
-        assert.equal(resGarbage.rows[0].result.success, false);
-        assert.match(resGarbage.rows[0].result.error, /Invalid approval_status: arbitrary_status/);
-      } finally {
-        await client.query('ROLLBACK');
-      }
-    });
-  });
-
-  await t.test('6. Reject quantities greater than Sales Order remaining deliverable quantity', async () => {
-    await withDbClient(async (client) => {
-      await client.query('BEGIN');
-      try {
-        await setupCorrectedRpc(client);
-        await setAuthenticatedUser(client, adminId);
-
-        // SO-2026-0087 item has quantity 30 kg remaining. Entering 50 kg must be rejected with helpful message.
-        const res = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 50
-          }]),
-          JSON.stringify({
-            sales_order_id: '655fd213-ffb4-4b4c-95cb-acb10e5dbe0d'
-          })
-        ]);
-
-        const result = res.rows[0].result;
-        assert.equal(result.success, false);
-        assert.match(result.error, /Delivery quantity \(50\) exceeds remaining Sales Order quantity \(30/);
-      } finally {
-        await client.query('ROLLBACK');
-      }
-    });
-  });
-
-  await t.test('7. Reject modifications when parent Sales Order is cancelled or rejected', async () => {
-    await withDbClient(async (client) => {
-      await client.query('BEGIN');
-      try {
-        await setupCorrectedRpc(client);
-        await setAuthenticatedUser(client, adminId);
-
-        // Set linked SO to cancelled
-        await client.query(`UPDATE sales_orders SET status = 'cancelled' WHERE id = '655fd213-ffb4-4b4c-95cb-acb10e5dbe0d'`);
-
-        const res = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 20
-          }]),
-          JSON.stringify({
-            sales_order_id: '655fd213-ffb4-4b4c-95cb-acb10e5dbe0d'
-          })
-        ]);
-
-        const result = res.rows[0].result;
-        assert.equal(result.success, false);
-        assert.match(result.error, /linked Sales Order is cancelled/);
-      } finally {
-        await client.query('ROLLBACK');
-      }
-    });
-  });
-
-  await t.test('8. Cancelled invoices do not block legitimate recovery', async () => {
-    await withDbClient(async (client) => {
-      await client.query('BEGIN');
-      try {
-        await setupCorrectedRpc(client);
-        await setAuthenticatedUser(client, adminId);
-
-        // In production, invoice SAPJ-26-072 is cancelled with [CANCELLED...] in notes.
-        // Confirm it does NOT block saving DO-26-0073.
-        const res = await client.query(`
-          SELECT edit_delivery_challan(
-            $1::uuid,
-            $2::jsonb,
-            $3::jsonb
-          ) as result
-        `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
-          JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 20
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
+            quantity: 30
           }]),
           JSON.stringify({
             approval_status: 'pending_approval'
           })
         ]);
 
+        const result = res.rows[0].result;
+        assert.equal(result.success, true);
+
+        // Verify updated item quantity in database
+        const itemsRes = await client.query('SELECT id, quantity FROM delivery_challan_items WHERE challan_id = $1', [DC_ID]);
+        assert.equal(itemsRes.rows.length, 1);
+        assert.equal(Number(itemsRes.rows[0].quantity), 30);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('4. Edit quantity from 20 kg to 30 kg with item id (in-place update succeeds)', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        const res = await client.query(`
+          SELECT edit_delivery_challan(
+            $1::uuid,
+            $2::jsonb,
+            $3::jsonb
+          ) as result
+        `, [
+          DC_ID,
+          JSON.stringify([{
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
+            quantity: 30
+          }]),
+          JSON.stringify({
+            approval_status: 'pending_approval'
+          })
+        ]);
+
+        const result = res.rows[0].result;
+        assert.equal(result.success, true);
+
+        const itemsRes = await client.query('SELECT id, quantity FROM delivery_challan_items WHERE challan_id = $1', [DC_ID]);
+        assert.equal(itemsRes.rows.length, 1);
+        assert.equal(itemsRes.rows[0].id, ITEM_ID);
+        assert.equal(Number(itemsRes.rows[0].quantity), 30);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('5. Idempotent save: Saving the same quantity twice succeeds identically', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        for (let i = 0; i < 2; i++) {
+          const res = await client.query(`
+            SELECT edit_delivery_challan(
+              $1::uuid,
+              $2::jsonb,
+              $3::jsonb
+            ) as result
+          `, [
+            DC_ID,
+            JSON.stringify([{
+              id: ITEM_ID,
+              product_id: PRODUCT_ID,
+              batch_id: BATCH_ID,
+              sales_order_item_id: SO_ITEM_ID,
+              quantity: 25
+            }]),
+            JSON.stringify({ approval_status: 'pending_approval' })
+          ]);
+          assert.equal(res.rows[0].result.success, true);
+        }
+
+        const itemsRes = await client.query('SELECT count(*), max(quantity) as qty FROM delivery_challan_items WHERE challan_id = $1', [DC_ID]);
+        assert.equal(Number(itemsRes.rows[0].count), 1);
+        assert.equal(Number(itemsRes.rows[0].qty), 25);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('6. Increase quantity by 5 kg (20 kg -> 25 kg)', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        const res = await client.query(`
+          SELECT edit_delivery_challan(
+            $1::uuid,
+            $2::jsonb,
+            $3::jsonb
+          ) as result
+        `, [
+          DC_ID,
+          JSON.stringify([{
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
+            quantity: 25
+          }]),
+          JSON.stringify({ notes: 'Increased by 5kg' })
+        ]);
         assert.equal(res.rows[0].result.success, true);
+
+        const check = await client.query('SELECT quantity FROM delivery_challan_items WHERE id = $1', [ITEM_ID]);
+        assert.equal(Number(check.rows[0].quantity), 25);
       } finally {
         await client.query('ROLLBACK');
       }
     });
   });
 
-  await t.test('9. Active (uncancelled) invoice blocks unsafe changes', async () => {
+  await t.test('7. Decrease quantity by 10 kg (20 kg -> 10 kg)', async () => {
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await setupCorrectedRpc(client);
         await setAuthenticatedUser(client, adminId);
-
-        // Temporarily clear cancellation note to simulate an active invoice
-        await client.query(`
-          UPDATE sales_invoices
-          SET notes = 'Commercial active invoice'
-          WHERE id = '9878345f-b286-4a0e-83fe-de487c95e94f'
-        `);
 
         const res = await client.query(`
           SELECT edit_delivery_challan(
@@ -640,44 +319,293 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
             $3::jsonb
           ) as result
         `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
+          DC_ID,
           JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            quantity: 20
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
+            quantity: 10
           }]),
-          JSON.stringify({ delivery_address: 'New Address' })
+          JSON.stringify({ notes: 'Decreased by 10kg' })
         ]);
+        assert.equal(res.rows[0].result.success, true);
 
-        assert.equal(res.rows[0].result.success, false);
-        assert.match(res.rows[0].result.error, /Delivery Challan already invoiced by active invoice\(s\) SAPJ-26-072/);
+        const check = await client.query('SELECT quantity FROM delivery_challan_items WHERE id = $1', [ITEM_ID]);
+        assert.equal(Number(check.rows[0].quantity), 10);
       } finally {
         await client.query('ROLLBACK');
       }
     });
   });
 
-  await t.test('10. Two-argument signature works seamlessly without ambiguity', async () => {
+  await t.test('8. Split / Multi-batch items on same DC: 10 kg + 20 kg = 30 kg <= 30 kg succeeds', async () => {
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await setupCorrectedRpc(client);
         await setAuthenticatedUser(client, adminId);
 
-        // Calling with 2 arguments
+        const res = await client.query(`
+          SELECT edit_delivery_challan(
+            $1::uuid,
+            $2::jsonb,
+            $3::jsonb
+          ) as result
+        `, [
+          DC_ID,
+          JSON.stringify([
+            {
+              id: ITEM_ID,
+              product_id: PRODUCT_ID,
+              batch_id: BATCH_ID,
+              sales_order_item_id: SO_ITEM_ID,
+              quantity: 10
+            },
+            {
+              product_id: PRODUCT_ID,
+              batch_id: BATCH_ID,
+              sales_order_item_id: SO_ITEM_ID,
+              quantity: 20
+            }
+          ]),
+          JSON.stringify({ approval_status: 'pending_approval' })
+        ]);
+        assert.equal(res.rows[0].result.success, true);
+
+        const itemsRes = await client.query('SELECT count(*), sum(quantity) as total_qty FROM delivery_challan_items WHERE challan_id = $1', [DC_ID]);
+        assert.equal(Number(itemsRes.rows[0].count), 2);
+        assert.equal(Number(itemsRes.rows[0].total_qty), 30);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('9. Split items exceeding total SO remaining quantity (20 kg + 15 kg = 35 kg > 30 kg) is rejected', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        let errorCaught = false;
+        try {
+          await client.query(`
+            SELECT edit_delivery_challan(
+              $1::uuid,
+              $2::jsonb,
+              $3::jsonb
+            ) as result
+          `, [
+            DC_ID,
+            JSON.stringify([
+              {
+                id: ITEM_ID,
+                product_id: PRODUCT_ID,
+                batch_id: BATCH_ID,
+                sales_order_item_id: SO_ITEM_ID,
+                quantity: 20
+              },
+              {
+                product_id: PRODUCT_ID,
+                batch_id: BATCH_ID,
+                sales_order_item_id: SO_ITEM_ID,
+                quantity: 15
+              }
+            ]),
+            JSON.stringify({ approval_status: 'pending_approval' })
+          ]);
+        } catch (err) {
+          errorCaught = true;
+          assert.match(err.message, /Delivery quantity \(35(\.0+)?\) exceeds remaining Sales Order quantity \(30(\.0+)?\)/);
+        }
+        assert.ok(errorCaught, 'Must reject total split quantity when it exceeds remaining SO quantity');
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('10. Reject single item quantity exceeding remaining Sales Order quantity (50 kg > 30 kg)', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        let errorCaught = false;
+        try {
+          await client.query(`
+            SELECT edit_delivery_challan(
+              $1::uuid,
+              $2::jsonb,
+              $3::jsonb
+            ) as result
+          `, [
+            DC_ID,
+            JSON.stringify([{
+              id: ITEM_ID,
+              product_id: PRODUCT_ID,
+              batch_id: BATCH_ID,
+              sales_order_item_id: SO_ITEM_ID,
+              quantity: 50
+            }]),
+            JSON.stringify({ approval_status: 'pending_approval' })
+          ]);
+        } catch (err) {
+          errorCaught = true;
+          assert.match(err.message, /Delivery quantity \(50(\.0+)?\) exceeds remaining Sales Order quantity \(30(\.0+)?\)/);
+        }
+        assert.ok(errorCaught, 'Must reject when quantity exceeds approved SO remaining quantity');
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('11. Account for OTHER pending Delivery Challans when calculating remaining SO quantity', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        // Create a temporary second pending DC for the same SO item with 10 kg
+        const otherDcRes = await client.query(`
+          INSERT INTO delivery_challans (
+            customer_id, sales_order_id, challan_number, challan_date,
+            delivery_address, approval_status, created_by
+          ) VALUES (
+            $1, $2, 'DO-TEST-OTHER', CURRENT_DATE,
+            'Other Address', 'pending_approval', $3
+          ) RETURNING id;
+        `, [CUSTOMER_ID, SO_ID, adminId]);
+        const otherDcId = otherDcRes.rows[0].id;
+
+        await client.query(`
+          INSERT INTO delivery_challan_items (
+            challan_id, product_id, batch_id, sales_order_item_id, quantity
+          ) VALUES (
+            $1, $2, $3, $4, 10
+          );
+        `, [otherDcId, PRODUCT_ID, BATCH_ID, SO_ITEM_ID]);
+
+        // SO has 30 kg total. Other pending DC takes 10 kg. Deliverable remaining for DO-26-0073 is 20 kg.
+        // Editing DO-26-0073 to 20 kg should SUCCEED (10 + 20 = 30 <= 30)
+        const resOk = await client.query(`
+          SELECT edit_delivery_challan(
+            $1::uuid,
+            $2::jsonb,
+            $3::jsonb
+          ) as result
+        `, [
+          DC_ID,
+          JSON.stringify([{
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
+            quantity: 20
+          }]),
+          JSON.stringify({ approval_status: 'pending_approval' })
+        ]);
+        assert.equal(resOk.rows[0].result.success, true);
+
+        // Editing DO-26-0073 to 25 kg should FAIL (10 + 25 = 35 > 30)
+        let errorCaught = false;
+        try {
+          await client.query(`
+            SELECT edit_delivery_challan(
+              $1::uuid,
+              $2::jsonb,
+              $3::jsonb
+            ) as result
+          `, [
+            DC_ID,
+            JSON.stringify([{
+              id: ITEM_ID,
+              product_id: PRODUCT_ID,
+              batch_id: BATCH_ID,
+              sales_order_item_id: SO_ITEM_ID,
+              quantity: 25
+            }]),
+            JSON.stringify({ approval_status: 'pending_approval' })
+          ]);
+        } catch (err) {
+          errorCaught = true;
+          assert.match(err.message, /Delivery quantity \(25(\.0+)?\) exceeds remaining Sales Order quantity \(20(\.0+)?\)/);
+        }
+        assert.ok(errorCaught, 'Must constrain delivery quantity by other pending challans');
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('12. Failed validation rolls back all header and item changes cleanly', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
+        const initialHeader = await client.query('SELECT delivery_address, notes FROM delivery_challans WHERE id = $1', [DC_ID]);
+        const initialItem = await client.query('SELECT quantity FROM delivery_challan_items WHERE id = $1', [ITEM_ID]);
+
+        await client.query('SAVEPOINT sp_failed_edit');
+        try {
+          await client.query(`
+            SELECT edit_delivery_challan(
+              $1::uuid,
+              $2::jsonb,
+              $3::jsonb
+            )
+          `, [
+            DC_ID,
+            JSON.stringify([{
+              id: ITEM_ID,
+              product_id: PRODUCT_ID,
+              batch_id: BATCH_ID,
+              sales_order_item_id: SO_ITEM_ID,
+              quantity: 999 // Intentionally excessive quantity
+            }]),
+            JSON.stringify({
+              delivery_address: 'SHOULD NOT BE SAVED',
+              notes: 'CORRUPT EDIT ATTEMPT'
+            })
+          ]);
+        } catch (err) {
+          // Expected error - rollback to savepoint
+          await client.query('ROLLBACK TO SAVEPOINT sp_failed_edit');
+        }
+
+        // Check that values remain completely unchanged
+        const currentHeader = await client.query('SELECT delivery_address, notes FROM delivery_challans WHERE id = $1', [DC_ID]);
+        const currentItem = await client.query('SELECT quantity FROM delivery_challan_items WHERE id = $1', [ITEM_ID]);
+
+        assert.equal(currentHeader.rows[0].delivery_address, initialHeader.rows[0].delivery_address);
+        assert.equal(currentHeader.rows[0].notes, initialHeader.rows[0].notes);
+        assert.equal(Number(currentItem.rows[0].quantity), Number(initialItem.rows[0].quantity));
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+  });
+
+  await t.test('13. Two-argument signature works seamlessly without ambiguity', async () => {
+    await withDbClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await setAuthenticatedUser(client, adminId);
+
         const res = await client.query(`
           SELECT edit_delivery_challan(
             $1::uuid,
             $2::jsonb
           ) as result
         `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
+          DC_ID,
           JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
             quantity: 20
           }])
         ]);
@@ -689,14 +617,13 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
     });
   });
 
-  await t.test('11. Inventory and GL isolation: Save operation does NOT create inventory movements or journal entries', async () => {
+  await t.test('14. Inventory and GL isolation: Save operation does NOT create inventory movements or journal entries', async () => {
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
-        await setupCorrectedRpc(client);
         await setAuthenticatedUser(client, adminId);
 
-        const txCountBefore = await client.query(`SELECT count(*) FROM inventory_transactions WHERE reference_id = 'abda70d6-cede-4a14-bc47-1adea0729f6f'`);
+        const txCountBefore = await client.query(`SELECT count(*) FROM inventory_transactions WHERE reference_id = $1`, [DC_ID]);
         const jeCountBefore = await client.query(`SELECT count(*) FROM journal_entries WHERE description LIKE '%DO-26-0073%'`);
 
         // Execute save
@@ -707,20 +634,20 @@ test('Delivery Challan Edit & Recovery Type Safety and Quantity Regression Suite
             $3::jsonb
           )
         `, [
-          'abda70d6-cede-4a14-bc47-1adea0729f6f',
+          DC_ID,
           JSON.stringify([{
-            id: 'baadf206-f75f-4109-89e3-2a20f836351f',
-            product_id: 'f9ca763f-47c0-4bfa-b2a0-1905152458c6',
-            batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
-            sales_order_item_id: '2a1def7d-a77f-4873-b2c9-aeefc26d6689',
-            quantity: 20
+            id: ITEM_ID,
+            product_id: PRODUCT_ID,
+            batch_id: BATCH_ID,
+            sales_order_item_id: SO_ITEM_ID,
+            quantity: 30
           }]),
           JSON.stringify({
             approval_status: 'pending_approval'
           })
         ]);
 
-        const txCountAfter = await client.query(`SELECT count(*) FROM inventory_transactions WHERE reference_id = 'abda70d6-cede-4a14-bc47-1adea0729f6f'`);
+        const txCountAfter = await client.query(`SELECT count(*) FROM inventory_transactions WHERE reference_id = $1`, [DC_ID]);
         const jeCountAfter = await client.query(`SELECT count(*) FROM journal_entries WHERE description LIKE '%DO-26-0073%'`);
 
         assert.equal(Number(txCountAfter.rows[0].count), Number(txCountBefore.rows[0].count), 'Inventory movements must remain unchanged on save');

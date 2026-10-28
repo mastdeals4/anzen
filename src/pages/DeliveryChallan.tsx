@@ -184,7 +184,7 @@ export function DeliveryChallan() {
   const [linkedInvoiceItems, setLinkedInvoiceItems] = useState<any[]>([]);
   const [linkedSOPreview, setLinkedSOPreview] = useState<any | null>(null);
   const [salesOrderItemSources, setSalesOrderItemSources] = useState<SalesOrderItemSource[]>([]);
-  const [items, setItems] = useState<Omit<ChallanItem, 'id'>[]>([{
+  const [items, setItems] = useState<ChallanItem[]>([{
     product_id: '',
     batch_id: '',
     quantity: 0,
@@ -633,7 +633,10 @@ export function DeliveryChallan() {
                 neededQty = Math.max(0, neededQty - lineQty);
                 hasAllocated = true;
 
+                const matchingOrig = originalItems.find(oi => oi.product_id === item.product_id && oi.batch_id === batch.id)
+                  || originalItems.find(oi => oi.product_id === item.product_id);
                 newItems.push({
+                  id: matchingOrig?.id,
                   sales_order_item_id: item.id,
                   product_id: item.product_id,
                   batch_id: batch.id,
@@ -654,10 +657,12 @@ export function DeliveryChallan() {
                 const phPackSize = pWeight > 0 ? pWeight : null;
                 const phPackType = (pWeight > 0 && pType) ? formatPackTypeForDisplay(pType) : null;
                 const phPacks = (phPackSize && neededQty > 0) ? Math.ceil(neededQty / phPackSize) : null;
+                const matchingOrig = originalItems.find(oi => oi.product_id === item.product_id);
                 newItems.push({
+                  id: matchingOrig?.id,
                   sales_order_item_id: item.id,
                   product_id: item.product_id,
-                  batch_id: '',
+                  batch_id: matchingOrig?.batch_id || '',
                   quantity: neededQty,
                   pack_size: phPackSize,
                   pack_type: phPackType,
@@ -1244,7 +1249,7 @@ export function DeliveryChallan() {
         // Approved allocations are immutable. Corrections must use the
         // canonical rejection/cancellation reversal and a replacement DC.
         const itemsForRpc = preparedItems.map(item => ({
-          id: item.id || undefined,
+          id: item.id || null,
           product_id: item.product_id,
           batch_id: item.batch_id,
           sales_order_item_id: item.sales_order_item_id || null,
