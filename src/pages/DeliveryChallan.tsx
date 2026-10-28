@@ -1154,7 +1154,7 @@ export function DeliveryChallan() {
           showToast({
             type: 'error',
             title: 'Sales Order Quantity Constraint',
-            message: `Delivery quantity (${totalQty}) exceeds remaining Sales Order quantity (${maxRemaining}) for ${prodName} on ${soNumber}. Edit the Sales Order to increase quantity, select another order, or adjust the delivery quantity to ${maxRemaining}.`,
+            message: `Delivery quantity (${totalQty}) exceeds the remaining Sales Order quantity (${maxRemaining}) for ${prodName} on ${soNumber}. Edit the Sales Order to increase quantity, select another order, or adjust the delivery quantity to ${maxRemaining}.`,
           });
           return;
         }

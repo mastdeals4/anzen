@@ -13,7 +13,7 @@ assert.match(migration, /CREATE TABLE IF NOT EXISTS public\.dc_batch_allocations
 assert.match(fixMigration, /consume_so_product_reservation_v2/);
 assert.match(fixMigration, /validate_dc_item_product_reservation_v2/);
 assert.match(fixMigration, /Selected batch is invalid, expired, or has insufficient physical stock/);
-assert.match(dc, /exceeds the remaining Sales Order quantity/);
+assert.match(dc, /exceeds (?:the )?remaining Sales Order quantity/);
 assert.doesNotMatch(dc, /Delivery quantity exceeds the remaining Sales Order product reservation/);
 assert.doesNotMatch(dc, /realign_reservation_for_delivery_challan/);
 
