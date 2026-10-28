@@ -338,11 +338,18 @@ export function CreditNoteView({ creditNote, items, onClose, companyProfile }: C
                       <span className="ml-2">{creditNote.original_invoice_number}</span>
                     </div>
                   )}
-                  {creditNote.material_returns && (
+                  {creditNote.material_returns ? (
                     <div className="pt-1">
                       <span className="font-bold">Originating Return:</span>
                       <span className="ml-2 font-mono text-purple-700 bg-purple-50 px-1 py-0.5 rounded border border-purple-200">
                         {creditNote.material_returns.return_number}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="pt-1">
+                      <span className="font-bold">Type:</span>
+                      <span className="ml-2 text-blue-700 bg-blue-50 px-1 py-0.5 rounded border border-blue-200 text-[10px]">
+                        Commercial Credit
                       </span>
                     </div>
                   )}

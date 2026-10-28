@@ -7,13 +7,14 @@ import { CreditNoteView } from '../components/CreditNoteView';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Eye, Trash2, AlertCircle, CheckCircle, XCircle, RotateCcw, Filter } from 'lucide-react';
+import { Plus, Eye, Trash2, AlertCircle, CheckCircle, XCircle, RotateCcw, Filter, Pencil } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
 import { MoneyInput } from '../components/MoneyInput';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { useSupabaseRealtimeChannel } from '../hooks/useSupabaseRealtimeChannel';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -115,6 +116,23 @@ export function CreditNotes() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNote | null>(null);
   const [selectedCreditNoteItems, setSelectedCreditNoteItems] = useState<any[]>([]);
+  const [editingCreditNoteId, setEditingCreditNoteId] = useState<string | null>(null);
+
+  // Realtime updates for credit notes and material returns
+  useSupabaseRealtimeChannel({
+    channelName: 'credit_notes_realtime_changes',
+    table: 'credit_notes',
+    onEvent: () => {
+      loadCreditNotes();
+    },
+  });
+  useSupabaseRealtimeChannel({
+    channelName: 'credit_notes_material_returns_changes',
+    table: 'material_returns',
+    onEvent: () => {
+      loadApprovedReturns();
+    },
+  });
 
   // Filtering: defaults to showing all records; date filter filters by commercial credit_note_date
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending_approval' | 'approved' | 'rejected'>('all');
@@ -454,6 +472,82 @@ export function CreditNotes() {
     return { subtotal, tax_amount, total_amount };
   };
 
+  const handleEditCreditNote = async (creditNote: CreditNote) => {
+    if (creditNote.status === 'approved') {
+      showToast({
+        type: 'error',
+        title: 'Cannot Edit',
+        message: 'Approved credit notes have posted general ledger and inventory records and cannot be edited. Please reverse the credit note if adjustments are needed.',
+      });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const { data: itemRows, error: itemErr } = await supabase
+        .from('credit_note_items')
+        .select(`
+          product_id,
+          batch_id,
+          quantity,
+          unit_price,
+          products(product_name, product_code),
+          batches(
+            batch_number,
+            current_stock,
+            product_sources!batches_make_id_fkey(supplier_name, grade)
+          )
+        `)
+        .eq('credit_note_id', creditNote.id);
+
+      if (itemErr) throw itemErr;
+
+      setEditingCreditNoteId(creditNote.id);
+      setFormData({
+        credit_note_number: creditNote.credit_note_number,
+        credit_note_date: creditNote.credit_note_date,
+        customer_id: creditNote.customer_id,
+        original_invoice_id: creditNote.original_invoice_id || '',
+        original_invoice_number: creditNote.original_invoice_number || '',
+        reason: creditNote.reason || '',
+        notes: creditNote.notes || '',
+        currency: creditNote.currency || 'IDR',
+        material_return_id: creditNote.material_return_id || '',
+      });
+
+      if (creditNote.customer_id) {
+        await loadInvoicesForCustomer(creditNote.customer_id);
+      }
+
+      if (itemRows && itemRows.length > 0) {
+        const loadedItems = itemRows.map((item: any) => {
+          const batch = normalizeNestedRelation(item.batches);
+          return {
+            product_id: item.product_id,
+            batch_id: item.batch_id || '',
+            quantity: Number(item.quantity) || 0,
+            unit_price: Number(item.unit_price) || 0,
+            batches: batch ? {
+              ...batch,
+              product_sources: normalizeNestedRelation(batch.product_sources),
+            } : null,
+          };
+        });
+        setItems(loadedItems);
+        if (loadedItems[0]?.product_id) {
+          loadBatchesForProduct(loadedItems[0].product_id);
+        }
+      }
+
+      setModalOpen(true);
+    } catch (err: any) {
+      console.error('Error loading credit note for edit:', err);
+      showToast({ type: 'error', title: 'Error', message: err?.message || 'Failed to load credit note details' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -467,6 +561,60 @@ export function CreditNotes() {
     const hasInvalidItems = items.some(item => !item.product_id || !item.batch_id || item.quantity <= 0 || item.unit_price <= 0);
     if (hasInvalidItems) {
       showToast({ type: 'error', title: 'Error', message: 'Please complete all item details' });
+      return;
+    }
+
+    // Branch for Editing existing draft credit note
+    if (editingCreditNoteId) {
+      setIsSubmitting(true);
+      try {
+        const totals = calculateTotals();
+        const { error: updateErr } = await supabase
+          .from('credit_notes')
+          .update({
+            credit_note_date: formData.credit_note_date,
+            customer_id: formData.customer_id,
+            original_invoice_id: formData.original_invoice_id || null,
+            original_invoice_number: formData.original_invoice_number || null,
+            reason: formData.reason,
+            notes: formData.notes || null,
+            currency: formData.currency,
+            material_return_id: formData.material_return_id || null,
+            ...totals,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editingCreditNoteId)
+          .eq('status', 'pending_approval');
+
+        if (updateErr) throw updateErr;
+
+        // Replace items
+        const { error: delErr } = await supabase
+          .from('credit_note_items')
+          .delete()
+          .eq('credit_note_id', editingCreditNoteId);
+        if (delErr) throw delErr;
+
+        const itemsWithCreditNoteId = items.map(({ products: _products, batches: _batches, ...item }) => ({
+          ...item,
+          credit_note_id: editingCreditNoteId,
+        }));
+
+        const { error: itemsInsertErr } = await supabase
+          .from('credit_note_items')
+          .insert(itemsWithCreditNoteId);
+        if (itemsInsertErr) throw itemsInsertErr;
+
+        showToast({ type: 'success', title: 'Updated', message: `Credit note ${formData.credit_note_number} updated successfully.` });
+        setModalOpen(false);
+        resetForm();
+        await loadData();
+      } catch (error: any) {
+        console.error('Error updating credit note:', error);
+        showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to update credit note.' });
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -582,7 +730,37 @@ export function CreditNotes() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this credit note? This will reverse any linked adjustment.', variant: 'danger', confirmLabel: 'Delete' })) {
+    const targetNote = creditNotes.find(cn => cn.id === id);
+    if (!targetNote) return;
+
+    if (targetNote.status === 'approved') {
+      showToast({
+        type: 'error',
+        title: 'Cannot Delete',
+        message: 'Approved credit notes have posted general ledger and inventory records and cannot be deleted. Please reject or reverse the credit note instead.',
+      });
+      return;
+    }
+
+    if ((targetNote as any).nota_retur_id) {
+      showToast({
+        type: 'error',
+        title: 'Cannot Delete',
+        message: 'This credit note is linked to a registered Coretax Nota Retur tax document and cannot be deleted.',
+      });
+      return;
+    }
+
+    const linkedReturnMsg = targetNote.material_return_id
+      ? ' This credit note is linked to a Material Return. Deleting it will release the return so a new credit note can be re-issued.'
+      : '';
+
+    if (!await showConfirm({
+      title: 'Confirm Delete',
+      message: `Are you sure you want to delete credit note ${targetNote.credit_note_number || 'Draft'}?${linkedReturnMsg}`,
+      variant: 'danger',
+      confirmLabel: 'Delete',
+    })) {
       return;
     }
 
@@ -613,6 +791,7 @@ export function CreditNotes() {
   };
 
   const resetForm = () => {
+    setEditingCreditNoteId(null);
     setFormData({
       credit_note_number: '',
       credit_note_date: new Date().toISOString().split('T')[0],
@@ -702,7 +881,14 @@ export function CreditNotes() {
           <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
             {ret.return_number}
           </span>
-        ) : <span className="text-gray-400 text-xs">—</span>;
+        ) : (
+          <span
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium"
+            title="Commercial Credit Note: Price adjustment / damaged packaging concession without physical goods return"
+          >
+            Commercial
+          </span>
+        );
       }
     },
     {
@@ -864,6 +1050,16 @@ export function CreditNotes() {
                 <Eye className="w-4 h-4" />
               </button>
 
+              {canManage && (!creditNote.status || creditNote.status === 'pending_approval') && (
+                <button
+                  onClick={() => handleEditCreditNote(creditNote)}
+                  className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                  title="Edit Credit Note"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              )}
+
               {isManager && (!creditNote.status || creditNote.status === 'pending_approval') && (
                 <>
                   <button
@@ -883,7 +1079,7 @@ export function CreditNotes() {
                 </>
               )}
 
-              {canManage && (!creditNote.status || creditNote.status === 'pending_approval') && (
+              {canManage && (!creditNote.status || creditNote.status === 'pending_approval' || creditNote.status === 'rejected') && (
                 <button
                   onClick={() => handleDelete(creditNote.id)}
                   className="p-1 text-red-600 hover:bg-red-50 rounded"
@@ -902,7 +1098,7 @@ export function CreditNotes() {
             setModalOpen(false);
             resetForm();
           }}
-          title="Create Credit Note"
+          title={editingCreditNoteId ? 'Edit Credit Note' : 'Create Credit Note'}
         >
           <form onSubmit={handleSubmit} className="space-y-4">
             <SapRow>
@@ -1176,10 +1372,10 @@ export function CreditNotes() {
                 {isSubmitting ? (
                   <>
                     <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent" />
-                    <span>Creating...</span>
+                    <span>{editingCreditNoteId ? 'Saving...' : 'Creating...'}</span>
                   </>
                 ) : (
-                  'Create Credit Note'
+                  editingCreditNoteId ? 'Update Credit Note' : 'Create Credit Note'
                 )}
               </button>
             </div>

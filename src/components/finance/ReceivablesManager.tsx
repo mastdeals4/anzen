@@ -147,7 +147,11 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
       const paidByInvoice = new Map<string, number>();
       if (invoiceIds.length > 0) {
-        const [{ data: invAllocs, error: invAllocErr }, { data: invAdjs, error: invAdjErr }] = await Promise.all([
+        const [
+          { data: invAllocs, error: invAllocErr },
+          { data: invAdjs, error: invAdjErr },
+          { data: invCreditNotes, error: invCnErr },
+        ] = await Promise.all([
           supabase
             .from('voucher_allocations')
             .select('sales_invoice_id, allocated_amount')
@@ -157,12 +161,20 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
             .from('invoice_rounding_adjustments')
             .select('sales_invoice_id, adjustment_amount')
             .in('sales_invoice_id', invoiceIds),
+          supabase
+            .from('credit_notes')
+            .select('original_invoice_id, total_amount')
+            .in('original_invoice_id', invoiceIds)
+            .eq('status', 'approved'),
         ]);
         if (invAllocErr) {
           console.error('Error loading invoice allocations:', invAllocErr);
         }
         if (invAdjErr) {
           console.error('Error loading invoice adjustments:', invAdjErr);
+        }
+        if (invCnErr) {
+          console.error('Error loading invoice credit notes:', invCnErr);
         }
         for (const a of invAllocs || []) {
           paidByInvoice.set(
@@ -175,6 +187,14 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
             a.sales_invoice_id,
             (paidByInvoice.get(a.sales_invoice_id) || 0) + (Number(a.adjustment_amount) || 0),
           );
+        }
+        for (const cn of (invCreditNotes || []) as any[]) {
+          if (cn.original_invoice_id) {
+            paidByInvoice.set(
+              cn.original_invoice_id,
+              (paidByInvoice.get(cn.original_invoice_id) || 0) + (Number(cn.total_amount) || 0),
+            );
+          }
         }
       }
 
@@ -275,6 +295,11 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
   useSupabaseRealtimeChannel({
     channelName: 'receivables_rounding_adjustments',
     table: 'invoice_rounding_adjustments',
+    onEvent: scheduleReceivablesRefresh,
+  });
+  useSupabaseRealtimeChannel({
+    channelName: 'receivables_credit_notes',
+    table: 'credit_notes',
     onEvent: scheduleReceivablesRefresh,
   });
 
