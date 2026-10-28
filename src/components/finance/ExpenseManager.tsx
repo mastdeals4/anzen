@@ -5383,8 +5383,17 @@ export function ExpenseManager({
                 </div>
                 <div className="flex items-start gap-3">
                   <div className="text-right">
-                    <div className="text-[9px] uppercase font-medium text-gray-400 tracking-wide">{isSalary ? 'Gross Salary' : 'Total'}</div>
-                    <div className="text-[19px] font-bold text-gray-900 font-mono leading-tight">{fmtMoney(canonicalExpenseTotal, 2)}</div>
+                    <div className="text-[9px] uppercase font-medium text-gray-400 tracking-wide">
+                      {isSalary ? 'Gross Salary' : isBroker ? 'Accounting Expense (P&L)' : 'Total'}
+                    </div>
+                    <div className="text-[19px] font-bold text-gray-900 font-mono leading-tight">
+                      {fmtMoney(canonicalExpenseTotal, 2)}
+                    </div>
+                    {isBroker && (
+                      <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                        Cash Payable: <span className="font-semibold text-green-700">{fmtMoney(canonicalCashPayable, 2)}</span>
+                      </div>
+                    )}
                     <div className="mt-0.5">{approvalBadge()}</div>
                   </div>
                 </div>
@@ -5496,17 +5505,20 @@ export function ExpenseManager({
             {/* ── BROKER SUMMARY (only for broker) ── */}
             {isBroker && brokerTotals && (() => {
               const rows: Array<[string, number, string]> = [
-                ['Broker Invoice', brokerTotals.brokerInvoiceAmount, 'text-gray-900'],
-                ['Reimbursements', brokerTotals.reimbursementTotal, 'text-gray-900'],
+                ['Broker Invoice (DPP/Fee)', brokerTotals.brokerInvoiceAmount, 'text-gray-900'],
+                ['Reimbursements Gross', brokerTotals.reimbursementTotal, 'text-gray-900'],
                 ['Reimbursement DPP', brokerTotals.reimbursementDpp, 'text-gray-700'],
-                ['Recoverable PPN', brokerTotals.recoverableInputPpn, 'text-blue-700'],
-                ['PPh23', brokerTotals.pph23Withheld, 'text-orange-700'],
+                ['Recoverable PPN (Asset)', brokerTotals.recoverableInputPpn, 'text-blue-700 font-semibold'],
+                ['PPh 23 Withheld', brokerTotals.pph23Withheld, 'text-orange-700 font-semibold'],
                 ['Stamp Duty', brokerTotals.stampDuty, 'text-gray-700'],
-                ['Accounting Expense', brokerTotals.accountingExpenseTotal, 'text-gray-900'],
+                ['Accounting Expense (P&L)', brokerTotals.accountingExpenseTotal, 'text-gray-900 font-bold'],
               ];
               return (
                 <div className="px-4 py-2 border-b border-gray-100">
-                  <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Broker Invoice Summary</h3>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Broker Invoice Summary</h3>
+                    <span className="text-[10px] text-gray-400 italic">Accounting expense excludes recoverable PPN Masukan</span>
+                  </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
                     {rows.map(([label, value, tint]) => (
                       <div key={label}>
@@ -5516,7 +5528,10 @@ export function ExpenseManager({
                     ))}
                   </div>
                   <div className="mt-1.5 flex items-center justify-between border-t border-gray-100 pt-1.5">
-                    <span className="text-[10px] font-semibold text-green-700 uppercase tracking-wide">Final Cash Payable</span>
+                    <div>
+                      <span className="text-[10px] font-semibold text-green-700 uppercase tracking-wide">Final Cash Payable (to Supplier)</span>
+                      <span className="text-[10px] text-gray-400 ml-2">(Gross − PPh 23 Withheld)</span>
+                    </div>
                     <span className="text-[15px] font-bold font-mono text-green-800">{fmtMoney(brokerTotals.finalCashPayable, 2)}</span>
                   </div>
                 </div>
@@ -5762,7 +5777,10 @@ export function ExpenseManager({
                           )}
                           {(pphTarget > 0 || pphPaid > 0) && (
                             <div className="flex items-center justify-between text-[11px]">
-                              <span className="text-gray-600">PPh Withholding</span>
+                              <div>
+                                <span className="text-gray-600">PPh Withholding</span>
+                                <span className="text-[9px] text-gray-400 ml-1">(Payable to Tax Office)</span>
+                              </div>
                               <div className="flex items-center gap-1.5">
                                 <span className="font-mono text-gray-800">{fmtMoney(pphPaid)} / {fmtMoney(pphTarget)}</span>
                                 {badge(pphPaid, pphTarget)}

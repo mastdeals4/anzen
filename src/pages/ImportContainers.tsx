@@ -56,6 +56,8 @@ interface SelectablePI {
   total_amount: number;
   po_number?: string;
   lines_count?: number;
+  linked_container_id?: string | null;
+  linked_container_ref?: string | null;
 }
 
 interface LinkedExpense {
@@ -140,7 +142,24 @@ export default function ImportContainers() {
 
     const containerSubscription = supabase
       .channel('container-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'import_containers' }, () => fetchContainers())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'import_containers' }, () => {
+        fetchContainers();
+        fetchAvailablePIs();
+      })
+      .subscribe();
+
+    const piSubscription = supabase
+      .channel('pi-container-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_invoices' }, () => {
+        fetchAvailablePIs();
+      })
+      .subscribe();
+
+    const piraSubscription = supabase
+      .channel('pira-container-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_invoice_receiving_allocations' }, () => {
+        fetchAvailablePIs();
+      })
       .subscribe();
 
     const expenseSubscription = supabase
@@ -155,6 +174,8 @@ export default function ImportContainers() {
 
     return () => {
       supabase.removeChannel(containerSubscription);
+      supabase.removeChannel(piSubscription);
+      supabase.removeChannel(piraSubscription);
       supabase.removeChannel(expenseSubscription);
       supabase.removeChannel(pettyCashSubscription);
     };
@@ -236,23 +257,37 @@ export default function ImportContainers() {
     try {
       // Query existing import relationships: import containers and receiving allocations
       const [{ data: icRows }, { data: piraRows }] = await Promise.all([
-        supabase.from('import_containers').select('purchase_invoice_ids'),
+        supabase.from('import_containers').select('id, container_ref, purchase_invoice_ids'),
         supabase
           .from('purchase_invoice_receiving_allocations')
-          .select('purchase_invoice_id')
+          .select('purchase_invoice_id, import_container_id')
           .not('import_container_id', 'is', null),
       ]);
 
-      const importPiIds = new Set<string>();
+      // Map container reference by container ID
+      const containerRefById = new Map<string, string>();
+      (icRows || []).forEach((ic: any) => {
+        if (ic.id) containerRefById.set(ic.id, ic.container_ref || 'Existing Container');
+      });
+
+      // Build mapping from purchase_invoice_id -> { id: container_id, ref: container_ref }
+      const piContainerMap = new Map<string, { id: string; ref: string }>();
       (icRows || []).forEach((ic: any) => {
         if (Array.isArray(ic.purchase_invoice_ids)) {
           ic.purchase_invoice_ids.forEach((id: string) => {
-            if (id) importPiIds.add(id);
+            if (id && !piContainerMap.has(id)) {
+              piContainerMap.set(id, { id: ic.id, ref: ic.container_ref || 'Existing Container' });
+            }
           });
         }
       });
       (piraRows || []).forEach((r: any) => {
-        if (r.purchase_invoice_id) importPiIds.add(r.purchase_invoice_id);
+        if (r.purchase_invoice_id && r.import_container_id && !piContainerMap.has(r.purchase_invoice_id)) {
+          piContainerMap.set(r.purchase_invoice_id, {
+            id: r.import_container_id,
+            ref: containerRefById.get(r.import_container_id) || 'Existing Container',
+          });
+        }
       });
 
       const { data, error } = await supabase
@@ -266,9 +301,10 @@ export default function ImportContainers() {
           exchange_rate,
           subtotal,
           total_amount,
+          status,
           purchase_type,
           purchase_orders(po_number),
-          suppliers(company_name),
+          suppliers(company_name, country),
           purchase_invoice_items(id)
         `)
         .order('invoice_date', { ascending: false });
@@ -276,25 +312,39 @@ export default function ImportContainers() {
       if (error) throw error;
 
       // Filter only to PIs belonging to the SAPJ Import workflow:
-      // Either purchase_type === 'import' OR linked to an import container / receiving allocation
+      // Excludes cancelled invoices.
+      // Must be an import PI: foreign currency (e.g. USD, EUR), explicit purchase_type === 'import',
+      // overseas supplier, or linked to an import container.
       // Strictly excludes domestic/local purchase invoices (e.g. PT. Kairos Tritunggal, PT. Anugerah Mentari Distrindo)
-      const importPIs = (data || []).filter((pi: any) =>
-        pi.purchase_type === 'import' || importPiIds.has(pi.id)
-      );
+      const importPIs = (data || []).filter((pi: any) => {
+        if (pi.status === 'cancelled') return false;
+        const isForeignCurrency = Boolean(pi.currency && pi.currency.toUpperCase() !== 'IDR');
+        const isImportType = pi.purchase_type === 'import';
+        const isOverseasSupplier = Boolean(
+          pi.suppliers?.country && pi.suppliers.country.trim().toLowerCase() !== 'indonesia'
+        );
+        const isLinkedToContainer = piContainerMap.has(pi.id);
+        return isForeignCurrency || isImportType || isOverseasSupplier || isLinkedToContainer;
+      });
 
-      const formatted: SelectablePI[] = importPIs.map((pi: any) => ({
-        id: pi.id,
-        invoice_number: pi.invoice_number,
-        invoice_date: pi.invoice_date,
-        supplier_id: pi.supplier_id,
-        supplier_name: pi.suppliers?.company_name || 'Unknown Supplier',
-        currency: pi.currency || 'USD',
-        exchange_rate: Number(pi.exchange_rate) || 15000,
-        subtotal: Number(pi.subtotal) || Number(pi.total_amount) || 0,
-        total_amount: Number(pi.total_amount) || 0,
-        po_number: pi.purchase_orders?.po_number,
-        lines_count: Array.isArray(pi.purchase_invoice_items) ? pi.purchase_invoice_items.length : 0,
-      }));
+      const formatted: SelectablePI[] = importPIs.map((pi: any) => {
+        const link = piContainerMap.get(pi.id);
+        return {
+          id: pi.id,
+          invoice_number: pi.invoice_number,
+          invoice_date: pi.invoice_date,
+          supplier_id: pi.supplier_id,
+          supplier_name: pi.suppliers?.company_name || 'Unknown Supplier',
+          currency: pi.currency || 'USD',
+          exchange_rate: Number(pi.exchange_rate) || 15000,
+          subtotal: Number(pi.subtotal) || Number(pi.total_amount) || 0,
+          total_amount: Number(pi.total_amount) || 0,
+          po_number: pi.purchase_orders?.po_number,
+          lines_count: Array.isArray(pi.purchase_invoice_items) ? pi.purchase_invoice_items.length : 0,
+          linked_container_id: link ? link.id : null,
+          linked_container_ref: link ? link.ref : null,
+        };
+      });
 
       setAvailablePIs(formatted);
     } catch (error: any) {
@@ -423,7 +473,7 @@ export default function ImportContainers() {
       setShowModal(false);
       setEditingContainer(null);
       resetForm();
-      fetchContainers();
+      await Promise.all([fetchContainers(), fetchAvailablePIs()]);
     } catch (error: any) {
       showToast({ type: 'error', title: t('common.error'), message: 'Failed to save container: ' + error.message });
     }
@@ -559,6 +609,7 @@ export default function ImportContainers() {
 
   const handleEdit = async (container: ImportContainer) => {
     setEditingContainer(container);
+    await fetchAvailablePIs();
     const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
     setCanonicalLandedCostPool(Number(canonicalPool) || 0);
 
@@ -644,7 +695,19 @@ export default function ImportContainers() {
 
   const hasLinkedItems = unifiedItems.length > 0;
 
-  const filteredPIs = availablePIs.filter(pi => {
+  // Filter eligible PIs based on current modal mode:
+  // - If creating a new container (editingContainer is null): only PIs NOT linked to any container are offered.
+  // - If editing a container: PIs linked to THIS container + unlinked PIs are offered; PIs linked to OTHER containers are excluded.
+  const eligiblePIs = availablePIs.filter(pi => {
+    if (pi.linked_container_id) {
+      if (!editingContainer || pi.linked_container_id !== editingContainer.id) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const filteredPIs = eligiblePIs.filter(pi => {
     if (!piSearchQuery.trim()) return true;
     const q = piSearchQuery.toLowerCase();
     return (
@@ -665,7 +728,12 @@ export default function ImportContainers() {
             <p className="text-sm text-gray-600 mt-1">{t('importContainers.subtitle')}</p>
           </div>
           <button
-            onClick={() => { setEditingContainer(null); resetForm(); setShowModal(true); }}
+            onClick={() => {
+              setEditingContainer(null);
+              resetForm();
+              fetchAvailablePIs();
+              setShowModal(true);
+            }}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm self-start sm:self-auto shadow-sm"
           >
             <Plus className="w-4 h-4" />{t('importContainers.newContainer')}
@@ -837,6 +905,30 @@ export default function ImportContainers() {
                         Done
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {/* Selected PI Badges under dropdown trigger */}
+                {selectedPiObjects.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {selectedPiObjects.map(pi => (
+                      <span
+                        key={pi.id}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 text-xs font-medium border border-blue-200"
+                      >
+                        <FileText className="w-3 h-3 text-blue-600 shrink-0" />
+                        <span className="font-semibold">{pi.invoice_number}</span>
+                        <span className="text-blue-600 font-mono">({formatCurrency(pi.subtotal, pi.currency)})</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePI(pi.id)}
+                          className="text-blue-400 hover:text-blue-700 ml-0.5 rounded hover:bg-blue-100 p-0.5 transition"
+                          title="Remove PI"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
