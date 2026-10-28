@@ -218,7 +218,7 @@ test('6. ReceiptVoucherManager.tsx allocation and settlement UI integration', ()
     'Receipt allocation table must have Final Balance header');
 
   // Persistence in handleSubmit
-  assert.match(content, /applySettlementAdjustment\(\{[\s\S]*documentType:\s*'sales'/,
+  assert.match(content, /applySettlementAdjustment\(\{[\s\S]*documentType:\s*(alloc\.targetType\s*===\s*'salesorder'\s*\?\s*'sales_order'\s*:\s*)?'sales'/,
     'ReceiptVoucherManager handleSubmit must call applySettlementAdjustment for sales invoices');
 });
 

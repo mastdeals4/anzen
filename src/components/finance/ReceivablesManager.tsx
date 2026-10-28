@@ -5,11 +5,14 @@ import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from './FloatingField';
 import { SapRow } from './SapLayout';
-import { TrendingUp, RefreshCw, BarChart2 } from 'lucide-react';
+import { TrendingUp, RefreshCw, BarChart2, CheckCircle } from 'lucide-react';
 import { useNavigation } from '../../contexts/NavigationContext';
 import { formatDate } from '../../utils/dateFormat';
 import { useSupabaseRealtimeChannel } from '../../hooks/useSupabaseRealtimeChannel';
 import { useFinance } from '../../contexts/FinanceContext';
+import { applySettlementAdjustment } from '../../services/financeCommands';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 import * as XLSX from 'xlsx';
 
 interface SalesInvoice {
@@ -22,6 +25,8 @@ interface SalesInvoice {
   payment_status: 'pending' | 'partial' | 'paid';
   customers: { company_name: string } | null;
   paid_amount?: number;
+  balance_amount?: number;
+  notes?: string | null;
 }
 
 interface ReceiptVoucher {
@@ -60,6 +65,8 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
   const [customerInvoices, setCustomerInvoices] = useState<SalesInvoice[]>([]);
   const [selectedAllocations, setSelectedAllocations] = useState<{[key: string]: number}>({});
+  const [roundingTolerance, setRoundingTolerance] = useState<number>(100);
+  const [settlingAdjustmentId, setSettlingAdjustmentId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     payment_number: '',
     payment_date: new Date().toISOString().split('T')[0],
@@ -69,6 +76,19 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     reference_number: '',
     notes: '',
   });
+
+  useEffect(() => {
+    supabase
+      .from('app_settings')
+      .select('rounding_tolerance_amount')
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.rounding_tolerance_amount) {
+          setRoundingTolerance(Number(data.rounding_tolerance_amount));
+        }
+      });
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -120,24 +140,40 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         throw banksRes.error;
       }
 
-      // Bulk fetch allocations for both invoices and vouchers, then aggregate client-side.
+      // Bulk fetch allocations and adjustments for invoices, then aggregate client-side.
+      // Replicates get_invoice_paid_amount = voucher_allocations(receipt) + invoice_rounding_adjustments
       const invoiceIds = (invoicesRes.data || []).map((inv) => inv.id);
       const voucherIds = (paymentsRes.data || []).map((v) => v.id);
 
       const paidByInvoice = new Map<string, number>();
       if (invoiceIds.length > 0) {
-        const { data: invAllocs, error: invAllocErr } = await supabase
-          .from('voucher_allocations')
-          .select('sales_invoice_id, allocated_amount')
-          .in('sales_invoice_id', invoiceIds)
-          .eq('voucher_type', 'receipt');
+        const [{ data: invAllocs, error: invAllocErr }, { data: invAdjs, error: invAdjErr }] = await Promise.all([
+          supabase
+            .from('voucher_allocations')
+            .select('sales_invoice_id, allocated_amount')
+            .in('sales_invoice_id', invoiceIds)
+            .eq('voucher_type', 'receipt'),
+          supabase
+            .from('invoice_rounding_adjustments')
+            .select('sales_invoice_id, adjustment_amount')
+            .in('sales_invoice_id', invoiceIds),
+        ]);
         if (invAllocErr) {
           console.error('Error loading invoice allocations:', invAllocErr);
+        }
+        if (invAdjErr) {
+          console.error('Error loading invoice adjustments:', invAdjErr);
         }
         for (const a of invAllocs || []) {
           paidByInvoice.set(
             a.sales_invoice_id,
             (paidByInvoice.get(a.sales_invoice_id) || 0) + (Number(a.allocated_amount) || 0),
+          );
+        }
+        for (const a of invAdjs || []) {
+          paidByInvoice.set(
+            a.sales_invoice_id,
+            (paidByInvoice.get(a.sales_invoice_id) || 0) + (Number(a.adjustment_amount) || 0),
           );
         }
       }
@@ -163,12 +199,24 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
       }
 
       const invoicesWithPaidAmount = (invoicesRes.data || [])
-        .filter((inv: any) => !inv.notes?.includes('[CANCELLED') && !inv.notes?.toLowerCase().startsWith('cancelled') && (inv.balance_amount === undefined || inv.balance_amount === null || Number(inv.balance_amount) > 0))
-        .map((invoice) => ({
-          ...invoice,
-          paid_amount: paidByInvoice.get(invoice.id) || 0,
-          customers: firstRelation(invoice.customers),
-        }));
+        .filter((inv: any) => {
+          if (inv.notes?.includes('[CANCELLED') || inv.notes?.toLowerCase().startsWith('cancelled')) return false;
+          const paid = paidByInvoice.get(inv.id) || 0;
+          const bal = Math.max(0, Math.round((Number(inv.total_amount) - paid) * 100) / 100);
+          if (bal <= 0 || inv.payment_status === 'paid') return false;
+          if (inv.balance_amount !== undefined && inv.balance_amount !== null && Number(inv.balance_amount) <= 0) return false;
+          return true;
+        })
+        .map((invoice) => {
+          const paid_amount = paidByInvoice.get(invoice.id) || 0;
+          const balance = Math.max(0, Math.round((Number(invoice.total_amount) - paid_amount) * 100) / 100);
+          return {
+            ...invoice,
+            paid_amount,
+            balance_amount: balance,
+            customers: firstRelation(invoice.customers),
+          };
+        });
 
       const paymentsWithAllocations = (paymentsRes.data || []).map((voucher) => ({
         ...voucher,
@@ -224,15 +272,59 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     table: 'receipt_vouchers',
     onEvent: scheduleReceivablesRefresh,
   });
+  useSupabaseRealtimeChannel({
+    channelName: 'receivables_rounding_adjustments',
+    table: 'invoice_rounding_adjustments',
+    onEvent: scheduleReceivablesRefresh,
+  });
 
   const handleRefresh = () => {
     setRefreshing(true);
     loadData();
   };
 
+  const handleSettleResidualRoundOff = async (invoice: SalesInvoice) => {
+    const paid = invoice.paid_amount || 0;
+    const balance = Math.max(0, Math.round((Number(invoice.total_amount) - paid) * 100) / 100);
+    if (balance <= 0) return;
+
+    if (!await showConfirm({
+      title: 'Settle Round-Off Adjustment',
+      message: `Post residual round-off adjustment of Rp ${balance.toLocaleString('id-ID', { minimumFractionDigits: 2 })} to close sales invoice ${invoice.invoice_number}? This will credit Accounts Receivable (1120) and debit Round-Off Expense (6900).`,
+      confirmLabel: 'Settle Round-Off'
+    })) return;
+
+    setSettlingAdjustmentId(invoice.id);
+    try {
+      await applySettlementAdjustment({
+        documentType: 'sales',
+        invoiceId: invoice.id,
+        amount: balance,
+        adjustmentType: 'rounding',
+        reason: 'invoice_rounding_tolerance'
+      });
+      showToast({
+        type: 'success',
+        title: 'Round-off Settled',
+        message: `Adjustment for ${invoice.invoice_number} posted successfully. Invoice is now paid in full.`
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to settle round-off:', err);
+      showToast({
+        type: 'error',
+        title: 'Settlement Failed',
+        message: err.message || 'Failed to settle round-off'
+      });
+    } finally {
+      setSettlingAdjustmentId(null);
+    }
+  };
+
   const handleRecordPayment = async (invoice: SalesInvoice) => {
     setSelectedInvoice(invoice);
-    const remainingAmount = invoice.total_amount - (invoice.paid_amount || 0);
+    const paid = invoice.paid_amount || 0;
+    const remainingAmount = Math.max(0, Math.round((Number(invoice.total_amount) - paid) * 100) / 100);
     setFormData({
       ...formData,
       payment_number: `PAY-${Date.now()}`,
@@ -253,23 +345,30 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         throw error;
       }
 
-      // Calculate paid_amount for each invoice
+      // Calculate paid_amount for each invoice including allocations + rounding adjustments
       const invoicesWithPaidAmount = await Promise.all((custInvoices || []).map(async (inv) => {
         try {
-          const { data: allocations, error: allocError } = await supabase
-            .from('voucher_allocations')
-            .select('allocated_amount')
-            .eq('sales_invoice_id', inv.id)
-            .eq('voucher_type', 'receipt');
+          const [{ data: allocations, error: allocError }, { data: adjustments, error: adjError }] = await Promise.all([
+            supabase
+              .from('voucher_allocations')
+              .select('allocated_amount')
+              .eq('sales_invoice_id', inv.id)
+              .eq('voucher_type', 'receipt'),
+            supabase
+              .from('invoice_rounding_adjustments')
+              .select('adjustment_amount')
+              .eq('sales_invoice_id', inv.id),
+          ]);
 
-          if (allocError) {
-            console.error('Error loading allocations for invoice:', inv.id, allocError);
-          }
+          if (allocError) console.error('Error loading allocations for invoice:', inv.id, allocError);
+          if (adjError) console.error('Error loading adjustments for invoice:', inv.id, adjError);
 
-          const paid_amount = allocations?.reduce((sum, alloc) => sum + (Number(alloc.allocated_amount) || 0), 0) || 0;
+          const allocSum = allocations?.reduce((sum, alloc) => sum + (Number(alloc.allocated_amount) || 0), 0) || 0;
+          const adjSum = adjustments?.reduce((sum, adj) => sum + (Number(adj.adjustment_amount) || 0), 0) || 0;
+          const totalPaid = allocSum + adjSum;
           return {
             ...inv,
-            paid_amount,
+            paid_amount: totalPaid,
             customers: inv.customers || null
           };
         } catch (err) {
@@ -302,12 +401,12 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     // Validation
     const totalAllocated = Object.values(selectedAllocations).reduce((sum, amount) => sum + amount, 0);
     if (totalAllocated > formData.amount) {
-      alert('Total allocated amount cannot exceed payment amount');
+      showToast({ type: 'error', title: 'Invalid Allocation', message: 'Total allocated amount cannot exceed payment amount' });
       return;
     }
 
     if (totalAllocated === 0) {
-      alert('Please allocate the payment to at least one invoice');
+      showToast({ type: 'error', title: 'Invalid Allocation', message: 'Please allocate the payment to at least one invoice' });
       return;
     }
 
@@ -337,11 +436,10 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
       if (voucherError) throw voucherError;
 
-      // 3. Insert invoice payment allocations using voucher_allocations table
+      // 3. Insert invoice payment allocations and auto-settle round-off if residual within tolerance
       for (const [invoiceId, amount] of Object.entries(selectedAllocations)) {
         if (amount <= 0) continue;
 
-        // Create allocation in voucher_allocations table (this will trigger auto-update of invoice)
         await supabase.from('voucher_allocations').insert({
           voucher_type: 'receipt',
           receipt_voucher_id: voucher.id,
@@ -349,8 +447,35 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
           allocated_amount: amount,
         });
 
-        // Note: Invoice payment status is automatically updated by database trigger
-        // No need to manually update payment_status, paid_amount, or balance_amount
+        // Check if residual is within tolerance and settle round-off if applicable
+        const targetInv = customerInvoices.find(ci => ci.id === invoiceId);
+        if (targetInv) {
+          const currentPaid = targetInv.paid_amount || 0;
+          const remainingAfterAlloc = Math.round((Number(targetInv.total_amount) - currentPaid - amount) * 100) / 100;
+          if (remainingAfterAlloc > 0 && remainingAfterAlloc <= roundingTolerance) {
+            try {
+              await applySettlementAdjustment({
+                documentType: 'sales',
+                invoiceId,
+                voucherId: voucher.id,
+                amount: remainingAfterAlloc,
+                adjustmentType: 'rounding',
+                reason: 'invoice_rounding_tolerance',
+              });
+            } catch (adjErr) {
+              console.warn('Auto round-off adjustment skipped/failed:', adjErr);
+            }
+          }
+        }
+      }
+
+      // 4. Post receipt voucher
+      const { error: postError } = await supabase.rpc('post_receipt_voucher', {
+        p_rv_id: voucher.id,
+        p_posted_by: user.id,
+      });
+      if (postError) {
+        console.warn('Receipt voucher created, posting warning:', postError);
       }
 
       setModalOpen(false);
@@ -358,11 +483,15 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
       setCustomerInvoices([]);
       setSelectedAllocations({});
       resetForm();
-      loadData();
-      alert(`Receipt voucher ${voucherNumber} created and allocated successfully!`);
+      showToast({
+        type: 'success',
+        title: 'Payment Recorded',
+        message: `Receipt voucher ${voucherNumber} created and allocated successfully!`
+      });
+      await loadData();
     } catch (error: any) {
       console.error('Error recording payment:', error);
-      alert(`Failed to record payment: ${error.message}`);
+      showToast({ type: 'error', title: 'Payment Failed', message: error.message || 'Failed to record payment' });
     }
   };
 
@@ -627,15 +756,36 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
               columns={invoiceColumns}
               data={invoices}
               loading={loading}
-              actions={canManage ? (invoice) => (
-                <button
-                  onClick={() => handleRecordPayment(invoice)}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition shadow-sm"
-                >
-                  <span className="text-lg">+</span>
-                  Record Payment
-                </button>
-              ) : undefined}
+              actions={canManage ? (invoice) => {
+                const paid = invoice.paid_amount || 0;
+                const balance = Math.max(0, Math.round((Number(invoice.total_amount) - paid) * 100) / 100);
+                const isWithinTolerance = balance > 0 && balance <= roundingTolerance && invoice.payment_status !== 'paid';
+                const isSettling = settlingAdjustmentId === invoice.id;
+
+                return (
+                  <div className="flex items-center gap-1.5 justify-end">
+                    {isWithinTolerance && (
+                      <button
+                        type="button"
+                        disabled={isSettling}
+                        onClick={() => handleSettleResidualRoundOff(invoice)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-amber-600 text-white rounded hover:bg-amber-700 shadow-sm transition-colors disabled:opacity-50"
+                        title={`Post round-off adjustment of Rp ${balance.toLocaleString('id-ID', { minimumFractionDigits: 2 })} to close this invoice`}
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        {isSettling ? 'Settling...' : 'Settle Round-Off'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleRecordPayment(invoice)}
+                      className="flex items-center gap-1 px-3 py-1 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 transition shadow-sm"
+                    >
+                      <span className="text-sm">+</span>
+                      Record Payment
+                    </button>
+                  </div>
+                );
+              } : undefined}
             />
           )}
         </>
@@ -862,7 +1012,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
               <p className="text-sm text-gray-600">Select invoices and enter amount to allocate to each</p>
 
               {customerInvoices.map((invoice) => {
-                const balance = invoice.total_amount - (invoice.paid_amount || 0);
+                const balance = Math.max(0, Math.round((Number(invoice.total_amount) - (invoice.paid_amount || 0)) * 100) / 100);
                 const isSelected = selectedAllocations[invoice.id] !== undefined;
                 const allocatedAmount = selectedAllocations[invoice.id] || 0;
 
