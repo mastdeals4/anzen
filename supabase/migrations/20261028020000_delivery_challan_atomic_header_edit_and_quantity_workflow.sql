@@ -79,7 +79,7 @@ BEGIN
       vehicle_number = CASE WHEN p_header ? 'vehicle_number' THEN NULLIF(p_header->>'vehicle_number', '') ELSE vehicle_number END,
       driver_name = CASE WHEN p_header ? 'driver_name' THEN NULLIF(p_header->>'driver_name', '') ELSE driver_name END,
       notes = CASE WHEN p_header ? 'notes' THEN NULLIF(p_header->>'notes', '') ELSE notes END,
-      approval_status = COALESCE(p_header->>'approval_status', approval_status),
+      approval_status = COALESCE(NULLIF(TRIM(p_header->>'approval_status'), '')::public.dc_approval_status, approval_status),
       rejection_reason = CASE WHEN (p_header->>'approval_status') = 'pending_approval' THEN NULL ELSE rejection_reason END,
       rejected_by = CASE WHEN (p_header->>'approval_status') = 'pending_approval' THEN NULL ELSE rejected_by END,
       rejected_at = CASE WHEN (p_header->>'approval_status') = 'pending_approval' THEN NULL ELSE rejected_at END,
