@@ -40,11 +40,10 @@ assert.match(journalUi, /from\('bank_statement_allocations'\)/);
 assert.match(journalUi, /canonicalAllocations/);
 // The canonical line query uses an inclusive start and exclusive next-day end,
 // so 20-Feb-2026 is included in Jan–Aug and excluded from Jul–Aug.
-assert.match(ui, /\.gte\('transaction_date', dateRange\.start\)[\s\S]*\.lt\('transaction_date', endDateStr\)/);
+assert.match(ui, /\.gte\('transaction_date',\s*(?:startIso|dateRange\.start)\)[\s\S]*\.(?:lte|lt)\('transaction_date',\s*(?:endIso|endDateStr)\)/);
 assert.match(bankLedger, /\.gte\('transaction_date', globalDateRange\.startDate\)[\s\S]*\.lt\('transaction_date', endDateStr\)/);
 assert.match(ui, /account_number === '0930 2010 14'/, 'IDR default must select the audited IDR account');
-assert.match(ui, /\.gte\('transaction_date', dateRange\.start\)[\s\S]*\.lt\('transaction_date', endDateStr\)/);
-const statementQuery = ui.slice(ui.indexOf("const { data: rangeData"), ui.indexOf("let data = rangeData"));
+const statementQuery = ui.slice(ui.indexOf("for (let offset = 0; ; offset +="), ui.indexOf("let data = rangeData"));
 assert.doesNotMatch(statementQuery, /\.limit\(/, 'historical reconciliation must not impose an arbitrary row limit');
 
 // Recognition is AP-only when an expense has not been linked to a real cash

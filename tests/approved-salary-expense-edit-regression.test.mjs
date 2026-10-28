@@ -71,7 +71,7 @@ test('6. Preventing duplicate journals, payments, and advance applications: guar
 
 test('7. Correct outstanding advance and net payable calculations after an amount change', () => {
   // UI recalculates net payable subtracting advanceApplied
-  assert.match(expenseUi, /net_salary_payable: Math\.max\(\(preservingHistoricalValues \? Number\(formData\.amount \|\| 0\) : calculation\.gross_salary\) - advanceApplied/);
+  assert.match(expenseUi, /net_salary_payable: Math\.max\(\s*\(preservingHistoricalValues \? Number\(formData\.amount \|\| 0\) : calculation\.gross_salary\)[\s\S]*?- advanceApplied/);
   // recalculate_expense_payment_state includes posted salary advance applications
   assert.match(migration, /SELECT v_supplier_paid\+COALESCE\(sum\(sa\.applied_amount\),0\) INTO v_supplier_paid[\s\S]*FROM public\.salary_advance_applications sa[\s\S]*JOIN public\.payment_vouchers settlement ON settlement\.id = sa\.settlement_payment_voucher_id[\s\S]*WHERE sa\.salary_expense_id = p_expense_id AND settlement\.is_posted = true;/);
   // Target paid is bounded by payable

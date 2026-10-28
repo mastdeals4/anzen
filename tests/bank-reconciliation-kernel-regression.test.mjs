@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
+import pg from 'pg';
+
+const { Client } = pg;
 
 const migration = fs.readFileSync(
   'supabase/migrations/20260921140000_bank_reconciliation_kernel_fix.sql',
@@ -21,7 +23,7 @@ test('1. Migration checks: ensures bank reconciliation kernel architecture', () 
   assert.doesNotMatch(migration, /is_reversed\s*=\s*false/);
 });
 
-test('2. Live Database Transactional Regression Suite: Cases 1 through 12', () => {
+test('2. Live Database Transactional Regression Suite: Cases 1 through 12', async () => {
   const testSql = `
 BEGIN;
 
@@ -460,18 +462,24 @@ $test$;
 ROLLBACK;
 `;
 
-  let output = '';
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres',
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+
+  let rollbackSeen = false;
   try {
-    output = execSync('npx supabase db query --linked', {
-      input: testSql,
-      encoding: 'utf8',
-    });
+    await client.query(testSql);
   } catch (err) {
-    output = (err.stdout || '') + (err.stderr || '') + (err.message || '');
-    if (!output.includes('ROLLBACK_SUCCESS')) {
+    if (err.message && err.message.includes('ROLLBACK_SUCCESS')) {
+      rollbackSeen = true;
+    } else {
       throw err;
     }
+  } finally {
+    await client.end();
   }
 
-  assert.match(output, /ROLLBACK_SUCCESS/);
+  assert.ok(rollbackSeen, 'Expected ROLLBACK_SUCCESS after running all 12 regression test cases');
 });

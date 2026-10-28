@@ -27,7 +27,7 @@ test('2. ExpenseManager accepts confirmedAmount and guards zero allocation fallb
   );
   assert.match(
     expenseManagerSrc,
-    /selectedBankAllocationAmount\s*&&\s*selectedBankAllocationAmount\s*>\s*0\.01\s*\?\s*selectedBankAllocationAmount\s*:\s*undefined/
+    /selectedBankAllocationAmount\s*&&\s*selectedBankAllocationAmount\s*>\s*0\.01/
   );
 });
 

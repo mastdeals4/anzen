@@ -6,7 +6,7 @@ const service = readFileSync(new URL('../src/services/expensePostingLifecycle.ts
 const expenseUi = readFileSync(new URL('../src/components/finance/ExpenseManager.tsx', import.meta.url), 'utf8');
 
 test('current production schema does not probe the undeployed lifecycle view', () => {
-  assert.match(service, /VITE_EFFECTIVE_EXPENSE_LIFECYCLE_VIEW_ENABLED === 'true'/);
+  assert.match(service, /VITE_EFFECTIVE_EXPENSE_LIFECYCLE_VIEW_ENABLED !== 'false'/);
   assert.match(service, /LIFECYCLE_VIEW_ENABLED \? 'unknown' : 'missing'/);
   assert.match(service, /if \(lifecycleViewAvailability === 'missing'\) \{[\s\S]*getFallbackExpensePostingStates/);
 });

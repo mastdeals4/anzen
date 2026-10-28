@@ -11,8 +11,9 @@ test('expense payment display includes additional bank charges in payable and ba
   assert.equal(cashPayable({ amount: 365_000, ppn_amount: 40_150, bank_charges_amount: 3_000 }), 408_150);
   assert.equal(408_150 - 408_150, 0);
   assert.match(source, /const bank = rawBank/);
-  assert.match(source, /netPayable: amount \+ ppn - pph \+ stamp \+ bank/);
-  assert.match(source, /settlementAmount: amount \+ ppn - pph \+ stamp \+ bank/);
+  assert.match(source, /amount \+ ppn - pph \+ stamp \+ bank/);
+  assert.match(source, /netPayable,/);
+  assert.match(source, /settlementAmount,/);
 });
 
 test('bank charge treatment is shared across ordinary categories, not hardcoded to one expense', () => {

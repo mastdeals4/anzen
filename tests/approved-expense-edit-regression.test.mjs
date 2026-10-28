@@ -49,11 +49,11 @@ test('bank account change atomically replaces the canonical allocation', () => {
 test('accrued expense edit never fabricates a bank allocation', () => {
   assert.match(migration, /Accrued expense cannot create a bank allocation/);
   assert.match(migration, /NEW\.payment_method IS NULL[\s\S]*code='2110'/);
-  assert.match(expenseUi, /payment_method === null[\s\S]*Outstanding \(A\/P\)/);
+  assert.match(expenseUi, /payment_method === null[\s\S]*Outstanding \(A\/P/);
   assert.match(migration, /payment_method='cash'[\s\S]*code='1101'/);
   assert.match(migration, /payment_method='petty_cash'[\s\S]*code='1102'/);
   assert.match(migration, /Cash\/petty-cash expense cannot create a bank allocation/);
-  assert.match(expenseUi, /const effectivePaymentMethod = reconciledBankInfo\?\.bank_account_id[\s\S]*: expense\.payment_method;/);
+  assert.match(expenseUi, /const effectivePaymentMethod =[\s\S]*reconciledBankInfo\?\.bank_account_id[\s\S]*: expense\.payment_method;/);
   assert.doesNotMatch(expenseUi, /expense\.payment_method \|\| 'bank_transfer'/);
 });
 

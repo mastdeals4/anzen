@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { execSync } from 'node:child_process';
+import pg from 'pg';
+
+const { Client } = pg;
 
 const serviceCode = readFileSync(
   new URL('../src/services/expensePostingLifecycle.ts', import.meta.url),
@@ -154,69 +156,71 @@ test('ExpenseManager filter conditions include ACTIVE and REPLACED in default Op
   assert.equal(filterExpense(exp177, 'cancelled', 'all'), false, 'Active/Replaced expense must NOT appear in Cancelled view');
 });
 
-test('Live DB population regression: all 642 expenses match authoritative state with 0 discrepancies', () => {
-  const checkCmd = `node -e "
-import { execSync } from 'child_process';
-const viewSql = 'SELECT eeps.expense_id, eeps.voucher_number, eeps.document_approval_status, eeps.effective_posting_state as db_state FROM public.effective_expense_posting_state eeps;';
-const viewRaw = execSync('npx supabase db query --linked --output-format json \\\"' + viewSql + '\\\"', { maxBuffer: 50 * 1024 * 1024, encoding: 'utf-8' });
-const viewRows = JSON.parse(viewRaw).rows || JSON.parse(viewRaw);
+test('Live DB population regression: all expenses match authoritative state with 0 discrepancies', async () => {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres',
+    ssl: { rejectUnauthorized: false }
+  });
+  await client.connect();
 
-const journalSql = 'SELECT id, entry_number, entry_date, source_module, reference_id, reference_number, created_at, is_posted, is_reversed, reversed_by_id FROM public.journal_entries WHERE reference_id IS NOT NULL OR reference_number LIKE \\'EXP-%\\';';
-const journalRaw = execSync('npx supabase db query --linked --output-format json \\\"' + journalSql + '\\\"', { maxBuffer: 50 * 1024 * 1024, encoding: 'utf-8' });
-const allJournals = JSON.parse(journalRaw).rows || JSON.parse(journalRaw);
+  try {
+    const viewRes = await client.query('SELECT eeps.expense_id, eeps.voucher_number, eeps.document_approval_status, eeps.effective_posting_state as db_state FROM public.effective_expense_posting_state eeps;');
+    const viewRows = viewRes.rows;
 
-const journalsByExpenseId = new Map();
-for (const j of allJournals) {
-  if (j.reference_id) {
-    if (!journalsByExpenseId.has(j.reference_id)) journalsByExpenseId.set(j.reference_id, []);
-    journalsByExpenseId.get(j.reference_id).push(j);
-  }
-  if (j.reference_number && j.reference_number.startsWith('EXP-')) {
-    const expId = j.reference_number.replace(/^EXP-/, '');
-    if (!journalsByExpenseId.has(expId)) journalsByExpenseId.set(expId, []);
-    if (!journalsByExpenseId.get(expId).some(existing => existing.id === j.id)) {
-      journalsByExpenseId.get(expId).push(j);
+    const journalRes = await client.query('SELECT id, entry_number, entry_date, source_module, reference_id, reference_number, created_at, is_posted, is_reversed, reversed_by_id FROM public.journal_entries WHERE reference_id IS NOT NULL OR reference_number LIKE \'EXP-%\';');
+    const allJournals = journalRes.rows;
+
+    const journalsByExpenseId = new Map();
+    for (const j of allJournals) {
+      if (j.reference_id) {
+        if (!journalsByExpenseId.has(j.reference_id)) journalsByExpenseId.set(j.reference_id, []);
+        journalsByExpenseId.get(j.reference_id).push(j);
+      }
+      if (j.reference_number && j.reference_number.startsWith('EXP-')) {
+        const expId = j.reference_number.replace(/^EXP-/, '');
+        if (!journalsByExpenseId.has(expId)) journalsByExpenseId.set(expId, []);
+        if (!journalsByExpenseId.get(expId).some(existing => existing.id === j.id)) {
+          journalsByExpenseId.get(expId).push(j);
+        }
+      }
     }
+
+    const newestFirst = (a, b) => (b.created_at || '').localeCompare(a.created_at || '');
+
+    function resolveFallbackState(expense, journals) {
+      const originals = journals.filter(j => j.is_posted === true && ['expense', 'expenses'].includes(j.source_module || ''));
+      const replacements = journals.filter(j =>
+        j.is_posted === true && !j.is_reversed &&
+        (j.source_module === 'historical_salary_advance_repair' ||
+         (j.source_module === 'historical_repair' &&
+          (j.reference_number?.startsWith('HR-AP-') || j.reference_number?.startsWith('HR-CASH-') || j.reference_number?.startsWith('HR-REC-'))))
+      );
+      const activeOriginals = originals.filter(j => !j.is_reversed).sort(newestFirst);
+      const reversedOriginals = originals.filter(j => j.is_reversed).sort(newestFirst);
+      const activeReplacements = replacements.sort(newestFirst);
+      const activeOriginal = activeOriginals[0] || null;
+      const reversedOriginal = reversedOriginals[0] || null;
+      const replacement = activeReplacements[0] || null;
+
+      if (activeOriginals.length > 1 || activeReplacements.length > 1 || (activeOriginals.length > 0 && activeReplacements.length > 0)) return 'AMBIGUOUS';
+      if (expense.document_approval_status !== 'approved' && (activeOriginal || replacement)) return 'AMBIGUOUS';
+      if (activeOriginal) return 'ACTIVE';
+      if (reversedOriginal && replacement) return 'REPLACED';
+      if (reversedOriginal) return 'REVERSED';
+      if (expense.document_approval_status === 'rejected') return 'REJECTED';
+      if (expense.document_approval_status === 'pending_approval') return 'PENDING';
+      return 'AMBIGUOUS';
+    }
+
+    let discrepancies = 0;
+    for (const r of viewRows) {
+      const state = resolveFallbackState(r, journalsByExpenseId.get(r.expense_id) || []);
+      if (state !== r.db_state) discrepancies++;
+    }
+    assert.equal(discrepancies, 0, `Found ${discrepancies} state discrepancies`);
+    assert.ok(viewRows.length > 0, 'Must have at least one expense row');
+  } finally {
+    await client.end();
   }
-}
-
-const newestFirst = (a, b) => (b.created_at || '').localeCompare(a.created_at || '');
-
-function resolveFallbackState(expense, journals) {
-  const originals = journals.filter(j => j.is_posted === true && ['expense', 'expenses'].includes(j.source_module || ''));
-  const replacements = journals.filter(j =>
-    j.is_posted === true && !j.is_reversed &&
-    (j.source_module === 'historical_salary_advance_repair' ||
-     (j.source_module === 'historical_repair' &&
-      (j.reference_number?.startsWith('HR-AP-') || j.reference_number?.startsWith('HR-CASH-') || j.reference_number?.startsWith('HR-REC-'))))
-  );
-  const activeOriginals = originals.filter(j => !j.is_reversed).sort(newestFirst);
-  const reversedOriginals = originals.filter(j => j.is_reversed).sort(newestFirst);
-  const activeReplacements = replacements.sort(newestFirst);
-  const activeOriginal = activeOriginals[0] || null;
-  const reversedOriginal = reversedOriginals[0] || null;
-  const replacement = activeReplacements[0] || null;
-
-  if (activeOriginals.length > 1 || activeReplacements.length > 1 || (activeOriginals.length > 0 && activeReplacements.length > 0)) return 'AMBIGUOUS';
-  if (expense.document_approval_status !== 'approved' && (activeOriginal || replacement)) return 'AMBIGUOUS';
-  if (activeOriginal) return 'ACTIVE';
-  if (reversedOriginal && replacement) return 'REPLACED';
-  if (reversedOriginal) return 'REVERSED';
-  if (expense.document_approval_status === 'rejected') return 'REJECTED';
-  if (expense.document_approval_status === 'pending_approval') return 'PENDING';
-  return 'AMBIGUOUS';
-}
-
-let discrepancies = 0;
-for (const r of viewRows) {
-  const state = resolveFallbackState(r, journalsByExpenseId.get(r.expense_id) || []);
-  if (state !== r.db_state) discrepancies++;
-}
-if (discrepancies > 0) process.exit(1);
-console.log('OK: ' + viewRows.length + ' expenses matched');
-"`;
-
-  const output = execSync(checkCmd, { encoding: 'utf-8', timeout: 30000 });
-  assert.match(output, /OK: \d+ expenses matched/);
 });
 

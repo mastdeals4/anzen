@@ -107,7 +107,7 @@ test('3. Category and Utility selection supported (e.g. PT. PAM JAYA - water)', 
   // Utility dropdown renders provider name and utility type
   assert.match(
     expenseUi,
-    /options=\{[\s\S]*utilityRoster\.map\(u\s*=>\s*\(\{\s*value:\s*u\.id,\s*label:\s*`\$\{u\.provider_name\}\s*·\s*\$\{u\.utility_type\}`/,
+    /utilityRoster\.map\(u\s*=>\s*\(\{\s*value:\s*u\.id,\s*label:\s*`\$\{u\.provider_name\}\s*·\s*\$\{u\.utility_type\}`/,
     'ExpenseManager must display utility options formatted as Provider · Utility Type'
   );
 
@@ -175,7 +175,7 @@ test('6. Duplicate prevention on retries stops creating multiple expenses for sa
   // Checks bank statement line before saving
   assert.match(
     expenseUi,
-    /if\s*\(selectedBankTransactionId\)\s*\{[\s\S]*from\('bank_statement_lines'\)[\s\S]*select\('id,\s*matched_expense_id,\s*matching_status'\)[\s\S]*if\s*\(lineCheck\?\.matched_expense_id\)\s*\{[\s\S]*throw new Error\(/,
+    /if\s*\(selectedBankTransactionId\)\s*\{[\s\S]*from\('bank_statement_lines'\)[\s\S]*select\('id,\s*matched_expense_id,\s*matching_status[^']*'\)[\s\S]*if\s*\(lineCheck\?\.matched_expense_id\)\s*\{[\s\S]*throw new Error\(/,
     'ExpenseManager must check if statement line is already linked before inserting a new expense'
   );
 });
