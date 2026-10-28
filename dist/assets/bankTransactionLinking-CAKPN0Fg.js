@@ -1,0 +1,20 @@
+import{s as l}from"./index-B0JgAhAg.js";import{b as y,l as A}from"./financeCommands-CXCR81Dp.js";import{f as g}from"./batchQuery-C9wOcMph.js";const N="finance:reconciliation-refresh",h=.01;function p(t,n){const a=Number(t||0),o=Number(n||0);return a>0?a:o}function w(t,n,a=h,o=!1){if(o)return"matched";const u=Number(t)||0,c=Number(n)||0;return c<=a?"unmatched":c>=u-a?"matched":"partially_reconciled"}function B(t){if(!t.manually_unlinked&&t.matched_entry_id&&(t.matching_status==="confirmed"||t.reconciliation_status==="recorded"))return!1;const n=p(t.debit_amount,t.credit_amount),a=Number(t.allocatedAmount||0),o=t.remainingAmount??Math.max(0,n-a);return w(n,a)!=="matched"&&Number(o)>h}async function j({bankAccountId:t,direction:n="debit",currentExpenseId:a,currentJournalEntryId:o,currentPettyCashId:u,includeLinked:c=!1}){let r=l.from("bank_statement_lines").select(`
+      id,
+      transaction_date,
+      description,
+      reference,
+      debit_amount,
+      credit_amount,
+      bank_account_id,
+      matched_expense_id,
+      matched_entry_id,
+      matched_receipt_id,
+      matched_payment_id,
+      matched_petty_cash_id,
+      matched_fund_transfer_id,
+      matched_tax_payment_id,
+      reconciliation_status,
+      matching_status,
+      manually_unlinked,
+      bank_accounts(bank_name, account_name, account_number, alias, currency)
+    `).eq("bank_account_id",t);n==="debit"?r=r.gt("debit_amount",0):n==="credit"?r=r.gt("credit_amount",0):r=r.or("debit_amount.gt.0,credit_amount.gt.0");const{data:_,error:f}=await r.order("transaction_date",{ascending:!1});if(f)throw f;const b=(_||[]).map(i=>i.id),m=new Map,d=new Map;if(b.length>0){const i=await g(b,e=>l.from("bank_statement_allocations").select("bank_statement_line_id, allocation_amount, journal_entries(is_posted, is_reversed)").in("bank_statement_line_id",e));for(const e of i){const s=Array.isArray(e.journal_entries)?e.journal_entries[0]:e.journal_entries;s&&(!s.is_posted||s.is_reversed)||(m.set(e.bank_statement_line_id,(m.get(e.bank_statement_line_id)||0)+Number(e.allocation_amount||0)),d.set(e.bank_statement_line_id,(d.get(e.bank_statement_line_id)||0)+1))}}return(_||[]).map(i=>{const e=p(i.debit_amount,i.credit_amount),s=m.get(i.id)||0,k={...i,allocatedAmount:s,allocationCount:d.get(i.id)||0,remainingAmount:Math.max(0,e-s)};return{...k,isLinked:!B(k)}}).filter(i=>c||!i.isLinked)}async function T({bankStatementLineId:t,matchedExpenseId:n,matchedPaymentId:a,matchedJournalEntryId:o,note:u,paymentKind:c="supplier",allocationAmount:r}){if(!n&&!a&&!o)throw new Error("A bank transaction must be linked to a Finance document or journal entry.");if(await A(t,n?"expense":a?"payment":"journal",n||a||o,c,r),u){const{error:_}=await l.from("bank_statement_lines").update({notes:u}).eq("id",t);if(_)throw _}}async function R(t){await y(t)}function v(){window.dispatchEvent(new CustomEvent(N))}export{h as B,N as F,T as a,p as b,w as c,j as l,v as n,R as u};
