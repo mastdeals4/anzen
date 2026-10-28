@@ -38,17 +38,27 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
 
   const DC_ID = 'abda70d6-cede-4a14-bc47-1adea0729f6f'; // DO-26-0073
   const SO_ID = '655fd213-ffb4-4b4c-95cb-acb10e5dbe0d'; // SO-2026-0087
-  const SO_ITEM_ID = '2a1def7d-a77f-4873-b2c9-aeefc26d6689'; // ordered 30, delivered 0
+  const SO_ITEM_ID = '2a1def7d-a77f-4873-b2c9-aeefc26d6689'; // ordered 30
   const PRODUCT_ID = 'f9ca763f-47c0-4bfa-b2a0-1905152458c6';
   const BATCH_ID = 'f767785c-1d74-4b03-b7be-1e6cd6b8282f';
   const ITEM_ID = 'baadf206-f75f-4109-89e3-2a20f836351f';
   const CUSTOMER_ID = 'b8f9dc5e-2cdf-4527-8960-186bb2a30913';
+
+  // Helper to isolate pending draft state inside rollbacked test transactions
+  const setupPendingScenario = async (client) => {
+    await client.query("UPDATE delivery_challans SET approval_status = 'pending_approval' WHERE id = $1", [DC_ID]);
+    await client.query("UPDATE sales_order_items SET delivered_quantity = 0 WHERE id = $1", [SO_ITEM_ID]);
+  };
 
   await t.test('1. Reproduction of 20 + 30 = 50 quantity double counting when trigger does not skip or exclude current DC', async () => {
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
         await client.query('RESET ROLE');
+        await setupPendingScenario(client);
+        // Ensure DO-26-0073 item has 20 kg for mathematical reproduction
+        await client.query('UPDATE delivery_challan_items SET quantity = 20 WHERE id = $1', [ITEM_ID]);
+
         // Define the buggy trigger function that omitted skip check and current DC exclusion
         await client.query(`
           CREATE OR REPLACE FUNCTION public.test_buggy_validate_dc_item()
@@ -59,7 +69,6 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
             v_pending numeric;
             v_remaining numeric;
           BEGIN
-            -- BUG: Does not check current_setting('app.skip_dc_item_trigger', true)
             SELECT dc.sales_order_id, dc.approval_status INTO v_dc
             FROM public.delivery_challans dc WHERE dc.id = NEW.challan_id;
 
@@ -82,7 +91,6 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
           $$;
         `);
 
-        // Check calculation with new item id (simulating insert of 30 kg when 20 kg already exists on same DC)
         let errorCaught = false;
         try {
           const dummyNewId = '00000000-0000-0000-0000-000000000001';
@@ -122,6 +130,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -149,7 +158,6 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
         const result = res.rows[0].result;
         assert.equal(result.success, true);
 
-        // Verify database row updated correctly
         const check = await client.query('SELECT approval_status, delivery_address FROM delivery_challans WHERE id = $1', [DC_ID]);
         assert.equal(check.rows[0].approval_status, 'pending_approval');
         assert.equal(check.rows[0].delivery_address, 'Verified Test Address');
@@ -163,9 +171,9 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
-        // Omit id (item without ID)
         const res = await client.query(`
           SELECT edit_delivery_challan(
             $1::uuid,
@@ -188,7 +196,6 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
         const result = res.rows[0].result;
         assert.equal(result.success, true);
 
-        // Verify updated item quantity in database
         const itemsRes = await client.query('SELECT id, quantity FROM delivery_challan_items WHERE challan_id = $1', [DC_ID]);
         assert.equal(itemsRes.rows.length, 1);
         assert.equal(Number(itemsRes.rows[0].quantity), 30);
@@ -202,6 +209,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -241,6 +249,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         for (let i = 0; i < 2; i++) {
@@ -277,6 +286,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -310,6 +320,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -343,6 +354,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -385,6 +397,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         let errorCaught = false;
@@ -429,6 +442,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         let errorCaught = false;
@@ -465,6 +479,8 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
+        await client.query('UPDATE delivery_challan_items SET quantity = 20 WHERE id = $1', [ITEM_ID]);
         await setAuthenticatedUser(client, adminId);
 
         // Create a temporary second pending DC for the same SO item with 10 kg
@@ -543,6 +559,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const initialHeader = await client.query('SELECT delivery_address, notes FROM delivery_challans WHERE id = $1', [DC_ID]);
@@ -571,11 +588,9 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
             })
           ]);
         } catch (err) {
-          // Expected error - rollback to savepoint
           await client.query('ROLLBACK TO SAVEPOINT sp_failed_edit');
         }
 
-        // Check that values remain completely unchanged
         const currentHeader = await client.query('SELECT delivery_address, notes FROM delivery_challans WHERE id = $1', [DC_ID]);
         const currentItem = await client.query('SELECT quantity FROM delivery_challan_items WHERE id = $1', [ITEM_ID]);
 
@@ -592,6 +607,7 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const res = await client.query(`
@@ -621,12 +637,12 @@ test('Delivery Challan Edit, Recovery & Quantity Validation Regression Suite', a
     await withDbClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await setupPendingScenario(client);
         await setAuthenticatedUser(client, adminId);
 
         const txCountBefore = await client.query(`SELECT count(*) FROM inventory_transactions WHERE reference_id = $1`, [DC_ID]);
         const jeCountBefore = await client.query(`SELECT count(*) FROM journal_entries WHERE description LIKE '%DO-26-0073%'`);
 
-        // Execute save
         await client.query(`
           SELECT edit_delivery_challan(
             $1::uuid,
