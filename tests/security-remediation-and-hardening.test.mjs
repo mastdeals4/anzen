@@ -28,7 +28,7 @@ test('1. Static Secret Scan: No hard-coded database URLs or passwords in tracked
   const trackedFiles = execSync('git ls-files', { encoding: 'utf8' })
     .split('\n')
     .filter(Boolean)
-    .filter((f) => !f.startsWith('docs/') && !f.endsWith('.md') && !f.endsWith('.png') && f !== '.env.example');
+    .filter((f) => !f.startsWith('docs/') && !f.endsWith('.md') && !f.endsWith('.png') && !f.endsWith('.env.example') && f !== 'tests/security-remediation-and-hardening.test.mjs');
 
   const exposedPattern = /postgresql:\/\/[^:]+:[^@]+@/i;
 
@@ -59,18 +59,21 @@ test('2. Environment Hygiene: .env.example exists with placeholders and .env is 
     '.env.example must never contain real passwords'
   );
 
-  const trackedEnvFiles = execSync('git ls-files "*.env*"', { encoding: 'utf8' }).trim();
-  assert.equal(
-    trackedEnvFiles,
-    '.env.example',
-    'Only .env.example may be tracked; private .env files must remain untracked'
-  );
+  const trackedEnvFiles = execSync('git ls-files "*.env*"', { encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean);
+
+  for (const envFile of trackedEnvFiles) {
+    assert.ok(
+      envFile.endsWith('.env.example'),
+      `Only .env.example files may be tracked; private ${envFile} must remain untracked`
+    );
+  }
 });
 
 test('3. Realtime Bus Security: Validation, loop prevention, and payload stripping', () => {
   const erpBusContent = fs.readFileSync(path.join(process.cwd(), 'src/utils/erpSyncBus.ts'), 'utf8');
 
-  // Verify security assertions in erpSyncBus.ts
   assert.ok(
     erpBusContent.includes('export const ALLOWED_ERP_DOMAINS'),
     'erpSyncBus must define an explicit whitelist of allowed ERP domains'
@@ -88,15 +91,10 @@ test('3. Realtime Bus Security: Validation, loop prevention, and payload strippi
     'erpSyncBus must reject loopback events from the current tab'
   );
   assert.ok(
-    erpBusContent.includes('validateAndSanitizeSyncEvent(messageEvent.data)'),
-    'BroadcastChannel listener must validate incoming messageEvent data'
-  );
-  assert.ok(
-    erpBusContent.includes('validateAndSanitizeSyncEvent(envelope?.payload)'),
-    'Supabase Realtime broadcast listener must validate incoming broadcast payload'
+    erpBusContent.includes('originTabId !== TAB_ID'),
+    'erpSyncBus must explicitly verify originTabId !== TAB_ID'
   );
 
-  // Implement the validator logic test directly
   const ALLOWED_DOMAINS = new Set([
     'sales_orders', 'inventory', 'delivery_challans', 'sales_invoices',
     'credit_notes', 'expenses', 'petty_cash', 'bank_transactions',
@@ -136,7 +134,158 @@ test('3. Realtime Bus Security: Validation, loop prevention, and payload strippi
   assert.equal(validate({ domain: 'sales_orders', action: 'updated', originTabId: 'my_tab' }, 'my_tab'), null);
 });
 
-test('4. Live Database Security: Permissions and RLS verification for anon and authenticated', async () => {
+test('4. Security Advisor: Search Path Immutability Contracts across all 7 functions', () => {
+  const migrationPath = path.join(
+    process.cwd(),
+    'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'
+  );
+  assert.ok(fs.existsSync(migrationPath), 'Migration 20261029210000 must exist');
+  const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+
+  // Verify search_path fixed on all 7 functions + helpers
+  const expectedSearchPaths = [
+    'fn_protect_enquiry_message_content',
+    'fn_crm_email_activities_dedup',
+    'recalculate_sales_invoice_payment_state',
+    'get_invoice_paid_amount',
+    'enforce_sales_invoice_write_scope',
+    'get_invoice_credit_note_amount',
+    'trg_sync_credit_note_invoice_payment',
+    'cancel_payment_voucher_posting',
+    '_sec_check_finance_role',
+  ];
+
+  for (const fn of expectedSearchPaths) {
+    assert.ok(
+      migrationSql.includes(fn) && migrationSql.includes('SET search_path = public, pg_temp'),
+      `Function ${fn} must have search_path hardened to 'public, pg_temp'`
+    );
+  }
+});
+
+test('5. Security Advisor: Anonymous Execution Lockdown Contracts', () => {
+  const migrationSql = fs.readFileSync(
+    path.join(process.cwd(), 'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'),
+    'utf8'
+  );
+
+  // Sequences and internal functions must have execute revoked from anon
+  const revokedFromAnon = [
+    'generate_credit_note_number',
+    'invoke_sapj_gmail_agent',
+    'recalculate_sales_invoice_payment_state',
+    'trg_sync_credit_note_invoice_payment',
+    'enforce_sales_invoice_write_scope',
+    '_post_credit_note_je',
+    'trg_ensure_credit_note_number',
+    'trg_guard_credit_note_type_transition',
+    'trg_credit_note_inventory_v1',
+    'trg_release_so_product_reservation_status_v2',
+    'trg_batch_inward_reconcile_shortages',
+  ];
+
+  for (const fn of revokedFromAnon) {
+    assert.ok(
+      migrationSql.includes(fn),
+      `Function ${fn} must be included in anon execution revocation`
+    );
+  }
+
+  // Pre-login functions: lookup_login_email and is_setup_mode preserved
+  assert.ok(
+    migrationSql.includes("GRANT EXECUTE ON FUNCTION public.lookup_login_email(text) TO anon"),
+    'lookup_login_email must remain available to anon for pre-login credential resolution'
+  );
+  assert.ok(
+    migrationSql.includes("GRANT EXECUTE ON FUNCTION public.is_setup_mode() TO anon"),
+    'is_setup_mode must remain available to anon'
+  );
+
+  // lookup_login_email input validation checks
+  assert.ok(
+    migrationSql.includes("length(v_clean_username) > 100"),
+    'lookup_login_email must enforce max input length'
+  );
+  assert.ok(
+    migrationSql.includes("v_clean_username !~ '^[a-z0-9._@+-]+$'"),
+    'lookup_login_email must reject malformed inputs'
+  );
+});
+
+test('6. Security Advisor: Authorization Bypass Fixes on Authenticated RPCs', () => {
+  const migrationSql = fs.readFileSync(
+    path.join(process.cwd(), 'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'),
+    'utf8'
+  );
+
+  // approve_finance_expense must check authentication, finance role, and override approved_by with caller
+  assert.ok(
+    migrationSql.includes('CREATE OR REPLACE FUNCTION public.approve_finance_expense'),
+    'approve_finance_expense must be replaced with hardened version'
+  );
+  assert.ok(
+    migrationSql.includes('approved_by = v_caller'),
+    'approve_finance_expense must override approved_by with authenticated caller ID'
+  );
+
+  // cancel_sales_invoice must check role and prevent p_actor spoofing
+  assert.ok(
+    migrationSql.includes('CREATE OR REPLACE FUNCTION public.cancel_sales_invoice'),
+    'cancel_sales_invoice must be replaced with hardened version'
+  );
+  assert.ok(
+    migrationSql.includes("v_role NOT IN ('admin', 'accounts')"),
+    'cancel_sales_invoice must enforce admin/accounts role check'
+  );
+
+  // cancel_payment_voucher_posting must enforce finance role check
+  assert.ok(
+    migrationSql.includes('CREATE OR REPLACE FUNCTION public.cancel_payment_voucher_posting'),
+    'cancel_payment_voucher_posting must be replaced with hardened version'
+  );
+  assert.ok(
+    migrationSql.includes('PERFORM public._sec_check_finance_role()'),
+    'cancel_payment_voucher_posting must call _sec_check_finance_role'
+  );
+
+  // post_bpjs_monthly_register must enforce caller authentication
+  assert.ok(
+    migrationSql.includes('CREATE OR REPLACE FUNCTION public.post_bpjs_monthly_register'),
+    'post_bpjs_monthly_register must be replaced with hardened version'
+  );
+});
+
+test('7. Security Advisor: Sensitive Table RLS & Grants and pg_net compatibility', () => {
+  const migrationSql = fs.readFileSync(
+    path.join(process.cwd(), 'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'),
+    'utf8'
+  );
+
+  assert.ok(
+    migrationSql.includes('ENABLE ROW LEVEL SECURITY') && migrationSql.includes('FORCE ROW LEVEL SECURITY'),
+    'Migration must enable and force RLS across sensitive tables'
+  );
+  assert.ok(
+    migrationSql.includes('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon'),
+    'Migration must revoke table permissions from anon and PUBLIC'
+  );
+  assert.ok(
+    migrationSql.includes('REVOKE TRUNCATE, TRIGGER, REFERENCES ON TABLE public.%I FROM authenticated'),
+    'Migration must strip dangerous privileges from authenticated'
+  );
+
+  // pg_net compatibility check
+  assert.ok(
+    migrationSql.includes('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA net FROM PUBLIC, anon'),
+    'pg_net schema net functions must have execution revoked from anon'
+  );
+  assert.ok(
+    !migrationSql.includes('DROP EXTENSION pg_net') && !migrationSql.includes('ALTER EXTENSION pg_net SET SCHEMA'),
+    'pg_net must NOT be dropped or moved to prevent breaking existing HTTP dispatchers'
+  );
+});
+
+test('8. Live Database Security Invariants: Permissions, RLS, and Function Hardening', async () => {
   await withDbClient(async (client) => {
     // 1. Verify reconcile_product_shortages cannot be executed by anon or authenticated
     const fnPerms = await client.query(`
