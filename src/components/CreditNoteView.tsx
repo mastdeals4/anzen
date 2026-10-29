@@ -41,6 +41,7 @@ interface CreditNoteViewProps {
     subtotal: number;
     tax_amount: number;
     total_amount: number;
+    credit_note_type?: string;
     customers?: {
       company_name: string;
       address: string;
@@ -345,11 +346,25 @@ export function CreditNoteView({ creditNote, items, onClose, companyProfile }: C
                         {creditNote.material_returns.return_number}
                       </span>
                     </div>
-                  ) : (
+                  ) : creditNote.credit_note_type === 'physical_return' ? (
+                    <div className="pt-1">
+                      <span className="font-bold">Type:</span>
+                      <span className="ml-2 text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200 text-[10px]">
+                        Physical Goods Return
+                      </span>
+                    </div>
+                  ) : creditNote.credit_note_type === 'commercial_credit' ? (
                     <div className="pt-1">
                       <span className="font-bold">Type:</span>
                       <span className="ml-2 text-blue-700 bg-blue-50 px-1 py-0.5 rounded border border-blue-200 text-[10px]">
                         Commercial Credit
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="pt-1">
+                      <span className="font-bold">Type:</span>
+                      <span className="ml-2 text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200 text-[10px]">
+                        Unclassified (Review Required)
                       </span>
                     </div>
                   )}

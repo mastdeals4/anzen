@@ -18,6 +18,7 @@ import { canSeeInventoryCosting } from '../utils/permissions';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
 import { formatUnit, abbreviateUnit, formatPackagingDetails } from '../utils/unitDisplay';
 import { PACKAGING_TYPES, normalizePackagingType } from '../constants/masterData';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 interface Batch {
   id: string;
@@ -165,6 +166,14 @@ export function Batches() {
     loadCompanySettings();
     loadPendingInwards();
   }, [canViewCosting]);
+
+  useErpSyncListener(
+    ['inventory', 'sales_orders', 'delivery_challans', 'material_returns', 'purchases'],
+    () => {
+      loadBatches();
+      loadPendingInwards();
+    }
+  );
 
   const loadPendingInwards = async () => {
     const { data, error } = await supabase.from('purchase_invoices').select('*,suppliers(company_name),purchase_invoice_items(*,products(product_name, unit))');
@@ -548,6 +557,7 @@ export function Batches() {
       batchOperationIdRef.current = null;
       setModalOpen(false);
       resetForm();
+      emitErpSync('inventory', 'updated');
       await Promise.all([loadBatches(), loadPendingInwards()]);
     } catch (error: any) {
       console.error('Error saving batch:', error);
@@ -726,6 +736,7 @@ export function Batches() {
       }
 
       showToast({ type: 'success', title: 'Archived', message: `${batchLabel} archived. All inventory history was preserved.` });
+      emitErpSync('inventory', 'updated');
       await loadBatches();
     } catch (error: any) {
       console.error('[Batch delete] Unexpected error:', error);
@@ -800,6 +811,7 @@ export function Batches() {
       }
 
       showToast({ type: 'success', title: 'Archived', message: 'Batch archived. Toggle "Show Archived" to view it.' });
+      emitErpSync('inventory', 'updated');
       await loadBatches();
     } catch (error: any) {
       showToast({ type: 'error', title: 'Error', message: error?.message || 'Failed to archive batch' });
@@ -814,6 +826,7 @@ export function Batches() {
         .eq('id', batchId);
       if (error) throw error;
       showToast({ type: 'success', title: 'Restored', message: 'Batch restored successfully' });
+      emitErpSync('inventory', 'updated');
       await loadBatches();
     } catch (error: any) {
       showToast({ type: 'error', title: 'Error', message: error?.message || 'Failed to restore batch' });

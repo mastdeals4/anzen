@@ -17,6 +17,7 @@ import { formatCurrency } from '../../utils/currency';
 import { FinanceActionButton, FinanceBadge } from './FinanceUI';
 import { useFinance } from '../../contexts/FinanceContext';
 import { unlinkBankStatementLine } from '../../services/financeCommands';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 
 interface FundTransfer {
   id: string;
@@ -148,6 +149,13 @@ export function FundTransferManager({
   useEffect(() => {
     loadData();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useErpSyncListener(
+    ['bank_transactions', 'vouchers'],
+    () => {
+      loadData();
+    }
+  );
 
   useEffect(() => {
     if (!prefillFromBankReconciliation) return;

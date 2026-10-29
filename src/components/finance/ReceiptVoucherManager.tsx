@@ -27,6 +27,7 @@ import {
   notifyFinanceReconciliationRefresh,
   unlinkBankTransaction,
 } from './bankTransactionLinking';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 import { useFinance } from '../../contexts/FinanceContext';
 import { VoucherBankLinkIndicator } from './VoucherBankLinkIndicator';
 import {
@@ -186,6 +187,13 @@ export function ReceiptVoucherManager({
   useEffect(() => {
     loadVouchers();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useErpSyncListener(
+    ['vouchers', 'sales_invoices', 'bank_transactions'],
+    () => {
+      loadVouchers();
+    }
+  );
 
   useEffect(() => {
     const handleReconRefresh = () => {
@@ -784,6 +792,8 @@ export function ReceiptVoucherManager({
       setModalOpen(false);
       resetForm();
       onCloseEmbedded?.();
+      emitErpSync('vouchers', editMode && selectedVoucher ? 'updated' : 'created');
+      emitErpSync('sales_invoices', 'settled');
       await loadVouchers();
     } catch (error: any) {
       console.error('Error saving voucher:', error);

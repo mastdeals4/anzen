@@ -9,6 +9,7 @@ import { DeliveryChallanView } from './DeliveryChallanView';
 import { InvoiceView } from './InvoiceView';
 import { showToast } from './ToastNotification';
 import { Search, ChevronDown, ChevronRight, Package, ExternalLink, Loader2 } from 'lucide-react';
+import { useErpSyncListener } from '../utils/erpSyncBus';
 
 export interface StockMovementsModalProps {
   isOpen: boolean;
@@ -55,6 +56,16 @@ export function StockMovementsModal({
       setTransactionHistory([]);
     }
   }, [isOpen, batchId, productId]);
+
+  useErpSyncListener(
+    ['inventory', 'sales_orders', 'delivery_challans'],
+    () => {
+      if (isOpen && (batchId || productId)) {
+        loadMovements();
+      }
+    },
+    { enabled: isOpen }
+  );
 
   const loadMovements = async () => {
     setLoading(true);

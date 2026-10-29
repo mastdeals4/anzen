@@ -7,6 +7,7 @@ import { Package, AlertTriangle, Search, ChevronDown, ChevronUp, History } from 
 import { useNavigation } from '../contexts/NavigationContext';
 import { formatDate } from '../utils/dateFormat';
 import { formatUnit } from '../utils/unitDisplay';
+import { useErpSyncListener } from '../utils/erpSyncBus';
 
 interface StockSummary {
   product_id: string;
@@ -78,6 +79,13 @@ export function Stock() {
   useEffect(() => {
     loadStockSummary();
   }, []);
+
+  useErpSyncListener(
+    ['inventory', 'sales_orders', 'delivery_challans', 'material_returns', 'purchases'],
+    () => {
+      loadStockSummary();
+    }
+  );
 
   const loadStockSummary = async () => {
     try {

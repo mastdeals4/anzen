@@ -9,6 +9,7 @@ import { TrendingUp, RefreshCw, BarChart2, CheckCircle } from 'lucide-react';
 import { useNavigation } from '../../contexts/NavigationContext';
 import { formatDate } from '../../utils/dateFormat';
 import { useSupabaseRealtimeChannel } from '../../hooks/useSupabaseRealtimeChannel';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 import { useFinance } from '../../contexts/FinanceContext';
 import { applySettlementAdjustment } from '../../services/financeCommands';
 import { showToast } from '../ToastNotification';
@@ -277,6 +278,11 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
     }, 400);
   };
 
+  useErpSyncListener(
+    ['sales_invoices', 'vouchers', 'credit_notes', 'bank_transactions'],
+    scheduleReceivablesRefresh
+  );
+
   useSupabaseRealtimeChannel({
     channelName: 'receivables_sales_invoices',
     table: 'sales_invoices',
@@ -333,6 +339,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         title: 'Round-off Settled',
         message: `Adjustment for ${invoice.invoice_number} posted successfully. Invoice is now paid in full.`
       });
+      emitErpSync('sales_invoices', 'settled', { entityId: invoice.id });
       await loadData();
     } catch (err: any) {
       console.error('Failed to settle round-off:', err);
@@ -513,6 +520,8 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         title: 'Payment Recorded',
         message: `Receipt voucher ${voucherNumber} created and allocated successfully!`
       });
+      emitErpSync('vouchers', 'created');
+      emitErpSync('sales_invoices', 'settled');
       await loadData();
     } catch (error: any) {
       console.error('Error recording payment:', error);

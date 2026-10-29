@@ -24,6 +24,7 @@ import {
   bankStatementLineAmount,
   notifyFinanceReconciliationRefresh,
 } from './bankTransactionLinking';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 import { formatCurrency, parseIndonesianNumber } from '../../utils/currency';
 import { FinanceActionButton } from './FinanceUI';
 import {
@@ -478,6 +479,14 @@ export function BankReconciliationEnhanced({
     window.addEventListener(FINANCE_RECONCILIATION_REFRESH_EVENT, refresh);
     return () => window.removeEventListener(FINANCE_RECONCILIATION_REFRESH_EVENT, refresh);
   }, []);
+
+  useErpSyncListener(
+    ['bank_transactions', 'vouchers', 'expenses', 'sales_invoices'],
+    () => {
+      loadExpensesRef.current();
+      if (selectedBankRef.current) loadStatementLinesRef.current();
+    }
+  );
 
   useEffect(() => {
     loadBankAccounts();

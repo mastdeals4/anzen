@@ -26,6 +26,7 @@ import { useFinance } from '../../contexts/FinanceContext';
 import { VoucherBankLinkIndicator } from './VoucherBankLinkIndicator';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from './FloatingField';
 import { SapRow } from './SapLayout';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 import {
   evaluateVoucherBankLink,
   type VoucherBankLinkEvaluation,
@@ -302,6 +303,13 @@ export function PaymentVoucherManager({
   useEffect(() => {
     loadVouchers();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useErpSyncListener(
+    ['vouchers', 'expenses', 'bank_transactions'],
+    () => {
+      loadVouchers();
+    }
+  );
 
   useEffect(() => {
     const handleReconRefresh = () => {
@@ -887,6 +895,8 @@ export function PaymentVoucherManager({
         p_posted_by: profile.id,
       });
       if (error) throw error;
+      emitErpSync('vouchers', 'approved', { entityId: v.id });
+      emitErpSync('expenses', 'updated');
       loadVouchers();
     } catch (err) {
       alert('Failed to post: ' + supabaseErrorMessage(err));
@@ -918,6 +928,8 @@ export function PaymentVoucherManager({
       }
       setCancelPostingTarget(null);
       setCancelPostingReason('');
+      emitErpSync('vouchers', 'cancelled', { entityId: cancelPostingTarget.id });
+      emitErpSync('expenses', 'updated');
       loadVouchers();
     } catch (err) {
       alert('Failed to cancel posting: ' + supabaseErrorMessage(err));
@@ -1160,6 +1172,8 @@ export function PaymentVoucherManager({
       });
       if (error) throw error;
 
+      emitErpSync('vouchers', 'deleted');
+      emitErpSync('expenses', 'updated');
       loadVouchers();
     } catch (err) {
       alert('Delete failed: ' + supabaseErrorMessage(err));
@@ -1372,6 +1386,8 @@ export function PaymentVoucherManager({
       setModalOpen(false);
       resetForm();
       onCloseEmbedded?.();
+      emitErpSync('vouchers', editingVoucher ? 'updated' : 'created', { entityId: savedVoucher?.id });
+      emitErpSync('expenses', 'updated');
       await loadVouchers();
     } catch (error: unknown) {
       console.error('Error saving voucher:', error);

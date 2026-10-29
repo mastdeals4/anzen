@@ -23,6 +23,7 @@ import { fetchApprovedDeliverySalesOrderIds, getDeliveryAlertForOrder } from '..
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
 import { FloatingField, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 interface Customer {
   id: string;
@@ -150,6 +151,13 @@ export default function SalesOrders() {
   useEffect(() => {
     fetchSalesOrders();
   }, [activeTab, dateRange.startDate, dateRange.endDate, backfillAllDates]);
+
+  useErpSyncListener(
+    ['sales_orders', 'inventory', 'delivery_challans', 'sales_invoices'],
+    () => {
+      fetchSalesOrders();
+    }
+  );
 
   useEffect(() => {
     filterOrders();
@@ -564,6 +572,7 @@ export default function SalesOrders() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: t('success.salesOrderSubmitted') });
+      emitErpSync('sales_orders', 'updated', { entityId: orderId });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error submitting for approval:', error.message);
@@ -598,6 +607,7 @@ export default function SalesOrders() {
       setShowArchiveModal(false);
       setArchiveReason('');
       setOrderToArchive(null);
+      emitErpSync('sales_orders', 'updated', { entityId: orderToArchive });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error archiving order:', error.message);
@@ -623,6 +633,7 @@ export default function SalesOrders() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: t('success.salesOrderUnarchived') });
+      emitErpSync('sales_orders', 'updated', { entityId: orderId });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error unarchiving order:', error.message);
@@ -647,6 +658,8 @@ export default function SalesOrders() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: t('success.salesOrderCancelled') });
+      emitErpSync('sales_orders', 'cancelled', { entityId: orderId });
+      emitErpSync('inventory', 'updated');
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error cancelling order:', error.message);
@@ -666,6 +679,8 @@ export default function SalesOrders() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: 'Sales order deleted successfully!' });
+      emitErpSync('sales_orders', 'deleted', { entityId: orderId });
+      emitErpSync('inventory', 'updated');
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error deleting order:', error.message);
@@ -726,6 +741,8 @@ export default function SalesOrders() {
         showToast({ type: 'success', title: 'Success', message: 'Sales order approved!' });
       }
 
+      emitErpSync('sales_orders', 'approved', { entityId: orderId });
+      emitErpSync('inventory', 'updated');
       fetchSalesOrders();
 
       // Fire email notification (non-blocking — don't fail if it errors)
@@ -737,6 +754,36 @@ export default function SalesOrders() {
       const msg = error?.message || (error instanceof Error ? error.message : 'Unknown error');
       console.error('Error approving order:', msg);
       showToast({ type: 'error', title: 'Error', message: msg || 'Failed to approve order' });
+    }
+  };
+
+  const handleRecheckShortage = async (orderId: string) => {
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: reserveResult, error: reserveError } = await supabase
+        .rpc('approve_sales_order_product_reservation_v2', {
+          p_so_id: orderId,
+          p_approved_by: user?.id || null,
+        });
+
+      if (reserveError) {
+        showToast({ type: 'error', title: 'Error', message: reserveError.message || 'Failed to re-check stock reservation' });
+      } else if (reserveResult && reserveResult.length > 0) {
+        const result = reserveResult[0];
+        if (result.success) {
+          showToast({ type: 'success', title: 'Stock Allocated', message: 'Available stock allocated successfully! Sales order is now reserved.' });
+          emitErpSync('sales_orders', 'updated', { entityId: orderId });
+          emitErpSync('inventory', 'updated');
+        } else {
+          showToast({ type: 'warning', title: 'Still in Shortage', message: result.message || 'Insufficient unreserved stock available.' });
+        }
+      }
+      await fetchSalesOrders();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: err?.message || 'Error reconciling shortage' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -767,6 +814,8 @@ export default function SalesOrders() {
       setShowRejectModal(false);
       setRejectionReason('');
       setOrderToReject(null);
+      emitErpSync('sales_orders', 'rejected', { entityId: orderToReject });
+      emitErpSync('inventory', 'updated');
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error rejecting order:', error.message);
@@ -1320,6 +1369,15 @@ export default function SalesOrders() {
                           >
                             <DollarSign className="w-4 h-4" />
                           </button>
+                          {order.status === 'shortage' && (
+                            <button
+                              onClick={() => handleRecheckShortage(order.id)}
+                              className="text-amber-600 hover:text-amber-800 p-0.5 hover:bg-amber-50 rounded"
+                              title="Re-check Stock & Allocate Available"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                            </button>
+                          )}
                           {((profile?.role === 'admin' && !['closed', 'cancelled'].includes(order.status)) ||
                             (!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery', 'approved', 'stock_reserved', 'shortage'].includes(order.status))) && (
                             <button
@@ -1421,6 +1479,7 @@ export default function SalesOrders() {
               setShowCreateModal(false);
               setEditingOrder(null);
               setCreatePrefill(undefined);
+              emitErpSync('sales_orders', editingOrder ? 'updated' : 'created');
               fetchSalesOrders();
             }}
             onCancel={() => {

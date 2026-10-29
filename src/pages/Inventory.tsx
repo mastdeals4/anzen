@@ -13,6 +13,7 @@ import { formatDate } from '../utils/dateFormat';
 import { MoneyInput } from '../components/MoneyInput';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 type TabType = 'transactions' | 'returns' | 'rejections';
 
@@ -140,6 +141,13 @@ export function Inventory() {
     loadData();
   }, [activeTab]);
 
+  useErpSyncListener(
+    ['inventory', 'sales_orders', 'delivery_challans', 'material_returns', 'purchases'],
+    () => {
+      loadData();
+    }
+  );
+
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -266,6 +274,7 @@ export function Inventory() {
 
       setModalOpen(false);
       resetForm();
+      emitErpSync('inventory', 'updated');
       loadData();
       showToast({ type: 'success', title: 'Success', message: 'Transaction added successfully' });
     } catch (error) {
@@ -292,6 +301,8 @@ export function Inventory() {
 
       setModalOpen(false);
       resetForm();
+      emitErpSync('material_returns', 'created');
+      emitErpSync('inventory', 'updated');
       loadData();
       showToast({ type: 'success', title: 'Success', message: 'Material return created successfully. Awaiting approval.' });
     } catch (error) {
@@ -318,6 +329,7 @@ export function Inventory() {
 
       setModalOpen(false);
       resetForm();
+      emitErpSync('inventory', 'updated');
       loadData();
       showToast({ type: 'success', title: 'Success', message: 'Stock rejection created successfully. Awaiting approval.' });
     } catch (error) {

@@ -106,7 +106,7 @@ function main() {
   targets.forEach(t => console.log(`  • ${t}`));
   console.log('');
 
-  const result = spawnSync('node', ['--test', ...targets], {
+  const result = spawnSync('node', ['--test', '--test-concurrency=1', ...targets], {
     stdio: 'inherit',
     cwd: ROOT_DIR,
   });

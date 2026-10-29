@@ -15,6 +15,7 @@ import { fetchSalesOrderDeliveryAlerts, summarizeDeliveryAlerts } from '../utils
 import { TaxComplianceDashboardCards } from '../components/finance/tax/TaxComplianceDashboardCards';
 import { formatCurrency } from '../utils/currency';
 import { OwnerAttentionDashboard } from '../components/dashboard/OwnerAttentionDashboard';
+import { useErpSyncListener } from '../utils/erpSyncBus';
 
 interface DashboardStats {
   totalProducts: number;
@@ -75,6 +76,13 @@ export function Dashboard() {
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  useErpSyncListener(
+    ['sales_orders', 'inventory', 'sales_invoices', 'delivery_challans', 'expenses', 'dashboard'],
+    () => {
+      loadDashboardData();
+    }
+  );
 
   const loadDashboardData = async () => {
     // Sales role has its own dedicated dashboard; skip all generic queries.

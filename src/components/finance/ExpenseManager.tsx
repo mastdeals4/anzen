@@ -33,6 +33,7 @@ import {
   notifyFinanceReconciliationRefresh,
   unlinkBankTransaction,
 } from './bankTransactionLinking';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 import { FinanceDocumentAttachments, uploadFinanceDocuments } from './FinanceDocumentAttachments';
 import { getPostedJournalsForExport, writeReconciliationWorkbook, type ReconciliationSummaryRow } from './reconciliationExport';
 import { ExpenseCategorySelect, groupExpenseCategories } from './ExpenseCategorySelect';
@@ -787,6 +788,13 @@ export function ExpenseManager({
   useEffect(() => {
     loadData();
   }, [dateRange]);
+
+  useErpSyncListener(
+    ['expenses', 'bank_transactions', 'vouchers'],
+    () => {
+      loadData();
+    }
+  );
 
   useEffect(() => {
     if (formData.expense_category !== 'salary' || !selectedStaffId) {

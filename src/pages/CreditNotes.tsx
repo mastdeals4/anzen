@@ -15,6 +15,7 @@ import { MoneyInput } from '../components/MoneyInput';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
 import { useSupabaseRealtimeChannel } from '../hooks/useSupabaseRealtimeChannel';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -37,6 +38,7 @@ interface CreditNote {
   tax_amount: number;
   total_amount: number;
   status?: string;
+  credit_note_type?: 'physical_return' | 'commercial_credit' | null;
   approved_by?: string;
   material_return_id?: string;
   material_returns?: {
@@ -157,6 +159,7 @@ export function CreditNotes() {
     notes: '',
     currency: 'IDR',
     material_return_id: '',
+    credit_note_type: 'physical_return' as 'physical_return' | 'commercial_credit' | '',
   });
 
   const [items, setItems] = useState<Omit<CreditNoteItem, 'id'>[]>([
@@ -171,6 +174,13 @@ export function CreditNotes() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useErpSyncListener(
+    ['credit_notes', 'sales_invoices', 'material_returns', 'inventory'],
+    () => {
+      loadData();
+    }
+  );
 
   const loadData = async () => {
     setLoading(true);
@@ -513,6 +523,7 @@ export function CreditNotes() {
         notes: creditNote.notes || '',
         currency: creditNote.currency || 'IDR',
         material_return_id: creditNote.material_return_id || '',
+        credit_note_type: creditNote.credit_note_type || (creditNote.material_return_id ? 'physical_return' : ''),
       });
 
       if (creditNote.customer_id) {
@@ -558,6 +569,11 @@ export function CreditNotes() {
       return;
     }
 
+    if (!formData.credit_note_type && !formData.material_return_id) {
+      showToast({ type: 'error', title: 'Classification Required', message: 'Please select a Credit Note Type (Physical Return or Commercial Credit).' });
+      return;
+    }
+
     const hasInvalidItems = items.some(item => !item.product_id || !item.batch_id || item.quantity <= 0 || item.unit_price <= 0);
     if (hasInvalidItems) {
       showToast({ type: 'error', title: 'Error', message: 'Please complete all item details' });
@@ -580,6 +596,7 @@ export function CreditNotes() {
             notes: formData.notes || null,
             currency: formData.currency,
             material_return_id: formData.material_return_id || null,
+            credit_note_type: formData.material_return_id ? 'physical_return' : formData.credit_note_type,
             ...totals,
             updated_at: new Date().toISOString(),
           })
@@ -608,6 +625,8 @@ export function CreditNotes() {
         showToast({ type: 'success', title: 'Updated', message: `Credit note ${formData.credit_note_number} updated successfully.` });
         setModalOpen(false);
         resetForm();
+        emitErpSync('credit_notes', 'updated', { entityId: editingCreditNoteId });
+        emitErpSync('sales_invoices', 'updated');
         await loadData();
       } catch (error: any) {
         console.error('Error updating credit note:', error);
@@ -634,6 +653,7 @@ export function CreditNotes() {
         reason: formData.reason,
         notes: formData.notes || null,
         currency: formData.currency,
+        credit_note_type: formData.material_return_id ? 'physical_return' : formData.credit_note_type,
         ...totals,
         created_by: user?.id,
       };
@@ -666,6 +686,8 @@ export function CreditNotes() {
       showToast({ type: 'success', title: 'Created', message: `Credit note ${finalNumber} created and is pending approval.` });
       setModalOpen(false);
       resetForm();
+      emitErpSync('credit_notes', 'created', { entityId: creditNoteId || undefined });
+      emitErpSync('sales_invoices', 'updated');
       await loadData();
     } catch (error: any) {
       console.error('Error creating credit note:', error);
@@ -676,10 +698,19 @@ export function CreditNotes() {
   };
 
   const handleApprove = async (id: string) => {
+    const targetNote = creditNotes.find(cn => cn.id === id);
+    if (!targetNote?.credit_note_type && !targetNote?.material_return_id) {
+      showToast({
+        type: 'error',
+        title: 'Classification Required',
+        message: 'This credit note is unclassified. Please edit the credit note to specify Physical Return or Commercial Credit before approving.',
+      });
+      return;
+    }
+
     if (!await showConfirm({ title: 'Confirm', message: 'Approve this credit note? Stock and General Ledger will be adjusted accordingly.', variant: 'warning' })) return;
 
     try {
-      const targetNote = creditNotes.find(cn => cn.id === id);
       const updatePayload: Record<string, any> = {
         status: 'approved',
         approved_by: user?.id,
@@ -699,6 +730,9 @@ export function CreditNotes() {
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Credit note approved successfully' });
+      emitErpSync('credit_notes', 'approved', { entityId: id });
+      emitErpSync('sales_invoices', 'updated');
+      emitErpSync('inventory', 'updated');
       await loadData();
     } catch (error: any) {
       console.error('Error approving credit note:', error);
@@ -722,6 +756,8 @@ export function CreditNotes() {
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Credit note rejected' });
+      emitErpSync('credit_notes', 'rejected', { entityId: id });
+      emitErpSync('sales_invoices', 'updated');
       await loadData();
     } catch (error: any) {
       console.error('Error rejecting credit note:', error);
@@ -773,6 +809,8 @@ export function CreditNotes() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: 'Credit note deleted successfully' });
+      emitErpSync('credit_notes', 'deleted', { entityId: id });
+      emitErpSync('sales_invoices', 'updated');
       await loadData();
     } catch (error: any) {
       console.error('Error deleting credit note:', error);
@@ -802,6 +840,7 @@ export function CreditNotes() {
       notes: '',
       currency: 'IDR',
       material_return_id: '',
+      credit_note_type: 'physical_return',
     });
     setItems([{ product_id: '', batch_id: '', quantity: 0, unit_price: 0 }]);
   };
@@ -829,6 +868,7 @@ export function CreditNotes() {
         original_invoice_number: ret.sales_invoices?.invoice_number || '',
         reason: `Return ${ret.return_number}: ${ret.return_reason || 'Customer material return'}`,
         material_return_id: ret.id,
+        credit_note_type: 'physical_return',
       }));
     });
     if (ret.customer_id) loadInvoicesForCustomer(ret.customer_id);
@@ -874,19 +914,42 @@ export function CreditNotes() {
     },
     {
       key: 'linked_return',
-      label: 'Linked Return',
+      label: 'Type / Linked Return',
       render: (value: any, cn: CreditNote) => {
         const ret = normalizeNestedRelation(cn.material_returns);
-        return ret ? (
-          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
-            {ret.return_number}
-          </span>
-        ) : (
+        if (ret) {
+          return (
+            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
+              {ret.return_number}
+            </span>
+          );
+        }
+        if (cn.credit_note_type === 'physical_return') {
+          return (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium"
+              title="Physical Goods Return: Goods received into warehouse and restocked into batches"
+            >
+              Physical Return
+            </span>
+          );
+        }
+        if (cn.credit_note_type === 'commercial_credit') {
+          return (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium"
+              title="Commercial Credit Note: Price adjustment / damaged packaging concession without physical goods return"
+            >
+              Commercial
+            </span>
+          );
+        }
+        return (
           <span
-            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium"
-            title="Commercial Credit Note: Price adjustment / damaged packaging concession without physical goods return"
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-medium"
+            title="Historical Unclassified Record: Requires manual audit before approval"
           >
-            Commercial
+            Unclassified (Review Required)
           </span>
         );
       }
@@ -1200,6 +1263,23 @@ export function CreditNotes() {
             )}
 
             <SapRow>
+              <FloatingField label="Credit Note Type" required span={6} filled={!!formData.credit_note_type || !!formData.material_return_id} hint={formData.material_return_id ? 'Linked Material Returns are physical returns' : undefined}>
+                <select
+                  name="credit_note_type"
+                  aria-label="Credit Note Type"
+                  value={formData.material_return_id ? 'physical_return' : formData.credit_note_type}
+                  onChange={(e) => setFormData({ ...formData, credit_note_type: e.target.value as 'physical_return' | 'commercial_credit' })}
+                  disabled={!!formData.material_return_id}
+                  className={FLOAT_INPUT}
+                >
+                  {!formData.credit_note_type && !formData.material_return_id && (
+                    <option value="">— Select Credit Note Type —</option>
+                  )}
+                  <option value="physical_return">Physical Return (Restocks stock & reverses COGS)</option>
+                  <option value="commercial_credit">Commercial Credit (Financial/price concession only)</option>
+                </select>
+              </FloatingField>
+
               <FloatingField label="Currency" span={6} filled={!!formData.currency}>
                 <select name="currency" aria-label="Currency"
                   value={formData.currency}

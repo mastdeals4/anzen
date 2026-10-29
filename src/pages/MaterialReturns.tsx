@@ -14,6 +14,7 @@ import { MaterialReturnView } from '../components/MaterialReturnView';
 import { formatDate } from '../utils/dateFormat';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 interface MaterialReturn {
   id: string;
@@ -132,6 +133,13 @@ export default function MaterialReturns() {
     loadReturns();
     loadCustomers();
   }, []);
+
+  useErpSyncListener(
+    ['material_returns', 'sales_invoices', 'delivery_challans', 'inventory'],
+    () => {
+      loadReturns();
+    }
+  );
 
   const loadReturns = async () => {
     try {
@@ -459,6 +467,8 @@ export default function MaterialReturns() {
 
       setModalOpen(false);
       resetForm();
+      emitErpSync('material_returns', editingReturnId ? 'updated' : 'created');
+      emitErpSync('inventory', 'updated');
       loadReturns();
     } catch (error: any) {
       console.error('Error saving return:', error);
@@ -566,6 +576,9 @@ export default function MaterialReturns() {
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Material return approved. Restock items processed through Inventory V1.' });
+      emitErpSync('material_returns', 'approved', { entityId: id });
+      emitErpSync('inventory', 'updated');
+      emitErpSync('credit_notes', 'updated');
       loadReturns();
     } catch (error: any) {
       console.error('Error approving return:', error);
@@ -589,6 +602,7 @@ export default function MaterialReturns() {
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Material return rejected' });
+      emitErpSync('material_returns', 'rejected', { entityId: id });
       loadReturns();
     } catch (error: any) {
       console.error('Error rejecting return:', error);
@@ -608,6 +622,7 @@ export default function MaterialReturns() {
 
       if (error) throw error;
       showToast({ type: 'success', title: 'Success', message: 'Material return deleted' });
+      emitErpSync('material_returns', 'deleted', { entityId: id });
       loadReturns();
     } catch (error: any) {
       console.error('Error deleting return:', error);

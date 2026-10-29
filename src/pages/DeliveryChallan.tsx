@@ -22,6 +22,7 @@ import { formatUnit } from '../utils/unitDisplay';
 import { formatPackTypeForDisplay } from '../utils/deliveryPackaging';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -199,6 +200,13 @@ export function DeliveryChallan() {
     loadProducts();
     loadBatches();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useErpSyncListener(
+    ['delivery_challans', 'sales_orders', 'inventory'],
+    () => {
+      loadChallans();
+    }
+  );
 
   const loadSalesOrders = async (customerId?: string) => {
     try {
@@ -1388,6 +1396,8 @@ export function DeliveryChallan() {
 
       setModalOpen(false);
       resetForm();
+      emitErpSync('delivery_challans', editingChallan ? 'updated' : 'created');
+      emitErpSync('sales_orders', 'updated');
       loadChallans();
       loadBatches();
       const isReactivated = editingChallan && (editingChallan.approval_status === 'rejected' || editingChallan.approval_status === 'cancelled');
@@ -1477,6 +1487,8 @@ export function DeliveryChallan() {
         }
       }
 
+      emitErpSync('delivery_challans', 'deleted');
+      emitErpSync('sales_orders', 'updated');
       loadChallans();
       showToast({
         type: 'success',
@@ -1520,6 +1532,9 @@ export function DeliveryChallan() {
 
       showToast({ type: 'success', title: 'Success', message: 'Delivery Challan approved successfully!' });
       delete approvalOperationIdsRef.current[challanId];
+      emitErpSync('delivery_challans', 'approved', { entityId: challanId });
+      emitErpSync('sales_orders', 'updated');
+      emitErpSync('inventory', 'updated');
       loadChallans();
 
       // Notify warehouse staff (non-blocking)
@@ -1573,6 +1588,11 @@ export function DeliveryChallan() {
       setShowRejectModal(false);
       setRejectionReason('');
       setChallanToReject(null);
+      emitErpSync('delivery_challans', 'rejected', { entityId: challanToReject });
+      emitErpSync('sales_orders', 'updated');
+      if (wasApproved) {
+        emitErpSync('inventory', 'updated');
+      }
       loadChallans();
     } catch (error: any) {
       console.error('Error rejecting challan:', error.message);

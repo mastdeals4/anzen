@@ -16,6 +16,7 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { FinanceActionButton } from '../components/finance/FinanceUI';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 interface Supplier {
   id: string;
@@ -141,6 +142,13 @@ export default function PurchaseOrders() {
     fetchProducts();
     fetchProductSources();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useErpSyncListener(
+    ['purchases', 'inventory'],
+    () => {
+      fetchPurchaseOrders();
+    }
+  );
 
   useEffect(() => {
     filterPOs();
@@ -519,6 +527,7 @@ export default function PurchaseOrders() {
       }
 
       setShowCreateModal(false);
+      emitErpSync('purchases', editingPO ? 'updated' : 'created');
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error saving purchase order:', error);
@@ -542,6 +551,7 @@ export default function PurchaseOrders() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: t('success.saved') });
+      emitErpSync('purchases', 'approved', { entityId: poId });
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error approving PO:', error);
@@ -573,6 +583,7 @@ export default function PurchaseOrders() {
       if (error) throw error;
 
       showToast({ type: 'success', title: 'Success', message: t('success.deleted') });
+      emitErpSync('purchases', 'deleted', { entityId: poId });
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error deleting PO:', error);

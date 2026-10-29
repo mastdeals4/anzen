@@ -22,6 +22,7 @@ import { MoneyInput } from '../components/MoneyInput';
 import { FloatingField, FLOAT_INPUT } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
 import { loadInvoiceDisplayItems } from '../utils/invoiceItemDisplay';
+import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 
 function normalizeNestedRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
@@ -276,6 +277,13 @@ export function Sales() {
     loadProducts();
     loadBatches();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useErpSyncListener(
+    ['sales_invoices', 'delivery_challans', 'credit_notes', 'vouchers'],
+    () => {
+      loadInvoices();
+    }
+  );
 
   useEffect(() => {
     if (navigationData?.sourceType === 'delivery_challan') {
@@ -1774,6 +1782,9 @@ export function Sales() {
             message: `Invoice ${editingInvoice.invoice_number} corrected successfully. Accounting postings and stock synchronized.`,
           });
 
+          emitErpSync('sales_invoices', 'updated', { entityId: editingInvoice.id });
+          emitErpSync('sales_orders', 'updated');
+          emitErpSync('inventory', 'updated');
           await loadInvoices();
           setModalOpen(false);
           resetForm();
@@ -1915,6 +1926,9 @@ export function Sales() {
 
       // Stock deduction and inventory transactions are handled automatically by database trigger
 
+      emitErpSync('sales_invoices', editingInvoice ? 'updated' : 'created', { entityId: invoice?.id });
+      emitErpSync('sales_orders', 'updated');
+      emitErpSync('inventory', 'updated');
       await loadInvoices();
       await loadBatches();
 
@@ -2224,6 +2238,9 @@ export function Sales() {
         message: `Invoice ${invoice.invoice_number} has been cancelled. Accounting entries reversed and linked Delivery Challan released.`,
       });
 
+      emitErpSync('sales_invoices', 'cancelled', { entityId: invoice?.id });
+      emitErpSync('sales_orders', 'updated');
+      emitErpSync('inventory', 'updated');
       await loadInvoices();
     } catch (error: any) {
       console.error('Error cancelling invoice:', error);
@@ -2261,6 +2278,7 @@ export function Sales() {
       const { error } = await supabase.from('sales_invoices').delete().eq('id', id);
 
       if (error) throw error;
+      emitErpSync('sales_invoices', 'deleted', { entityId: id });
       loadInvoices();
       showToast({
         type: 'success',

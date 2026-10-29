@@ -26,6 +26,7 @@ import { formatCurrency } from '../../utils/currency';
 import { useExpenseCategories } from './useExpenseCategories';
 import { getPostedJournalsForExport, writeReconciliationWorkbook, type ReconciliationSummaryRow } from './reconciliationExport';
 import { ExpenseCategorySelect, groupExpenseCategories } from './ExpenseCategorySelect';
+import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
 
 interface PettyCashDocument {
   id: string;
@@ -378,6 +379,13 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
       setTransactions((prev: any[]) => prev.filter((t) => t.id !== payload.old.id));
     }
   };
+
+  useErpSyncListener(
+    ['petty_cash', 'expenses', 'vouchers'],
+    () => {
+      loadDataRef.current();
+    }
+  );
 
   useSupabaseRealtimeChannel({
     channelName: 'petty_cash_changes',
