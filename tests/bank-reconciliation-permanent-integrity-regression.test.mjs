@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Client } from 'pg';
 
-const DB_CONNECTION = 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL;
 
 const migrationFix = fs.readFileSync(
   'supabase/migrations/20261013190000_bank_reconciliation_permanent_integrity_fix.sql',
@@ -29,6 +29,10 @@ test('1. Migration file contracts exist and contain expected procedures', () => 
 });
 
 test('2. Live Database Transactional Regression Suite (Pure Rollback Isolation)', async (t) => {
+  if (!DB_CONNECTION) {
+    console.warn('Skipping live database regression suite: DATABASE_URL is not set.');
+    return;
+  }
   const client = new Client({
     connectionString: DB_CONNECTION,
     ssl: { rejectUnauthorized: false },

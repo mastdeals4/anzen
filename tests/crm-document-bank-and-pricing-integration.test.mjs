@@ -1,11 +1,15 @@
 import { Client } from 'pg';
 
-const client = new Client({
-  connectionString: 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres',
-  ssl: { rejectUnauthorized: false }
-});
-
 async function runTests() {
+  if (!process.env.DATABASE_URL) {
+    console.warn('Skipping CRM integration test: DATABASE_URL environment variable is not set.');
+    return;
+  }
+
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
   await client.connect();
   console.log('🧪 Starting CRM Document Bank + Kunal Pricing AI Verification Tests...\n');
 

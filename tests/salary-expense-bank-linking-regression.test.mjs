@@ -7,7 +7,7 @@ const linkFieldSrc = fs.readFileSync('src/components/finance/BankTransactionLink
 const expenseManagerSrc = fs.readFileSync('src/components/finance/ExpenseManager.tsx', 'utf8');
 const financeCommandsSrc = fs.readFileSync('src/services/financeCommands.ts', 'utf8');
 
-const DB_CONNECTION = 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL;
 
 test('1. BankTransactionLinkField passes confirmedAllocation into onSelect', () => {
   assert.match(
@@ -39,6 +39,10 @@ test('3. financeCommands guards allocationAmount <= 0.01 to null', () => {
 });
 
 test('4. Live database verification for EXP/26/287 bank linking and accounting integrity', async () => {
+  if (!DB_CONNECTION) {
+    console.warn('Skipping live database verification: DATABASE_URL is not set.');
+    return;
+  }
   const client = new Client({
     connectionString: DB_CONNECTION,
     ssl: { rejectUnauthorized: false },

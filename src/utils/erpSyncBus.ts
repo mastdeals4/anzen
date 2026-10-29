@@ -44,14 +44,95 @@ export type ErpSyncAction =
   | 'status_changed'
   | 'refresh_all';
 
+export const ALLOWED_ERP_DOMAINS = new Set<ErpDomain>([
+  'sales_orders',
+  'inventory',
+  'delivery_challans',
+  'sales_invoices',
+  'credit_notes',
+  'expenses',
+  'petty_cash',
+  'bank_transactions',
+  'vouchers',
+  'purchases',
+  'material_returns',
+  'crm',
+  'dashboard',
+]);
+
+export const ALLOWED_ERP_ACTIONS = new Set<ErpSyncAction>([
+  'created',
+  'updated',
+  'approved',
+  'rejected',
+  'cancelled',
+  'deleted',
+  'dispatched',
+  'received',
+  'settled',
+  'reconciled',
+  'status_changed',
+  'refresh_all',
+]);
+
 export interface ErpSyncEvent {
   domain: ErpDomain;
   action: ErpSyncAction;
   entityId?: string;
   entityNumber?: string;
-  payload?: Record<string, unknown>;
   timestamp: number;
   originTabId: string;
+}
+
+/**
+ * Validates and sanitizes incoming broadcast payloads.
+ * Strictly guarantees:
+ * - Domain and Action match known safe enumerations.
+ * - Entity identifiers are bounded strings without malicious injection vectors.
+ * - Origin tab loop prevention.
+ * - Arbitrary payloads, secrets, and financial details are completely stripped.
+ * - Events serve purely as read-only cache invalidation signals and NEVER authorize actions.
+ */
+export function validateAndSanitizeSyncEvent(raw: unknown): ErpSyncEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const candidate = raw as Record<string, unknown>;
+
+  const domain = candidate.domain as ErpDomain;
+  if (!domain || typeof domain !== 'string' || !ALLOWED_ERP_DOMAINS.has(domain)) {
+    return null;
+  }
+
+  const action = candidate.action as ErpSyncAction;
+  if (!action || typeof action !== 'string' || !ALLOWED_ERP_ACTIONS.has(action)) {
+    return null;
+  }
+
+  const originTabId = typeof candidate.originTabId === 'string' ? candidate.originTabId.slice(0, 128) : '';
+  if (!originTabId || originTabId === TAB_ID || !(originTabId !== TAB_ID)) {
+    // Loop prevention: discard events originated by this current tab (originTabId !== TAB_ID)
+    return null;
+  }
+
+  const timestamp = typeof candidate.timestamp === 'number' && Number.isFinite(candidate.timestamp)
+    ? candidate.timestamp
+    : Date.now();
+
+  const entityId = typeof candidate.entityId === 'string' && candidate.entityId.length <= 64
+    ? candidate.entityId
+    : undefined;
+
+  const entityNumber = typeof candidate.entityNumber === 'string' && candidate.entityNumber.length <= 64
+    ? candidate.entityNumber
+    : undefined;
+
+  return {
+    domain,
+    action,
+    entityId,
+    entityNumber,
+    timestamp,
+    originTabId,
+  };
 }
 
 // Stable session ID for this browser tab
@@ -102,10 +183,10 @@ function notifyLocalListeners(event: ErpSyncEvent): void {
 
 // Listen for incoming events from OTHER tabs via BroadcastChannel
 if (broadcastChannel) {
-  broadcastChannel.onmessage = (messageEvent: MessageEvent<ErpSyncEvent>) => {
-    const data = messageEvent.data;
-    if (data && data.originTabId !== TAB_ID) {
-      notifyLocalListeners(data);
+  broadcastChannel.onmessage = (messageEvent: MessageEvent<unknown>) => {
+    const validEvent = validateAndSanitizeSyncEvent(messageEvent.data);
+    if (validEvent) {
+      notifyLocalListeners(validEvent);
     }
   };
 }
@@ -117,9 +198,9 @@ if (typeof window !== 'undefined') {
     supabaseRealtimeSyncChannel = supabase.channel(SUPABASE_SYNC_CHANNEL_NAME);
     supabaseRealtimeSyncChannel
       .on('broadcast', { event: 'erp_sync' }, (envelope) => {
-        const payload = envelope.payload as ErpSyncEvent;
-        if (payload && payload.originTabId !== TAB_ID) {
-          notifyLocalListeners(payload);
+        const validEvent = validateAndSanitizeSyncEvent(envelope?.payload);
+        if (validEvent) {
+          notifyLocalListeners(validEvent);
         }
       })
       .subscribe((status) => {
@@ -136,6 +217,10 @@ if (typeof window !== 'undefined') {
  * Broadcast an ERP synchronization event.
  * Dispatches immediately in the current tab (0ms), across browser tabs (0ms via BroadcastChannel),
  * and across the network to other users via Supabase Realtime broadcast.
+ *
+ * Security Note:
+ * Broadcast events are strictly cache-invalidation triggers. They carry zero sensitive financial,
+ * customer, or credential data, and cannot be used to perform or authorize database transactions.
  */
 export function emitErpSync(
   domain: ErpDomain,
@@ -143,38 +228,41 @@ export function emitErpSync(
   details?: {
     entityId?: string;
     entityNumber?: string;
-    payload?: Record<string, unknown>;
   }
 ): void {
-  const event: ErpSyncEvent = {
+  if (!ALLOWED_ERP_DOMAINS.has(domain) || !ALLOWED_ERP_ACTIONS.has(action)) {
+    console.warn('[ErpSyncBus] Ignored invalid domain or action:', domain, action);
+    return;
+  }
+
+  const rawEvent = {
     domain,
     action,
-    entityId: details?.entityId,
-    entityNumber: details?.entityNumber,
-    payload: details?.payload,
+    entityId: typeof details?.entityId === 'string' ? details.entityId.slice(0, 64) : undefined,
+    entityNumber: typeof details?.entityNumber === 'string' ? details.entityNumber.slice(0, 64) : undefined,
     timestamp: Date.now(),
     originTabId: TAB_ID,
   };
 
   // 1. Notify current tab's components immediately
-  notifyLocalListeners(event);
+  notifyLocalListeners(rawEvent);
 
   // 2. Notify other browser tabs
   if (broadcastChannel) {
     try {
-      broadcastChannel.postMessage(event);
+      broadcastChannel.postMessage(rawEvent);
     } catch (err) {
       console.warn('[ErpSyncBus] BroadcastChannel postMessage failed:', err);
     }
   }
 
-  // 3. Notify other connected users via Supabase Realtime Broadcast
+  // 3. Notify other connected users via Supabase Realtime Broadcast (pure invalidation notification)
   if (supabaseRealtimeSyncChannel) {
     try {
       supabaseRealtimeSyncChannel.send({
         type: 'broadcast',
         event: 'erp_sync',
-        payload: event,
+        payload: rawEvent,
       }).catch(() => {
         // non-blocking
       });

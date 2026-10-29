@@ -157,8 +157,12 @@ test('ExpenseManager filter conditions include ACTIVE and REPLACED in default Op
 });
 
 test('Live DB population regression: all expenses match authoritative state with 0 discrepancies', async () => {
+  if (!process.env.DATABASE_URL) {
+    console.warn('Skipping live database test: DATABASE_URL is not set.');
+    return;
+  }
   const client = new Client({
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres',
+    connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
   await client.connect();

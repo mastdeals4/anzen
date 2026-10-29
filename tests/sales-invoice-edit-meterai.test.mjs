@@ -83,10 +83,14 @@ test('6. Role permission guard protects posted invoice editing', () => {
 });
 
 test('7. Verification of SAPJ-26-046 and SAPJ-26-047 in database', async () => {
+  if (!process.env.DATABASE_URL) {
+    console.warn('Skipping live database verification: DATABASE_URL is not set.');
+    return;
+  }
   const pg = (await import('pg')).default;
   const { Client } = pg;
   const client = new Client({
-    connectionString: 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres'
+    connectionString: process.env.DATABASE_URL
   });
   await client.connect();
 

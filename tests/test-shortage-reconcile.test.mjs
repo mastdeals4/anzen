@@ -4,11 +4,13 @@ import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 
-const DB_CONNECTION =
-  process.env.DATABASE_URL ||
-  'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL;
 
 async function withDb(fn) {
+  if (!DB_CONNECTION) {
+    console.warn('Skipping live database test: DATABASE_URL environment variable is not set.');
+    return;
+  }
   const client = new pg.Client({
     connectionString: DB_CONNECTION,
     ssl: { rejectUnauthorized: false },
@@ -65,6 +67,10 @@ test('2. Live database simulation: Cyproheptadine ATP and SO-2026-0088 reconcili
     try {
       const prodId = 'c98d9f83-9bc2-4a44-9478-5d2ff3cff67f'; // Cyproheptadine
 
+      // Ensure simulated shortage condition inside isolated rollback transaction
+      await client.query("UPDATE sales_orders SET status = 'shortage' WHERE so_number = 'SO-2026-0088'");
+      await client.query("UPDATE so_product_reservations SET reserved_quantity = 25 WHERE sales_order_id = (SELECT id FROM sales_orders WHERE so_number = 'SO-2026-0088')");
+
       // Verify unallocated ATP exists before running reconcile
       const atpRes = await client.query(
         "SELECT available_quantity FROM inventory_v1_stock_summary WHERE product_id = $1",
@@ -110,6 +116,10 @@ test('3. Idempotency & Over-reservation Safety: Repeated triggers do not double-
     await client.query('BEGIN');
     try {
       const prodId = 'c98d9f83-9bc2-4a44-9478-5d2ff3cff67f';
+
+      // Ensure simulated shortage condition inside isolated rollback transaction
+      await client.query("UPDATE sales_orders SET status = 'shortage' WHERE so_number = 'SO-2026-0088'");
+      await client.query("UPDATE so_product_reservations SET reserved_quantity = 25 WHERE sales_order_id = (SELECT id FROM sales_orders WHERE so_number = 'SO-2026-0088')");
 
       // First run: resolves 1 order
       const first = await client.query(

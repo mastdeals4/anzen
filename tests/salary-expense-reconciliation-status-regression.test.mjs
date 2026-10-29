@@ -9,7 +9,7 @@ import {
 
 const expenseManagerSrc = fs.readFileSync('src/components/finance/ExpenseManager.tsx', 'utf8');
 
-const DB_CONNECTION = 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL;
 
 test('1. Salary fully settled by advance + remaining bank payment reconciles completely', () => {
   // EXP/26/285 verified case
@@ -154,6 +154,10 @@ test('5. Split bank payments and multiple allocations are aggregated correctly',
 });
 
 test('6. Settled advance cannot be applied a second time to October salary in DB', async () => {
+  if (!DB_CONNECTION) {
+    console.warn('Skipping live database test: DATABASE_URL is not set.');
+    return;
+  }
   const client = new Client({ connectionString: DB_CONNECTION, ssl: { rejectUnauthorized: false } });
   await client.connect();
   try {
@@ -198,6 +202,10 @@ test('7. New eligible advances remain explicitly selectable and are not auto-app
 });
 
 test('8. Historical live database accounting records are preserved without duplicates', async () => {
+  if (!DB_CONNECTION) {
+    console.warn('Skipping live database test: DATABASE_URL is not set.');
+    return;
+  }
   const client = new Client({ connectionString: DB_CONNECTION, ssl: { rejectUnauthorized: false } });
   await client.connect();
   try {

@@ -17,17 +17,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import pg from 'pg';
 
-const DB_CONNECTION =
-  process.env.DATABASE_URL ||
-  'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL;
 
-const client = new pg.Client({
-  connectionString: DB_CONNECTION,
-  ssl: { rejectUnauthorized: false },
-});
-await client.connect();
+let client = null;
+if (DB_CONNECTION) {
+  client = new pg.Client({
+    connectionString: DB_CONNECTION,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+}
 
 async function runSql(sql) {
+  if (!client) return [];
   const res = await client.query(sql);
   return res.rows || [];
 }
@@ -57,6 +59,18 @@ assert(modalSrc.includes(".from('inventory_v1_effective_ledger')\n        .selec
 console.log('   ✅ PASS: Query correctly queries select("*") without invalid PostgREST view relationship.\n');
 
 // 3. Query Corn Starch BP Batch E441/2026
+if (!client) {
+  console.warn('Skipping live database queries (steps 3-6): DATABASE_URL is not set.');
+  console.log('7. Verifying Stock page load query integrity (no N+1 per batch)...');
+  assert(!stockSrc.includes("inventory_v1_effective_ledger"), 'Stock.tsx itself must not query effective ledger on initial render');
+  assert(modalSrc.includes("inventory_v1_effective_ledger"), 'StockMovementsModal must query effective ledger on demand');
+  console.log('   ✅ PASS: Movement data loaded strictly on-demand when drill-down is opened.\n');
+  console.log('====================================================================');
+  console.log('STATIC & CONTRACT CHECKS PASSED (DATABASE_URL NOT SET)');
+  console.log('====================================================================');
+  process.exit(0);
+}
+
 console.log('3. Querying Corn Starch BP Batch E441/2026 in canonical database...');
 const batchE441Rows = await runSql(`
   SELECT b.id AS batch_id, b.batch_number, b.product_id, p.product_name, p.product_code, p.unit

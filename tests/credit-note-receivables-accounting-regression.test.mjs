@@ -4,11 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
 
-const DB_CONNECTION =
-  process.env.DATABASE_URL ||
-  'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL;
 
 async function withDbClient(callback) {
+  if (!DB_CONNECTION) {
+    console.warn('Skipping live database test: DATABASE_URL environment variable is not set.');
+    return;
+  }
   const client = new pg.Client({
     connectionString: DB_CONNECTION,
     ssl: { rejectUnauthorized: false },
