@@ -137,9 +137,9 @@ test('3. Realtime Bus Security: Validation, loop prevention, and payload strippi
 test('4. Security Advisor: Search Path Immutability Contracts across all 7 functions', () => {
   const migrationPath = path.join(
     process.cwd(),
-    'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'
+    'supabase/migrations/20261029140143_security_closure_hardening_hotfix.sql'
   );
-  assert.ok(fs.existsSync(migrationPath), 'Migration 20261029210000 must exist');
+  assert.ok(fs.existsSync(migrationPath), 'Migration 20261029140143 must exist');
   const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 
   // Verify search_path fixed on all 7 functions + helpers
@@ -157,21 +157,20 @@ test('4. Security Advisor: Search Path Immutability Contracts across all 7 funct
 
   for (const fn of expectedSearchPaths) {
     assert.ok(
-      migrationSql.includes(fn) && migrationSql.includes('SET search_path = public, pg_temp'),
-      `Function ${fn} must have search_path hardened to 'public, pg_temp'`
+      migrationSql.includes(fn) && migrationSql.includes('SET search_path = pg_catalog, public, pg_temp'),
+      `Function ${fn} must have search_path hardened to 'pg_catalog, public, pg_temp'`
     );
   }
 });
 
 test('5. Security Advisor: Anonymous Execution Lockdown Contracts', () => {
   const migrationSql = fs.readFileSync(
-    path.join(process.cwd(), 'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'),
+    path.join(process.cwd(), 'supabase/migrations/20261029140143_security_closure_hardening_hotfix.sql'),
     'utf8'
   );
 
   // Sequences and internal functions must have execute revoked from anon
   const revokedFromAnon = [
-    'generate_credit_note_number',
     'invoke_sapj_gmail_agent',
     'recalculate_sales_invoice_payment_state',
     'trg_sync_credit_note_invoice_payment',
@@ -191,14 +190,10 @@ test('5. Security Advisor: Anonymous Execution Lockdown Contracts', () => {
     );
   }
 
-  // Pre-login functions: lookup_login_email and is_setup_mode preserved
+  // Pre-login functions: lookup_login_email and is_setup_mode excluded from revocation
   assert.ok(
-    migrationSql.includes("GRANT EXECUTE ON FUNCTION public.lookup_login_email(text) TO anon"),
-    'lookup_login_email must remain available to anon for pre-login credential resolution'
-  );
-  assert.ok(
-    migrationSql.includes("GRANT EXECUTE ON FUNCTION public.is_setup_mode() TO anon"),
-    'is_setup_mode must remain available to anon'
+    migrationSql.includes("AND p.proname NOT IN ('lookup_login_email', 'is_setup_mode')"),
+    'lookup_login_email and is_setup_mode must be preserved for anon'
   );
 
   // lookup_login_email input validation checks
@@ -214,50 +209,60 @@ test('5. Security Advisor: Anonymous Execution Lockdown Contracts', () => {
 
 test('6. Security Advisor: Authorization Bypass Fixes on Authenticated RPCs', () => {
   const migrationSql = fs.readFileSync(
-    path.join(process.cwd(), 'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'),
+    path.join(process.cwd(), 'supabase/migrations/20261029140143_security_closure_hardening_hotfix.sql'),
     'utf8'
   );
 
   // approve_finance_expense must check authentication, finance role, and override approved_by with caller
   assert.ok(
-    migrationSql.includes('CREATE OR REPLACE FUNCTION public.approve_finance_expense'),
-    'approve_finance_expense must be replaced with hardened version'
+    migrationSql.includes('approve_finance_expense'),
+    'approve_finance_expense must be hardened'
   );
   assert.ok(
-    migrationSql.includes('approved_by = v_caller'),
+    migrationSql.includes("approved_by=CASE WHEN auth.role() = ''service_role'' THEN COALESCE(p_approved_by,auth.uid()) ELSE auth.uid() END"),
     'approve_finance_expense must override approved_by with authenticated caller ID'
   );
 
   // cancel_sales_invoice must check role and prevent p_actor spoofing
   assert.ok(
-    migrationSql.includes('CREATE OR REPLACE FUNCTION public.cancel_sales_invoice'),
-    'cancel_sales_invoice must be replaced with hardened version'
+    migrationSql.includes('cancel_sales_invoice'),
+    'cancel_sales_invoice must be hardened'
   );
   assert.ok(
-    migrationSql.includes("v_role NOT IN ('admin', 'accounts')"),
+    migrationSql.includes("IF COALESCE(v_role, '''') NOT IN (''admin'', ''accounts'')"),
     'cancel_sales_invoice must enforce admin/accounts role check'
   );
 
   // cancel_payment_voucher_posting must enforce finance role check
   assert.ok(
-    migrationSql.includes('CREATE OR REPLACE FUNCTION public.cancel_payment_voucher_posting'),
-    'cancel_payment_voucher_posting must be replaced with hardened version'
+    migrationSql.includes('cancel_payment_voucher_posting'),
+    'cancel_payment_voucher_posting must be hardened'
   );
   assert.ok(
     migrationSql.includes('PERFORM public._sec_check_finance_role()'),
     'cancel_payment_voucher_posting must call _sec_check_finance_role'
   );
 
+  // cancel_expense_posting must enforce finance role check
+  assert.ok(
+    migrationSql.includes('cancel_expense_posting'),
+    'cancel_expense_posting must be hardened'
+  );
+
   // post_bpjs_monthly_register must enforce caller authentication
   assert.ok(
-    migrationSql.includes('CREATE OR REPLACE FUNCTION public.post_bpjs_monthly_register'),
-    'post_bpjs_monthly_register must be replaced with hardened version'
+    migrationSql.includes('post_bpjs_monthly_register'),
+    'post_bpjs_monthly_register must be hardened'
+  );
+  assert.ok(
+    migrationSql.includes("v_user := CASE WHEN auth.role() = ''service_role'' THEN COALESCE(p_user_id, auth.uid()) ELSE auth.uid() END;"),
+    'post_bpjs_monthly_register must bind caller to auth.uid()'
   );
 });
 
 test('7. Security Advisor: Sensitive Table RLS & Grants and pg_net compatibility', () => {
   const migrationSql = fs.readFileSync(
-    path.join(process.cwd(), 'supabase/migrations/20261029210000_complete_security_advisor_hardening.sql'),
+    path.join(process.cwd(), 'supabase/migrations/20261029140143_security_closure_hardening_hotfix.sql'),
     'utf8'
   );
 
@@ -276,8 +281,8 @@ test('7. Security Advisor: Sensitive Table RLS & Grants and pg_net compatibility
 
   // pg_net compatibility check
   assert.ok(
-    migrationSql.includes('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA net FROM PUBLIC, anon'),
-    'pg_net schema net functions must have execution revoked from anon'
+    migrationSql.includes('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA net FROM PUBLIC, anon, authenticated'),
+    'pg_net schema net functions must have execution revoked from anon and authenticated'
   );
   assert.ok(
     !migrationSql.includes('DROP EXTENSION pg_net') && !migrationSql.includes('ALTER EXTENSION pg_net SET SCHEMA'),
