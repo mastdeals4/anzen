@@ -97,7 +97,7 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
         supabase
           .from('sales_invoices')
           // perf: projected columns (was select('*'))
-          .select('id, invoice_number, customer_id, invoice_date, due_date, total_amount, payment_status, notes, balance_amount, customers(company_name)')
+          .select('id, invoice_number, customer_id, invoice_date, due_date, total_amount, payment_status, notes, balance_amount, is_draft, document_status, customers(company_name)')
           .in('payment_status', ['pending', 'partial'])
           .lte('invoice_date', dateRange.endDate)
           .order('due_date', { ascending: true }),
@@ -221,6 +221,8 @@ export function ReceivablesManager({ canManage }: { canManage: boolean }) {
 
       const invoicesWithPaidAmount = (invoicesRes.data || [])
         .filter((inv: any) => {
+          if (inv.document_status === 'cancelled' || inv.document_status === 'draft') return false;
+          if (inv.is_draft) return false;
           if (inv.notes?.includes('[CANCELLED') || inv.notes?.toLowerCase().startsWith('cancelled')) return false;
           const paid = paidByInvoice.get(inv.id) || 0;
           const bal = Math.max(0, Math.round((Number(inv.total_amount) - paid) * 100) / 100);

@@ -304,8 +304,8 @@ test('6. Sales.tsx implements canonical lifecycle, tabbed navigation, and Cancel
   );
   assert.match(
     salesSource,
-    /totalRevenue:\s*(activeInvoices\.reduce|invoices\s*\.filter\(\(inv\)\s*=>\s*!isCancelledInvoice\(inv\)\))/,
-    'Stats totalRevenue must sum active invoices only'
+    /totalRevenue:\s*(postedRevenue|postedInvoices\.reduce|activeInvoices\.reduce|invoices\s*\.filter\(\(inv\)\s*=>\s*!isCancelledInvoice\(inv\)\))/,
+    'Stats totalRevenue must sum posted recognized invoices only'
   );
 
   // Cancelled Archive Tab UI with Archive Icon and Badge

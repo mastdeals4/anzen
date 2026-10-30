@@ -90,8 +90,15 @@ export function AgeingReport() {
 
       if (error) throw error;
 
+      const activePostedInvoices = (invoices || []).filter((inv: any) => {
+        if (inv.document_status === 'cancelled' || inv.document_status === 'draft') return false;
+        if (inv.is_draft) return false;
+        if (inv.notes?.includes('[CANCELLED') || inv.notes?.toLowerCase().startsWith('cancelled')) return false;
+        return true;
+      });
+
       const invoicesWithBalances = await Promise.all(
-        (invoices || []).map(async (inv) => {
+        activePostedInvoices.map(async (inv) => {
           const { data: paidData } = await supabase
             .rpc('get_invoice_paid_amount', { p_invoice_id: inv.id });
 

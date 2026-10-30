@@ -26,7 +26,7 @@ export function RevenueChart() {
 
       const { data: invoices } = await supabase
         .from('sales_invoices')
-        .select('invoice_date, total_amount')
+        .select('invoice_date, total_amount, is_draft, document_status, notes')
         .gte('invoice_date', sixMonthsAgo.toISOString().split('T')[0])
         .order('invoice_date', { ascending: true });
 
@@ -39,7 +39,14 @@ export function RevenueChart() {
         monthMap.set(key, { revenue: 0, invoices: 0 });
       }
 
-      (invoices || []).forEach(inv => {
+      (invoices || [])
+        .filter((inv) => {
+          if (inv.document_status === 'cancelled' || inv.document_status === 'draft') return false;
+          if (inv.is_draft) return false;
+          if (inv.notes?.includes('[CANCELLED') || inv.notes?.toLowerCase().startsWith('cancelled')) return false;
+          return true;
+        })
+        .forEach(inv => {
         const date = new Date(inv.invoice_date);
         const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
         const existing = monthMap.get(key);

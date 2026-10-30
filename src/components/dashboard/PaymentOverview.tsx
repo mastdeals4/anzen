@@ -32,11 +32,18 @@ export function PaymentOverview() {
 
       const { data: invoices } = await supabase
         .from('sales_invoices')
-        .select('payment_status, total_amount')
+        .select('payment_status, total_amount, is_draft, document_status, notes')
         .gte('invoice_date', threeMonthsAgo.toISOString().split('T')[0]);
 
       const statusMap = new Map<string, { count: number; amount: number }>();
-      (invoices || []).forEach(inv => {
+      (invoices || [])
+        .filter((inv) => {
+          if (inv.document_status === 'cancelled' || inv.document_status === 'draft') return false;
+          if (inv.is_draft) return false;
+          if (inv.notes?.includes('[CANCELLED') || inv.notes?.toLowerCase().startsWith('cancelled')) return false;
+          return true;
+        })
+        .forEach(inv => {
         const status = inv.payment_status || 'pending';
         const existing = statusMap.get(status) || { count: 0, amount: 0 };
         existing.count += 1;

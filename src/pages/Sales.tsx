@@ -43,6 +43,7 @@ interface SalesInvoice {
   document_status?: 'draft' | 'posted' | 'cancelled';
   cancelled_at?: string | null;
   cancelled_by?: string | null;
+  canceller_name?: string | null;
   cancellation_reason?: string | null;
   payment_status: 'pending' | 'partial' | 'paid';
   delivery_challan_number: string | null;
@@ -558,10 +559,36 @@ export function Sales() {
           );
         }
       }
+
+      // Resolve user profiles for verified cancelled_by attribution
+      const cancellerUserIds = Array.from(
+        new Set(
+          (data || [])
+            .map((inv: any) => inv.cancelled_by)
+            .filter((id): id is string => Boolean(id))
+        )
+      );
+      const cancellerMap = new Map<string, string>();
+      if (cancellerUserIds.length > 0) {
+        const { data: userProfiles } = await supabase
+          .from('user_profiles')
+          .select('id, full_name, email')
+          .in('id', cancellerUserIds);
+        (userProfiles || []).forEach((u: any) => {
+          cancellerMap.set(u.id, u.full_name || u.email || 'Unknown User');
+        });
+      }
+
       const invoicesWithPayments = (data || []).map((inv) => {
         const paidAmount = paidById.get(inv.id) || 0;
         const balance = inv.total_amount - paidAmount;
-        return { ...inv, paid_amount: paidAmount, balance_amount: balance };
+        const cancellerName = inv.cancelled_by ? (cancellerMap.get(inv.cancelled_by) || null) : null;
+        return {
+          ...inv,
+          paid_amount: paidAmount,
+          balance_amount: balance,
+          canceller_name: cancellerName,
+        };
       });
 
       const itemCounts = new Map<string, number>();
@@ -2548,20 +2575,30 @@ export function Sales() {
     },
     {
       key: 'cancellation_details',
-      label: 'Cancellation Reason & Audit Log',
-      thClassName: 'min-w-[220px]',
-      tdClassName: 'min-w-[220px]',
+      label: 'Cancellation Reason & Attribution',
+      thClassName: 'min-w-[250px]',
+      tdClassName: 'min-w-[250px]',
       render: (value: any, inv: SalesInvoice) => {
-        const reason = inv.cancellation_reason || inv.notes || 'Cancelled';
-        const displayReason = reason.split('\n')[0];
+        const reason = inv.cancellation_reason || inv.notes || null;
+        const displayReason = reason ? reason.split('\n')[0] : 'No reason recorded';
+        const hasVerifiedAuthor = Boolean(inv.cancelled_by && inv.canceller_name);
+
         return (
-          <div className="text-xs text-rose-950 bg-rose-50/80 border border-rose-200/80 rounded px-2.5 py-1" title={reason}>
-            <div className="truncate font-medium text-[11px]">{displayReason}</div>
-            {inv.cancelled_at && (
-              <div className="text-[10px] text-gray-500 mt-0.5">
-                Cancelled on: {formatDate(inv.cancelled_at.split('T')[0])}
-              </div>
-            )}
+          <div className="text-xs text-rose-950 bg-rose-50/80 border border-rose-200/80 rounded px-2.5 py-1.5 space-y-0.5" title={reason || undefined}>
+            <div className="truncate font-semibold text-[11px]">{displayReason}</div>
+            <div className="text-[10px] text-gray-600 flex flex-wrap items-center gap-x-2">
+              {inv.cancelled_at && (
+                <span>Cancelled: {formatDate(inv.cancelled_at.split('T')[0])}</span>
+              )}
+              <span>
+                By:{' '}
+                {hasVerifiedAuthor ? (
+                  <span className="font-semibold text-gray-900">{inv.canceller_name}</span>
+                ) : (
+                  <span className="italic text-gray-500">Unknown (historical record)</span>
+                )}
+              </span>
+            </div>
           </div>
         );
       },
@@ -2616,21 +2653,37 @@ export function Sales() {
           ? cancelledInvoices
           : activeInvoices;
 
+  // 1. Recognized sales: calculated strictly from POSTED, non-cancelled invoices
+  const postedCount = postedInvoices.length;
+  const postedRevenue = postedInvoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0);
+  const pendingInvoices = postedInvoices.filter((inv) => inv.payment_status === 'pending' || inv.payment_status === 'partial');
+  const pendingCount = pendingInvoices.length;
+  const pendingValue = postedInvoices.reduce((sum, inv) => sum + (Number(inv.balance_amount) || 0), 0);
+  const paidInvoices = postedInvoices.filter((inv) => inv.payment_status === 'paid');
+  const paidCount = paidInvoices.length;
+  const paidValue = postedInvoices.reduce((sum, inv) => sum + (Number(inv.paid_amount) || 0), 0);
+
+  // 2. Draft metrics: segregated from recognized sales revenue
+  const draftCount = draftInvoices.length;
+  const draftValue = draftInvoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0);
+
+  // 3. Cancelled metrics: archived totals
+  const cancelledCount = cancelledInvoices.length;
+  const cancelledValue = cancelledInvoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0);
+
   const stats = {
-    total: invoices.filter((inv) => !isCancelledInvoice(inv)).length,
-    totalRevenue: invoices
-      .filter((inv) => !isCancelledInvoice(inv))
-      .reduce((sum, inv) => sum + inv.total_amount, 0),
-    pending: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending').length,
-    pendingValue: invoices
-      .filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending')
-      .reduce((sum, inv) => sum + (inv.balance_amount || 0), 0),
-    paid: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid').length,
-    paidValue: invoices
-      .filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid')
-      .reduce((sum, inv) => sum + inv.total_amount, 0),
-    cancelled: cancelledInvoices.length,
-    cancelledValue: cancelledInvoices.reduce((sum, inv) => sum + inv.total_amount, 0),
+    total: activeInvoices.length,
+    postedCount,
+    totalRevenue: postedRevenue,
+    pending: pendingCount,
+    pendingValue,
+    paid: paidCount,
+    paidValue,
+    draftCount,
+    draftValue,
+    cancelled: cancelledCount,
+    cancelledValue,
+    activeCount: activeInvoices.length,
   };
 
   return (
@@ -2673,14 +2726,21 @@ export function Sales() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
             <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
-              {t('sales.invoices')}
+              Posted Invoices
             </span>
-            <div className="text-base font-bold text-gray-900 mt-0.5">{stats.total}</div>
+            <div className="mt-0.5 flex items-baseline justify-between">
+              <span className="text-base font-bold text-gray-900">{stats.total}</span>
+              {stats.draftCount > 0 && (
+                <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium" title="Unposted draft documents">
+                  +{stats.draftCount} draft{stats.draftCount > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
           </div>
           {isAdmin && (
             <div className="bg-white rounded-xl border border-blue-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
               <span className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide">
-                {t('common.total')} Revenue
+                Recognized Revenue
               </span>
               <div className="text-base font-bold text-blue-700 mt-0.5 leading-tight">
                 Rp {stats.totalRevenue.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
@@ -2689,7 +2749,7 @@ export function Sales() {
           )}
           <div className="bg-white rounded-xl border border-red-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
             <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">
-              {t('common.pending')}
+              {t('common.pending')} Receivables
             </span>
             <div className="mt-0.5">
               <span className="text-base font-bold text-red-600">{stats.pending}</span>
@@ -2700,7 +2760,7 @@ export function Sales() {
           </div>
           <div className="bg-white rounded-xl border border-green-200 shadow-xs px-3.5 py-2 min-h-[64px] flex flex-col justify-between">
             <span className="text-[11px] font-semibold text-green-600 uppercase tracking-wide">
-              {t('common.paid')}
+              {t('common.paid')} Received
             </span>
             <div className="mt-0.5">
               <span className="text-base font-bold text-green-600">{stats.paid}</span>
@@ -2710,6 +2770,17 @@ export function Sales() {
             </div>
           </div>
         </div>
+
+        {stats.draftCount > 0 && (
+          <div className="bg-amber-50/70 border border-amber-200 rounded-lg px-3 py-1.5 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-1">
+            <span className="font-medium">
+              Unposted Draft Invoices: <strong>{stats.draftCount} draft{stats.draftCount > 1 ? 's' : ''}</strong> (totaling Rp {stats.draftValue.toLocaleString('id-ID', { maximumFractionDigits: 0 })})
+            </span>
+            <span className="text-[11px] text-amber-700 italic">
+              Excluded from recognized sales revenue, receivables, and accounting ledger until posted.
+            </span>
+          </div>
+        )}
 
         {/* Tab Navigation: All Active, Posted, Drafts, Cancelled Archive */}
         <div className="flex items-center gap-1.5 border-b border-gray-200 pb-2">
