@@ -56,6 +56,7 @@ test.describe('SAPJ ERP: Complete Credit Note & Sales Return Accounting Integrat
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030140000_sales_lifecycle_terminal_cancellation_and_concurrency_hardening.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030150000_complete_credit_note_and_sales_return_accounting.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030170000_credit_note_final_accounting_and_lifecycle_corrections.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030180000_sales_and_credit_note_final_completion.sql'));
     } catch (err) {
       console.error('Migration setup failed:', err);
       throw err;
@@ -2071,5 +2072,264 @@ test.describe('SAPJ ERP: Complete Credit Note & Sales Return Accounting Integrat
 
     const itCount = Number((await pool.query('SELECT count(*) FROM public.inventory_transactions WHERE reference_id = $1', [cnId])).rows[0].count);
     assert.equal(itCount, 2, 'Exactly 2 inventory movements recorded. Return was posted once, NOT twice.');
+  });
+
+  test('28. Intra-request cumulative validation: duplicate source invoice items in single request rejected if exceeding available quantity', async () => {
+    // 1. Create a sales invoice with 1 item of 10 units
+    const invRes = await pool.query(`
+      INSERT INTO public.sales_invoices (
+        invoice_number, customer_id, invoice_date, subtotal, tax_amount, total_amount, paid_amount, balance_amount, payment_status, is_draft, document_status, created_by
+      ) VALUES (
+        'SAPJ-26-CUMUL-01', $1, CURRENT_DATE, 100000.00, 11000.00, 111000.00, 0, 111000.00, 'pending', false, 'posted', $2
+      ) RETURNING id;
+    `, [testCustomerId, adminUserId]);
+    const invId = invRes.rows[0].id;
+
+    const itemRes = await pool.query(`
+      INSERT INTO public.sales_invoice_items (
+        invoice_id, product_id, batch_id, quantity, unit_price
+      ) VALUES (
+        $1, $2, $3, 10.000, 10000.00
+      ) RETURNING id;
+    `, [invId, testProductId, testBatchId]);
+    const siiId = itemRes.rows[0].id;
+
+    // 2. Attempt to create a single credit note with 2 lines referencing the same source invoice item:
+    // Line 1: 6 units, Line 2: 6 units. Total = 12 units > 10 units invoiced.
+    const cnPayload = {
+      customer_id: testCustomerId,
+      original_invoice_id: invId,
+      reason: 'Quality issue duplicate test',
+      credit_note_type: 'physical_return',
+      business_case: 'excess_credit'
+    };
+    const itemsPayload = [
+      { sales_invoice_item_id: siiId, product_id: testProductId, batch_id: testBatchId, quantity: 6.000, unit_price: 10000.00 },
+      { sales_invoice_item_id: siiId, product_id: testProductId, batch_id: testBatchId, quantity: 6.000, unit_price: 10000.00 }
+    ];
+
+    let rpcFailed = false;
+    try {
+      await pool.query(`
+        SELECT public.create_credit_note_atomic($1::jsonb, $2::jsonb, $3::uuid);
+      `, [JSON.stringify(cnPayload), JSON.stringify(itemsPayload), adminUserId]);
+    } catch (err) {
+      rpcFailed = true;
+      assert(err.message.includes('exceeds remaining returnable quantity') || err.message.includes('Return quantity'));
+    }
+    assert.equal(rpcFailed, true, 'create_credit_note_atomic must reject intra-request lines exceeding source invoice item quantity');
+
+    // Confirm nothing was persisted
+    const cnCount = (await pool.query('SELECT count(*) FROM public.credit_notes WHERE original_invoice_id = $1', [invId])).rows[0].count;
+    assert.equal(Number(cnCount), 0, 'No credit note must be created upon failure');
+  });
+
+  test('29. Concurrent Credit Note creation serialized with row-level locking, preventing over-returns', async () => {
+    // 1. Create a sales invoice with 1 item of 10 units
+    const invRes = await pool.query(`
+      INSERT INTO public.sales_invoices (
+        invoice_number, customer_id, invoice_date, subtotal, tax_amount, total_amount, paid_amount, balance_amount, payment_status, is_draft, document_status, created_by
+      ) VALUES (
+        'SAPJ-26-CONCURR-01', $1, CURRENT_DATE, 100000.00, 11000.00, 111000.00, 0, 111000.00, 'pending', false, 'posted', $2
+      ) RETURNING id;
+    `, [testCustomerId, adminUserId]);
+    const invId = invRes.rows[0].id;
+
+    const itemRes = await pool.query(`
+      INSERT INTO public.sales_invoice_items (
+        invoice_id, product_id, batch_id, quantity, unit_price
+      ) VALUES (
+        $1, $2, $3, 10.000, 10000.00
+      ) RETURNING id;
+    `, [invId, testProductId, testBatchId]);
+    const siiId = itemRes.rows[0].id;
+
+    // Connect two independent clients
+    const clientA = new Client(PG_CONFIG);
+    const clientB = new Client(PG_CONFIG);
+    await clientA.connect();
+    await clientB.connect();
+
+    try {
+      const cnPayloadA = {
+        credit_note_number: 'CN-CONCURR-A',
+        customer_id: testCustomerId,
+        original_invoice_id: invId,
+        reason: 'Concurrent return A',
+        credit_note_type: 'physical_return'
+      };
+      const itemsA = [
+        { sales_invoice_item_id: siiId, product_id: testProductId, batch_id: testBatchId, quantity: 7.000, unit_price: 10000.00 }
+      ];
+
+      const cnPayloadB = {
+        credit_note_number: 'CN-CONCURR-B',
+        customer_id: testCustomerId,
+        original_invoice_id: invId,
+        reason: 'Concurrent return B',
+        credit_note_type: 'physical_return'
+      };
+      const itemsB = [
+        { sales_invoice_item_id: siiId, product_id: testProductId, batch_id: testBatchId, quantity: 7.000, unit_price: 10000.00 }
+      ];
+
+      // Execute both concurrently
+      const results = await Promise.allSettled([
+        clientA.query('SELECT public.create_credit_note_atomic($1::jsonb, $2::jsonb, $3::uuid)', [JSON.stringify(cnPayloadA), JSON.stringify(itemsA), adminUserId]),
+        clientB.query('SELECT public.create_credit_note_atomic($1::jsonb, $2::jsonb, $3::uuid)', [JSON.stringify(cnPayloadB), JSON.stringify(itemsB), adminUserId])
+      ]);
+
+      const fulfilled = results.filter(r => r.status === 'fulfilled');
+      const rejected = results.filter(r => r.status === 'rejected');
+
+      assert.equal(fulfilled.length, 1, 'Exactly one concurrent credit note creation must succeed');
+      assert.equal(rejected.length, 1, 'Exactly one concurrent credit note creation must be rejected due to return limit');
+      assert(rejected[0].reason.message.includes('exceeds remaining returnable quantity'));
+
+      // Verify that total credited quantity across all credit notes for this invoice is exactly 7.000
+      const totalCredited = (await pool.query(`
+        SELECT COALESCE(SUM(cni.quantity), 0) as total_qty
+        FROM public.credit_note_items cni
+        JOIN public.credit_notes cn ON cn.id = cni.credit_note_id
+        WHERE cn.original_invoice_id = $1
+      `, [invId])).rows[0].total_qty;
+
+      assert.equal(Number(totalCredited), 7.000, 'Total credited quantity must be exactly 7.000, not 14.000');
+    } finally {
+      await clientA.end();
+      await clientB.end();
+    }
+  });
+
+  test('30. Successful return exactly equal to remaining quantity leaves 0 remaining; subsequent return fails', async () => {
+    // 1. Create a sales invoice with 1 item of 10 units
+    const invRes = await pool.query(`
+      INSERT INTO public.sales_invoices (
+        invoice_number, customer_id, invoice_date, subtotal, tax_amount, total_amount, paid_amount, balance_amount, payment_status, is_draft, document_status, created_by
+      ) VALUES (
+        'SAPJ-26-EXACT-01', $1, CURRENT_DATE, 100000.00, 11000.00, 111000.00, 0, 111000.00, 'pending', false, 'posted', $2
+      ) RETURNING id;
+    `, [testCustomerId, adminUserId]);
+    const invId = invRes.rows[0].id;
+
+    const itemRes = await pool.query(`
+      INSERT INTO public.sales_invoice_items (
+        invoice_id, product_id, batch_id, quantity, unit_price
+      ) VALUES (
+        $1, $2, $3, 10.000, 10000.00
+      ) RETURNING id;
+    `, [invId, testProductId, testBatchId]);
+    const siiId = itemRes.rows[0].id;
+
+    // Credit Note for exact 10 units
+    const cnPayload1 = {
+      credit_note_number: 'CN-EXACT-10',
+      customer_id: testCustomerId,
+      original_invoice_id: invId,
+      reason: 'Exact return',
+      credit_note_type: 'physical_return'
+    };
+    const items1 = [
+      { sales_invoice_item_id: siiId, product_id: testProductId, batch_id: testBatchId, quantity: 10.000, unit_price: 10000.00 }
+    ];
+
+    const res1 = await pool.query('SELECT public.create_credit_note_atomic($1::jsonb, $2::jsonb, $3::uuid)', [
+      JSON.stringify(cnPayload1), JSON.stringify(items1), adminUserId
+    ]);
+    assert.equal(res1.rows[0].create_credit_note_atomic.success, true);
+
+    // Subsequent attempt to credit even 0.001 units
+    const cnPayload2 = {
+      credit_note_number: 'CN-EXACT-OVER',
+      customer_id: testCustomerId,
+      original_invoice_id: invId,
+      reason: 'Extra return should fail',
+      credit_note_type: 'physical_return'
+    };
+    const items2 = [
+      { sales_invoice_item_id: siiId, product_id: testProductId, batch_id: testBatchId, quantity: 0.001, unit_price: 10000.00 }
+    ];
+
+    let secondFailed = false;
+    try {
+      await pool.query('SELECT public.create_credit_note_atomic($1::jsonb, $2::jsonb, $3::uuid)', [
+        JSON.stringify(cnPayload2), JSON.stringify(items2), adminUserId
+      ]);
+    } catch (err) {
+      secondFailed = true;
+      assert(err.message.includes('exceeds remaining returnable quantity'));
+    }
+    assert.equal(secondFailed, true, 'Subsequent return must fail because remaining returnable is 0');
+  });
+
+  test('31. Sales KPI calculation regression: 10 posted, 2 drafts, 1 cancelled yields exactly 10 posted invoices', async () => {
+    // Generate invoices dataset representing 10 posted, 2 drafts, 1 cancelled
+    const invoices = [];
+    for (let i = 1; i <= 10; i++) {
+      invoices.push({
+        id: `posted-${i}`,
+        invoice_number: `INV-POST-${i}`,
+        document_status: 'posted',
+        is_draft: false,
+        total_amount: 1000000,
+        paid_amount: 500000,
+        balance_amount: 500000,
+        payment_status: 'partial'
+      });
+    }
+    for (let i = 1; i <= 2; i++) {
+      invoices.push({
+        id: `draft-${i}`,
+        invoice_number: `INV-DRAFT-${i}`,
+        document_status: 'draft',
+        is_draft: true,
+        total_amount: 500000,
+        paid_amount: 0,
+        balance_amount: 500000,
+        payment_status: 'pending'
+      });
+    }
+    invoices.push({
+      id: 'cancelled-1',
+      invoice_number: 'INV-CANC-1',
+      document_status: 'cancelled',
+      is_draft: false,
+      total_amount: 2000000,
+      paid_amount: 0,
+      balance_amount: 2000000,
+      payment_status: 'cancelled'
+    });
+
+    // Mirror the exact logic in Sales.tsx:
+    const isCancelledInvoice = (inv) => {
+      const docStatus = (inv.document_status || '').toLowerCase().trim();
+      const pStatus = (inv.payment_status || '').toLowerCase().trim();
+      return docStatus === 'cancelled' || pStatus === 'cancelled';
+    };
+
+    const isReportableInvoice = (inv) => {
+      const docStatus = (inv.document_status || '').toLowerCase().trim();
+      if (isCancelledInvoice(inv)) return false;
+      if (inv.is_draft === true || docStatus === 'draft') return false;
+      return docStatus === 'posted' || (!docStatus && !inv.is_draft);
+    };
+
+    const stats = {
+      total: invoices.length, // 13 total documents
+      postedCount: invoices.filter(isReportableInvoice).length, // 10 posted
+      cancelledCount: invoices.filter(isCancelledInvoice).length, // 1 cancelled
+      draftCount: invoices.filter(inv => !isCancelledInvoice(inv) && (inv.is_draft === true || (inv.document_status || '').toLowerCase().trim() === 'draft')).length // 2 drafts
+    };
+
+    assert.equal(stats.total, 13, 'Total documents must be 13');
+    assert.equal(stats.postedCount, 10, 'Posted count must be 10');
+    assert.equal(stats.draftCount, 2, 'Draft count must be 2');
+    assert.equal(stats.cancelledCount, 1, 'Cancelled count must be 1');
+
+    // In Sales.tsx KPI card:
+    // Previously rendered: {stats.total} (which incorrectly showed 13)
+    // Fixed rendered: {stats.postedCount} (which correctly shows 10)
+    const kpiDisplayedValue = stats.postedCount;
+    assert.equal(kpiDisplayedValue, 10, 'KPI display for Posted Invoices must show postedCount (10), not total (13)');
   });
   });

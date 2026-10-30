@@ -151,9 +151,8 @@ VALUES ('5100', 'Cost of Goods Sold', 'expense', 'debit'),
        ('4100', 'Sales Revenue', 'revenue', 'credit'),
        ('1120', 'Accounts Receivable', 'asset', 'debit'),
        ('1102', 'Bank Central Asia - IDR', 'asset', 'debit'),
-       ('4300', 'Sales Returns & Allowances', 'revenue', 'debit'),
+       ('4300', 'Sales Returns & Allowances', 'contra', 'debit'),
        ('2130', 'Output PPN Payable', 'liability', 'credit'),
-       ('5190', 'Inventory Impairment & Damage Loss', 'expense', 'debit'),
        ('2140', 'Customer Credit & Advances', 'liability', 'credit')
 ON CONFLICT (code) DO UPDATE SET normal_balance = EXCLUDED.normal_balance, account_type = EXCLUDED.account_type;
 
@@ -240,21 +239,7 @@ CREATE TABLE IF NOT EXISTS public.payment_vouchers (
   created_by uuid,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now(),
-  payment_type text DEFAULT 'payment',
-  status text DEFAULT 'approved',
   is_posted boolean DEFAULT true
-);
-
-CREATE TABLE IF NOT EXISTS public.credit_note_allocations (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  allocation_number text NOT NULL,
-  credit_note_id uuid NOT NULL,
-  target_invoice_id uuid NOT NULL,
-  allocated_amount numeric(18,2) NOT NULL CHECK (allocated_amount > 0),
-  allocated_date date NOT NULL DEFAULT CURRENT_DATE,
-  notes text,
-  created_by uuid,
-  created_at timestamptz DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS public.inventory_transactions (

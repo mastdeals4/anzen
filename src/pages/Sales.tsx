@@ -2738,7 +2738,7 @@ export function Sales() {
               Posted Invoices
             </span>
             <div className="mt-0.5 flex items-baseline justify-between">
-              <span className="text-base font-bold text-gray-900">{stats.total}</span>
+              <span className="text-base font-bold text-gray-900">{stats.postedCount}</span>
               {stats.draftCount > 0 && (
                 <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium" title="Unposted draft documents">
                   +{stats.draftCount} draft{stats.draftCount > 1 ? 's' : ''}

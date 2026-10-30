@@ -52,6 +52,9 @@ test.describe('Real PostgreSQL Migration, View Compatibility & Concurrency Verif
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030120000_sales_invoice_canonical_lifecycle_and_reporting_hardening.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030130000_sales_cancellation_hardening_corrections.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030140000_sales_lifecycle_terminal_cancellation_and_concurrency_hardening.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030150000_complete_credit_note_and_sales_return_accounting.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030170000_credit_note_final_accounting_and_lifecycle_corrections.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030180000_sales_and_credit_note_final_completion.sql'));
     } catch (err) {
       console.error('Setup failed:', err);
       throw err;
@@ -509,6 +512,307 @@ test.describe('Real PostgreSQL Migration, View Compatibility & Concurrency Verif
       throw err;
     } finally {
       client.release();
+    }
+  });
+
+  test('7. SO-to-DC-to-Invoice Status View: Counts distinct invoice documents, not line items, excluding drafts & cancelled', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const custRes = await client.query("INSERT INTO customers (company_name) VALUES ('SO Counts Test Customer') RETURNING id;");
+      const custId = custRes.rows[0].id;
+
+      const prodRes = await client.query("INSERT INTO products (product_name) VALUES ('SO Counts Product') RETURNING id;");
+      const prodId = prodRes.rows[0].id;
+
+      const batchRes = await client.query(`
+        INSERT INTO batches (product_id, batch_number, current_stock)
+        VALUES ('${prodId}', 'B-SO-COUNT', 200) RETURNING id;
+      `);
+      const batchId = batchRes.rows[0].id;
+
+      // 1. Create SO with 100 kg ordered
+      const soRes = await client.query(`
+        INSERT INTO sales_orders (so_number, customer_id, total_amount)
+        VALUES ('SO-DISTINCT-01', '${custId}', 1000000) RETURNING id;
+      `);
+      const soId = soRes.rows[0].id;
+
+      await client.query(`
+        INSERT INTO sales_order_items (sales_order_id, product_id, quantity, unit_price)
+        VALUES ('${soId}', '${prodId}', 100, 10000);
+      `);
+
+      // 2. Create DC with 100 kg delivered (approved)
+      const dcRes = await client.query(`
+        INSERT INTO delivery_challans (challan_number, customer_id, sales_order_id, approval_status)
+        VALUES ('DC-DISTINCT-01', '${custId}', '${soId}', 'approved') RETURNING id;
+      `);
+      const dcId = dcRes.rows[0].id;
+
+      const dciRes = await client.query(`
+        INSERT INTO delivery_challan_items (challan_id, product_id, batch_id, quantity)
+        VALUES ('${dcId}', '${prodId}', '${batchId}', 100) RETURNING id;
+      `);
+      const dciId = dciRes.rows[0].id;
+
+      // 3. Invoice 1 (Posted, 3 items): 10 kg + 15 kg + 15 kg = 40 kg
+      const inv1Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, sales_order_id, document_status, is_draft, linked_challan_ids)
+        VALUES ('INV-DST-001', '${custId}', '${soId}', 'posted', false, ARRAY['${dcId}']) RETURNING id;
+      `);
+      const inv1Id = inv1Res.rows[0].id;
+      await client.query(`
+        INSERT INTO sales_invoice_items (invoice_id, product_id, batch_id, quantity, delivery_challan_item_id)
+        VALUES ('${inv1Id}', '${prodId}', '${batchId}', 10, '${dciId}'),
+               ('${inv1Id}', '${prodId}', '${batchId}', 15, '${dciId}'),
+               ('${inv1Id}', '${prodId}', '${batchId}', 15, '${dciId}');
+      `);
+
+      // 4. Invoice 2 (Draft, 1 item): 15 kg -> MUST BE EXCLUDED FROM REPORTABLE STATUS
+      const inv2Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, sales_order_id, document_status, is_draft, linked_challan_ids)
+        VALUES ('INV-DST-002-DRAFT', '${custId}', '${soId}', 'draft', true, ARRAY['${dcId}']) RETURNING id;
+      `);
+      const inv2Id = inv2Res.rows[0].id;
+      await client.query(`
+        INSERT INTO sales_invoice_items (invoice_id, product_id, batch_id, quantity, delivery_challan_item_id)
+        VALUES ('${inv2Id}', '${prodId}', '${batchId}', 15, '${dciId}');
+      `);
+
+      // 5. Invoice 3 (Cancelled, 2 items): 10 kg + 10 kg = 20 kg -> MUST BE EXCLUDED FROM REPORTABLE STATUS
+      const inv3Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, sales_order_id, document_status, is_draft, linked_challan_ids, notes)
+        VALUES ('INV-DST-003-CANC', '${custId}', '${soId}', 'cancelled', false, ARRAY['${dcId}'], '[CANCELLED: Customer amended terms]') RETURNING id;
+      `);
+      const inv3Id = inv3Res.rows[0].id;
+      await client.query(`
+        INSERT INTO sales_invoice_items (invoice_id, product_id, batch_id, quantity, delivery_challan_item_id)
+        VALUES ('${inv3Id}', '${prodId}', '${batchId}', 10, '${dciId}'),
+               ('${inv3Id}', '${prodId}', '${batchId}', 10, '${dciId}');
+      `);
+
+      // 6. Invoice 4 (Replacement Posted, 2 items): 10 kg + 10 kg = 20 kg
+      const inv4Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, sales_order_id, document_status, is_draft, linked_challan_ids)
+        VALUES ('INV-DST-004-REPL', '${custId}', '${soId}', 'posted', false, ARRAY['${dcId}']) RETURNING id;
+      `);
+      const inv4Id = inv4Res.rows[0].id;
+      await client.query(`
+        INSERT INTO sales_invoice_items (invoice_id, product_id, batch_id, quantity, delivery_challan_item_id)
+        VALUES ('${inv4Id}', '${prodId}', '${batchId}', 10, '${dciId}'),
+               ('${inv4Id}', '${prodId}', '${batchId}', 10, '${dciId}');
+      `);
+
+      // Query view for this sales order
+      const statusRes = await client.query(`
+        SELECT * FROM so_delivery_invoice_status WHERE so_id = '${soId}';
+      `);
+      assert.equal(statusRes.rowCount, 1);
+      const row = statusRes.rows[0];
+
+      // Verification:
+      // invoice_count MUST BE 2 (exactly INV-DST-001 and INV-DST-004-REPL)
+      // It must NOT be 5 (3 lines from inv1 + 2 lines from inv4)
+      // And must NOT include draft (inv2) or cancelled (inv3)
+      assert.equal(Number(row.invoice_count), 2, 'invoice_count must count distinct invoice headers (2), not lines (5)');
+      assert.equal(Number(row.ordered_qty), 100, 'ordered_qty must be 100');
+      assert.equal(Number(row.approved_delivered_qty), 100, 'approved_delivered_qty must be 100');
+      // invoiced_qty: 40 kg (from inv1) + 20 kg (from inv4) = 60 kg
+      assert.equal(Number(row.invoiced_qty), 60, 'invoiced_qty must sum only reportable items (40 + 20 = 60)');
+      assert.equal(row.delivery_status, 'completed');
+      assert.equal(row.invoice_status, 'partial');
+
+      await client.query('ROLLBACK');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+
+  test('8. Legacy invoice INSERT/UPDATE trigger matrix (5 cases) and terminal cancellation', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const custRes = await client.query("INSERT INTO customers (company_name) VALUES ('Trigger Matrix Cust') RETURNING id;");
+      const custId = custRes.rows[0].id;
+
+      // Case 1: document_status = NULL, is_draft = true -> document_status = 'draft', is_draft = true
+      const c1Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, document_status, is_draft)
+        VALUES ('INV-TRG-CASE-1', '${custId}', NULL, true) RETURNING document_status, is_draft;
+      `);
+      assert.equal(c1Res.rows[0].document_status, 'draft', 'Case 1: document_status must be draft');
+      assert.equal(c1Res.rows[0].is_draft, true, 'Case 1: is_draft must be true');
+
+      // Case 2: document_status = NULL, is_draft = false -> document_status = 'posted', is_draft = false
+      const c2Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, document_status, is_draft)
+        VALUES ('INV-TRG-CASE-2', '${custId}', NULL, false) RETURNING document_status, is_draft;
+      `);
+      assert.equal(c2Res.rows[0].document_status, 'posted', 'Case 2: document_status must be posted');
+      assert.equal(c2Res.rows[0].is_draft, false, 'Case 2: is_draft must be false');
+
+      // Case 3: document_status = 'draft', is_draft = false -> status takes precedence
+      const c3Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, document_status, is_draft)
+        VALUES ('INV-TRG-CASE-3', '${custId}', 'draft', false) RETURNING document_status, is_draft;
+      `);
+      assert.equal(c3Res.rows[0].document_status, 'draft', 'Case 3: document_status takes precedence as draft');
+      assert.equal(c3Res.rows[0].is_draft, true, 'Case 3: is_draft forced to true');
+
+      // Case 4: document_status = 'posted', is_draft = true -> status takes precedence
+      const c4Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, document_status, is_draft)
+        VALUES ('INV-TRG-CASE-4', '${custId}', 'posted', true) RETURNING document_status, is_draft;
+      `);
+      assert.equal(c4Res.rows[0].document_status, 'posted', 'Case 4: document_status takes precedence as posted');
+      assert.equal(c4Res.rows[0].is_draft, false, 'Case 4: is_draft forced to false');
+
+      // Case 5: Terminal cancellation enforcement
+      const c5Res = await client.query(`
+        INSERT INTO sales_invoices (invoice_number, customer_id, document_status, is_draft)
+        VALUES ('INV-TRG-CASE-5', '${custId}', 'cancelled', false) RETURNING id;
+      `);
+      const c5Id = c5Res.rows[0].id;
+
+      // Attempt 1 to reopen: SET document_status = 'posted'
+      let reopen1Failed = false;
+      await client.query('SAVEPOINT sp_reopen_1;');
+      try {
+        await client.query(`UPDATE sales_invoices SET document_status = 'posted' WHERE id = '${c5Id}';`);
+      } catch (err) {
+        reopen1Failed = true;
+        await client.query('ROLLBACK TO SAVEPOINT sp_reopen_1;');
+        assert(err.message.includes('cancellation is terminal'));
+      }
+      assert.equal(reopen1Failed, true, 'Terminal cancellation must prevent update to posted');
+
+      // Attempt 2 to reopen: SET is_draft = true, document_status = 'draft'
+      let reopen2Failed = false;
+      await client.query('SAVEPOINT sp_reopen_2;');
+      try {
+        await client.query(`UPDATE sales_invoices SET is_draft = true, document_status = 'draft' WHERE id = '${c5Id}';`);
+      } catch (err) {
+        reopen2Failed = true;
+        await client.query('ROLLBACK TO SAVEPOINT sp_reopen_2;');
+        assert(err.message.includes('cancellation is terminal'));
+      }
+      assert.equal(reopen2Failed, true, 'Terminal cancellation must prevent update to draft');
+
+      await client.query('ROLLBACK');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+
+  test('9. Real concurrent Delivery Challan invoicing via create_sales_invoice_atomic prevents over-invoicing', async () => {
+    const adminId = '00000000-0000-0000-0000-000000000001';
+    const clientSetup = await pool.connect();
+    let custId, prodId, batchId, soId, dcId, dciId;
+
+    try {
+      const custRes = await clientSetup.query("INSERT INTO customers (company_name) VALUES ('Concurrent DC Cust') RETURNING id;");
+      custId = custRes.rows[0].id;
+      const prodRes = await clientSetup.query("INSERT INTO products (product_name) VALUES ('Concurrent DC Prod') RETURNING id;");
+      prodId = prodRes.rows[0].id;
+      const batchRes = await clientSetup.query(`
+        INSERT INTO batches (product_id, batch_number, current_stock)
+        VALUES ('${prodId}', 'B-DC-CONC', 100) RETURNING id;
+      `);
+      batchId = batchRes.rows[0].id;
+
+      const soRes = await clientSetup.query(`
+        INSERT INTO sales_orders (so_number, customer_id) VALUES ('SO-DC-CONC-01', '${custId}') RETURNING id;
+      `);
+      soId = soRes.rows[0].id;
+
+      const dcRes = await clientSetup.query(`
+        INSERT INTO delivery_challans (challan_number, customer_id, sales_order_id, approval_status)
+        VALUES ('DC-CONC-01', '${custId}', '${soId}', 'approved') RETURNING id;
+      `);
+      dcId = dcRes.rows[0].id;
+
+      // Delivery Challan item has 10 units
+      const dciRes = await clientSetup.query(`
+        INSERT INTO delivery_challan_items (challan_id, product_id, batch_id, quantity)
+        VALUES ('${dcId}', '${prodId}', '${batchId}', 10) RETURNING id;
+      `);
+      dciId = dciRes.rows[0].id;
+    } finally {
+      clientSetup.release();
+    }
+
+    // Connect two independent clients
+    const clientA = new Client(PG_CONFIG);
+    const clientB = new Client(PG_CONFIG);
+    await clientA.connect();
+    await clientB.connect();
+
+    try {
+      await clientA.query(`SET request.jwt.claim.sub = '${adminId}';`);
+      await clientB.query(`SET request.jwt.claim.sub = '${adminId}';`);
+
+      const invHeaderA = {
+        invoice_number: 'INV-CONC-DC-A',
+        customer_id: custId,
+        sales_order_id: soId,
+        document_status: 'posted'
+      };
+      const invItemsA = [
+        { product_id: prodId, batch_id: batchId, delivery_challan_item_id: dciId, quantity: 8, unit_price: 100 }
+      ];
+
+      const invHeaderB = {
+        invoice_number: 'INV-CONC-DC-B',
+        customer_id: custId,
+        sales_order_id: soId,
+        document_status: 'posted'
+      };
+      const invItemsB = [
+        { product_id: prodId, batch_id: batchId, delivery_challan_item_id: dciId, quantity: 8, unit_price: 100 }
+      ];
+
+      // Two concurrent calls: each attempts to invoice 8 units out of 10 available
+      const results = await Promise.allSettled([
+        clientA.query('SELECT create_sales_invoice_atomic($1::jsonb, $2::jsonb)', [
+          JSON.stringify(invHeaderA), JSON.stringify(invItemsA)
+        ]),
+        clientB.query('SELECT create_sales_invoice_atomic($1::jsonb, $2::jsonb)', [
+          JSON.stringify(invHeaderB), JSON.stringify(invItemsB)
+        ])
+      ]);
+
+      const fulfilled = results.filter(r => r.status === 'fulfilled');
+      const rejected = results.filter(r => r.status === 'rejected');
+
+      assert.equal(fulfilled.length, 1, 'Exactly one concurrent invoice creation must succeed');
+      assert.equal(rejected.length, 1, 'The competing concurrent invoice creation must be rejected');
+      assert(
+        rejected[0].reason.message.includes('exceeds available remaining quantity') ||
+        rejected[0].reason.message.includes('exceeds')
+      );
+
+      // Verify that total invoiced against the DC item is exactly 8 units, not 16 units
+      const dciCheck = (await pool.query(`
+        SELECT COALESCE(SUM(sii.quantity), 0) as total_invoiced
+        FROM sales_invoice_items sii
+        JOIN sales_invoices si ON si.id = sii.invoice_id
+        WHERE sii.delivery_challan_item_id = '${dciId}'
+          AND is_reportable_sales_invoice(si.document_status, si.is_draft, si.notes);
+      `)).rows[0].total_invoiced;
+
+      assert.equal(Number(dciCheck), 8, 'Total invoiced quantity must be exactly 8, preserving remaining 2');
+    } finally {
+      await clientA.end();
+      await clientB.end();
     }
   });
 });

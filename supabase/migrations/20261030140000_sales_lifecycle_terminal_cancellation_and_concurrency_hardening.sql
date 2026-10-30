@@ -15,6 +15,18 @@ BEGIN;
 -- an omitted status from a status explicitly supplied by legacy or modern callers.
 ALTER TABLE public.sales_invoices ALTER COLUMN document_status DROP DEFAULT;
 
+-- Ensure sales_orders compatibility column order_date
+ALTER TABLE public.sales_orders ADD COLUMN IF NOT EXISTS order_date date;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'sales_orders' AND column_name = 'so_date'
+  ) THEN
+    UPDATE public.sales_orders SET order_date = COALESCE(so_date, created_at::date) WHERE order_date IS NULL;
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION public.trg_sync_sales_invoice_document_status()
 RETURNS trigger
 LANGUAGE plpgsql

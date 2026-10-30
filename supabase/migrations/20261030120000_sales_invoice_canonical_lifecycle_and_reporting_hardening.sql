@@ -32,6 +32,9 @@ ALTER TABLE public.sales_invoices
 ALTER TABLE public.sales_invoices
   ADD COLUMN IF NOT EXISTS cancellation_reason text;
 
+ALTER TABLE public.finance_expenses
+  ADD COLUMN IF NOT EXISTS sales_order_id uuid REFERENCES public.sales_orders(id);
+
 CREATE INDEX IF NOT EXISTS idx_sales_invoices_document_status
   ON public.sales_invoices(document_status, invoice_date);
 
