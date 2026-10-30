@@ -1,7 +1,8 @@
 -- ==============================================================================
 -- Migration: 20261030140000_sales_lifecycle_terminal_cancellation_and_concurrency_hardening.sql
 -- Description: Sales invoice lifecycle terminal cancellation, DC concurrency locking,
---              item-level DC invoicing quantity rollup, and SO view fan-out elimination.
+--              item-level DC invoicing quantity rollup, hardened authorization guards,
+--              and production-compatible view contracts.
 -- ==============================================================================
 
 BEGIN;
@@ -147,7 +148,7 @@ DECLARE
 BEGIN
   SELECT role INTO v_role FROM public.user_profiles WHERE id = auth.uid();
   IF v_role IS NULL OR v_role NOT IN ('admin', 'accounts', 'sales', 'warehouse') THEN
-    RAISE EXCEPTION 'Permission denied: role % cannot create sales invoices', v_role;
+    RAISE EXCEPTION 'Permission denied: role % cannot create sales invoices', COALESCE(v_role, 'none');
   END IF;
   IF jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'Sales invoice requires at least one product line';
@@ -207,7 +208,7 @@ BEGIN
 
     IF NOT FOUND OR v_dc.product_id IS DISTINCT FROM v_product OR v_dc.batch_id IS DISTINCT FROM v_batch
        OR v_dc.customer_id IS DISTINCT FROM (p_invoice->>'customer_id')::uuid
-       OR v_dc.approval_status <> 'approved' THEN
+       OR v_dc.approval_status::text <> 'approved' THEN
       RAISE EXCEPTION 'Invoice line source Delivery Challan is invalid or not approved';
     END IF;
 
@@ -281,6 +282,7 @@ BEGIN
 END;
 $function$;
 
+REVOKE EXECUTE ON FUNCTION public.create_sales_invoice_atomic(jsonb, jsonb) FROM anon, PUBLIC;
 GRANT EXECUTE ON FUNCTION public.create_sales_invoice_atomic(jsonb, jsonb) TO authenticated, service_role;
 
 -- ==============================================================================
@@ -322,8 +324,8 @@ DECLARE
   v_req_dc_qty numeric;
 BEGIN
   SELECT role INTO v_role FROM public.user_profiles WHERE id = auth.uid();
-  IF v_role NOT IN ('admin', 'accounts', 'sales') THEN
-    RAISE EXCEPTION 'Permission denied: role % cannot update sales invoices', v_role;
+  IF v_role IS NULL OR v_role NOT IN ('admin', 'accounts', 'sales') THEN
+    RAISE EXCEPTION 'Permission denied: role % cannot update sales invoices', COALESCE(v_role, 'none');
   END IF;
 
   -- 1. Fetch and lock existing invoice record
@@ -399,7 +401,7 @@ BEGIN
     FROM public.delivery_challan_items dci
     JOIN public.delivery_challans dc ON dc.id = dci.challan_id
     WHERE dci.id = ANY(v_new_dc_item_ids)
-      AND dc.approval_status <> 'approved'
+      AND dc.approval_status::text <> 'approved'
   ) THEN
     RAISE EXCEPTION 'All source Delivery Challans must be approved';
   END IF;
@@ -567,6 +569,8 @@ BEGIN
 END;
 $function$;
 
+REVOKE EXECUTE ON FUNCTION public.update_sales_invoice_atomic(uuid, jsonb, jsonb[]) FROM anon, PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.update_sales_invoice_atomic(uuid, jsonb, jsonb, uuid) FROM anon, PUBLIC;
 GRANT EXECUTE ON FUNCTION public.update_sales_invoice_atomic(uuid, jsonb, jsonb[]) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.update_sales_invoice_atomic(uuid, jsonb, jsonb, uuid) TO authenticated, service_role;
 
@@ -586,9 +590,17 @@ SET search_path = public, pg_temp
 AS $function$
 DECLARE
   v_role text;
+  v_caller uuid := auth.uid();
   v_blocking_invoices text;
 BEGIN
-  SELECT role INTO v_role FROM public.user_profiles WHERE id = COALESCE(auth.uid(), p_user);
+  IF v_caller IS NULL THEN
+    v_caller := p_user;
+  END IF;
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT role INTO v_role FROM public.user_profiles WHERE id = v_caller;
   IF v_role IS NULL OR v_role NOT IN ('admin','accounts','warehouse') THEN
     RAISE EXCEPTION 'Not authorized to cancel delivery challans';
   END IF;
@@ -623,17 +635,18 @@ BEGIN
   UPDATE public.delivery_challans
      SET approval_status   = 'cancelled',
          rejection_reason  = COALESCE(p_reason, rejection_reason),
-         rejected_by       = COALESCE(p_user, auth.uid()),
+         rejected_by       = v_caller,
          rejected_at       = now(),
          updated_at        = now()
    WHERE id = p_dc_id;
 END;
 $function$;
 
+REVOKE EXECUTE ON FUNCTION public.fn_cancel_delivery_challan(uuid, uuid, text) FROM anon, PUBLIC;
 GRANT EXECUTE ON FUNCTION public.fn_cancel_delivery_challan(uuid, uuid, text) TO authenticated, service_role;
 
 -- ==============================================================================
--- 5. DC Invoicing Summary View (Item-Level Quantity Aggregation)
+-- 5. DC Invoicing Summary View (Item-Level Quantity Aggregation, Production Contract)
 -- ==============================================================================
 
 CREATE OR REPLACE VIEW public.dc_invoicing_summary WITH (security_invoker = true) AS
@@ -643,9 +656,7 @@ WITH dc_item_inv AS (
     dci.challan_id,
     dci.quantity AS approved_quantity,
     COALESCE(SUM(sii.quantity), 0::numeric) AS invoiced_quantity,
-    GREATEST(0::numeric, dci.quantity - COALESCE(SUM(sii.quantity), 0::numeric)) AS remaining_quantity,
-    array_remove(array_agg(DISTINCT si.invoice_number), NULL::text) AS item_invoice_numbers,
-    array_remove(array_agg(DISTINCT si.id), NULL::uuid) AS item_invoice_ids
+    GREATEST(0::numeric, dci.quantity - COALESCE(SUM(sii.quantity), 0::numeric)) AS remaining_quantity
   FROM public.delivery_challan_items dci
   LEFT JOIN (
     public.sales_invoice_items sii
@@ -654,22 +665,28 @@ WITH dc_item_inv AS (
   ) ON sii.delivery_challan_item_id = dci.id
   GROUP BY dci.id, dci.challan_id, dci.quantity
 ),
-dc_rollup AS (
+dc_item_totals AS (
   SELECT
     challan_id,
-    count(*) AS total_items,
-    count(CASE WHEN invoiced_quantity = 0 THEN 1 END) AS not_invoiced_items,
-    count(CASE WHEN invoiced_quantity >= approved_quantity THEN 1 END) AS invoiced_items,
-    count(CASE WHEN invoiced_quantity > 0 AND invoiced_quantity < approved_quantity THEN 1 END) AS partially_invoiced_items,
-    sum(approved_quantity) AS total_quantity,
-    sum(invoiced_quantity) AS total_invoiced_quantity,
-    sum(remaining_quantity) AS total_remaining_quantity,
-    array_remove(array_agg(DISTINCT unnest_num), NULL::text) AS invoice_numbers,
-    array_remove(array_agg(DISTINCT unnest_id), NULL::uuid) AS invoice_ids
+    count(*)::bigint AS total_items,
+    count(CASE WHEN invoiced_quantity = 0 THEN 1 END)::bigint AS not_invoiced_items,
+    count(CASE WHEN invoiced_quantity >= approved_quantity THEN 1 END)::bigint AS invoiced_items,
+    count(CASE WHEN invoiced_quantity > 0 AND invoiced_quantity < approved_quantity THEN 1 END)::bigint AS partially_invoiced_items,
+    COALESCE(sum(approved_quantity), 0::numeric) AS total_quantity,
+    COALESCE(sum(invoiced_quantity), 0::numeric) AS total_invoiced_quantity,
+    COALESCE(sum(remaining_quantity), 0::numeric) AS total_remaining_quantity
   FROM dc_item_inv
-  LEFT JOIN LATERAL unnest(item_invoice_numbers) AS unnest_num ON true
-  LEFT JOIN LATERAL unnest(item_invoice_ids) AS unnest_id ON true
   GROUP BY challan_id
+),
+dc_invoices AS (
+  SELECT
+    dci.challan_id,
+    COALESCE(array_agg(DISTINCT si.invoice_number) FILTER (WHERE si.invoice_number IS NOT NULL), ARRAY[]::text[]) AS invoice_numbers
+  FROM public.delivery_challan_items dci
+  JOIN public.sales_invoice_items sii ON sii.delivery_challan_item_id = dci.id
+  JOIN public.sales_invoices si ON si.id = sii.invoice_id
+    AND public.is_reportable_sales_invoice(si.document_status, si.is_draft, si.notes)
+  GROUP BY dci.challan_id
 )
 SELECT
   dc.id AS challan_id,
@@ -677,26 +694,103 @@ SELECT
   dc.customer_id,
   dc.challan_date,
   dc.approval_status,
-  COALESCE(r.total_items, 0::bigint) AS total_items,
-  COALESCE(r.not_invoiced_items, 0::bigint) AS not_invoiced_items,
-  COALESCE(r.invoiced_items, 0::bigint) AS invoiced_items,
-  COALESCE(r.total_quantity, 0::numeric) AS total_quantity,
-  COALESCE(r.total_remaining_quantity, 0::numeric) AS total_remaining_quantity,
+  COALESCE(t.total_items, 0::bigint) AS total_items,
+  COALESCE(t.not_invoiced_items, 0::bigint) AS not_invoiced_items,
+  COALESCE(t.invoiced_items, 0::bigint) AS invoiced_items,
+  COALESCE(t.total_quantity, 0::numeric) AS total_quantity,
+  COALESCE(t.total_remaining_quantity, 0::numeric) AS total_remaining_quantity,
   CASE
-    WHEN COALESCE(r.total_invoiced_quantity, 0::numeric) = 0 THEN 'not_invoiced'::text
-    WHEN COALESCE(r.total_remaining_quantity, 0::numeric) = 0 THEN 'fully_invoiced'::text
+    WHEN COALESCE(t.total_invoiced_quantity, 0::numeric) = 0 THEN 'not_invoiced'::text
+    WHEN COALESCE(t.total_remaining_quantity, 0::numeric) = 0 THEN 'fully_invoiced'::text
     ELSE 'partially_invoiced'::text
-  END AS invoicing_status,
-  COALESCE(r.invoice_numbers, ARRAY[]::text[]) AS invoice_numbers,
-  COALESCE(r.invoice_ids, ARRAY[]::uuid[]) AS invoice_ids
+  END AS dc_status,
+  COALESCE(inv.invoice_numbers, ARRAY[]::text[]) AS linked_invoices,
+  COALESCE(inv.invoice_numbers, ARRAY[]::text[]) AS linked_invoice_numbers
 FROM public.delivery_challans dc
-LEFT JOIN dc_rollup r ON r.challan_id = dc.id;
+LEFT JOIN dc_item_totals t ON t.challan_id = dc.id
+LEFT JOIN dc_invoices inv ON inv.challan_id = dc.id;
 
 -- ==============================================================================
--- 6. SO-to-DC-to-Invoice Status View (Eliminating Join Fan-Out)
+-- 6. SO-to-DC-to-Invoice Status View (Production Contract Compatible)
 -- ==============================================================================
 
 CREATE OR REPLACE VIEW public.so_delivery_invoice_status WITH (security_invoker = true) AS
+WITH ordered AS (
+  SELECT
+    soi.sales_order_id AS so_id,
+    COALESCE(SUM(soi.quantity), 0::numeric) AS ordered_qty
+  FROM public.sales_order_items soi
+  GROUP BY soi.sales_order_id
+),
+approved_delivery AS (
+  SELECT
+    dc.sales_order_id AS so_id,
+    COALESCE(SUM(dci.quantity), 0::numeric) AS approved_delivered_qty,
+    count(DISTINCT dc.id) AS approved_dc_count
+  FROM public.delivery_challans dc
+  JOIN public.delivery_challan_items dci ON dci.challan_id = dc.id
+  WHERE dc.approval_status::text = 'approved'
+    AND dc.sales_order_id IS NOT NULL
+  GROUP BY dc.sales_order_id
+),
+so_reportable_invoices AS (
+  SELECT DISTINCT
+    sii.id AS invoice_item_id,
+    COALESCE(si.sales_order_id, dc.sales_order_id) AS so_id,
+    sii.quantity
+  FROM public.sales_invoice_items sii
+  JOIN public.sales_invoices si ON si.id = sii.invoice_id
+  LEFT JOIN public.delivery_challan_items dci ON dci.id = sii.delivery_challan_item_id
+  LEFT JOIN public.delivery_challans dc ON dc.id = dci.challan_id
+  WHERE public.is_reportable_sales_invoice(si.document_status, si.is_draft, si.notes)
+    AND (si.invoice_number NOT ILIKE 'TEST-COGS-%')
+    AND COALESCE(si.sales_order_id, dc.sales_order_id) IS NOT NULL
+),
+invoiced AS (
+  SELECT
+    so_id,
+    COALESCE(SUM(quantity), 0::numeric) AS invoiced_qty,
+    count(DISTINCT invoice_item_id) AS invoice_count
+  FROM so_reportable_invoices
+  GROUP BY so_id
+)
+SELECT
+  so.id AS so_id,
+  so.so_number,
+  so.customer_id,
+  so.status AS so_status,
+  CASE
+    WHEN COALESCE(ad.approved_delivered_qty, 0::numeric) = 0::numeric THEN 'pending'::text
+    WHEN COALESCE(ad.approved_delivered_qty, 0::numeric) >= COALESCE(o.ordered_qty, 0::numeric)
+         AND COALESCE(o.ordered_qty, 0::numeric) > 0::numeric THEN 'completed'::text
+    ELSE 'partial'::text
+  END AS delivery_status,
+  CASE
+    WHEN COALESCE(i.invoiced_qty, 0::numeric) = 0::numeric THEN 'pending'::text
+    WHEN COALESCE(i.invoiced_qty, 0::numeric) >= COALESCE(o.ordered_qty, 0::numeric)
+         AND COALESCE(o.ordered_qty, 0::numeric) > 0::numeric THEN 'completed'::text
+    ELSE 'partial'::text
+  END AS invoice_status,
+  CASE
+    WHEN COALESCE(i.invoiced_qty, 0::numeric) > 0::numeric
+         AND COALESCE(ad.approved_delivered_qty, 0::numeric) = 0::numeric THEN 'invoice_done_delivery_pending'::text
+    ELSE NULL::text
+  END AS special_status,
+  COALESCE(ad.approved_dc_count, 0::bigint) AS approved_dc_count,
+  COALESCE(i.invoice_count, 0::bigint) AS invoice_count,
+  COALESCE(o.ordered_qty, 0::numeric) AS ordered_qty,
+  COALESCE(ad.approved_delivered_qty, 0::numeric) AS approved_delivered_qty,
+  COALESCE(i.invoiced_qty, 0::numeric) AS invoiced_qty
+FROM public.sales_orders so
+LEFT JOIN ordered o ON o.so_id = so.id
+LEFT JOIN approved_delivery ad ON ad.so_id = so.id
+LEFT JOIN invoiced i ON i.so_id = so.id;
+
+-- ==============================================================================
+-- 7. Versioned Extended Financial Summary Views (Non-breaking additive interfaces)
+-- ==============================================================================
+
+CREATE OR REPLACE VIEW public.so_delivery_invoice_financial_summary_v2 WITH (security_invoker = true) AS
 WITH dc_agg AS (
   SELECT
     dc.sales_order_id,
@@ -705,7 +799,7 @@ WITH dc_agg AS (
     array_remove(array_agg(DISTINCT dc.challan_number), NULL::text) AS dc_numbers
   FROM public.delivery_challans dc
   JOIN public.delivery_challan_items dci ON dci.challan_id = dc.id
-  WHERE dc.approval_status = 'approved'::text
+  WHERE dc.approval_status::text = 'approved'
   GROUP BY dc.sales_order_id
 ),
 inv_headers AS (
@@ -755,6 +849,6 @@ LEFT JOIN inv_lines ON inv_lines.sales_order_id = so.id;
 
 GRANT SELECT ON public.dc_invoicing_summary TO authenticated, service_role;
 GRANT SELECT ON public.so_delivery_invoice_status TO authenticated, service_role;
+GRANT SELECT ON public.so_delivery_invoice_financial_summary_v2 TO authenticated, service_role;
 
 COMMIT;
-

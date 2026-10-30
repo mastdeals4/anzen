@@ -147,11 +147,17 @@ DECLARE
   v_reversal_id uuid;
 BEGIN
   -- Permission check: only admin and accounts can cancel financially posted invoices
-  IF v_caller IS NOT NULL THEN
-    SELECT role INTO v_role FROM public.user_profiles WHERE id = v_caller;
-    IF v_role NOT IN ('admin', 'accounts') THEN
-      RAISE EXCEPTION 'Permission denied: role % cannot cancel sales invoices', v_role;
-    END IF;
+  v_caller := auth.uid();
+  IF v_caller IS NULL THEN
+    v_caller := p_actor;
+  END IF;
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT role INTO v_role FROM public.user_profiles WHERE id = v_caller;
+  IF v_role IS NULL OR v_role NOT IN ('admin', 'accounts') THEN
+    RAISE EXCEPTION 'Permission denied: role % cannot cancel sales invoices', COALESCE(v_role, 'none');
   END IF;
 
   -- Lock invoice row
@@ -517,7 +523,7 @@ CREATE OR REPLACE VIEW public.dc_invoicing_summary WITH (security_invoker = true
          AND NOT COALESCE(si.is_draft, false)
          AND NOT (si.notes LIKE '[CANCELLED%' OR LOWER(si.notes) LIKE 'cancelled%')
      ) ON sii.delivery_challan_item_id = dci.id
-  WHERE dc.approval_status = 'approved'::public.dc_approval_status
+  WHERE dc.approval_status::text = 'approved'
   GROUP BY dc.id, dc.challan_number, dc.customer_id, dc.challan_date, dc.approval_status;
 
 GRANT SELECT ON public.dc_invoicing_summary TO authenticated, service_role;
@@ -535,7 +541,7 @@ CREATE OR REPLACE VIEW public.so_delivery_invoice_status WITH (security_invoker 
           count(DISTINCT dc.id) AS approved_dc_count
    FROM public.delivery_challans dc
      JOIN public.delivery_challan_items dci ON dci.challan_id = dc.id
-   WHERE dc.approval_status = 'approved'::public.dc_approval_status
+   WHERE dc.approval_status::text = 'approved'
      AND dc.sales_order_id IS NOT NULL
    GROUP BY dc.sales_order_id
  ),
@@ -574,11 +580,15 @@ CREATE OR REPLACE VIEW public.so_delivery_invoice_status WITH (security_invoker 
         WHEN (COALESCE(inv.invoiced_qty, 0::numeric) >= COALESCE(o.ordered_qty, 0::numeric) AND COALESCE(o.ordered_qty, 0::numeric) > 0::numeric) THEN 'completed'::text
         ELSE 'partial'::text
     END AS invoice_status,
-    COALESCE(o.ordered_qty, 0::numeric) AS ordered_quantity,
-    COALESCE(ad.approved_delivered_qty, 0::numeric) AS delivered_quantity,
-    COALESCE(inv.invoiced_qty, 0::numeric) AS invoiced_quantity,
+    CASE
+        WHEN ((COALESCE(inv.invoiced_qty, 0::numeric) > 0::numeric) AND (COALESCE(ad.approved_delivered_qty, 0::numeric) = 0::numeric)) THEN 'invoice_done_delivery_pending'::text
+        ELSE NULL::text
+    END AS special_status,
     COALESCE(ad.approved_dc_count, 0::bigint) AS approved_dc_count,
-    COALESCE(inv.invoice_count, 0::bigint) AS invoice_count
+    COALESCE(inv.invoice_count, 0::bigint) AS invoice_count,
+    COALESCE(o.ordered_qty, 0::numeric) AS ordered_qty,
+    COALESCE(ad.approved_delivered_qty, 0::numeric) AS approved_delivered_qty,
+    COALESCE(inv.invoiced_qty, 0::numeric) AS invoiced_qty
    FROM public.sales_orders so
      LEFT JOIN ordered o ON o.so_id = so.id
      LEFT JOIN approved_delivery ad ON ad.so_id = so.id
@@ -686,6 +696,7 @@ $$;
 -- ==============================================================================
 
 -- 7.1 get_authoritative_sales_line_cogs: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_authoritative_sales_line_cogs(date, date);
 CREATE OR REPLACE FUNCTION public.get_authoritative_sales_line_cogs(p_start_date date, p_end_date date)
  RETURNS TABLE(
    line_id uuid,
@@ -837,6 +848,7 @@ $function$;
 GRANT EXECUTE ON FUNCTION public.get_authoritative_sales_line_cogs(date, date) TO authenticated, service_role;
 
 -- 7.2 get_sales_profitability_line_expenses: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_sales_profitability_line_expenses(date, date);
 CREATE OR REPLACE FUNCTION public.get_sales_profitability_line_expenses(
   p_start_date date,
   p_end_date date
@@ -964,6 +976,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_sales_profitability_line_expenses(date, date) TO authenticated, service_role;
 
 -- 7.3 get_sales_profitability_summary: exclude cancelled invoices and return separate disclosure
+DROP FUNCTION IF EXISTS public.get_sales_profitability_summary(date, date);
 CREATE OR REPLACE FUNCTION public.get_sales_profitability_summary(
   p_start_date date,
   p_end_date date
@@ -1201,6 +1214,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_sales_profitability_summary(date, date) TO authenticated, service_role;
 
 -- 7.4 get_sales_profitability_product_batches: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_sales_profitability_product_batches(uuid, date, date);
 CREATE OR REPLACE FUNCTION public.get_sales_profitability_product_batches(
   p_product_id uuid,
   p_start_date date,
@@ -1347,6 +1361,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_sales_profitability_product_batches(uuid, date, date) TO authenticated, service_role;
 
 -- 7.5 get_sales_profitability_batch_orders: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_sales_profitability_batch_orders(uuid, date, date);
 CREATE OR REPLACE FUNCTION public.get_sales_profitability_batch_orders(
   p_batch_id uuid,
   p_start_date date,
@@ -1456,6 +1471,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_sales_profitability_batch_orders(uuid, date, date) TO authenticated, service_role;
 
 -- 7.6 get_sales_profit_summary: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_sales_profit_summary(date, date);
 CREATE OR REPLACE FUNCTION public.get_sales_profit_summary(p_start_date date, p_end_date date)
 RETURNS TABLE(
   product_id uuid,
@@ -1519,6 +1535,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_sales_profit_summary(date, date) TO authenticated, service_role;
 
 -- 7.7 get_sales_profit_drilldown: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_sales_profit_drilldown(text, date, date, uuid);
 CREATE OR REPLACE FUNCTION public.get_sales_profit_drilldown(
   p_product_id uuid,
   p_start_date date,
@@ -1571,6 +1588,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_sales_profit_drilldown(uuid, date, date) TO authenticated, service_role;
 
 -- 7.8 get_customer_sales_report: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_customer_sales_report(date, date, uuid);
 CREATE OR REPLACE FUNCTION public.get_customer_sales_report(
   p_start_date date,
   p_end_date date
@@ -1682,6 +1700,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_customer_sales_report(date, date) TO authenticated, service_role;
 
 -- 7.9 get_product_performance_report: exclude cancelled invoices
+DROP FUNCTION IF EXISTS public.get_product_performance_report(date, date, uuid);
 CREATE OR REPLACE FUNCTION public.get_product_performance_report(
   p_start_date date,
   p_end_date date
