@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Layout } from '../components/Layout';
-import { Package, Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, FileText, X, Search, ChevronDown } from 'lucide-react';
+import { Plus, CreditCard as Edit, Lock, CheckCircle, AlertCircle, FileText, X, Search, ChevronDown } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { MoneyInput } from '../components/MoneyInput';
@@ -13,8 +13,12 @@ import { showToast } from '../components/ToastNotification';
 
 import { formatDate } from '../utils/dateFormat';
 import { canSeeInventoryCosting } from '../utils/permissions';
-import { calculateCanonicalExpenseTotal } from '../utils/taxCalculations';
 import type { BrokerItem } from '../utils/taxCalculations';
+import {
+  calculateContainerLandedCostPool,
+  isCapitalizableLandedCostCategory,
+  calculateExpenseLandedCostAmount,
+} from '../utils/landedCost.ts';
 import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../services/expensePostingLifecycle';
 
 interface Supplier {
@@ -66,6 +70,8 @@ interface LinkedExpense {
   amount: number;
   expense_date: string;
   description: string | null;
+  voucher_number?: string | null;
+  invoice_number?: string | null;
   ppn_amount?: number | null;
   pph_amount?: number | null;
   stamp_duty_amount?: number | null;
@@ -93,11 +99,13 @@ type SourceType = 'expense' | 'petty_cash';
 interface UnifiedLinkedItem {
   id: string;
   source: SourceType;
+  referenceNumber: string;
   category: string;
   amount: number;
   date: string;
   description: string;
   include_in_landed_cost: boolean;
+  isCapitalizable: boolean;
   isPIB: boolean;
   pib_bm_amount?: number | null;
   pib_ppn_amount?: number | null;
@@ -122,8 +130,8 @@ export default function ImportContainers() {
   const [linkedExpenses, setLinkedExpenses] = useState<LinkedExpense[]>([]);
   const [linkedPettyCash, setLinkedPettyCash] = useState<LinkedPettyCash[]>([]);
   const [inclusionMap, setInclusionMap] = useState<Record<string, boolean>>({});
-  const [canonicalLandedCostPool, setCanonicalLandedCostPool] = useState(0);
   const [savingInclusion, setSavingInclusion] = useState(false);
+  const [expandedDescIds, setExpandedDescIds] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
     container_ref: '',
     supplier_id: '',
@@ -134,6 +142,15 @@ export default function ImportContainers() {
     other_import_costs: 0,
     notes: ''
   });
+
+  const toggleDescExpand = (id: string) => {
+    setExpandedDescIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetchContainers();
@@ -214,20 +231,22 @@ export default function ImportContainers() {
         ? await Promise.all(
             containerRows.map(async (container) => {
               const [{ data: expenses }, { data: pettyCash }] = await Promise.all([
-                supabase.from('finance_expenses').select('id, amount, expense_category, ppn_amount, stamp_duty_amount, broker_items, include_in_landed_cost').eq('import_container_id', container.id),
-                supabase.from('petty_cash_transactions').select('id, amount, include_in_landed_cost').eq('import_container_id', container.id),
+                supabase.from('finance_expenses').select('id, amount, expense_category, ppn_amount, stamp_duty_amount, broker_items, include_in_landed_cost, pib_bm_amount, pib_ppn_amount, pib_pph_amount, voucher_number, invoice_number').eq('import_container_id', container.id),
+                supabase.from('petty_cash_transactions').select('id, amount, transaction_number, transaction_type, expense_category, include_in_landed_cost').eq('import_container_id', container.id),
               ]);
               const states = await getEffectiveExpensePostingStates((expenses || []).map(e => e.id));
-              const linkedExpensesTotal = (expenses || [])
-                .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
-                .filter(e => e.expense_category !== 'pib_import')
-                .filter(e => e.include_in_landed_cost === true)
-                .reduce((sum, e) => sum + calculateCanonicalExpenseTotal(e), 0) || 0;
-              const linkedPettyCashTotal = (pettyCash || [])
-                .filter(pc => pc.include_in_landed_cost === true)
-                .reduce((sum, pc) => sum + (pc.amount || 0), 0) || 0;
-              const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
-              return { ...container, linked_expenses_total: linkedExpensesTotal, linked_petty_cash_total: linkedPettyCashTotal, canonical_landed_cost_pool: Number(canonicalPool) || 0 };
+              const activeExpenses = (expenses || []).filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state));
+              const breakdown = calculateContainerLandedCostPool({
+                linkedExpenses: activeExpenses,
+                linkedPettyCash: pettyCash || [],
+                otherImportCosts: container.other_import_costs || 0,
+              });
+              return {
+                ...container,
+                linked_expenses_total: breakdown.selectedLandedExpensesTotal,
+                linked_petty_cash_total: breakdown.selectedLandedPettyCashTotal,
+                canonical_landed_cost_pool: breakdown.containerLandedCostPool,
+              };
             })
           )
         : containerRows;
@@ -496,13 +515,12 @@ export default function ImportContainers() {
     setLinkedExpenses([]);
     setLinkedPettyCash([]);
     setInclusionMap({});
-    setCanonicalLandedCostPool(0);
   };
 
   const loadLinkedExpenses = async (containerId: string) => {
     try {
       const [{ data: expData, error: expError }, { data: pcData, error: pcError }] = await Promise.all([
-        supabase.from('finance_expenses').select('id, expense_category, amount, expense_date, description, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, include_in_landed_cost, pib_bm_amount, pib_ppn_amount, pib_pph_amount').eq('import_container_id', containerId).order('expense_date', { ascending: false }),
+        supabase.from('finance_expenses').select('id, expense_category, amount, expense_date, description, voucher_number, invoice_number, ppn_amount, pph_amount, stamp_duty_amount, bank_charges_amount, broker_items, include_in_landed_cost, pib_bm_amount, pib_ppn_amount, pib_pph_amount').eq('import_container_id', containerId).order('expense_date', { ascending: false }),
         supabase.from('petty_cash_transactions').select('id, transaction_number, transaction_type, amount, description, transaction_date, expense_category, include_in_landed_cost').eq('import_container_id', containerId).order('transaction_date', { ascending: false }),
       ]);
       if (expError) throw expError;
@@ -555,14 +573,14 @@ export default function ImportContainers() {
   const handleSelectAll = async () => {
     const updates: Record<string, boolean> = {};
     for (const item of unifiedItems) {
-      if (!item.isPIB) { updates[item.id] = true; }
+      if (!item.isPIB && item.isCapitalizable) { updates[item.id] = true; }
     }
     setInclusionMap(prev => ({ ...prev, ...updates }));
     setSavingInclusion(true);
     try {
       for (const item of unifiedItems) {
-        if (!item.isPIB && !updates[item.id]) continue;
-        if (!item.isPIB) {
+        if (!item.isPIB && item.isCapitalizable && !updates[item.id]) continue;
+        if (!item.isPIB && item.isCapitalizable) {
           const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
           await supabase.from(table).update({ include_in_landed_cost: true }).eq('id', item.id);
         }
@@ -610,8 +628,6 @@ export default function ImportContainers() {
   const handleEdit = async (container: ImportContainer) => {
     setEditingContainer(container);
     await fetchAvailablePIs();
-    const { data: canonicalPool } = await supabase.rpc('calculate_container_landed_cost_pool', { p_container_id: container.id });
-    setCanonicalLandedCostPool(Number(canonicalPool) || 0);
 
     // Fetch linked PIs from receiving allocations or container array
     const { data: allocPIs } = await supabase
@@ -663,35 +679,40 @@ export default function ImportContainers() {
     ...linkedExpenses.filter(e => e.expense_category !== 'pib_import').map(e => ({
       id: e.id,
       source: 'expense' as SourceType,
+      referenceNumber: e.voucher_number || e.invoice_number || 'EXP',
       category: e.expense_category,
-      amount: calculateCanonicalExpenseTotal(e),
+      amount: calculateExpenseLandedCostAmount(e).amount,
       date: e.expense_date,
       description: e.description || '',
       include_in_landed_cost: inclusionMap[e.id] ?? false,
+      isCapitalizable: isCapitalizableLandedCostCategory(e.expense_category),
       isPIB: false,
       rawExpense: e,
     })),
     ...linkedPettyCash.map(pc => ({
       id: pc.id,
       source: 'petty_cash' as SourceType,
+      referenceNumber: pc.transaction_number || 'PC',
       category: pc.expense_category || pc.transaction_type,
-      amount: pc.amount,
+      amount: Number(pc.amount || 0),
       date: pc.transaction_date,
-      description: `${pc.transaction_number}: ${pc.description}`,
+      description: pc.description || '',
       include_in_landed_cost: inclusionMap[pc.id] ?? false,
+      isCapitalizable: isCapitalizableLandedCostCategory(pc.expense_category || pc.transaction_type),
       isPIB: false,
     }))
   ];
 
   const pibExpenses = linkedExpenses.filter(e => e.expense_category === 'pib_import');
-  const pibDutyTotal = pibExpenses.reduce((sum, e) => sum + (e.pib_bm_amount || 0), 0);
-  const pibPpnTotal = pibExpenses.reduce((sum, e) => sum + (e.pib_ppn_amount || 0), 0);
-  const pibPphTotal = pibExpenses.reduce((sum, e) => sum + (e.pib_pph_amount || 0), 0);
-  const pibPaymentTotal = pibExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-  const selectedLinkedTotal = unifiedItems
-    .filter(i => i.include_in_landed_cost)
-    .reduce((sum, i) => sum + i.amount, 0);
+  const landedCostBreakdown = useMemo(() => {
+    return calculateContainerLandedCostPool({
+      linkedExpenses,
+      linkedPettyCash,
+      inclusionMap,
+      otherImportCosts: formData.other_import_costs || 0,
+    });
+  }, [linkedExpenses, linkedPettyCash, inclusionMap, formData.other_import_costs]);
 
   const hasLinkedItems = unifiedItems.length > 0;
 
@@ -805,8 +826,26 @@ export default function ImportContainers() {
             onClose={() => { setShowModal(false); setEditingContainer(null); resetForm(); }}
             title={editingContainer ? t('importContainers.editContainer') : t('importContainers.addContainer')}
             maxWidth="max-w-4xl"
+            footer={
+              <div className="flex items-center justify-end gap-3 w-full">
+                <button
+                  type="button"
+                  onClick={() => { setShowModal(false); setEditingContainer(null); resetForm(); }}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium text-gray-700 transition"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="submit"
+                  form="import-container-form"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium shadow-2xs transition"
+                >
+                  {editingContainer ? t('common.update') : t('common.create')}
+                </button>
+              </div>
+            }
           >
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form id="import-container-form" onSubmit={handleSubmit} className="space-y-4 pt-1">
               {/* COMPACT SEARCHABLE MULTI-PI SELECTOR DROPDOWN */}
               <div className="space-y-1 relative" ref={piDropdownRef}>
                 <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
@@ -1017,59 +1056,214 @@ export default function ImportContainers() {
 
               {/* Linked Expenses + Petty Cash */}
               {canViewCosting && editingContainer && hasLinkedItems && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-green-900 uppercase">Linked Costs — select to include in landed cost</h3>
+                <div className="bg-green-50/70 border border-green-200 rounded-xl p-3 sm:p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold text-green-950 uppercase tracking-wider">
+                        Linked Costs ({unifiedItems.length} items)
+                      </h3>
+                      <p className="text-[11px] text-green-800 font-normal">
+                        Select capitalizable shipping and handling costs to include in container landed cost.
+                      </p>
+                    </div>
                     {unifiedItems.length > 0 && (
-                      <div className="flex gap-2">
-                        <button type="button" onClick={handleSelectAll} disabled={savingInclusion} className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700">Select All</button>
-                        <button type="button" onClick={handleClearAll} disabled={savingInclusion} className="text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">Clear All</button>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleSelectAll}
+                          disabled={savingInclusion}
+                          className="text-xs px-2.5 py-1 bg-green-700 text-white font-medium rounded-md hover:bg-green-800 transition disabled:opacity-50"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearAll}
+                          disabled={savingInclusion}
+                          className="text-xs px-2.5 py-1 bg-white border border-gray-300 text-gray-700 font-medium rounded-md hover:bg-gray-50 transition disabled:opacity-50"
+                        >
+                          Clear All
+                        </button>
                       </div>
                     )}
                   </div>
-                  <div className="space-y-1 max-h-60 overflow-y-auto">
-                    {unifiedItems.map((item) => (
-                      <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 bg-white rounded text-xs">
-                        <input
-                          name="include_in_landed_cost"
-                          aria-label="Include In Landed Cost"
-                          type="checkbox"
-                          checked={item.include_in_landed_cost}
-                          onChange={(e) => handleToggleInclusion(item.id, item.source, e.target.checked)}
-                          disabled={savingInclusion}
-                          className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer flex-shrink-0"
-                        />
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${item.source === 'expense' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {item.source === 'expense' ? 'Expense' : 'Petty Cash'}
+
+                  <div className="space-y-1.5 max-h-72 sm:max-h-80 overflow-y-auto pr-0.5">
+                    {unifiedItems.map((item) => {
+                      const isExpanded = expandedDescIds.has(item.id);
+                      const hasLongDesc = (item.description || '').length > 35;
+                      const isChecked = item.include_in_landed_cost && item.isCapitalizable;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`p-2.5 rounded-lg border transition ${
+                            isChecked
+                              ? 'bg-white border-green-300 shadow-2xs'
+                              : !item.isCapitalizable
+                              ? 'bg-purple-50/40 border-purple-200'
+                              : 'bg-white/80 border-gray-200 opacity-80'
+                          }`}
+                        >
+                          <div className="flex items-start sm:items-center gap-2.5 text-xs">
+                            <input
+                              name="include_in_landed_cost"
+                              aria-label="Include In Landed Cost"
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => handleToggleInclusion(item.id, item.source, e.target.checked)}
+                              disabled={savingInclusion || !item.isCapitalizable}
+                              title={
+                                !item.isCapitalizable
+                                  ? 'Regulatory operational fee (Account 5410) — excluded from inventory landed cost'
+                                  : undefined
+                              }
+                              className="w-4 h-4 mt-0.5 sm:mt-0 rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+                            />
+
+                            <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide ${
+                                  item.source === 'expense' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                                }`}
+                              >
+                                {item.source === 'expense' ? 'Expense' : 'Petty Cash'}
+                              </span>
+                              <span className="font-mono text-[11px] font-medium bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded border border-gray-200">
+                                {item.referenceNumber}
+                              </span>
+                              <span className="font-semibold text-gray-800">
+                                {getCategoryLabel(item.category)}
+                              </span>
+                              {!item.isCapitalizable && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200"
+                                  title="Operational regulatory fee posted to P&L 5410. Excluded from inventory landed-cost capitalization to prevent duplicate COGS 5100 expense recognition."
+                                >
+                                  Operational (P&L 5410 Excluded)
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex-1 min-w-0 px-2 text-gray-600">
+                              <div
+                                className={`text-xs ${isExpanded ? 'whitespace-normal' : 'truncate'}`}
+                                title={item.description}
+                              >
+                                <span>{item.description || '—'}</span>
+                                {hasLongDesc && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleDescExpand(item.id)}
+                                    className="ml-1 text-[10px] text-blue-600 hover:underline font-semibold"
+                                  >
+                                    {isExpanded ? 'show less' : '...more'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0 pl-2">
+                              <div
+                                className={`font-bold tabular-nums text-xs ${
+                                  isChecked
+                                    ? 'text-green-800'
+                                    : !item.isCapitalizable
+                                    ? 'text-purple-700'
+                                    : 'text-gray-400'
+                                }`}
+                              >
+                                {formatCurrency(item.amount, 'IDR')}
+                              </div>
+                              {item.date && (
+                                <div className="text-[10px] text-gray-400 tabular-nums">
+                                  {formatDate(item.date)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 pt-3 border-t border-green-200 space-y-1.5 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-green-950">Selected Capitalizable Linked Costs:</span>
+                      <span className="font-bold text-green-900 tabular-nums">
+                        {formatCurrency(landedCostBreakdown.selectedLandedLinkedTotal, 'IDR')}
+                      </span>
+                    </div>
+                    {landedCostBreakdown.excludedOperationalExpensesTotal > 0 && (
+                      <div className="flex justify-between items-center text-purple-900 bg-purple-50/70 border border-purple-200 px-2.5 py-1 rounded-md">
+                        <span className="font-medium flex items-center gap-1">
+                          Operational Linked Costs (P&L 5410 Excluded):
                         </span>
-                        <span className="font-medium text-gray-800 truncate flex-1">{getCategoryLabel(item.category)}</span>
-                        <span className="text-gray-500 truncate hidden sm:inline max-w-[200px]">{item.description}</span>
-                        <span className={`font-semibold whitespace-nowrap ${item.include_in_landed_cost ? 'text-green-700' : 'text-gray-400'}`}>
-                          {formatCurrency(item.amount, 'IDR')}
+                        <span className="font-bold tabular-nums">
+                          {formatCurrency(landedCostBreakdown.excludedOperationalExpensesTotal, 'IDR')}
                         </span>
                       </div>
-                    ))}
-                  </div>
-                  <div className="mt-2 pt-2 border-t border-green-200 space-y-0.5 text-xs">
-                    <div className="flex justify-between"><span className="font-semibold text-green-900">Selected Linked Costs:</span><span className="font-bold text-green-900">{formatCurrency(selectedLinkedTotal, 'IDR')}</span></div>
-                    <div className="flex justify-between"><span className="font-semibold text-green-900">Other Import Costs:</span><span className="font-bold text-green-900">{formatCurrency(formData.other_import_costs || 0, 'IDR')}</span></div>
-                    <div className="flex justify-between pt-1 border-t border-green-200"><span className="font-bold text-green-900">Container Landed-Cost Pool:</span><span className="text-sm font-bold text-green-900">{formatCurrency(canonicalLandedCostPool, 'IDR')}</span></div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-green-950">Import Duty (Bea Masuk):</span>
+                      <span className="font-bold text-green-900 tabular-nums">
+                        {formatCurrency(landedCostBreakdown.pibDutyTotal, 'IDR')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-green-950">Other Import Costs:</span>
+                      <span className="font-bold text-green-900 tabular-nums">
+                        {formatCurrency(landedCostBreakdown.otherImportCosts, 'IDR')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 border-t border-green-300">
+                      <span className="font-extrabold text-green-950 text-sm">Container Landed-Cost Pool:</span>
+                      <span className="text-base font-black text-green-950 tabular-nums">
+                        {formatCurrency(landedCostBreakdown.containerLandedCostPool, 'IDR')}
+                      </span>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* PIB Breakdown */}
-              {canViewCosting && editingContainer && pibExpenses.length > 0 && (pibDutyTotal > 0 || pibPpnTotal > 0 || pibPphTotal > 0) && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <h3 className="text-xs font-semibold text-amber-900 uppercase mb-1">PIB / Customs Breakdown</h3>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                        <div><div className="text-amber-700 font-medium">Import Duty (BM)</div><div className="font-bold text-amber-900">{formatCurrency(pibDutyTotal)}</div></div>
-                        <div><div className="text-amber-700 font-medium">Import PPN</div><div className="font-bold text-gray-500">{formatCurrency(pibPpnTotal)}</div><div className="text-[9px] text-gray-400">Excluded</div></div>
-                        <div><div className="text-amber-700 font-medium">Import PPh22</div><div className="font-bold text-gray-500">{formatCurrency(pibPphTotal)}</div><div className="text-[9px] text-gray-400">Excluded</div></div>
-                        <div><div className="text-amber-700 font-medium">PIB Total</div><div className="font-bold text-amber-900">{formatCurrency(pibPaymentTotal)}</div><div className="text-[9px] text-gray-400">Not landed cost</div></div>
+              {canViewCosting && editingContainer && pibExpenses.length > 0 && (landedCostBreakdown.pibPaymentTotal > 0) && (
+                <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 sm:p-4">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-xs font-bold text-amber-950 uppercase tracking-wider mb-2">
+                        PIB / Customs Breakdown
+                      </h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div className="bg-white/80 p-2 rounded-lg border border-amber-200">
+                          <div className="text-amber-800 font-medium text-[11px]">Import Duty (BM)</div>
+                          <div className="font-bold text-amber-950 text-sm tabular-nums mt-0.5">
+                            {formatCurrency(landedCostBreakdown.pibDutyTotal)}
+                          </div>
+                          <div className="text-[10px] text-green-700 font-medium mt-0.5">Capitalized to Inventory</div>
+                        </div>
+                        <div className="bg-white/80 p-2 rounded-lg border border-amber-200">
+                          <div className="text-gray-600 font-medium text-[11px]">Import PPN</div>
+                          <div className="font-bold text-gray-700 text-sm tabular-nums mt-0.5">
+                            {formatCurrency(landedCostBreakdown.pibPpnTotal)}
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">Input VAT 1150 (Excluded)</div>
+                        </div>
+                        <div className="bg-white/80 p-2 rounded-lg border border-amber-200">
+                          <div className="text-gray-600 font-medium text-[11px]">Import PPh22</div>
+                          <div className="font-bold text-gray-700 text-sm tabular-nums mt-0.5">
+                            {formatCurrency(landedCostBreakdown.pibPphTotal)}
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">Prepaid Tax 1155 (Excluded)</div>
+                        </div>
+                        <div className="bg-white/80 p-2 rounded-lg border border-amber-200">
+                          <div className="text-amber-900 font-medium text-[11px]">PIB Total Payment</div>
+                          <div className="font-bold text-amber-950 text-sm tabular-nums mt-0.5">
+                            {formatCurrency(landedCostBreakdown.pibPaymentTotal)}
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">Customs billing total</div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1108,22 +1302,6 @@ export default function ImportContainers() {
                   />
                 </FloatingField>
               </SapRow>
-
-              <div className="flex justify-end gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={() => { setShowModal(false); setEditingContainer(null); resetForm(); }}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                >
-                  {editingContainer ? t('common.update') : t('common.create')}
-                </button>
-              </div>
             </form>
           </Modal>
         )}

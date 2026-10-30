@@ -1,0 +1,233 @@
+/**
+ * SAPJ ERP — Single Source of Truth for Landed-Cost Calculations
+ *
+ * This module defines the authoritative business rules for calculating container
+ * landed-cost pools, mirroring the PostgreSQL functions:
+ *   - public.is_capitalizable_landed_cost_category(category)
+ *   - public.calculate_container_landed_cost_pool(container_id)
+ *
+ * Tax and Capitalization Rules:
+ *   1. Capitalizable categories:
+ *      - Duty & customs: 'duty_customs', 'duty_import', 'duty'
+ *      - Freight & port: 'freight_import', 'freight', 'freight_charges', 'port_charges'
+ *      - Handling & clearing: 'clearing_forwarding', 'container_handling', 'loading_import'
+ *      - Transportation: 'transport_import', 'transportation'
+ *      - Customs broker: 'import_broker' (net base: broker invoice minus PPN plus net line items plus stamp duty)
+ *      - Other import: 'other_import', 'other_import_costs'
+ *      - PIB Import: 'pib_import' (contributes ONLY pib_bm_amount / Bea Masuk)
+ *   2. Non-capitalizable / Excluded categories:
+ *      - Import PPN (Account 1150 Input VAT) — recoverable tax asset, never capitalized to inventory.
+ *      - Import PPh 22 (Account 1155 Prepaid Tax) — prepaid income tax, never capitalized to inventory.
+ *      - BPOM / SKI Fees (Account 5410) — operational regulatory registration expense in P&L,
+ *        excluded from inventory landed-cost capitalization to prevent double-expensing against COGS 5100.
+ *      - General operational expenses: 'staff_welfare', 'office', 'utilities', etc.
+ */
+
+import { calculateCanonicalExpenseTotal } from './taxCalculations.ts';
+
+export const CAPITALIZABLE_LANDED_COST_CATEGORIES = new Set([
+  'duty_customs',
+  'duty',
+  'duty_import',
+  'freight_import',
+  'freight',
+  'freight_charges',
+  'clearing_forwarding',
+  'container_handling',
+  'loading_import',
+  'port_charges',
+  'transport_import',
+  'transportation',
+  'import_broker',
+  'other_import',
+  'other_import_costs',
+  'pib_import',
+]);
+
+/**
+ * Normalizes category names and checks against the authoritative landed-cost whitelist.
+ */
+export function isCapitalizableLandedCostCategory(category: string | null | undefined): boolean {
+  if (!category) return false;
+  const normalized = category.toLowerCase().trim().replace(/ /g, '_');
+  return CAPITALIZABLE_LANDED_COST_CATEGORIES.has(normalized);
+}
+
+export interface LandedCostExpenseInput {
+  id: string;
+  expense_category: string;
+  amount: number;
+  description?: string | null;
+  voucher_number?: string | null;
+  invoice_number?: string | null;
+  expense_date?: string | null;
+  ppn_amount?: number | null;
+  pph_amount?: number | null;
+  stamp_duty_amount?: number | null;
+  bank_charges_amount?: number | null;
+  broker_items?: any[] | null;
+  include_in_landed_cost?: boolean | null;
+  pib_bm_amount?: number | null;
+  pib_ppn_amount?: number | null;
+  pib_pph_amount?: number | null;
+}
+
+export interface LandedCostPettyCashInput {
+  id: string;
+  transaction_number?: string | null;
+  transaction_type?: string | null;
+  amount: number;
+  description?: string | null;
+  transaction_date?: string | null;
+  expense_category?: string | null;
+  include_in_landed_cost?: boolean | null;
+}
+
+export interface ContainerLandedCostInput {
+  linkedExpenses: LandedCostExpenseInput[];
+  linkedPettyCash: LandedCostPettyCashInput[];
+  inclusionMap?: Record<string, boolean>;
+  otherImportCosts?: number | null;
+}
+
+export interface ContainerLandedCostBreakdown {
+  /** Sum of user-selected capitalizable expenses (excluding PIB duty). */
+  selectedLandedExpensesTotal: number;
+  /** Sum of user-selected capitalizable petty cash transactions. */
+  selectedLandedPettyCashTotal: number;
+  /** Sum of all selected capitalizable linked costs (expenses + petty cash). */
+  selectedLandedLinkedTotal: number;
+  /** Customs Duty (Bea Masuk) from linked PIB expenses. */
+  pibDutyTotal: number;
+  /** Input PPN from linked PIB expenses (excluded from landed cost). */
+  pibPpnTotal: number;
+  /** Prepaid PPh 22 from linked PIB expenses (excluded from landed cost). */
+  pibPphTotal: number;
+  /** Total cash payment required for PIB (Duty + PPN + PPh22). */
+  pibPaymentTotal: number;
+  /** Historical cash other import costs stored on the container. */
+  otherImportCosts: number;
+  /** Linked operational expenses excluded from capitalization (e.g. BPOM/SKI fees). */
+  excludedOperationalExpensesTotal: number;
+  /**
+   * The authoritative Landed-Cost Pool for this container.
+   * Matches `public.calculate_container_landed_cost_pool(p_container_id)`.
+   */
+  containerLandedCostPool: number;
+}
+
+/**
+ * Calculates the exact capitalizable landed-cost amount for an expense item.
+ */
+export function calculateExpenseLandedCostAmount(expense: LandedCostExpenseInput): {
+  amount: number;
+  isCapitalizable: boolean;
+} {
+  const isCapitalizable = isCapitalizableLandedCostCategory(expense.expense_category);
+  if (!isCapitalizable) {
+    return {
+      amount: 0,
+      isCapitalizable: false,
+    };
+  }
+
+  if (expense.expense_category === 'pib_import') {
+    return {
+      amount: Number(expense.pib_bm_amount || 0),
+      isCapitalizable: true,
+    };
+  }
+
+  if (expense.expense_category === 'import_broker') {
+    return {
+      amount: calculateCanonicalExpenseTotal(expense as any),
+      isCapitalizable: true,
+    };
+  }
+
+  return {
+    amount: Number(expense.amount || 0),
+    isCapitalizable: true,
+  };
+}
+
+/**
+ * Authoritative single calculation function for the container landed-cost pool.
+ */
+export function calculateContainerLandedCostPool(
+  input: ContainerLandedCostInput,
+): ContainerLandedCostBreakdown {
+  const {
+    linkedExpenses = [],
+    linkedPettyCash = [],
+    inclusionMap = {},
+    otherImportCosts = 0,
+  } = input;
+
+  let selectedLandedExpensesTotal = 0;
+  let excludedOperationalExpensesTotal = 0;
+
+  for (const exp of linkedExpenses) {
+    if (exp.expense_category === 'pib_import') {
+      continue; // Handled separately in PIB breakdown
+    }
+
+    const isSelected = inclusionMap[exp.id] ?? (exp.include_in_landed_cost === true);
+    const { amount, isCapitalizable } = calculateExpenseLandedCostAmount(exp);
+
+    if (isCapitalizable) {
+      if (isSelected) {
+        selectedLandedExpensesTotal += amount;
+      }
+    } else {
+      // Non-capitalizable (e.g. BPOM/SKI fees)
+      if (isSelected) {
+        excludedOperationalExpensesTotal += Number(exp.amount || 0);
+      }
+    }
+  }
+
+  let selectedLandedPettyCashTotal = 0;
+  for (const pc of linkedPettyCash) {
+    const isSelected = inclusionMap[pc.id] ?? (pc.include_in_landed_cost === true);
+    const isCapitalizable = isCapitalizableLandedCostCategory(pc.expense_category || pc.transaction_type);
+
+    if (isCapitalizable) {
+      if (isSelected) {
+        selectedLandedPettyCashTotal += Number(pc.amount || 0);
+      }
+    } else {
+      if (isSelected) {
+        excludedOperationalExpensesTotal += Number(pc.amount || 0);
+      }
+    }
+  }
+
+  const pibExpenses = linkedExpenses.filter((e) => e.expense_category === 'pib_import');
+  const pibDutyTotal = pibExpenses.reduce((sum, e) => {
+    const isSelected = inclusionMap[e.id] ?? (e.include_in_landed_cost !== false);
+    return isSelected ? sum + Number(e.pib_bm_amount || 0) : sum;
+  }, 0);
+  const pibPpnTotal = pibExpenses.reduce((sum, e) => sum + Number(e.pib_ppn_amount || 0), 0);
+  const pibPphTotal = pibExpenses.reduce((sum, e) => sum + Number(e.pib_pph_amount || 0), 0);
+  const pibPaymentTotal = pibExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+  const normalizedOtherImportCosts = Math.round(Number(otherImportCosts || 0) * 100) / 100;
+  const selectedLandedLinkedTotal = Math.round((selectedLandedExpensesTotal + selectedLandedPettyCashTotal) * 100) / 100;
+
+  const rawPool = selectedLandedLinkedTotal + pibDutyTotal + normalizedOtherImportCosts;
+  const containerLandedCostPool = Math.round(rawPool * 100) / 100;
+
+  return {
+    selectedLandedExpensesTotal: Math.round(selectedLandedExpensesTotal * 100) / 100,
+    selectedLandedPettyCashTotal: Math.round(selectedLandedPettyCashTotal * 100) / 100,
+    selectedLandedLinkedTotal,
+    pibDutyTotal: Math.round(pibDutyTotal * 100) / 100,
+    pibPpnTotal: Math.round(pibPpnTotal * 100) / 100,
+    pibPphTotal: Math.round(pibPphTotal * 100) / 100,
+    pibPaymentTotal: Math.round(pibPaymentTotal * 100) / 100,
+    otherImportCosts: normalizedOtherImportCosts,
+    excludedOperationalExpensesTotal: Math.round(excludedOperationalExpensesTotal * 100) / 100,
+    containerLandedCostPool,
+  };
+}
