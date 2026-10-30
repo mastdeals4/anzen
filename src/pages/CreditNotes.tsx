@@ -849,23 +849,12 @@ export function CreditNotes() {
         stock_disposition: formData.stock_disposition || 'saleable',
         godown: formData.godown || 'Main Warehouse',
         ...totals,
-        created_by: user?.id,
       };
       if (formData.material_return_id) insertPayload.material_return_id = formData.material_return_id;
 
-      const { data: creditNoteData, error: creditNoteError } = await supabase
-        .from('credit_notes')
-        .insert(insertPayload)
-        .select()
-        .single();
-
-      if (creditNoteError) throw creditNoteError;
-      creditNoteId = creditNoteData.id;
-
-      const itemsWithCreditNoteId = items.map(({ products: _products, batches: _batches, ...item }) => {
+      const itemsPayload = items.map(({ products: _products, batches: _batches, ...item }) => {
         const itemDisp = item.disposition || formData.stock_disposition || 'saleable';
         return {
-          credit_note_id: creditNoteData.id,
           sales_invoice_item_id: item.sales_invoice_item_id || null,
           delivery_challan_item_id: item.delivery_challan_item_id || null,
           product_id: item.product_id,
@@ -880,16 +869,18 @@ export function CreditNotes() {
         };
       });
 
-      const { error: itemsError } = await supabase
-        .from('credit_note_items')
-        .insert(itemsWithCreditNoteId);
+      // Call atomic RPC to ensure header and items are saved in a single database transaction
+      const { data: result, error: atomicErr } = await supabase.rpc('create_credit_note_atomic', {
+        p_credit_note: insertPayload,
+        p_items: itemsPayload,
+        p_actor: user?.id,
+      });
 
-      if (itemsError) {
-        await supabase.from('credit_notes').delete().eq('id', creditNoteId);
-        throw new Error(`Failed to save credit note items: ${itemsError.message}`);
-      }
+      if (atomicErr) throw atomicErr;
+      creditNoteId = result?.credit_note_id;
+      const createdNumber = result?.credit_note_number || finalNumber;
 
-      showToast({ type: 'success', title: 'Created', message: `Credit note ${finalNumber} created and is pending approval.` });
+      showToast({ type: 'success', title: 'Created', message: `Credit note ${createdNumber} created and is pending approval.` });
       setModalOpen(false);
       resetForm();
       emitErpSync('credit_notes', 'created', { entityId: creditNoteId || undefined });

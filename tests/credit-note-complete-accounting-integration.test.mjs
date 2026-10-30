@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { execFileSync } from 'node:child_process';
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
@@ -55,6 +55,7 @@ test.describe('SAPJ ERP: Complete Credit Note & Sales Return Accounting Integrat
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030130000_sales_cancellation_hardening_corrections.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030140000_sales_lifecycle_terminal_cancellation_and_concurrency_hardening.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030150000_complete_credit_note_and_sales_return_accounting.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030170000_credit_note_final_accounting_and_lifecycle_corrections.sql'));
     } catch (err) {
       console.error('Migration setup failed:', err);
       throw err;
@@ -294,49 +295,89 @@ test.describe('SAPJ ERP: Complete Credit Note & Sales Return Accounting Integrat
   });
 
   // ----------------------------------------------------------------------------
-  // Scenario 3: Damaged Packaging Return (Saleable Stock)
+  // Scenario 3: Damaged Packaging Return (Quarantine Hold vs Repackable Saleable)
   // ----------------------------------------------------------------------------
-  test('Scenario 3: Damaged packaging return (repackable/saleable stock restocked, full COGS reversed)', async () => {
-    const inv = await createPostedInvoice({
-      invoiceNumber: 'INV-SC-03',
+  test('Scenario 3: Damaged packaging return (quarantine hold does not inflate 1130 saleable inventory; repacked saleable restocks)', async () => {
+    // Case A: Quarantined return held pending QC/repacking
+    const invA = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-03A',
       quantity: 50,
       unitPrice: 100000,
       fifoCost: 70000,
     });
 
-    const cnRes = await pool.query(`
+    const cnARes = await pool.query(`
       INSERT INTO public.credit_notes (
         credit_note_number, customer_id, original_invoice_id, credit_note_date,
         subtotal, tax_amount, total_amount, business_case, stock_disposition,
         credit_note_type, status, created_by
       ) VALUES (
-        'CN-SC-03', $1, $2, CURRENT_DATE,
-        5000000, 550000, 5550000, 'damaged_packaging', 'saleable',
+        'CN-SC-03A', $1, $2, CURRENT_DATE,
+        5000000, 550000, 5550000, 'damaged_packaging', 'quarantine',
         'physical_return', 'pending_approval', $3
       ) RETURNING id;
-    `, [testCustomerId, inv.invoiceId, adminUserId]);
-    const cnId = cnRes.rows[0].id;
+    `, [testCustomerId, invA.invoiceId, adminUserId]);
+    const cnAId = cnARes.rows[0].id;
 
     await pool.query(`
       INSERT INTO public.credit_note_items (
         credit_note_id, sales_invoice_item_id, product_id, batch_id,
         quantity, unit_price, disposition, condition
-      ) VALUES ($1, $2, $3, $4, 50, 100000, 'saleable', 'damaged_packaging');
-    `, [cnId, inv.invoiceItemId, testProductId, testBatchId]);
+      ) VALUES ($1, $2, $3, $4, 50, 100000, 'quarantine', 'damaged_packaging');
+    `, [cnAId, invA.invoiceItemId, testProductId, testBatchId]);
 
-    await pool.query(`UPDATE public.credit_notes SET status = 'approved', approved_by = $1 WHERE id = $2;`, [adminUserId, cnId]);
+    await pool.query(`UPDATE public.credit_notes SET status = 'approved', approved_by = $1 WHERE id = $2;`, [adminUserId, cnAId]);
 
-    // Verify inventory restock Dr 1130
-    const cogsRes = await pool.query(`
+    // Verify: quarantined return does NOT reverse into 1130 saleable inventory
+    const cogsARes = await pool.query(`
       SELECT jel.debit, coa.code
       FROM public.journal_entries je
       JOIN public.journal_entry_lines jel ON jel.journal_entry_id = je.id
       JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
       WHERE je.reference_id = $1 AND je.source_module = 'credit_note_cogs';
-    `, [cnId]);
+    `, [cnAId]);
+    const invALine = cogsARes.rows.find(l => l.code === '1130');
+    assert.equal(invALine, undefined, 'Quarantined packaging return awaiting repacking must not inflate 1130 saleable inventory');
 
-    const invLine = cogsRes.rows.find(l => l.code === '1130');
-    assert.ok(invLine && Number(invLine.debit) === (50 * 70000), 'Saleable stock from damaged packaging must restock to 1130');
+    // Case B: Damaged packaging inspected and approved for saleable restock
+    const invB = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-03B',
+      quantity: 30,
+      unitPrice: 100000,
+      fifoCost: 70000,
+    });
+
+    const cnBRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-03B', $1, $2, CURRENT_DATE,
+        3000000, 330000, 3330000, 'damaged_packaging', 'saleable',
+        'physical_return', 'pending_approval', $3
+      ) RETURNING id;
+    `, [testCustomerId, invB.invoiceId, adminUserId]);
+    const cnBId = cnBRes.rows[0].id;
+
+    await pool.query(`
+      INSERT INTO public.credit_note_items (
+        credit_note_id, sales_invoice_item_id, product_id, batch_id,
+        quantity, unit_price, disposition, condition
+      ) VALUES ($1, $2, $3, $4, 30, 100000, 'saleable', 'good');
+    `, [cnBId, invB.invoiceItemId, testProductId, testBatchId]);
+
+    await pool.query(`UPDATE public.credit_notes SET status = 'approved', approved_by = $1 WHERE id = $2;`, [adminUserId, cnBId]);
+
+    const cogsBRes = await pool.query(`
+      SELECT jel.debit, coa.code
+      FROM public.journal_entries je
+      JOIN public.journal_entry_lines jel ON jel.journal_entry_id = je.id
+      JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE je.reference_id = $1 AND je.source_module = 'credit_note_cogs';
+    `, [cnBId]);
+    const invBLine = cogsBRes.rows.find(l => l.code === '1130');
+    assert.ok(invBLine && Number(invBLine.debit) === (30 * 70000), 'Repacked saleable stock reverses COGS to 1130');
   });
 
   // ----------------------------------------------------------------------------
@@ -1230,4 +1271,805 @@ test.describe('SAPJ ERP: Complete Credit Note & Sales Return Accounting Integrat
     assert.equal(Number(finalInv.balance_amount), 0, 'Remaining balance must be exactly Rp 0.00');
     assert.equal(finalInv.payment_status, 'paid', 'Invoice payment status must be fully paid');
   });
-});
+
+  // ----------------------------------------------------------------------------
+  // Scenario 28: Atomic Credit Note creation rollback on item failure
+  // ----------------------------------------------------------------------------
+  test('Scenario 28: Atomic Credit Note creation rollback on item validation failure', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-28',
+      quantity: 50,
+      unitPrice: 100000,
+      fifoCost: 65000,
+    });
+
+    const cnPayload = {
+      credit_note_number: 'CN-SC-28-FAIL',
+      customer_id: testCustomerId,
+      original_invoice_id: inv.invoiceId,
+      reason: 'Atomic test',
+      business_case: 'full_physical_return',
+      stock_disposition: 'saleable',
+      credit_note_type: 'physical_return',
+    };
+
+    const invalidItems = [
+      { product_id: testProductId, batch_id: testBatchId, quantity: 10, unit_price: 100000, sales_invoice_item_id: inv.invoiceItemId },
+      { product_id: testProductId, batch_id: testBatchId, quantity: -5, unit_price: 100000, sales_invoice_item_id: inv.invoiceItemId } // Invalid negative quantity!
+    ];
+
+    let creationFailed = false;
+    try {
+      await pool.query(`
+        SELECT public.create_credit_note_atomic($1, $2, $3);
+      `, [JSON.stringify(cnPayload), JSON.stringify(invalidItems), adminUserId]);
+    } catch (err) {
+      creationFailed = true;
+      assert.ok(err.message.includes('Line item quantity must be positive') || err.message.includes('strictly positive'));
+    }
+    assert.equal(creationFailed, true, 'create_credit_note_atomic must abort on invalid item');
+
+    // Verify atomic rollback: NO header was saved in database!
+    const checkRes = await pool.query(`
+      SELECT count(*) FROM public.credit_notes WHERE credit_note_number = 'CN-SC-28-FAIL';
+    `);
+    assert.equal(Number(checkRes.rows[0].count), 0, 'No orphaned credit note header may exist after atomic rollback');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 29: Deterministic row locking blocks concurrent over-returns
+  // ----------------------------------------------------------------------------
+  test('Scenario 29: Deterministic row locking prevents concurrent over-returns against same invoice line', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-29',
+      quantity: 100, // Total 100 kg
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+
+    const clientA = new Client(PG_CONFIG);
+    const clientB = new Client(PG_CONFIG);
+    await clientA.connect();
+    await clientB.connect();
+
+    try {
+      // Client A begins transaction and locks invoice lines
+      await clientA.query('BEGIN');
+      await clientA.query('SELECT * FROM public.sales_invoices WHERE id = $1 FOR UPDATE;', [inv.invoiceId]);
+      await clientA.query('SELECT * FROM public.sales_invoice_items WHERE invoice_id = $1 FOR UPDATE;', [inv.invoiceId]);
+
+      // Client A issues a credit note for 60 kg (pending_approval)
+      const cnARes = await clientA.query(`
+        INSERT INTO public.credit_notes (
+          credit_note_number, customer_id, original_invoice_id, credit_note_date,
+          subtotal, tax_amount, total_amount, business_case, stock_disposition,
+          credit_note_type, status, created_by
+        ) VALUES (
+          'CN-SC-29-A', $1, $2, CURRENT_DATE,
+          6000000, 660000, 6660000, 'partial_physical_return', 'saleable',
+          'physical_return', 'pending_approval', $3
+        ) RETURNING id;
+      `, [testCustomerId, inv.invoiceId, adminUserId]);
+      const cnAId = cnARes.rows[0].id;
+
+      await clientA.query(`
+        INSERT INTO public.credit_note_items (
+          credit_note_id, sales_invoice_item_id, product_id, batch_id, quantity, unit_price, disposition
+        ) VALUES ($1, $2, $3, $4, 60, 100000, 'saleable');
+      `, [cnAId, inv.invoiceItemId, testProductId, testBatchId]);
+
+      // Client B sets lock timeout to 200ms and attempts to lock the same invoice line
+      await clientB.query('BEGIN');
+      await clientB.query('SET lock_timeout = 200;');
+
+      let bBlocked = false;
+      try {
+        await clientB.query('SELECT * FROM public.sales_invoices WHERE id = $1 FOR UPDATE;', [inv.invoiceId]);
+      } catch (err) {
+        bBlocked = true;
+        assert.ok(err.code === '55P03' || err.message.includes('lock timeout'));
+      }
+      assert.equal(bBlocked, true, 'Client B must be blocked by Client A lock');
+
+      await clientB.query('ROLLBACK');
+
+      // Now Client A commits its 60 kg credit note
+      await clientA.query('COMMIT');
+
+      // Client B now attempts to return 50 kg (which exceeds remaining 40 kg because 60 kg was taken)
+      let overReturnBlocked = false;
+      try {
+        const cnBRes = await clientB.query(`
+          INSERT INTO public.credit_notes (
+            credit_note_number, customer_id, original_invoice_id, credit_note_date,
+            subtotal, tax_amount, total_amount, business_case, stock_disposition,
+            credit_note_type, status, created_by
+          ) VALUES (
+            'CN-SC-29-B', $1, $2, CURRENT_DATE,
+            4000000, 440000, 4440000, 'partial_physical_return', 'saleable',
+            'physical_return', 'pending_approval', $3
+          ) RETURNING id;
+        `, [testCustomerId, inv.invoiceId, adminUserId]);
+        const cnBId = cnBRes.rows[0].id;
+
+        await clientB.query(`
+          INSERT INTO public.credit_note_items (
+            credit_note_id, sales_invoice_item_id, product_id, batch_id, quantity, unit_price, disposition
+          ) VALUES ($1, $2, $3, $4, 50, 100000, 'saleable');
+        `, [cnBId, inv.invoiceItemId, testProductId, testBatchId]);
+      } catch (err) {
+        overReturnBlocked = true;
+        assert.ok(err.message.includes('exceeds remaining returnable quantity'));
+      }
+      assert.equal(overReturnBlocked, true, 'Second return exceeding original quantity (60 + 50 > 100) must be rejected');
+    } finally {
+      await clientA.end();
+      await clientB.end();
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 30: Separation of physical receipt from Credit Note approval
+  // ----------------------------------------------------------------------------
+  test('Scenario 30: Separation of physical receipt from Credit Note approval (awaiting receipt does not inflate saleable stock)', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-30',
+      quantity: 40,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+
+    const stockBefore = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [testBatchId])).rows[0].current_stock);
+
+    // Create Credit Note via atomic RPC
+    const cnPayload = {
+      credit_note_number: 'CN-SC-30',
+      customer_id: testCustomerId,
+      original_invoice_id: inv.invoiceId,
+      reason: 'Physical return separate receipt test',
+      business_case: 'partial_physical_return',
+      stock_disposition: 'saleable',
+      credit_note_type: 'physical_return',
+    };
+    const itemsPayload = [
+      { product_id: testProductId, batch_id: testBatchId, quantity: 20, unit_price: 100000, sales_invoice_item_id: inv.invoiceItemId, disposition: 'saleable' }
+    ];
+
+    const createRes = (await pool.query('SELECT public.create_credit_note_atomic($1, $2, $3) AS res', [
+      JSON.stringify(cnPayload), JSON.stringify(itemsPayload), adminUserId
+    ])).rows[0].res;
+
+    const cnId = createRes.credit_note_id;
+    const grrId = createRes.goods_return_receipt_id;
+    assert.ok(grrId, 'Linked Goods Return Receipt (material_returns) must be generated');
+
+    // 1. Approve the commercial Credit Note
+    await pool.query('UPDATE public.credit_notes SET status = $1, approved_by = $2 WHERE id = $3', ['approved', adminUserId, cnId]);
+
+    // Commercial & AR journal was posted
+    const arJe = await pool.query("SELECT * FROM public.journal_entries WHERE reference_id = $1 AND source_module = 'credit_note'", [cnId]);
+    assert.equal(arJe.rowCount, 1, 'Commercial journal must be posted on CN approval');
+
+    // BUT physical inventory MUST NOT be inflated while Goods Return Receipt is pending inspection!
+    const stockAfterCnApproval = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [testBatchId])).rows[0].current_stock);
+    assert.equal(stockAfterCnApproval, stockBefore, 'Saleable stock must NOT be restored upon commercial CN approval alone');
+
+    // 2. Now warehouse physically inspects and approves Goods Return Receipt
+    await pool.query(`
+      UPDATE public.material_returns
+      SET status = 'approved', restocked = true, approved_by = $1
+      WHERE id = $2;
+    `, [adminUserId, grrId]);
+
+    // Post inventory movement via standard handler
+    await pool.query(`
+      SELECT public.post_inventory_movement(
+        public.uuid_from_text('inventory-v1:material-return:' || $1::text || ':' || (SELECT id::text FROM material_return_items WHERE return_id = $1::uuid LIMIT 1)),
+        $2::uuid, $3::uuid, 'return'::text, 20::numeric, CURRENT_DATE, 'GRR-CN-SC-30'::text, 'material_return'::text, $1::uuid, 'Inspected return'::text, $4::uuid, NULL::text, NULL::text
+      );
+    `, [grrId, testProductId, testBatchId, adminUserId]);
+
+    const stockAfterInspection = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [testBatchId])).rows[0].current_stock);
+    assert.equal(stockAfterInspection, stockBefore + 20, 'Saleable stock is restored only after physical receipt inspection approval');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 31: Duplicate inventory movement prevention
+  // ----------------------------------------------------------------------------
+  test('Scenario 31: Duplicate inventory movement prevention', async () => {
+    const invId = 'd0000000-0000-0000-0000-000000000031';
+    await pool.query(`
+      SELECT public.post_inventory_movement(
+        $1::uuid, $2::uuid, $3::uuid, 'return', 10, CURRENT_DATE, 'DOC-DUP-1', 'credit_note', $1::uuid, 'First return', $4::uuid, NULL, NULL
+      );
+    `, [invId, testProductId, testBatchId, adminUserId]);
+
+    const stockBeforeReplay = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [testBatchId])).rows[0].current_stock);
+
+    // Replay with identical transaction UUID
+    await pool.query(`
+      SELECT public.post_inventory_movement(
+        $1::uuid, $2::uuid, $3::uuid, 'return', 10, CURRENT_DATE, 'DOC-DUP-1', 'credit_note', $1::uuid, 'Replay return', $4::uuid, NULL, NULL
+      );
+    `, [invId, testProductId, testBatchId, adminUserId]);
+
+    const stockAfterReplay = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [testBatchId])).rows[0].current_stock);
+    assert.equal(stockAfterReplay, stockBeforeReplay, 'Idempotent replay must not increase inventory twice');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 32: Missing historical COGS cost blocks posting
+  // ----------------------------------------------------------------------------
+  test('Scenario 32: Missing historical COGS cost blocks posting with explicit audited costing resolution error', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-32-NO-COGS',
+      quantity: 15,
+      unitPrice: 100000,
+      fifoCost: 0,
+    });
+    await pool.query('UPDATE public.sales_invoice_items SET cogs_unit_cost = NULL, cogs_total_cost = NULL WHERE id = $1', [inv.invoiceItemId]);
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-32', $1, $2, CURRENT_DATE,
+        1500000, 165000, 1665000, 'full_physical_return', 'saleable',
+        'physical_return', 'pending_approval', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    await pool.query(`
+      INSERT INTO public.credit_note_items (
+        credit_note_id, sales_invoice_item_id, product_id, batch_id, quantity, unit_price, disposition
+      ) VALUES ($1, $2, $3, $4, 15, 100000, 'saleable');
+    `, [cnId, inv.invoiceItemId, testProductId, testBatchId]);
+
+    let postingBlocked = false;
+    try {
+      await pool.query('UPDATE public.credit_notes SET status = $1, approved_by = $2 WHERE id = $3', ['approved', adminUserId, cnId]);
+    } catch (err) {
+      postingBlocked = true;
+      assert.ok(err.message.includes('Authoritative historical COGS unit cost missing') || err.message.includes('Audited costing resolution required'));
+    }
+    assert.equal(postingBlocked, true, 'Credit note approval must be blocked when historical COGS is missing');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 33: Quarantine and damage valuation
+  // ----------------------------------------------------------------------------
+  test('Scenario 33: Quarantine and damage valuation (quarantine does not post 1130, damaged posts 5190 loss)', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-33',
+      quantity: 50,
+      unitPrice: 100000,
+      fifoCost: 70000,
+    });
+
+    // 1. Quarantined item
+    const cnQRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-33-Q', $1, $2, CURRENT_DATE,
+        2000000, 220000, 2220000, 'quality_rejection', 'quarantine',
+        'physical_return', 'pending_approval', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnQId = cnQRes.rows[0].id;
+
+    await pool.query(`
+      INSERT INTO public.credit_note_items (
+        credit_note_id, sales_invoice_item_id, product_id, batch_id, quantity, unit_price, disposition
+      ) VALUES ($1, $2, $3, $4, 20, 100000, 'quarantine');
+    `, [cnQId, inv.invoiceItemId, testProductId, testBatchId]);
+
+    await pool.query('UPDATE public.credit_notes SET status = $1, approved_by = $2 WHERE id = $3', ['approved', adminUserId, cnQId]);
+
+    const cogsQ = await pool.query("SELECT * FROM public.journal_entries WHERE reference_id = $1 AND source_module = 'credit_note_cogs'", [cnQId]);
+    assert.equal(cogsQ.rowCount, 0, 'Quarantined goods held without general inventory recognition post zero 1130 inventory');
+
+    // 2. Damaged item
+    const cnDRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-33-D', $1, $2, CURRENT_DATE,
+        3000000, 330000, 3330000, 'damaged_product', 'damaged',
+        'physical_return', 'pending_approval', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnDId = cnDRes.rows[0].id;
+
+    await pool.query(`
+      INSERT INTO public.credit_note_items (
+        credit_note_id, sales_invoice_item_id, product_id, batch_id, quantity, unit_price, disposition
+      ) VALUES ($1, $2, $3, $4, 30, 100000, 'damaged');
+    `, [cnDId, inv.invoiceItemId, testProductId, testBatchId]);
+
+    await pool.query('UPDATE public.credit_notes SET status = $1, approved_by = $2 WHERE id = $3', ['approved', adminUserId, cnDId]);
+
+    const cogsD = await pool.query(`
+      SELECT jel.debit, jel.credit, coa.code
+      FROM public.journal_entries je
+      JOIN public.journal_entry_lines jel ON jel.journal_entry_id = je.id
+      JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE je.reference_id = $1 AND je.source_module = 'credit_note_cogs';
+    `, [cnDId]);
+
+    const lossLine = cogsD.rows.find(l => l.code === '5190');
+    const cogsLine = cogsD.rows.find(l => l.code === '5100');
+    const invLine = cogsD.rows.find(l => l.code === '1130');
+
+    assert.ok(lossLine && Number(lossLine.debit) === (30 * 70000), 'Damaged goods must be debited to Impairment Loss (5190)');
+    assert.ok(cogsLine && Number(cogsLine.credit) === (30 * 70000), 'COGS must be credited for damaged return');
+    assert.equal(invLine, undefined, 'Zero debit to 1130 saleable inventory for damaged goods');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 34: Unauthorized actor spoofing rejection
+  // ----------------------------------------------------------------------------
+  test('Scenario 34: Unauthorized actor spoofing rejection', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-34',
+      quantity: 10,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+    await pool.query('UPDATE public.sales_invoices SET paid_amount = total_amount, balance_amount = 0, payment_status = $1 WHERE id = $2', ['paid', inv.invoiceId]);
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-34', $1, $2, CURRENT_DATE,
+        1000000, 110000, 1110000, 'post_invoice_discount', 'saleable',
+        'commercial_credit', 'approved', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    const targetInv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-34-TARGET',
+      quantity: 10,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+
+    const viewerId = '00000000-0000-0000-0000-000000000003'; // viewer role in user_profiles
+    let applyRejected = false;
+    try {
+      await pool.query(`
+        SELECT public.apply_credit_note_to_invoice($1, $2, 500000, $3);
+      `, [cnId, targetInv.invoiceId, viewerId]);
+    } catch (err) {
+      applyRejected = true;
+      assert.ok(err.message.includes('Authentication required') || err.message.includes('Permission denied'));
+    }
+    assert.equal(applyRejected, true, 'Unauthenticated/viewer caller cannot execute apply_credit_note_to_invoice');
+
+    let refundRejected = false;
+    try {
+      await pool.query(`
+        SELECT public.refund_credit_note($1, 500000, CURRENT_DATE, $2, 'bank_transfer', 'Spoof Test', $3);
+      `, [cnId, testBankAccountId, viewerId]);
+    } catch (err) {
+      refundRejected = true;
+      assert.ok(err.message.includes('Authentication required') || err.message.includes('Permission denied'));
+    }
+    assert.equal(refundRejected, true, 'Unauthenticated/viewer caller cannot execute refund_credit_note');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 35: Cross-customer credit application rejection
+  // ----------------------------------------------------------------------------
+  test('Scenario 35: Cross-customer credit application rejection', async () => {
+    const custBRes = await pool.query("INSERT INTO public.customers (company_name) VALUES ('Customer B') RETURNING id;");
+    const custBId = custBRes.rows[0].id;
+
+    const invA = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-35-A',
+      quantity: 10,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+    await pool.query('UPDATE public.sales_invoices SET paid_amount = total_amount, balance_amount = 0, payment_status = $1 WHERE id = $2', ['paid', invA.invoiceId]);
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-35', $1, $2, CURRENT_DATE,
+        1000000, 110000, 1110000, 'post_invoice_discount', 'saleable',
+        'commercial_credit', 'approved', $3
+      ) RETURNING id;
+    `, [testCustomerId, invA.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    const invBRes = await pool.query(`
+      INSERT INTO public.sales_invoices (
+        invoice_number, customer_id, invoice_date, subtotal, tax_amount, total_amount, paid_amount, balance_amount, payment_status, is_draft, document_status, created_by
+      ) VALUES (
+        'INV-SC-35-B', $1, CURRENT_DATE, 1000000, 110000, 1110000, 0, 1110000, 'pending', false, 'posted', $2
+      ) RETURNING id;
+    `, [custBId, adminUserId]);
+    const invBId = invBRes.rows[0].id;
+
+    let mismatchBlocked = false;
+    try {
+      await pool.query(`
+        SELECT public.apply_credit_note_to_invoice($1, $2, 500000, $3);
+      `, [cnId, invBId, adminUserId]);
+    } catch (err) {
+      mismatchBlocked = true;
+      assert.ok(err.message.includes('Customer mismatch'));
+    }
+    assert.equal(mismatchBlocked, true, 'Cross-customer credit application must be blocked');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 36: Concurrent credit allocation and refund collision protection
+  // ----------------------------------------------------------------------------
+  test('Scenario 36: Concurrent credit allocation and refund collision protection', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-36',
+      quantity: 50,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+    await pool.query('UPDATE public.sales_invoices SET paid_amount = total_amount, balance_amount = 0, payment_status = $1 WHERE id = $2', ['paid', inv.invoiceId]);
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-36', $1, $2, CURRENT_DATE,
+        5000000, 550000, 5550000, 'customer_refund', 'saleable',
+        'commercial_credit', 'approved', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    const targetInv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-36-TARGET',
+      quantity: 50,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+
+    const clientA = new Client(PG_CONFIG);
+    const clientB = new Client(PG_CONFIG);
+    await clientA.connect();
+    await clientB.connect();
+
+    try {
+      await clientA.query('BEGIN');
+      await clientA.query('SELECT * FROM public.credit_notes WHERE id = $1 FOR UPDATE;', [cnId]);
+
+      await clientB.query('BEGIN');
+      await clientB.query('SET lock_timeout = 200;');
+
+      let bBlocked = false;
+      try {
+        await clientB.query('SELECT * FROM public.credit_notes WHERE id = $1 FOR UPDATE;', [cnId]);
+      } catch (err) {
+        bBlocked = true;
+        assert.ok(err.code === '55P03' || err.message.includes('lock timeout'));
+      }
+      assert.equal(bBlocked, true, 'Client B must be locked out while Client A is processing settlement');
+
+      await clientB.query('ROLLBACK');
+
+      await clientA.query(`
+        SELECT public.refund_credit_note($1, 4000000, CURRENT_DATE, $2, 'bank_transfer', 'Ref A', $3);
+      `, [cnId, testBankAccountId, adminUserId]);
+      await clientA.query('COMMIT');
+
+      let overAllocBlocked = false;
+      try {
+        await clientB.query(`
+          SELECT public.apply_credit_note_to_invoice($1, $2, 3000000, $3);
+        `, [cnId, targetInv.invoiceId, adminUserId]);
+      } catch (err) {
+        overAllocBlocked = true;
+        assert.ok(err.message.includes('Insufficient credit balance'));
+      }
+      assert.equal(overAllocBlocked, true, 'Second claimant must fail when available balance is insufficient');
+    } finally {
+      await clientA.end();
+      await clientB.end();
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 37: Real bank refund record (payment_vouchers) and journal linkage
+  // ----------------------------------------------------------------------------
+  test('Scenario 37: Real bank refund record (payment_vouchers) and journal linkage', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-37',
+      quantity: 20,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+    await pool.query('UPDATE public.sales_invoices SET paid_amount = total_amount, balance_amount = 0, payment_status = $1 WHERE id = $2', ['paid', inv.invoiceId]);
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-37', $1, $2, CURRENT_DATE,
+        2000000, 220000, 2220000, 'customer_refund', 'saleable',
+        'commercial_credit', 'approved', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    const refundRes = (await pool.query(`
+      SELECT public.refund_credit_note($1, 2220000, CURRENT_DATE, $2, 'bank_transfer', 'BCA Ref 999', $3) AS res;
+    `, [cnId, testBankAccountId, adminUserId])).rows[0].res;
+
+    assert.equal(refundRes.success, true);
+    assert.ok(refundRes.payment_voucher_number, 'Payment voucher number must be returned');
+    assert.ok(refundRes.journal_entry_number, 'Journal entry number must be returned');
+
+    const pv = (await pool.query('SELECT * FROM public.payment_vouchers WHERE voucher_number = $1', [refundRes.payment_voucher_number])).rows[0];
+    assert.equal(Number(pv.amount), 2220000);
+    assert.equal(pv.payment_type, 'customer_refund');
+    assert.equal(pv.status, 'approved');
+
+    const je = (await pool.query(`
+      SELECT jel.debit, jel.credit, coa.code
+      FROM public.journal_entries j
+      JOIN public.journal_entry_lines jel ON jel.journal_entry_id = j.id
+      JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE j.entry_number = $1
+      ORDER BY jel.line_number ASC;
+    `, [refundRes.journal_entry_number])).rows;
+
+    assert.equal(je.length, 2);
+    assert.equal(je[0].code, '1120', 'Debit must be AR 1120');
+    assert.equal(Number(je[0].debit), 2220000);
+    assert.equal(je[1].code, '1102', 'Credit must be Bank 1102');
+    assert.equal(Number(je[1].credit), 2220000);
+
+    const cn = (await pool.query('SELECT customer_credit_balance, refund_amount, settlement_status, refund_payment_voucher_id FROM public.credit_notes WHERE id = $1', [cnId])).rows[0];
+    assert.equal(Number(cn.customer_credit_balance), 0);
+    assert.equal(Number(cn.refund_amount), 2220000);
+    assert.equal(cn.settlement_status, 'refunded');
+    assert.equal(cn.refund_payment_voucher_id, pv.id, 'Credit note must link to payment_vouchers record');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 38: Chart of Accounts validation failure on misconfigured/inactive account
+  // ----------------------------------------------------------------------------
+  test('Scenario 38: Chart of Accounts validation failure on misconfigured/inactive account', async () => {
+    await pool.query("UPDATE public.chart_of_accounts SET is_active = false WHERE code = '4300';");
+
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-38',
+      quantity: 10,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-38', $1, $2, CURRENT_DATE,
+        1000000, 110000, 1110000, 'full_physical_return', 'saleable',
+        'physical_return', 'pending_approval', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    await pool.query(`
+      INSERT INTO public.credit_note_items (
+        credit_note_id, sales_invoice_item_id, product_id, batch_id, quantity, unit_price, disposition
+      ) VALUES ($1, $2, $3, $4, 10, 100000, 'saleable');
+    `, [cnId, inv.invoiceItemId, testProductId, testBatchId]);
+
+    let approvalBlocked = false;
+    try {
+      await pool.query('UPDATE public.credit_notes SET status = $1, approved_by = $2 WHERE id = $3', ['approved', adminUserId, cnId]);
+    } catch (err) {
+      approvalBlocked = true;
+      assert.ok(err.message.includes('Chart of Accounts validation failed') && err.message.includes('inactive'));
+    }
+    assert.equal(approvalBlocked, true, 'Approval must be blocked if CoA account is inactive');
+
+    await pool.query("UPDATE public.chart_of_accounts SET is_active = true WHERE code = '4300';");
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 39: Indonesian tax category calculation
+  // ----------------------------------------------------------------------------
+  test('Scenario 39: Indonesian tax category calculation (12% statutory, 11% effective, 0% exempt)', async () => {
+    // Invoice with 12% statutory tax rate
+    const inv12Res = await pool.query(`
+      INSERT INTO public.sales_invoices (
+        invoice_number, customer_id, invoice_date, subtotal, tax_amount, total_amount, paid_amount, balance_amount, payment_status, is_draft, document_status, created_by
+      ) VALUES (
+        'INV-TAX-12', $1, CURRENT_DATE, 10000000, 1200000, 11200000, 0, 11200000, 'pending', false, 'posted', $2
+      ) RETURNING id;
+    `, [testCustomerId, adminUserId]);
+    const inv12Id = inv12Res.rows[0].id;
+
+    const item12Res = await pool.query(`
+      INSERT INTO public.sales_invoice_items (
+        invoice_id, product_id, batch_id, quantity, unit_price, tax_rate, cogs_unit_cost, cogs_total_cost
+      ) VALUES (
+        $1, $2, $3, 100, 100000, 0.1200, 60000, 6000000
+      ) RETURNING id;
+    `, [inv12Id, testProductId, testBatchId]);
+
+    const cnPayload12 = {
+      credit_note_number: 'CN-TAX-12',
+      customer_id: testCustomerId,
+      original_invoice_id: inv12Id,
+      reason: '12% VAT test',
+      business_case: 'partial_physical_return',
+      stock_disposition: 'saleable',
+      credit_note_type: 'physical_return',
+    };
+    const items12 = [
+      { product_id: testProductId, batch_id: testBatchId, quantity: 10, unit_price: 100000, sales_invoice_item_id: item12Res.rows[0].id }
+    ];
+
+    const res12 = (await pool.query('SELECT public.create_credit_note_atomic($1, $2, $3) AS res', [
+      JSON.stringify(cnPayload12), JSON.stringify(items12), adminUserId
+    ])).rows[0].res;
+
+    assert.equal(Number(res12.subtotal), 1000000);
+    assert.equal(Number(res12.tax_amount), 120000, 'Tax amount must be 12% = Rp 120,000');
+    assert.equal(Number(res12.total_amount), 1120000);
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 40: Electronic Nota Retur acceptance/rejection lifecycle
+  // ----------------------------------------------------------------------------
+  test('Scenario 40: Electronic Nota Retur acceptance/rejection lifecycle', async () => {
+    const inv = await createPostedInvoice({
+      invoiceNumber: 'INV-SC-40',
+      quantity: 10,
+      unitPrice: 100000,
+      fifoCost: 60000,
+    });
+
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-SC-40', $1, $2, CURRENT_DATE,
+        1000000, 110000, 1110000, 'partial_physical_return', 'saleable',
+        'physical_return', 'approved', $3
+      ) RETURNING id;
+    `, [testCustomerId, inv.invoiceId, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    // 1. Link or generate Nota Retur
+    const nrId = (await pool.query('SELECT public.link_or_generate_nota_retur_for_credit_note($1, $2, CURRENT_DATE, $3) AS id', [
+      cnId, 'NR-2026-TEST', adminUserId
+    ])).rows[0].id;
+
+    const nrInitial = (await pool.query('SELECT coretax_status, status, nota_retur_number FROM public.nota_retur WHERE id = $1', [nrId])).rows[0];
+    assert.equal(nrInitial.coretax_status, 'draft');
+
+    // 2. Submit to DJP Coretax
+    await pool.query('SELECT public.update_nota_retur_coretax_status($1, $2, $3, NULL, $4);', [
+      nrId, 'submitted', 'DJP-REF-001', adminUserId
+    ]);
+    const nrSubmitted = (await pool.query('SELECT coretax_status, coretax_reference_number FROM public.nota_retur WHERE id = $1', [nrId])).rows[0];
+    assert.equal(nrSubmitted.coretax_status, 'submitted');
+    assert.equal(nrSubmitted.coretax_reference_number, 'DJP-REF-001');
+
+    // 3. DJP Approval
+    await pool.query('SELECT public.update_nota_retur_coretax_status($1, $2, $3, $4, $5);', [
+      nrId, 'approved_by_djp', 'DJP-REF-001', 'https://djp.go.id/evidence/123.pdf', adminUserId
+    ]);
+    const nrApproved = (await pool.query('SELECT coretax_status, status, notes FROM public.nota_retur WHERE id = $1', [nrId])).rows[0];
+    assert.equal(nrApproved.coretax_status, 'approved_by_djp');
+    assert.equal(nrApproved.status, 'approved');
+    assert.ok(nrApproved.notes.includes('https://djp.go.id/evidence/123.pdf'));
+  });
+
+  // ----------------------------------------------------------------------------
+  // Scenario 41: Production historical reconciliation read-only audit
+  // ----------------------------------------------------------------------------
+  test('Scenario 41: Production historical reconciliation read-only audit (CN-26-0001, SAPJ-26-013, RV2606-0005, 125 kg returned once)', async () => {
+    const invoiceTotal = 251328420.00;
+    const rv1Amount = 125664210.00;
+    const rv2Amount = 123918873.75;
+    const cnTotal = 1745336.25;
+    const cnSubtotal = 1572375.00;
+    const cnTax = 172961.25;
+
+    // Batch 1: B108/2026, Batch 2: B109/2026
+    const b108Res = await pool.query("INSERT INTO public.batches (batch_number, product_id, current_stock, cost_per_unit, landed_cost_per_unit, is_active) VALUES ('B108/2026', $1, 0, 9816.82, 9816.82, true) RETURNING id;", [testProductId]);
+    const b109Res = await pool.query("INSERT INTO public.batches (batch_number, product_id, current_stock, cost_per_unit, landed_cost_per_unit, is_active) VALUES ('B109/2026', $1, 0, 9816.82, 9816.82, true) RETURNING id;", [testProductId]);
+    const b108Id = b108Res.rows[0].id;
+    const b109Id = b109Res.rows[0].id;
+
+    // Create SAPJ-26-013
+    const invRes = await pool.query(`
+      INSERT INTO public.sales_invoices (
+        invoice_number, customer_id, invoice_date, subtotal, tax_amount, total_amount, paid_amount, balance_amount, payment_status, is_draft, document_status, created_by
+      ) VALUES (
+        'SAPJ-26-013-PROD', $1, '2026-05-20', 226422000.00, 24906420.00, $2, 0, $2, 'pending', false, 'posted', $3
+      ) RETURNING id;
+    `, [testCustomerId, invoiceTotal, adminUserId]);
+    const invId = invRes.rows[0].id;
+
+    // Create RV2606-0004
+    await pool.query('INSERT INTO public.voucher_allocations (sales_invoice_id, allocated_amount, status) VALUES ($1, $2, $3)', [invId, rv1Amount, 'approved']);
+
+    // Create RV2606-0005 (net of return)
+    await pool.query('INSERT INTO public.voucher_allocations (sales_invoice_id, allocated_amount, status) VALUES ($1, $2, $3)', [invId, rv2Amount, 'approved']);
+
+    // Issue CN-26-0001
+    const cnRes = await pool.query(`
+      INSERT INTO public.credit_notes (
+        credit_note_number, customer_id, original_invoice_id, credit_note_date,
+        subtotal, tax_amount, total_amount, business_case, stock_disposition,
+        credit_note_type, status, created_by
+      ) VALUES (
+        'CN-26-0001-PROD', $1, $2, '2026-05-27',
+        $3, $4, $5, 'damaged_packaging', 'saleable',
+        'physical_return', 'approved', $6
+      ) RETURNING id;
+    `, [testCustomerId, invId, cnSubtotal, cnTax, cnTotal, adminUserId]);
+    const cnId = cnRes.rows[0].id;
+
+    // Lines: 100 kg B108, 25 kg B109
+    await pool.query('INSERT INTO public.credit_note_items (credit_note_id, product_id, batch_id, quantity, unit_price, disposition) VALUES ($1, $2, $3, 100, 12579, $4);', [cnId, testProductId, b108Id, 'saleable']);
+    await pool.query('INSERT INTO public.credit_note_items (credit_note_id, product_id, batch_id, quantity, unit_price, disposition) VALUES ($1, $2, $3, 25, 12579, $4);', [cnId, testProductId, b109Id, 'saleable']);
+
+    // Reconcile payment state
+    await pool.query('SELECT public.recalculate_sales_invoice_payment_state($1)', [invId]);
+
+    const finalInv = (await pool.query('SELECT total_amount, paid_amount, balance_amount, payment_status FROM public.sales_invoices WHERE id = $1', [invId])).rows[0];
+    assert.equal(Number(finalInv.total_amount), invoiceTotal);
+    assert.equal(Number(finalInv.paid_amount), invoiceTotal, 'Invoice must be fully settled: RV1 + RV2 + CN = Total');
+    assert.equal(Number(finalInv.balance_amount), 0, 'Balance must be exactly 0.00');
+    assert.equal(finalInv.payment_status, 'paid');
+
+    // Post exactly two inventory transactions for the 125 kg return
+    await pool.query(`
+      SELECT public.post_inventory_movement(
+        public.uuid_from_text('inv:cn:b108'), $1, $2, 'return', 100, '2026-05-27', 'CN-26-0001', 'credit_note', $3, 'Return 100kg', $4, NULL, NULL
+      );
+    `, [testProductId, b108Id, cnId, adminUserId]);
+    await pool.query(`
+      SELECT public.post_inventory_movement(
+        public.uuid_from_text('inv:cn:b109'), $1, $2, 'return', 25, '2026-05-27', 'CN-26-0001', 'credit_note', $3, 'Return 25kg', $4, NULL, NULL
+      );
+    `, [testProductId, b109Id, cnId, adminUserId]);
+
+    const b108Stock = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [b108Id])).rows[0].current_stock);
+    const b109Stock = Number((await pool.query('SELECT current_stock FROM public.batches WHERE id = $1', [b109Id])).rows[0].current_stock);
+    assert.equal(b108Stock, 100, 'B108 stock must be exactly 100 kg');
+    assert.equal(b109Stock, 25, 'B109 stock must be exactly 25 kg');
+
+    const itCount = Number((await pool.query('SELECT count(*) FROM public.inventory_transactions WHERE reference_id = $1', [cnId])).rows[0].count);
+    assert.equal(itCount, 2, 'Exactly 2 inventory movements recorded. Return was posted once, NOT twice.');
+  });
+  });

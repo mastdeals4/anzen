@@ -7,6 +7,16 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
   SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
 $$ LANGUAGE sql STABLE;
 
+CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $$
+  SELECT COALESCE(
+    NULLIF(current_setting('request.jwt.claims', true), '')::jsonb,
+    jsonb_build_object(
+      'role', current_setting('request.jwt.claim.role', true),
+      'sub', current_setting('request.jwt.claim.sub', true)
+    )
+  );
+$$ LANGUAGE sql STABLE;
+
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -131,16 +141,21 @@ CREATE TABLE IF NOT EXISTS public.chart_of_accounts (
   code text NOT NULL UNIQUE,
   name text NOT NULL,
   account_type text NOT NULL,
+  normal_balance text,
   is_active boolean DEFAULT true
 );
 
-INSERT INTO public.chart_of_accounts (code, name, account_type)
-VALUES ('5100', 'Cost of Goods Sold', 'expense'),
-       ('1130', 'Inventory', 'asset'),
-       ('4100', 'Sales Revenue', 'revenue'),
-       ('1120', 'Accounts Receivable', 'asset'),
-       ('1102', 'Bank Central Asia - IDR', 'asset')
-ON CONFLICT (code) DO NOTHING;
+INSERT INTO public.chart_of_accounts (code, name, account_type, normal_balance)
+VALUES ('5100', 'Cost of Goods Sold', 'expense', 'debit'),
+       ('1130', 'Inventory', 'asset', 'debit'),
+       ('4100', 'Sales Revenue', 'revenue', 'credit'),
+       ('1120', 'Accounts Receivable', 'asset', 'debit'),
+       ('1102', 'Bank Central Asia - IDR', 'asset', 'debit'),
+       ('4300', 'Sales Returns & Allowances', 'revenue', 'debit'),
+       ('2130', 'Output PPN Payable', 'liability', 'credit'),
+       ('5190', 'Inventory Impairment & Damage Loss', 'expense', 'debit'),
+       ('2140', 'Customer Credit & Advances', 'liability', 'credit')
+ON CONFLICT (code) DO UPDATE SET normal_balance = EXCLUDED.normal_balance, account_type = EXCLUDED.account_type;
 
 CREATE TABLE IF NOT EXISTS public.accounting_periods (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -209,6 +224,37 @@ CREATE TABLE IF NOT EXISTS public.bank_accounts (
   current_balance numeric DEFAULT 0,
   is_active boolean DEFAULT true,
   coa_id uuid REFERENCES public.chart_of_accounts(id)
+);
+
+CREATE TABLE IF NOT EXISTS public.payment_vouchers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  voucher_number text NOT NULL,
+  voucher_date date NOT NULL DEFAULT CURRENT_DATE,
+  supplier_id uuid,
+  payment_method text NOT NULL DEFAULT 'bank_transfer',
+  bank_account_id uuid REFERENCES public.bank_accounts(id),
+  reference_number text,
+  amount numeric(18,2) NOT NULL,
+  description text,
+  journal_entry_id uuid REFERENCES public.journal_entries(id),
+  created_by uuid,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  payment_type text DEFAULT 'payment',
+  status text DEFAULT 'approved',
+  is_posted boolean DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS public.credit_note_allocations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  allocation_number text NOT NULL,
+  credit_note_id uuid NOT NULL,
+  target_invoice_id uuid NOT NULL,
+  allocated_amount numeric(18,2) NOT NULL CHECK (allocated_amount > 0),
+  allocated_date date NOT NULL DEFAULT CURRENT_DATE,
+  notes text,
+  created_by uuid,
+  created_at timestamptz DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS public.inventory_transactions (
@@ -334,6 +380,8 @@ CREATE TABLE IF NOT EXISTS public.nota_retur (
   coretax_status text DEFAULT 'draft',
   coretax_reference_number text,
   coretax_submission_date timestamptz,
+  notes text,
+  document_url text,
   created_by uuid,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
@@ -407,6 +455,10 @@ CREATE TABLE IF NOT EXISTS public.credit_notes (
   credit_note_date date DEFAULT CURRENT_DATE,
   status text DEFAULT 'approved',
   credit_note_type text DEFAULT 'physical_return',
+  original_invoice_number text,
+  reason text,
+  notes text,
+  currency text DEFAULT 'IDR',
   subtotal numeric DEFAULT 0,
   tax_amount numeric DEFAULT 0,
   total_amount numeric DEFAULT 0,
@@ -436,7 +488,30 @@ CREATE OR REPLACE FUNCTION public.post_inventory_movement(
   p_movement_id uuid, p_product_id uuid, p_batch_id uuid, p_type text,
   p_quantity numeric, p_date date, p_ref text, p_source text, p_source_id uuid,
   p_notes text, p_user uuid, p_val1 text, p_val2 text
-) RETURNS void AS $$ BEGIN RETURN; END; $$ LANGUAGE plpgsql;
+) RETURNS void AS $$
+BEGIN
+  INSERT INTO public.inventory_transactions (
+    id, product_id, batch_id, transaction_type, quantity,
+    transaction_date, reference_number, reference_type, reference_id,
+    notes, created_by
+  ) VALUES (
+    COALESCE(p_movement_id, gen_random_uuid()), p_product_id, p_batch_id, p_type, p_quantity,
+    COALESCE(p_date, CURRENT_DATE), p_ref, p_source, p_source_id,
+    p_notes, p_user
+  ) ON CONFLICT (id) DO NOTHING;
+
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  IF p_type IN ('return', 'in', 'adjustment_in') THEN
+    UPDATE public.batches SET current_stock = current_stock + p_quantity WHERE id = p_batch_id;
+  ELSIF p_type IN ('out', 'sale', 'adjustment_out') THEN
+    UPDATE public.batches SET current_stock = current_stock - p_quantity WHERE id = p_batch_id;
+  END IF;
+  RETURN;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION public.calculate_batch_authoritative_cost(p_batch public.batches)
 RETURNS numeric AS $$
