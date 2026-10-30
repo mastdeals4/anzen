@@ -206,7 +206,7 @@ interface BankReconciliationEnhancedProps {
   initialStatementLineId?: string | null;
   onInitialFocusHandled?: () => void;
   onRecordContra?: (line: { bankAccountId: string; statementLineId: string; date: string; amount: number; description: string; direction: 'from' | 'to' }) => void;
-  onRecordPayment?: (line: { bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string }) => void;
+  onRecordPayment?: (line: { bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string; partyType?: any; partyId?: string; paymentPurpose?: string; settlementAgainst?: string }) => void;
   onRecordExpense?: (line: BankReconciliationExpensePrefill) => void;
   onRecordReceipt?: (line: BankReconciliationReceiptPrefill) => void;
   onOpenJournal?: (journalEntryId: string) => void;
@@ -356,7 +356,7 @@ export function BankReconciliationEnhanced({
   const [embeddedExpensePrefill, setEmbeddedExpensePrefill] = useState<BankReconciliationExpensePrefill | null>(null);
   const [embeddedReceiptPrefill, setEmbeddedReceiptPrefill] = useState<BankReconciliationReceiptPrefill | null>(null);
   const [embeddedPaymentPrefill, setEmbeddedPaymentPrefill] = useState<{
-    bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string;
+    bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string; partyType?: any; partyId?: string; paymentPurpose?: string; settlementAgainst?: string;
   } | null>(null);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [linkToExpense, setLinkToExpense] = useState(false);
@@ -4711,24 +4711,111 @@ export function BankReconciliationEnhanced({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onRecordPayment ? onRecordPayment?.({
-                        bankAccountId: selectedBank,
-                        statementLineId: recordingLine.id,
-                        date: recordingLine.date,
-                        amount: recordingLine.debit,
-                        currency: recordingLine.currency as 'IDR' | 'USD',
-                        reference: recordingLine.reference || '',
-                        description: recordingLine.description,
-                      }) : setEmbeddedPaymentPrefill({
-                        bankAccountId: selectedBank,
-                        statementLineId: recordingLine.id,
-                        date: recordingLine.date,
-                        amount: recordingLine.debit,
-                        currency: recordingLine.currency as 'IDR' | 'USD',
-                        reference: recordingLine.reference || '',
-                        description: recordingLine.description,
-                      })}
-                      className="py-1.5 px-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200"
+                      onClick={() => {
+                        const prefill = {
+                          bankAccountId: selectedBank,
+                          statementLineId: recordingLine.id,
+                          date: recordingLine.date,
+                          amount: recordingLine.debit,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                          description: recordingLine.description,
+                          partyType: 'supplier',
+                          paymentPurpose: 'supplier_invoice_payment',
+                        };
+                        setRecordModal(false);
+                        if (onRecordPayment) onRecordPayment(prefill);
+                        else setEmbeddedPaymentPrefill(prefill);
+                      }}
+                      className="py-1.5 px-2.5 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                    >
+                      Supplier Payment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prefill = {
+                          bankAccountId: selectedBank,
+                          statementLineId: recordingLine.id,
+                          date: recordingLine.date,
+                          amount: recordingLine.debit,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                          description: recordingLine.description,
+                          partyType: 'customer',
+                          paymentPurpose: 'customer_refund',
+                        };
+                        setRecordModal(false);
+                        if (onRecordPayment) onRecordPayment(prefill);
+                        else setEmbeddedPaymentPrefill(prefill);
+                      }}
+                      className="py-1.5 px-2.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                    >
+                      Customer Refund
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prefill = {
+                          bankAccountId: selectedBank,
+                          statementLineId: recordingLine.id,
+                          date: recordingLine.date,
+                          amount: recordingLine.debit,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                          description: recordingLine.description,
+                          partyType: 'employee',
+                          paymentPurpose: 'salary_payroll',
+                        };
+                        setRecordModal(false);
+                        if (onRecordPayment) onRecordPayment(prefill);
+                        else setEmbeddedPaymentPrefill(prefill);
+                      }}
+                      className="py-1.5 px-2.5 rounded-lg text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100"
+                    >
+                      Staff Payment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prefill = {
+                          bankAccountId: selectedBank,
+                          statementLineId: recordingLine.id,
+                          date: recordingLine.date,
+                          amount: recordingLine.debit,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                          description: recordingLine.description,
+                          partyType: 'director',
+                          paymentPurpose: 'director_loan_repayment',
+                        };
+                        setRecordModal(false);
+                        if (onRecordPayment) onRecordPayment(prefill);
+                        else setEmbeddedPaymentPrefill(prefill);
+                      }}
+                      className="py-1.5 px-2.5 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                    >
+                      Director Repayment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prefill = {
+                          bankAccountId: selectedBank,
+                          statementLineId: recordingLine.id,
+                          date: recordingLine.date,
+                          amount: recordingLine.debit,
+                          currency: recordingLine.currency as 'IDR' | 'USD',
+                          reference: recordingLine.reference || '',
+                          description: recordingLine.description,
+                          partyType: 'other',
+                          paymentPurpose: 'other_payment',
+                        };
+                        setRecordModal(false);
+                        if (onRecordPayment) onRecordPayment(prefill);
+                        else setEmbeddedPaymentPrefill(prefill);
+                      }}
+                      className="py-1.5 px-2.5 rounded-lg text-xs font-medium bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100"
                     >
                       Other Payment
                     </button>
@@ -5376,29 +5463,118 @@ export function BankReconciliationEnhanced({
                     >
                       Record Contra
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const prefill: BankReconciliationReceiptPrefill = {
-                          statementLineId: recordingLine.id,
-                          bankAccountId: selectedBank,
-                          date: recordingLine.date,
-                          amount: recordingLine.credit,
-                          description: recordingLine.description,
-                          currency: recordingLine.currency as 'IDR' | 'USD',
-                          reference: recordingLine.reference || '',
-                        };
-                        setRecordModal(false);
-                        if (onRecordReceipt) {
-                          onRecordReceipt(prefill);
-                        } else {
-                          setEmbeddedReceiptPrefill(prefill);
-                        }
-                      }}
-                      className="text-xs text-green-700 font-semibold hover:underline"
-                    >
-                      Open Full Receipt Form
-                    </button>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefill: BankReconciliationReceiptPrefill = {
+                            statementLineId: recordingLine.id,
+                            bankAccountId: selectedBank,
+                            date: recordingLine.date,
+                            amount: recordingLine.credit,
+                            description: recordingLine.description,
+                            currency: recordingLine.currency as 'IDR' | 'USD',
+                            reference: recordingLine.reference || '',
+                            partyType: 'customer',
+                            paymentPurpose: 'invoice_payment',
+                          };
+                          setRecordModal(false);
+                          if (onRecordReceipt) onRecordReceipt(prefill);
+                          else setEmbeddedReceiptPrefill(prefill);
+                        }}
+                        className="py-1 px-2.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                      >
+                        Customer Receipt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefill: BankReconciliationReceiptPrefill = {
+                            statementLineId: recordingLine.id,
+                            bankAccountId: selectedBank,
+                            date: recordingLine.date,
+                            amount: recordingLine.credit,
+                            description: recordingLine.description,
+                            currency: recordingLine.currency as 'IDR' | 'USD',
+                            reference: recordingLine.reference || '',
+                            partyType: 'supplier',
+                            paymentPurpose: 'supplier_refund',
+                          };
+                          setRecordModal(false);
+                          if (onRecordReceipt) onRecordReceipt(prefill);
+                          else setEmbeddedReceiptPrefill(prefill);
+                        }}
+                        className="py-1 px-2.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                      >
+                        Supplier Refund
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefill: BankReconciliationReceiptPrefill = {
+                            statementLineId: recordingLine.id,
+                            bankAccountId: selectedBank,
+                            date: recordingLine.date,
+                            amount: recordingLine.credit,
+                            description: recordingLine.description,
+                            currency: recordingLine.currency as 'IDR' | 'USD',
+                            reference: recordingLine.reference || '',
+                            partyType: 'employee',
+                            paymentPurpose: 'employee_advance_recovery',
+                          };
+                          setRecordModal(false);
+                          if (onRecordReceipt) onRecordReceipt(prefill);
+                          else setEmbeddedReceiptPrefill(prefill);
+                        }}
+                        className="py-1 px-2.5 rounded-lg text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100"
+                      >
+                        Staff Recovery
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefill: BankReconciliationReceiptPrefill = {
+                            statementLineId: recordingLine.id,
+                            bankAccountId: selectedBank,
+                            date: recordingLine.date,
+                            amount: recordingLine.credit,
+                            description: recordingLine.description,
+                            currency: recordingLine.currency as 'IDR' | 'USD',
+                            reference: recordingLine.reference || '',
+                            partyType: 'director',
+                            paymentPurpose: 'director_funding',
+                          };
+                          setRecordModal(false);
+                          if (onRecordReceipt) onRecordReceipt(prefill);
+                          else setEmbeddedReceiptPrefill(prefill);
+                        }}
+                        className="py-1 px-2.5 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                      >
+                        Director Funding
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefill: BankReconciliationReceiptPrefill = {
+                            statementLineId: recordingLine.id,
+                            bankAccountId: selectedBank,
+                            date: recordingLine.date,
+                            amount: recordingLine.credit,
+                            description: recordingLine.description,
+                            currency: recordingLine.currency as 'IDR' | 'USD',
+                            reference: recordingLine.reference || '',
+                            partyType: 'other',
+                            paymentPurpose: 'other_money_received',
+                          };
+                          setRecordModal(false);
+                          if (onRecordReceipt) onRecordReceipt(prefill);
+                          else setEmbeddedReceiptPrefill(prefill);
+                        }}
+                        className="py-1 px-2.5 rounded-lg text-xs font-medium bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100"
+                      >
+                        Other Receipt
+                      </button>
+                    </div>
                     <button
                       type="button"
                       onClick={() => {

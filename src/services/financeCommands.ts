@@ -19,9 +19,20 @@ export interface FinanceExpensePayload {
   [key: string]: unknown;
 }
 
+export type PartyType = 'customer' | 'supplier' | 'employee' | 'director' | 'other';
+
 export interface ReceiptPayload {
   voucher_date: string;
-  customer_id: string;
+  party_type?: PartyType;
+  customer_id?: string | null;
+  supplier_id?: string | null;
+  staff_id?: string | null;
+  payment_purpose?: string;
+  settlement_against?: 'outstanding_balance' | 'specific_document' | 'advance' | 'unallocated_credit';
+  settlement_discount?: number;
+  adjustment_reason?: string | null;
+  adjustment_account_id?: string | null;
+  adjustment_notes?: string | null;
   payment_method: string;
   bank_account_id?: string | null;
   reference_number?: string | null;
@@ -36,14 +47,24 @@ export interface ReceiptAllocation {
   sales_invoice_id?: string | null;
   sales_order_id?: string | null;
   amount: number;
+  settlement_discount?: number;
+  adjustment_reason?: string | null;
+  notes?: string | null;
 }
 
 export interface PaymentPayload {
   voucher_date: string;
+  party_type?: PartyType;
   supplier_id?: string | null;
+  customer_id?: string | null;
   staff_id?: string | null;
   payment_method: string;
-  payment_purpose?: 'general' | 'salary_advance' | 'salary_advance_settlement';
+  payment_purpose?: string;
+  settlement_against?: 'outstanding_balance' | 'specific_document' | 'advance' | 'unallocated_credit';
+  settlement_discount?: number;
+  adjustment_reason?: string | null;
+  adjustment_account_id?: string | null;
+  adjustment_notes?: string | null;
   bank_account_id?: string | null;
   reference_number?: string | null;
   amount: number;
@@ -63,6 +84,37 @@ export interface PaymentPayload {
   bank_charge?: number;
   created_by?: string;
 }
+
+export interface PartyBalanceSummary {
+  party_type: string;
+  party_id: string;
+  total_receivable: number;
+  total_payable: number;
+  unallocated_credits: number;
+  unallocated_advances: number;
+  gl_balance: number;
+  net_balance: number;
+  balance_direction: 'debit' | 'credit' | 'zero';
+  outstanding_amount: number;
+  open_documents: Array<{
+    id: string;
+    document_type: string;
+    document_number: string;
+    document_date: string;
+    total_amount: number;
+    balance_amount: number;
+  }>;
+}
+
+export const getPartyBalanceSummary = (
+  partyType: PartyType,
+  partyId: string,
+  asOfDate?: string
+) => rpc<PartyBalanceSummary>('get_party_balance_summary', {
+  p_party_type: partyType,
+  p_party_id: partyId,
+  p_as_of_date: asOfDate || new Date().toISOString().split('T')[0],
+});
 
 export interface JournalLineCommand {
   account_id: string;

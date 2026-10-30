@@ -307,6 +307,33 @@ export default function PartyLedger() {
           });
         });
       }
+
+      // Customer Refunds Paid (Money OUT to Customer - Debits Customer Ledger)
+      const { data: customerRefunds } = await dateRange(
+        supabase
+          .from('payment_vouchers')
+          .select('id, voucher_date, voucher_number, amount, description, payment_purpose, transaction_currency, payment_currency, currency_code, exchange_rate')
+          .eq('customer_id', selectedParty)
+          .eq('is_posted', true),
+        'voucher_date',
+      ).order('voucher_date');
+
+      if (customerRefunds) {
+        customerRefunds.forEach(ref => {
+          const currency = ref.transaction_currency || ref.payment_currency || ref.currency_code || 'IDR';
+          const primaryAmount = Number(ref.amount || 0);
+          entries.push({
+            id: ref.id,
+            entry_date: ref.voucher_date,
+            particulars: `Customer Refund Paid - ${ref.description || ref.payment_purpose || 'Refund'}${currencyDetail(primaryAmount, currency, ref.exchange_rate)}`,
+            reference: ref.voucher_number,
+            debit: toFunctionalIDR(primaryAmount, currency, ref.exchange_rate),
+            credit: 0,
+            running_balance: 0,
+            type: 'payment',
+          });
+        });
+      }
     } else if (partyType === 'supplier') {
       // 1. Detect if this supplier is foreign currency (USD)
       const { data: usdCheck } = await supabase
@@ -448,6 +475,55 @@ export default function PartyLedger() {
         });
       }
 
+      // 4b. Supplier Refund Receipts (Supplier AP Credit / Advance Recovery)
+      const { data: supplierRefunds } = await dateRange(
+        supabase
+          .from('receipt_vouchers')
+          .select('id, voucher_date, voucher_number, amount, description, payment_purpose, transaction_currency, currency_code, exchange_rate, settlement_discount, adjustment_reason, journal_entry_id')
+          .eq('supplier_id', selectedParty)
+          .eq('is_posted', true),
+        'voucher_date',
+      ).order('voucher_date');
+
+      const rvJeIds = new Set<string>();
+      const rvVoucherNos = new Set<string>();
+
+      if (supplierRefunds) {
+        supplierRefunds.forEach(ref => {
+          if (ref.journal_entry_id) rvJeIds.add(ref.journal_entry_id);
+          if (ref.voucher_number) rvVoucherNos.add(ref.voucher_number);
+
+          const currency = ref.transaction_currency || ref.currency_code || (isUsdSupplier ? 'USD' : 'IDR');
+          const isUsd = currency === 'USD';
+          const refundAmount = Number(ref.amount || 0);
+          const discountDiff = Number(ref.settlement_discount || 0);
+          const totalSettled = refundAmount + discountDiff;
+          const fxRate = Number(ref.exchange_rate || 0);
+          const functionalAmount = isUsd ? (fxRate > 0 ? totalSettled * fxRate : 0) : totalSettled;
+
+          let particulars = `Supplier Refund Received${discountDiff > 0 ? ` (Settled: ${formatCurrency(totalSettled, currency)}, Write-off: ${formatCurrency(discountDiff, currency)})` : ''}`;
+          if (ref.description) {
+            particulars += ` - ${ref.description}`;
+          }
+
+          entries.push({
+            id: ref.id,
+            entry_date: ref.voucher_date,
+            particulars,
+            reference: ref.voucher_number,
+            currency: isUsd ? 'USD' : currency,
+            debit: 0,
+            credit: totalSettled,
+            exchange_rate: fxRate > 0 ? fxRate : null,
+            functional_amount: functionalAmount,
+            functional_debit: 0,
+            functional_credit: functionalAmount,
+            running_balance: 0,
+            type: 'receipt',
+          });
+        });
+      }
+
       // 5. Customs broker bills & direct GL 2110 settlements (bank recon payments, historical repairs, adjustments)
       // Any GL line on Account 2110 for this supplier that is not already captured by purchase invoices,
       // non-import expense bills, or payment vouchers is included here to ensure ledger and GL agree.
@@ -490,6 +566,7 @@ export default function PartyLedger() {
             const je = line.journal_entries;
             if (!je) return false;
             if (pvJeIds.has(line.journal_entry_id) || pvJeIds.has(je.id) || (je.reference_number && pvVoucherNos.has(je.reference_number))) return false;
+            if (rvJeIds.has(line.journal_entry_id) || rvJeIds.has(je.id) || (je.reference_number && rvVoucherNos.has(je.reference_number))) return false;
             if ((je.reference_id && piIds.has(je.reference_id)) || (je.reference_number && piNos.has(je.reference_number))) return false;
             const rawRef = je.reference_number || '';
             const refExpId = rawRef.startsWith('EXP-') ? rawRef.substring(4) : '';

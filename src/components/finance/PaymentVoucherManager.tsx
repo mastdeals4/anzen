@@ -11,7 +11,7 @@ import { FinanceModal } from './FinanceModal';
 import { F_BTN_PRIMARY, F_BTN_SECONDARY } from './FinanceForm';
 import { supabaseErrorMessage } from '../../utils/supabaseError';
 import { formatCurrency } from '../../utils/currency';
-import { linkBankStatementLine, savePaymentVoucher, applySettlementAdjustment } from '../../services/financeCommands';
+import { linkBankStatementLine, savePaymentVoucher, applySettlementAdjustment, getPartyBalanceSummary, type PartyType, type PartyBalanceSummary } from '../../services/financeCommands';
 import { BankTransactionLinkField } from './BankTransactionLinkField';
 import { FinanceActionButton, FinanceBadge } from './FinanceUI';
 import {
@@ -37,6 +37,16 @@ import {
 interface Supplier {
   id: string;
   company_name: string;
+}
+
+interface Customer {
+  id: string;
+  company_name: string;
+}
+
+interface DirectorOption {
+  id: string;
+  name: string;
 }
 
 interface StaffMember {
@@ -76,9 +86,16 @@ interface PaymentVoucher {
   voucher_number: string;
   voucher_date: string;
   supplier_id: string | null;
+  customer_id?: string | null;
   staff_id: string | null;
+  party_type?: PartyType | null;
+  settlement_against?: string | null;
+  settlement_discount?: number | null;
+  adjustment_reason?: string | null;
+  adjustment_account_id?: string | null;
+  adjustment_notes?: string | null;
   payment_method: string;
-  payment_purpose: 'general' | 'salary_advance' | 'salary_advance_settlement';
+  payment_purpose: string;
   salary_advance_status?: 'not_applicable' | 'outstanding' | 'partially_settled' | 'settled';
   salary_advance_applied_amount?: number;
   bank_account_id: string | null;
@@ -106,8 +123,9 @@ interface PaymentVoucher {
   bank_link_evaluation?: VoucherBankLinkEvaluation;
   bank_statement_line?: BankTransactionLine | null;
   bank_statement_lines?: BankTransactionLine[];
-  suppliers?: { company_name: string };
-  finance_staff_master?: { full_name: string };
+  suppliers?: { company_name: string } | null;
+  customers?: { company_name: string } | null;
+  finance_staff_master?: { full_name: string } | null;
   bank_accounts?: { account_name: string; bank_name: string; alias: string | null; currency: string | null };
   // derived
   invoice_currency: string;
@@ -145,7 +163,17 @@ interface PaymentVoucherManagerProps {
   onViewInvoice?: (invoiceId: string) => void;
   onViewExpense?: (expenseId: string) => void;
   prefillFromBankReconciliation?: {
-    bankAccountId: string; statementLineId: string; date: string; amount: number; currency: 'IDR' | 'USD'; reference: string; description: string;
+    bankAccountId: string;
+    statementLineId: string;
+    date: string;
+    amount: number;
+    currency: 'IDR' | 'USD';
+    reference: string;
+    description: string;
+    partyType?: PartyType;
+    partyId?: string;
+    paymentPurpose?: string;
+    settlementAgainst?: string;
   } | null;
   onBankReconciliationPrefillConsumed?: () => void;
   onPaymentSavedFromBankReconciliation?: (voucherId: string, statementLineId: string) => void;
@@ -250,7 +278,12 @@ export function PaymentVoucherManager({
   const [postingLoading, setPostingLoading] = useState<string | null>(null);
   const [vouchers, setVouchers] = useState<PaymentVoucher[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [directors, setDirectors] = useState<DirectorOption[]>([]);
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
+  const [partyType, setPartyType] = useState<PartyType>('supplier');
+  const [partyBalanceSummary, setPartyBalanceSummary] = useState<PartyBalanceSummary | null>(null);
+  const [partyBalanceLoading, setPartyBalanceLoading] = useState(false);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [pendingInvoices, setPendingInvoices] = useState<PurchaseInvoice[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -274,13 +307,52 @@ export function PaymentVoucherManager({
   const [activeInvoicePopoverId, setActiveInvoicePopoverId] = useState<string | null>(null);
   const [viewAllocations, setViewAllocations] = useState<Array<{ invoice_id: string; invoice_number: string; invoice_date: string; allocated_amount: number; allocated_currency: string; is_expense_bill?: boolean; expense_id?: string; expense_category?: string; gross_salary?: number; advance_applied?: number; pph21?: number; settlement_adjustment?: number; adjustment_type?: string }>>([]);
 
+  const PAYMENT_PURPOSES: Record<PartyType, Array<{ value: string; label: string }>> = {
+    supplier: [
+      { value: 'supplier_invoice_payment', label: 'Supplier Invoice Payment' },
+      { value: 'supplier_advance', label: 'Supplier Advance / Deposit' },
+      { value: 'supplier_overpayment_settlement', label: 'Supplier Overpayment Settlement' },
+      { value: 'supplier_other_payment', label: 'Other Supplier Payment' },
+      { value: 'general', label: 'General / Expense Bill Settlement' },
+    ],
+    customer: [
+      { value: 'customer_refund', label: 'Customer Refund (Overpayment / Return)' },
+      { value: 'customer_excess_payment_refund', label: 'Customer Excess Payment Refund' },
+      { value: 'customer_advance_refund', label: 'Customer Advance Refund' },
+      { value: 'customer_other_payment', label: 'Other Customer Payment' },
+    ],
+    employee: [
+      { value: 'salary_payroll', label: 'Salary / Payroll' },
+      { value: 'employee_reimbursement', label: 'Employee Reimbursement' },
+      { value: 'employee_advance', label: 'Employee Advance' },
+      { value: 'salary_advance', label: 'Salary Advance' },
+      { value: 'salary_advance_settlement', label: 'Salary Advance Settlement' },
+      { value: 'other_employee_payment', label: 'Other Employee Payment' },
+    ],
+    director: [
+      { value: 'director_loan_repayment', label: 'Director Loan Repayment' },
+      { value: 'director_withdrawal', label: 'Director Withdrawal' },
+      { value: 'other_related_party_payment', label: 'Other Related Party Payment' },
+    ],
+    other: [
+      { value: 'other_payment', label: 'Other Payment' },
+    ],
+  };
+
   const [formData, setFormData] = useState({
     voucher_date: new Date().toISOString().split('T')[0],
+    party_type: 'supplier' as PartyType,
     payee_type: 'supplier' as 'supplier' | 'staff',
     supplier_id: '',
+    customer_id: '',
     staff_id: '',
+    other_party_name: '',
     payment_method: 'bank_transfer',
-    payment_purpose: 'general' as PaymentPurpose,
+    payment_purpose: 'supplier_invoice_payment',
+    settlement_against: 'specific_document' as 'outstanding_balance' | 'specific_document' | 'advance' | 'unallocated_credit',
+    settlement_discount: 0,
+    adjustment_reason: 'purchase_discount',
+    adjustment_notes: '',
     bank_account_id: '',
     reference_number: '',
     amount: 0,
@@ -321,6 +393,8 @@ export function PaymentVoucherManager({
 
   useEffect(() => {
     loadSuppliers();
+    loadCustomers();
+    loadDirectors();
     loadStaff();
     loadBankAccounts();
     loadTaxCodes();
@@ -338,7 +412,8 @@ export function PaymentVoucherManager({
 
   useEffect(() => {
     if (prefillInvoice && !loading) {
-      setFormData(prev => ({ ...prev, supplier_id: prefillInvoice.supplier_id, amount: prefillInvoice.balance_amount }));
+      setFormData(prev => ({ ...prev, party_type: 'supplier', payee_type: 'supplier', supplier_id: prefillInvoice.supplier_id, amount: prefillInvoice.balance_amount }));
+      setPartyType('supplier');
       setModalOpen(true);
       onPrefillConsumed?.();
     }
@@ -350,8 +425,11 @@ export function PaymentVoucherManager({
     // Works for supplier bills and staff bills (salary/advance).
     if (prefillExpenseBill && !loading) {
       const isStaff = !!prefillExpenseBill.staff_id;
+      const nextPartyType: PartyType = isStaff ? 'employee' : 'supplier';
+      setPartyType(nextPartyType);
       setFormData(prev => ({
         ...prev,
+        party_type: nextPartyType,
         payee_type: isStaff ? 'staff' : 'supplier',
         supplier_id: isStaff ? '' : (prefillExpenseBill.supplier_id || ''),
         staff_id: isStaff ? (prefillExpenseBill.staff_id || '') : '',
@@ -375,6 +453,12 @@ export function PaymentVoucherManager({
     setBankReconBankAccountId(prefillFromBankReconciliation.bankAccountId);
     setAllocations([]);
     setExpenseBillAllocations([]);
+
+    const pType: PartyType = prefillFromBankReconciliation.partyType || 'supplier';
+    const pPurpose = prefillFromBankReconciliation.paymentPurpose || (pType === 'customer' ? 'customer_refund' : pType === 'employee' ? 'salary_payroll' : pType === 'director' ? 'director_loan_repayment' : 'supplier_invoice_payment');
+    const pSettlement = (prefillFromBankReconciliation.settlementAgainst as 'outstanding_balance' | 'specific_document' | 'advance' | 'unallocated_credit') || (pType === 'supplier' ? 'specific_document' : 'outstanding_balance');
+
+    setPartyType(pType);
     setFormData(prev => ({
       ...prev,
       voucher_date: prefillFromBankReconciliation.date,
@@ -385,7 +469,23 @@ export function PaymentVoucherManager({
       payment_method: 'bank_transfer',
       payment_currency: prefillFromBankReconciliation.currency,
       exchange_rate: prefillFromBankReconciliation.currency === 'IDR' ? 1 : 0,
+      party_type: pType,
+      payee_type: pType === 'employee' ? 'staff' : 'supplier',
+      supplier_id: pType === 'supplier' ? (prefillFromBankReconciliation.partyId || '') : '',
+      customer_id: pType === 'customer' ? (prefillFromBankReconciliation.partyId || '') : '',
+      staff_id: pType === 'employee' ? (prefillFromBankReconciliation.partyId || '') : '',
+      other_party_name: pType === 'director' || pType === 'other' ? (prefillFromBankReconciliation.partyId || '') : '',
+      payment_purpose: pPurpose,
+      settlement_against: pSettlement,
     }));
+    if (prefillFromBankReconciliation.partyId) {
+      void getPartyBalanceSummary(pType, prefillFromBankReconciliation.partyId)
+        .then(s => setPartyBalanceSummary(s))
+        .catch(() => setPartyBalanceSummary(null));
+      if (pType === 'supplier') {
+        loadPendingInvoices(prefillFromBankReconciliation.partyId);
+      }
+    }
     setSelectedBank(bankAccounts.find(bank => bank.id === prefillFromBankReconciliation.bankAccountId) || null);
     setModalOpen(true);
     onBankReconciliationPrefillConsumed?.();
@@ -453,16 +553,15 @@ export function PaymentVoucherManager({
 
   const loadVouchers = async () => {
     try {
-      // finance_staff_master embed requires the staff-accounting migration;
-      // fall back to the supplier-only select on a DB that predates it.
+      // finance_staff_master and customers embed
       let { data, error } = await supabase
         .from('payment_vouchers')
-        .select('*, suppliers(company_name), finance_staff_master(full_name), bank_accounts(account_name, bank_name, alias, currency)')
+        .select('*, suppliers(company_name), customers(company_name), finance_staff_master(full_name), bank_accounts(account_name, bank_name, alias, currency)')
         .gte('voucher_date', dateRange.startDate)
         .lte('voucher_date', dateRange.endDate)
         .order('voucher_date', { ascending: false })
         .order('voucher_number', { ascending: false });
-      if (error && /finance_staff_master|staff_id/i.test(error.message || '')) {
+      if (error && /customers|finance_staff_master|staff_id/i.test(error.message || '')) {
         ({ data, error } = await supabase
           .from('payment_vouchers')
           .select('*, suppliers(company_name), bank_accounts(account_name, bank_name, alias, currency)')
@@ -711,6 +810,121 @@ export function PaymentVoucherManager({
     setSuppliers(data || []);
   };
 
+  const loadCustomers = async () => {
+    const { data } = await supabase
+      .from('customers')
+      .select('id, company_name')
+      .eq('is_active', true)
+      .order('company_name');
+    setCustomers(data || []);
+  };
+
+  const loadDirectors = async () => {
+    const list: DirectorOption[] = [{ id: 'Vijay Lunkad', name: 'Vijay Lunkad (Director)' }];
+    try {
+      const { data } = await supabase
+        .from('loans')
+        .select('counterparty_name')
+        .order('counterparty_name');
+      if (data) {
+        const unique = Array.from(new Set(data.map(d => d.counterparty_name).filter(Boolean)));
+        unique.forEach(name => {
+          if (!list.some(d => d.id === name)) {
+            list.push({ id: name, name: `${name} (Director / Loan)` });
+          }
+        });
+      }
+    } catch {
+      // fallback
+    }
+    setDirectors(list);
+  };
+
+  const handlePartyTypeChange = (newType: PartyType) => {
+    setPartyType(newType);
+    const defaultPurpose = PAYMENT_PURPOSES[newType][0].value;
+    const defaultSettlementAgainst = newType === 'supplier' ? 'specific_document' : 'outstanding_balance';
+    setFormData(prev => ({
+      ...prev,
+      party_type: newType,
+      payee_type: newType === 'employee' ? 'staff' : 'supplier',
+      supplier_id: '',
+      customer_id: '',
+      staff_id: '',
+      other_party_name: '',
+      payment_purpose: defaultPurpose,
+      settlement_against: defaultSettlementAgainst,
+      settlement_discount: 0,
+      adjustment_reason: 'purchase_discount',
+      adjustment_notes: '',
+    }));
+    setPartyBalanceSummary(null);
+    setPendingInvoices([]);
+    setAllocations([]);
+    setExpenseBillAllocations([]);
+    setOutstandingExpenseBills([]);
+  };
+
+  const handlePartySelect = async (partyId: string) => {
+    setFormData(prev => {
+      const updated = { ...prev };
+      if (partyType === 'supplier') {
+        updated.supplier_id = partyId;
+        updated.customer_id = '';
+        updated.staff_id = '';
+      } else if (partyType === 'customer') {
+        updated.supplier_id = '';
+        updated.customer_id = partyId;
+        updated.staff_id = '';
+      } else if (partyType === 'employee') {
+        updated.supplier_id = '';
+        updated.customer_id = '';
+        updated.staff_id = partyId;
+        const staff = staffList.find(s => s.id === partyId);
+        if (staff?.default_payment_method) {
+          updated.payment_method = staff.default_payment_method;
+        }
+      } else if (partyType === 'director') {
+        updated.supplier_id = '';
+        updated.customer_id = '';
+        updated.staff_id = '';
+        updated.other_party_name = partyId;
+      } else {
+        updated.supplier_id = '';
+        updated.customer_id = '';
+        updated.staff_id = '';
+        updated.other_party_name = partyId;
+      }
+      return updated;
+    });
+
+    if (partyType === 'supplier' && partyId) {
+      loadPendingInvoices(partyId);
+    } else if (partyType === 'employee' && partyId) {
+      loadOutstandingExpenseBillsForPayee(null, partyId);
+    } else {
+      setPendingInvoices([]);
+      setAllocations([]);
+      setExpenseBillAllocations([]);
+      setOutstandingExpenseBills([]);
+    }
+
+    if (partyId) {
+      setPartyBalanceLoading(true);
+      try {
+        const summary = await getPartyBalanceSummary(partyType, partyId);
+        setPartyBalanceSummary(summary);
+      } catch (err) {
+        console.error('Error loading party balance summary:', err);
+        setPartyBalanceSummary(null);
+      } finally {
+        setPartyBalanceLoading(false);
+      }
+    } else {
+      setPartyBalanceSummary(null);
+    }
+  };
+
   const loadStaff = async () => {
     const { data } = await supabase
       .from('finance_staff_master')
@@ -858,11 +1072,18 @@ export function PaymentVoucherManager({
   const resetForm = () => {
     setFormData({
       voucher_date: new Date().toISOString().split('T')[0],
+      party_type: 'supplier',
       payee_type: 'supplier',
       supplier_id: '',
+      customer_id: '',
       staff_id: '',
+      other_party_name: '',
       payment_method: 'bank_transfer',
-      payment_purpose: 'general',
+      payment_purpose: 'supplier_invoice_payment',
+      settlement_against: 'specific_document',
+      settlement_discount: 0,
+      adjustment_reason: 'purchase_discount',
+      adjustment_notes: '',
       bank_account_id: '',
       reference_number: '',
       amount: 0,
@@ -874,6 +1095,8 @@ export function PaymentVoucherManager({
       payment_currency: 'IDR',
       exchange_rate: 1,
     });
+    setPartyType('supplier');
+    setPartyBalanceSummary(null);
     setAllocations([]);
     setExpenseBillAllocations([]);
     setOutstandingExpenseBills([]);
@@ -944,13 +1167,22 @@ export function PaymentVoucherManager({
       return;
     }
     setEditingVoucher(v);
+    const vPartyType: PartyType = (v.party_type as PartyType) || (v.customer_id ? 'customer' : v.staff_id ? 'employee' : 'supplier');
+    setPartyType(vPartyType);
     setFormData({
       voucher_date: v.voucher_date,
-      payee_type: v.staff_id ? 'staff' : 'supplier',
+      party_type: vPartyType,
+      payee_type: vPartyType === 'employee' ? 'staff' : 'supplier',
       supplier_id: v.supplier_id || '',
+      customer_id: v.customer_id || '',
       staff_id: v.staff_id || '',
+      other_party_name: v.description?.replace(/^Director:\s*/i, '') || '',
       payment_method: v.payment_method,
-      payment_purpose: v.payment_purpose || 'general',
+      payment_purpose: v.payment_purpose || (vPartyType === 'customer' ? 'customer_refund' : vPartyType === 'employee' ? 'salary_payroll' : 'supplier_invoice_payment'),
+      settlement_against: (v.settlement_against as any) || (vPartyType === 'supplier' ? 'specific_document' : 'outstanding_balance'),
+      settlement_discount: Number(v.settlement_discount || 0),
+      adjustment_reason: v.adjustment_reason || 'purchase_discount',
+      adjustment_notes: v.adjustment_notes || '',
       bank_account_id: v.bank_account_id || '',
       reference_number: v.reference_number || '',
       amount: v.amount,
@@ -962,6 +1194,10 @@ export function PaymentVoucherManager({
       payment_currency: v.payment_currency || 'IDR',
       exchange_rate: v.exchange_rate || 1,
     });
+    const partyId = v.supplier_id || v.customer_id || v.staff_id || '';
+    if (partyId) {
+      void getPartyBalanceSummary(vPartyType, partyId).then(s => setPartyBalanceSummary(s)).catch(() => setPartyBalanceSummary(null));
+    }
     if (v.bank_account_id) {
       const bank = bankAccounts.find(b => b.id === v.bank_account_id);
       if (bank) setSelectedBank(bank);
@@ -1233,16 +1469,33 @@ export function PaymentVoucherManager({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const isStaffPayee = formData.payee_type === 'staff';
-    if (isStaffPayee ? !formData.staff_id : !formData.supplier_id) {
-      alert(isStaffPayee ? 'Please select a staff member.' : 'Please select a supplier.');
+    const currentPartyType: PartyType = formData.party_type || (formData.payee_type === 'staff' ? 'employee' : 'supplier');
+    if (currentPartyType === 'supplier' && !formData.supplier_id) {
+      alert('Please select a supplier.');
       return;
     }
-    if (formData.payment_method === 'advance_adjustment' && !isStaffPayee) {
+    if (currentPartyType === 'customer' && !formData.customer_id) {
+      alert('Please select a customer for this refund.');
+      return;
+    }
+    if (currentPartyType === 'employee' && !formData.staff_id) {
+      alert('Please select a staff member.');
+      return;
+    }
+    if (currentPartyType === 'director' && !formData.other_party_name) {
+      alert('Please select or specify the director / counterparty name.');
+      return;
+    }
+    if (formData.settlement_discount > 0 && !formData.adjustment_notes?.trim()) {
+      alert('An explanation / approval narration is required when recording a settlement discount or difference.');
+      return;
+    }
+
+    if (formData.payment_method === 'advance_adjustment' && currentPartyType !== 'employee') {
       alert('Advance Adjustment is only available for staff payees.');
       return;
     }
-    if (formData.payment_purpose === 'salary_advance' && !isStaffPayee) {
+    if (formData.payment_purpose === 'salary_advance' && currentPartyType !== 'employee') {
       alert('Salary Advance requires a staff payee.');
       return;
     }
@@ -1297,10 +1550,16 @@ export function PaymentVoucherManager({
 
       const payload = {
         voucher_date: formData.voucher_date,
-        supplier_id: isStaffPayee ? null : formData.supplier_id,
-        staff_id: isStaffPayee ? formData.staff_id : null,
+        party_type: currentPartyType,
+        supplier_id: currentPartyType === 'supplier' ? formData.supplier_id : null,
+        customer_id: currentPartyType === 'customer' ? formData.customer_id : null,
+        staff_id: currentPartyType === 'employee' ? formData.staff_id : null,
         payment_method: formData.payment_method,
         payment_purpose: formData.payment_purpose,
+        settlement_against: formData.settlement_against,
+        settlement_discount: Number(formData.settlement_discount || 0),
+        adjustment_reason: formData.settlement_discount > 0 ? formData.adjustment_reason : undefined,
+        adjustment_notes: formData.settlement_discount > 0 ? formData.adjustment_notes : undefined,
         bank_account_id: formData.bank_account_id || null,
         reference_number: formData.reference_number || null,
         amount: formData.amount,
@@ -1312,7 +1571,7 @@ export function PaymentVoucherManager({
         actual_bank_debit: totalBankDebit,
         pph_amount: formData.pph_amount,
         pph_code_id: formData.pph_code_id || null,
-        description: formData.description || null,
+        description: formData.description || (currentPartyType === 'director' ? `Director: ${formData.other_party_name}` : null),
         document_urls: [...formData.document_urls, ...uploadedUrls],
         payment_currency: formData.payment_currency,
         exchange_rate: effectiveExchangeRate,
@@ -1398,6 +1657,37 @@ export function PaymentVoucherManager({
     }
   };
 
+  const getPartyDisplayName = (v: PaymentVoucher) => {
+    if (v.party_type === 'customer' || v.customer_id) {
+      return v.customers?.company_name || 'Customer';
+    }
+    if (v.party_type === 'employee' || v.staff_id) {
+      return v.finance_staff_master?.full_name || 'Staff';
+    }
+    if (v.party_type === 'director') {
+      return v.description?.replace(/^Director:\s*/i, '') || 'Director';
+    }
+    if (v.party_type === 'other') {
+      return v.description || 'Other Party';
+    }
+    return v.suppliers?.company_name || v.customers?.company_name || v.finance_staff_master?.full_name || '—';
+  };
+
+  const getPartyTypeBadge = (pType?: string | null) => {
+    switch (pType) {
+      case 'customer':
+        return <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800">Customer Refund</span>;
+      case 'employee':
+        return <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800">Staff / Payroll</span>;
+      case 'director':
+        return <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800">Director</span>;
+      case 'other':
+        return <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-800">Other</span>;
+      default:
+        return <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">Supplier</span>;
+    }
+  };
+
   const search = searchTerm.trim().toLowerCase();
   const paymentVoucherCount = vouchers.filter(v => v.payment_purpose !== 'salary_advance_settlement').length;
   const settlementVoucherCount = vouchers.filter(v => v.payment_purpose === 'salary_advance_settlement').length;
@@ -1411,6 +1701,7 @@ export function PaymentVoucherManager({
     return (
       v.voucher_number?.toLowerCase().includes(search) ||
       v.suppliers?.company_name?.toLowerCase().includes(search) ||
+      v.customers?.company_name?.toLowerCase().includes(search) ||
       v.finance_staff_master?.full_name?.toLowerCase().includes(search) ||
       v.description?.toLowerCase().includes(search)
     );
@@ -1492,8 +1783,19 @@ export function PaymentVoucherManager({
           columns={[
             { header: 'Voucher No', cell: (v) => <span className="font-mono font-medium">{v.voucher_number}</span> },
             { header: 'Date',       cell: (v) => new Date(v.voucher_date).toLocaleDateString('id-ID') },
-            { header: 'Payee',      cell: (v) => v.suppliers?.company_name
-              ?? (v.finance_staff_master ? <span>{v.finance_staff_master.full_name} <span className="text-[9px] text-teal-600 font-semibold">STAFF</span></span> : '—') },
+            { header: 'PARTY', cell: (v) => (
+              <div>
+                <div className="font-medium text-gray-900 text-xs">{getPartyDisplayName(v)}</div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  {getPartyTypeBadge(v.party_type || (v.customer_id ? 'customer' : v.staff_id ? 'employee' : 'supplier'))}
+                  {v.settlement_discount && v.settlement_discount > 0 ? (
+                    <span className="inline-block px-1.5 py-0.2 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                      Disc: {fmt(v.settlement_discount, v.payment_currency || 'IDR')}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) },
             { header: 'Method',     cell: (v) => (
               <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] capitalize">
                 {v.payment_method.replace(/_/g, ' ')}
@@ -1657,7 +1959,7 @@ export function PaymentVoucherManager({
         }
       >
         <form id="payment-voucher-form" onSubmit={handleSubmit} className="flex flex-col gap-3">
-          {/* Row 1 — Transaction details (4 columns) */}
+          {/* Row 1 — Party & Settlement Details */}
           <SapRow>
             <FloatingField label="Date" required span={3} filled={!!formData.voucher_date}>
               <input
@@ -1670,62 +1972,121 @@ export function PaymentVoucherManager({
                 className={FLOAT_INPUT}
               />
             </FloatingField>
-            <FloatingField label="Pay To" required span={3} filled={!!formData.payee_type}>
+            <FloatingField label="Party Type" required span={3} filled={!!formData.party_type}>
               <select
-                name="payee_type"
-                aria-label="Payee Type"
-                value={formData.payee_type}
-                onChange={(e) => {
-                  const payeeType = e.target.value as 'supplier' | 'staff';
-                  setFormData({
-                    ...formData,
-                    payee_type: payeeType,
-                    supplier_id: '',
-                    staff_id: '',
-                    payment_purpose: payeeType === 'staff' ? formData.payment_purpose : 'general',
-                    payment_method: formData.payment_method === 'advance_adjustment' ? 'bank_transfer' : formData.payment_method,
-                  });
-                  setExpenseBillAllocations([]);
-                  setOutstandingExpenseBills([]);
-                }}
+                name="party_type"
+                aria-label="Party Type"
+                value={formData.party_type}
+                disabled={!!editingVoucher}
+                onChange={(e) => handlePartyTypeChange(e.target.value as PartyType)}
                 className={FLOAT_INPUT}
               >
                 <option value="supplier">Supplier</option>
-                <option value="staff">Staff</option>
+                <option value="customer">Customer (Refund)</option>
+                <option value="employee">Staff / Payroll</option>
+                <option value="director">Director / Loan</option>
+                <option value="other">Other Party</option>
               </select>
             </FloatingField>
             <FloatingField
-              label={formData.payee_type === 'staff' ? 'Staff Member' : 'Supplier'}
+              label={formData.party_type === 'customer' ? 'Customer' : formData.party_type === 'employee' ? 'Staff Member' : formData.party_type === 'director' ? 'Director / Loan' : formData.party_type === 'other' ? 'Party Name' : 'Supplier'}
               required
-              span={3}
-              filled={formData.payee_type === 'staff' ? !!formData.staff_id : !!formData.supplier_id}
+              span={4}
+              filled={!!(formData.supplier_id || formData.customer_id || formData.staff_id || formData.other_party_name)}
             >
-              {formData.payee_type === 'staff' ? (
+              {editingVoucher ? (
+                <div className={FLOAT_INPUT + ' !bg-gray-50 flex items-center'}>
+                  {formData.party_type === 'customer'
+                    ? (customers.find(c => c.id === formData.customer_id)?.company_name || 'Unknown Customer')
+                    : formData.party_type === 'employee'
+                    ? (staffList.find(s => s.id === formData.staff_id)?.full_name || 'Unknown Staff')
+                    : formData.party_type === 'director'
+                    ? (formData.other_party_name || 'Director')
+                    : (suppliers.find(s => s.id === formData.supplier_id)?.company_name || 'Unknown Supplier')}
+                </div>
+              ) : formData.party_type === 'customer' ? (
+                <SearchableSelect
+                  value={formData.customer_id}
+                  onChange={(val) => handlePartySelect(val)}
+                  options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+                  placeholder="Select customer"
+                  className="!h-9 !rounded-md text-xs"
+                />
+              ) : formData.party_type === 'employee' ? (
                 <SearchableSelect
                   value={formData.staff_id}
-                  onChange={(val) => {
-                    const staff = staffList.find((item) => item.id === val);
-                    setFormData({
-                      ...formData,
-                      staff_id: val,
-                      payment_method: staff?.default_payment_method || formData.payment_method,
-                    });
-                  }}
+                  onChange={(val) => handlePartySelect(val)}
                   options={staffList.map(s => ({ value: s.id, label: s.employee_code ? `${s.full_name} (${s.employee_code})` : s.full_name }))}
                   placeholder="Select staff"
                   className="!h-9 !rounded-md text-xs"
                 />
+              ) : formData.party_type === 'director' ? (
+                <SearchableSelect
+                  value={formData.other_party_name}
+                  onChange={(val) => handlePartySelect(val)}
+                  options={directors.map(d => ({ value: d.id, label: d.name }))}
+                  placeholder="Select director"
+                  className="!h-9 !rounded-md text-xs"
+                />
+              ) : formData.party_type === 'other' ? (
+                <input
+                  name="other_party_name"
+                  type="text"
+                  value={formData.other_party_name}
+                  onChange={(e) => handlePartySelect(e.target.value)}
+                  className={FLOAT_INPUT}
+                  placeholder="Enter party / payee name"
+                />
               ) : (
                 <SearchableSelect
                   value={formData.supplier_id}
-                  onChange={(val) => setFormData({ ...formData, supplier_id: val })}
+                  onChange={(val) => handlePartySelect(val)}
                   options={suppliers.map(s => ({ value: s.id, label: s.company_name }))}
                   placeholder="Select supplier"
                   className="!h-9 !rounded-md text-xs"
                 />
               )}
             </FloatingField>
-            <FloatingField label="Payment Method" required span={3} filled={!!formData.payment_method}>
+            <FloatingField label="Settlement Against" required span={2} filled={!!formData.settlement_against}>
+              <select
+                name="settlement_against"
+                aria-label="Settlement Against"
+                value={formData.settlement_against}
+                onChange={(e) => setFormData({ ...formData, settlement_against: e.target.value as any })}
+                className={FLOAT_INPUT}
+              >
+                {(formData.party_type === 'supplier' || formData.party_type === 'employee') && (
+                  <option value="specific_document">Documents</option>
+                )}
+                <option value="outstanding_balance">Party Balance</option>
+                <option value="advance">Advance / Deposit</option>
+              </select>
+            </FloatingField>
+          </SapRow>
+
+          {/* Row 2 — Payment Purpose, Method & Bank */}
+          <SapRow>
+            <FloatingField
+              label="Payment Purpose"
+              required
+              span={4}
+              filled={!!formData.payment_purpose}
+            >
+              <select
+                name="payment_purpose"
+                aria-label="Payment Purpose"
+                value={formData.payment_purpose}
+                onChange={(e) => setFormData({ ...formData, payment_purpose: e.target.value })}
+                className={FLOAT_INPUT}
+                disabled={!!editingVoucher?.is_posted}
+              >
+                {(PAYMENT_PURPOSES[formData.party_type] || PAYMENT_PURPOSES.supplier).map(p => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </FloatingField>
+
+            <FloatingField label="Payment Method" required span={2} filled={!!formData.payment_method}>
               <select
                 name="payment_method"
                 aria-label="Payment Method"
@@ -1739,59 +2100,17 @@ export function PaymentVoucherManager({
                 <option value="check">Check</option>
                 <option value="giro">Giro</option>
                 <option value="other">Other</option>
-                {formData.payee_type === 'staff' && (
+                {formData.party_type === 'employee' && (
                   <option value="advance_adjustment">Adjust Against Staff Advance</option>
                 )}
               </select>
-            </FloatingField>
-          </SapRow>
-
-          {/* Row 2 — Payment details (4 columns) */}
-          <SapRow>
-            {formData.payee_type === 'staff' && (
-              <FloatingField
-                label="Payment Purpose"
-                required
-                span={['cash', 'advance_adjustment'].includes(formData.payment_method) ? 6 : 3}
-                filled={!!formData.payment_purpose}
-              >
-                <select
-                  name="payment_purpose"
-                  aria-label="Payment Purpose"
-                  value={formData.payment_purpose}
-                  onChange={(e) => setFormData({ ...formData, payment_purpose: e.target.value as PaymentPurpose })}
-                  className={FLOAT_INPUT}
-                  disabled={!!editingVoucher?.is_posted}
-                >
-                  <option value="general">General Staff Payment</option>
-                  <option value="salary_advance">Salary Advance</option>
-                  {formData.payment_purpose === 'salary_advance_settlement' && (
-                    <option value="salary_advance_settlement">Salary Advance Settlement</option>
-                  )}
-                </select>
-              </FloatingField>
-            )}
-
-            <FloatingField
-              label={`Amount${pendingInvoices.length > 0 ? ` (${invoiceCurrency})` : ''}`}
-              required
-              span={['cash', 'advance_adjustment'].includes(formData.payment_method) ? 6 : 3}
-              filled={!!formData.amount}
-            >
-              <MoneyInput
-                required
-                decimal
-                value={formData.amount}
-                onChange={(n) => setFormData({ ...formData, amount: n })}
-                className={`${FLOAT_INPUT} !text-right !font-mono !font-semibold`}
-              />
             </FloatingField>
 
             {!['cash', 'advance_adjustment'].includes(formData.payment_method) && (
               <>
                 <FloatingField
                   label="Bank Account"
-                  span={formData.payee_type === 'staff' ? 3 : 6}
+                  span={3}
                   filled={!!formData.bank_account_id}
                   right={selectedBank && (
                     <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
@@ -1853,7 +2172,7 @@ export function PaymentVoucherManager({
               </>
             )}
 
-            {formData.payee_type === 'supplier' && ['cash', 'advance_adjustment'].includes(formData.payment_method) && (
+            {['cash', 'advance_adjustment'].includes(formData.payment_method) && (
               <FloatingField label="Reference / Memo" span={6} filled={!!formData.reference_number}>
                 <input
                   name="reference_number"
@@ -1867,6 +2186,185 @@ export function PaymentVoucherManager({
               </FloatingField>
             )}
           </SapRow>
+
+          {/* Row 3 — Amount Paid & Settlement / Purchase Discount */}
+          <SapRow>
+            <FloatingField
+              label={`Amount Paid${pendingInvoices.length > 0 ? ` (${invoiceCurrency})` : ''}`}
+              required
+              span={4}
+              filled={!!formData.amount}
+            >
+              <MoneyInput
+                required
+                decimal
+                value={formData.amount}
+                onChange={(n) => setFormData({ ...formData, amount: n })}
+                className={`${FLOAT_INPUT} !text-right !font-mono !font-semibold text-rose-700`}
+              />
+            </FloatingField>
+
+            <FloatingField label={`Purchase / Settlement Discount (${bankCurrency})`} span={4} filled={formData.settlement_discount > 0}>
+              <MoneyInput
+                decimal
+                value={formData.settlement_discount}
+                onChange={(n) => setFormData({ ...formData, settlement_discount: n })}
+                className={`${FLOAT_INPUT} !text-right !font-mono text-amber-700 bg-amber-50/20`}
+              />
+            </FloatingField>
+
+            {formData.settlement_discount > 0 ? (
+              <FloatingField label="Discount / Adjustment Reason" required span={4} filled={!!formData.adjustment_reason}>
+                <select
+                  name="adjustment_reason"
+                  aria-label="Adjustment Reason"
+                  value={formData.adjustment_reason}
+                  onChange={(e) => setFormData({ ...formData, adjustment_reason: e.target.value })}
+                  className={FLOAT_INPUT}
+                >
+                  <option value="purchase_discount">Purchase Discount (Earned discount)</option>
+                  <option value="rounding_difference">Rounding Difference (&lt; Rp 10,000)</option>
+                  <option value="approved_write_off">Approved Difference / Write-off</option>
+                  <option value="bank_charges">Bank Deductions / Charges</option>
+                  <option value="other">Other Approved Adjustment</option>
+                </select>
+              </FloatingField>
+            ) : (
+              <div className="col-span-4 flex items-center justify-end px-2 text-xs text-gray-500">
+                {partyBalanceSummary && formData.amount > 0 && Math.abs(partyBalanceSummary.outstanding_amount - formData.amount) > 0 && Math.abs(partyBalanceSummary.outstanding_amount - formData.amount) <= 50000 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const diff = Math.round(Math.abs(partyBalanceSummary.outstanding_amount - formData.amount) * 100) / 100;
+                      setFormData(prev => ({
+                        ...prev,
+                        settlement_discount: diff,
+                        adjustment_reason: diff <= 10000 ? 'rounding_difference' : 'purchase_discount',
+                        adjustment_notes: `Approved settlement discount of ${diff} against outstanding balance of ${partyBalanceSummary.outstanding_amount}`,
+                      }));
+                    }}
+                    className="px-2 py-1 rounded bg-amber-50 border border-amber-300 text-amber-800 hover:bg-amber-100 font-medium text-[11px]"
+                  >
+                    Set Difference ({fmt(Math.abs(partyBalanceSummary.outstanding_amount - formData.amount), bankCurrency)}) as Purchase Discount
+                  </button>
+                )}
+              </div>
+            )}
+          </SapRow>
+
+          {formData.settlement_discount > 0 && (
+            <SapRow>
+              <FloatingField label="Discount Approval Notes / Narration (Mandatory)" required span={12} filled={!!formData.adjustment_notes}>
+                <input
+                  name="adjustment_notes"
+                  type="text"
+                  required
+                  value={formData.adjustment_notes}
+                  onChange={(e) => setFormData({ ...formData, adjustment_notes: e.target.value })}
+                  className={FLOAT_INPUT}
+                  placeholder="e.g. Approved early settlement discount agreed with supplier"
+                />
+              </FloatingField>
+            </SapRow>
+          )}
+
+          {/* Party Balance & Settlement Summary Card */}
+          {partyBalanceSummary && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-800">
+                    Party Balance & Settlement Summary ({formData.party_type.toUpperCase()})
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    partyBalanceSummary.balance_direction === 'credit'
+                      ? 'bg-rose-100 text-rose-800'
+                      : partyBalanceSummary.balance_direction === 'debit'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}>
+                    {partyBalanceSummary.balance_direction === 'credit'
+                      ? 'Credit (Payable / Bill Due)'
+                      : partyBalanceSummary.balance_direction === 'debit'
+                      ? 'Debit (Advance / Excess Paid)'
+                      : 'Zero Balance'}
+                  </span>
+                </div>
+                <span className="text-slate-500 font-mono text-[11px]">
+                  GL Balance: {fmt(partyBalanceSummary.gl_balance, bankCurrency)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-slate-500 block">Total Open:</span>
+                  <span className="font-semibold text-slate-800 font-mono">
+                    {fmt(partyBalanceSummary.outstanding_amount, bankCurrency)}
+                  </span>
+                </div>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-slate-500 block">This Payment:</span>
+                  <span className="font-semibold text-rose-700 font-mono">
+                    {fmt(formData.amount, bankCurrency)}
+                  </span>
+                </div>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-slate-500 block">Discount / Difference:</span>
+                  <span className="font-semibold text-amber-700 font-mono">
+                    {fmt(formData.settlement_discount || 0, bankCurrency)}
+                  </span>
+                </div>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-slate-500 block">Remaining Balance:</span>
+                  <span className={`font-bold font-mono ${
+                    Math.max(0, partyBalanceSummary.outstanding_amount - formData.amount - (formData.settlement_discount || 0)) === 0
+                      ? 'text-emerald-700'
+                      : 'text-slate-800'
+                  }`}>
+                    {fmt(
+                      Math.max(0, Math.round((partyBalanceSummary.outstanding_amount - formData.amount - (formData.settlement_discount || 0)) * 100) / 100),
+                      bankCurrency
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Compact Accounting Preview Box */}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-semibold text-slate-800">Accounting Preview (General Ledger Impact)</span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                Balanced (Dr = Cr)
+              </span>
+            </div>
+            <div className="space-y-1 font-mono text-[11px] bg-white p-2.5 rounded border border-slate-200">
+              <div className="flex justify-between text-slate-700">
+                <span>
+                  Dr {formData.party_type === 'supplier'
+                    ? '2110 - Hutang Usaha (AP Subledger)'
+                    : formData.party_type === 'customer'
+                    ? '2140 - Uang Muka Pelanggan (Customer Deposit)'
+                    : formData.party_type === 'employee'
+                    ? '1160 - Uang Muka Karyawan / Payroll'
+                    : formData.party_type === 'director'
+                    ? '2105 - Pinjaman Direksi (Repayment)'
+                    : '6900 - Beban Lain-lain'}
+                </span>
+                <span>{fmt(formData.amount + (formData.settlement_discount || 0), bankCurrency)}</span>
+              </div>
+              <div className="flex justify-between text-slate-700 border-t border-slate-200 pt-1">
+                <span>Cr {selectedBank?.alias || (formData.payment_method === 'cash' ? 'Cash on Hand (1110)' : 'Bank Account')}</span>
+                <span>{fmt(formData.amount, bankCurrency)}</span>
+              </div>
+              {formData.settlement_discount > 0 && (
+                <div className="flex justify-between text-amber-700">
+                  <span>Cr 5105 - Potongan Pembelian (Purchase Discount) / 4915</span>
+                  <span>{fmt(formData.settlement_discount, bankCurrency)}</span>
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Conditional notes / warnings */}
           {formData.payee_type === 'staff' && formData.payment_purpose === 'salary_advance' && (
@@ -2334,13 +2832,23 @@ export function PaymentVoucherManager({
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <div className="text-xs text-gray-500 mb-0.5">Payee</div>
-                <div className="font-medium text-gray-900">{viewingVoucher.suppliers?.company_name || viewingVoucher.finance_staff_master?.full_name || '—'}</div>
+                <div className="text-xs text-gray-500 mb-0.5">Party</div>
+                <div className="font-medium text-gray-900">{getPartyDisplayName(viewingVoucher)}</div>
+                <div className="mt-0.5">{getPartyTypeBadge(viewingVoucher.party_type || (viewingVoucher.customer_id ? 'customer' : viewingVoucher.staff_id ? 'employee' : 'supplier'))}</div>
               </div>
               <div>
                 <div className="text-xs text-gray-500 mb-0.5">Payment Method</div>
                 <div className="font-medium text-gray-900 capitalize">{viewingVoucher.payment_method.replace(/_/g, ' ')}</div>
               </div>
+              {viewingVoucher.settlement_discount && viewingVoucher.settlement_discount > 0 && (
+                <div>
+                  <div className="text-xs text-gray-500 mb-0.5">Purchase / Settlement Discount</div>
+                  <div className="font-medium text-amber-700">{fmt(viewingVoucher.settlement_discount, viewingVoucher.payment_currency || 'IDR')}</div>
+                  {viewingVoucher.adjustment_notes && (
+                    <div className="text-xs text-gray-500 italic mt-0.5">{viewingVoucher.adjustment_notes}</div>
+                  )}
+                </div>
+              )}
               {viewingVoucher.payment_purpose !== 'general' && (
                 <div>
                   <div className="text-xs text-gray-500 mb-0.5">Purpose</div>
