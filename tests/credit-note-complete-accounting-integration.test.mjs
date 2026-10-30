@@ -57,6 +57,8 @@ test.describe('SAPJ ERP: Complete Credit Note & Sales Return Accounting Integrat
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030150000_complete_credit_note_and_sales_return_accounting.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030170000_credit_note_final_accounting_and_lifecycle_corrections.sql'));
       runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030180000_sales_and_credit_note_final_completion.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030190000_unified_party_settlement_and_voucher_upgrade.sql'));
+      runPsqlFile(path.join(rootDir, 'supabase/migrations/20261030200000_hotfix_sales_profitability_unallocated_expenses.sql'));
     } catch (err) {
       console.error('Migration setup failed:', err);
       throw err;
