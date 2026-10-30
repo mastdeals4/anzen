@@ -29,7 +29,18 @@ export function Modal({
 }: ModalProps) {
   const { t } = useLanguage();
   const bodyRef = useRef<HTMLDivElement>(null);
+  const prevIsOpenRef = useRef(false);
 
+  // Scroll reset effect: runs ONLY when modal transitions from closed (false) to open (true).
+  // It will NOT reset scrollTop on parent re-renders or onClose reference changes.
+  useEffect(() => {
+    if (isOpen && !prevIsOpenRef.current && bodyRef.current) {
+      bodyRef.current.scrollTop = 0;
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  // Escape key handler
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && isOpen) {
@@ -39,9 +50,6 @@ export function Modal({
 
     if (isOpen) {
       document.addEventListener('keydown', handleEscape);
-      if (bodyRef.current) {
-        bodyRef.current.scrollTop = 0;
-      }
       return () => document.removeEventListener('keydown', handleEscape);
     }
   }, [isOpen, onClose]);

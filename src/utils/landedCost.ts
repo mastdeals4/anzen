@@ -7,15 +7,16 @@
  *   - public.calculate_container_landed_cost_pool(container_id)
  *
  * Tax and Capitalization Rules:
- *   1. Capitalizable categories:
- *      - Duty & customs: 'duty_customs', 'duty_import', 'duty'
- *      - Freight & port: 'freight_import', 'freight', 'freight_charges', 'port_charges'
+ *   1. Capitalizable categories (exact parity with PostgreSQL public.is_capitalizable_landed_cost_category):
+ *      - Duty & customs: 'duty_customs', 'duty', 'duty_import'
+ *      - Freight & port: 'freight_import', 'freight', 'port_charges'
  *      - Handling & clearing: 'clearing_forwarding', 'container_handling', 'loading_import'
- *      - Transportation: 'transport_import', 'transportation'
+ *      - Transportation: 'transport_import'
  *      - Customs broker: 'import_broker' (net base: broker invoice minus PPN plus net line items plus stamp duty)
- *      - Other import: 'other_import', 'other_import_costs'
+ *      - Other import: 'other_import'
  *      - PIB Import: 'pib_import' (contributes ONLY pib_bm_amount / Bea Masuk)
  *   2. Non-capitalizable / Excluded categories:
+ *      - Non-whitelisted legacy transport: 'freight_charges', 'transportation', 'other_import_costs'
  *      - Import PPN (Account 1150 Input VAT) — recoverable tax asset, never capitalized to inventory.
  *      - Import PPh 22 (Account 1155 Prepaid Tax) — prepaid income tax, never capitalized to inventory.
  *      - BPOM / SKI Fees (Account 5410) — operational regulatory registration expense in P&L,
@@ -31,18 +32,47 @@ export const CAPITALIZABLE_LANDED_COST_CATEGORIES = new Set([
   'duty_import',
   'freight_import',
   'freight',
-  'freight_charges',
   'clearing_forwarding',
   'container_handling',
   'loading_import',
   'port_charges',
   'transport_import',
-  'transportation',
   'import_broker',
   'other_import',
-  'other_import_costs',
   'pib_import',
 ]);
+
+export const CAPITALIZABLE_LANDED_COST_CATEGORIES_ARRAY = Array.from(CAPITALIZABLE_LANDED_COST_CATEGORIES);
+
+/**
+ * Import-related categories that are associated with import shipments but
+ * are NOT capitalized to inventory (e.g. operational P&L or tax balance-sheet assets).
+ */
+export const NON_CAPITALIZABLE_IMPORT_CATEGORIES = new Set([
+  'bpom_ski_fees',
+  'ppn_import',
+  'pph_import',
+  'freight_charges',
+  'transportation',
+  'other_import_costs',
+]);
+
+/**
+ * All categories valid for linking or displaying against import shipments and containers.
+ */
+export const ALL_IMPORT_EXPENSE_CATEGORIES = new Set([
+  ...CAPITALIZABLE_LANDED_COST_CATEGORIES,
+  ...NON_CAPITALIZABLE_IMPORT_CATEGORIES,
+]);
+
+/**
+ * Checks whether an expense category belongs to import shipment operations (both capitalizable and non-capitalizable).
+ */
+export function isImportExpenseCategory(category: string | null | undefined): boolean {
+  if (!category) return false;
+  const normalized = category.toLowerCase().trim().replace(/ /g, '_');
+  return ALL_IMPORT_EXPENSE_CATEGORIES.has(normalized);
+}
 
 /**
  * Normalizes category names and checks against the authoritative landed-cost whitelist.

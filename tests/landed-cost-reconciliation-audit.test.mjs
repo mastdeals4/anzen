@@ -8,22 +8,25 @@ import {
 } from '../src/utils/landedCost.ts';
 
 test('1. Capitalizable Categories Whitelist: Matches PostgreSQL authoritative rules', () => {
-  // Capitalizable landed costs
+  // Capitalizable landed costs (exact 13 categories accepted by public.is_capitalizable_landed_cost_category)
   assert.equal(isCapitalizableLandedCostCategory('import_broker'), true);
   assert.equal(isCapitalizableLandedCostCategory('loading_import'), true);
   assert.equal(isCapitalizableLandedCostCategory('pib_import'), true);
   assert.equal(isCapitalizableLandedCostCategory('freight_import'), true);
-  assert.equal(isCapitalizableLandedCostCategory('freight_charges'), true);
+  assert.equal(isCapitalizableLandedCostCategory('freight'), true);
   assert.equal(isCapitalizableLandedCostCategory('clearing_forwarding'), true);
   assert.equal(isCapitalizableLandedCostCategory('port_charges'), true);
   assert.equal(isCapitalizableLandedCostCategory('container_handling'), true);
   assert.equal(isCapitalizableLandedCostCategory('transport_import'), true);
-  assert.equal(isCapitalizableLandedCostCategory('transportation'), true);
   assert.equal(isCapitalizableLandedCostCategory('duty_customs'), true);
+  assert.equal(isCapitalizableLandedCostCategory('duty'), true);
+  assert.equal(isCapitalizableLandedCostCategory('duty_import'), true);
   assert.equal(isCapitalizableLandedCostCategory('other_import'), true);
-  assert.equal(isCapitalizableLandedCostCategory('other_import_costs'), true);
 
   // Non-capitalizable / operational categories strictly excluded
+  assert.equal(isCapitalizableLandedCostCategory('freight_charges'), false, 'freight_charges is rejected by PostgreSQL whitelist');
+  assert.equal(isCapitalizableLandedCostCategory('transportation'), false, 'transportation is rejected by PostgreSQL whitelist');
+  assert.equal(isCapitalizableLandedCostCategory('other_import_costs'), false, 'other_import_costs is rejected by PostgreSQL whitelist');
   assert.equal(isCapitalizableLandedCostCategory('bpom_ski_fees'), false, 'BPOM/SKI is operational P&L 5410');
   assert.equal(isCapitalizableLandedCostCategory('ppn_import'), false, 'PPN is recoverable asset 1150');
   assert.equal(isCapitalizableLandedCostCategory('pph_import'), false, 'PPh 22 is prepaid tax asset 1155');

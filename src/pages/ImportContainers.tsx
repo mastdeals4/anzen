@@ -17,6 +17,7 @@ import type { BrokerItem } from '../utils/taxCalculations';
 import {
   calculateContainerLandedCostPool,
   isCapitalizableLandedCostCategory,
+  isImportExpenseCategory,
   calculateExpenseLandedCostAmount,
 } from '../utils/landedCost.ts';
 import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../services/expensePostingLifecycle';
@@ -526,20 +527,13 @@ export default function ImportContainers() {
       if (expError) throw expError;
       if (pcError) throw pcError;
 
-      // Filter to import shipment categories only to exclude any domestic/local purchase costs
-      const importExpenseCategories = new Set([
-        'pib_import', 'freight_charges', 'clearing_forwarding', 'port_charges',
-        'container_handling', 'transportation', 'loading_import', 'bpom_ski_fees',
-        'import_broker', 'other_import_costs'
-      ]);
-
       const states = await getEffectiveExpensePostingStates((expData || []).map(e => e.id));
       const activeExpenses = (expData || [])
         .filter(e => isEffectiveExpensePosting(states.get(e.id)?.effective_posting_state))
-        .filter(e => importExpenseCategories.has(e.expense_category));
+        .filter(e => isImportExpenseCategory(e.expense_category));
 
       const filteredPettyCash = (pcData || [])
-        .filter((pc: any) => !pc.expense_category || importExpenseCategories.has(pc.expense_category));
+        .filter((pc: any) => !pc.expense_category || isImportExpenseCategory(pc.expense_category));
 
       setLinkedExpenses(activeExpenses);
       setLinkedPettyCash(filteredPettyCash as LinkedPettyCash[]);
@@ -556,6 +550,7 @@ export default function ImportContainers() {
   };
 
   const handleToggleInclusion = async (itemId: string, source: SourceType, checked: boolean) => {
+    const previousState = inclusionMap[itemId];
     setInclusionMap(prev => ({ ...prev, [itemId]: checked }));
     setSavingInclusion(true);
     try {
@@ -563,7 +558,10 @@ export default function ImportContainers() {
       const { error } = await supabase.from(table).update({ include_in_landed_cost: checked }).eq('id', itemId);
       if (error) throw error;
     } catch (error: any) {
-      setInclusionMap(prev => ({ ...prev, [itemId]: !checked }));
+      setInclusionMap(prev => ({ ...prev, [itemId]: previousState }));
+      if (editingContainer) {
+        await loadLinkedExpenses(editingContainer.id);
+      }
       showToast({ type: 'error', title: t('common.error'), message: 'Failed to update: ' + error.message });
     } finally {
       setSavingInclusion(false);
@@ -571,6 +569,7 @@ export default function ImportContainers() {
   };
 
   const handleSelectAll = async () => {
+    const previousInclusionMap = { ...inclusionMap };
     const updates: Record<string, boolean> = {};
     for (const item of unifiedItems) {
       if (!item.isPIB && item.isCapitalizable) { updates[item.id] = true; }
@@ -579,20 +578,25 @@ export default function ImportContainers() {
     setSavingInclusion(true);
     try {
       for (const item of unifiedItems) {
-        if (!item.isPIB && item.isCapitalizable && !updates[item.id]) continue;
         if (!item.isPIB && item.isCapitalizable) {
           const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
-          await supabase.from(table).update({ include_in_landed_cost: true }).eq('id', item.id);
+          const { error } = await supabase.from(table).update({ include_in_landed_cost: true }).eq('id', item.id);
+          if (error) throw error;
         }
       }
     } catch (error: any) {
-      showToast({ type: 'error', title: t('common.error'), message: 'Failed to select all: ' + error.message });
+      setInclusionMap(previousInclusionMap);
+      if (editingContainer) {
+        await loadLinkedExpenses(editingContainer.id);
+      }
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to select all: ' + (error?.message || 'Database update failed') });
     } finally {
       setSavingInclusion(false);
     }
   };
 
   const handleClearAll = async () => {
+    const previousInclusionMap = { ...inclusionMap };
     const updates: Record<string, boolean> = {};
     for (const item of unifiedItems) {
       if (!item.isPIB) { updates[item.id] = false; }
@@ -603,11 +607,16 @@ export default function ImportContainers() {
       for (const item of unifiedItems) {
         if (!item.isPIB) {
           const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
-          await supabase.from(table).update({ include_in_landed_cost: false }).eq('id', item.id);
+          const { error } = await supabase.from(table).update({ include_in_landed_cost: false }).eq('id', item.id);
+          if (error) throw error;
         }
       }
     } catch (error: any) {
-      showToast({ type: 'error', title: t('common.error'), message: 'Failed to clear all: ' + error.message });
+      setInclusionMap(previousInclusionMap);
+      if (editingContainer) {
+        await loadLinkedExpenses(editingContainer.id);
+      }
+      showToast({ type: 'error', title: t('common.error'), message: 'Failed to clear all: ' + (error?.message || 'Database update failed') });
     } finally {
       setSavingInclusion(false);
     }
