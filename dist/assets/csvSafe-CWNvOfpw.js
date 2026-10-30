@@ -1,1 +1,0 @@
-const s=/^[=+\-@\t\r]/;function e(t){if(t==null||typeof t=="number"||typeof t=="boolean")return t;const n=String(t);return s.test(n)?`'${n}`:n}function i(t){return t.map(n=>{const r={};for(const o of Object.keys(n))r[o]=e(n[o]);return r})}export{e as a,i as s};
