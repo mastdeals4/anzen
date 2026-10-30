@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
-import { X, Printer, Download } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { X, Printer, Download, ExternalLink, ShieldCheck, FileText, Landmark, RefreshCw } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -34,7 +35,12 @@ interface CreditNoteViewProps {
     credit_note_number: string;
     credit_note_date: string;
     customer_id: string;
+    original_invoice_id?: string;
     original_invoice_number?: string;
+    sales_invoices?: {
+      id?: string;
+      invoice_number: string;
+    } | null;
     reason: string;
     notes?: string;
     currency: string;
@@ -42,7 +48,29 @@ interface CreditNoteViewProps {
     tax_amount: number;
     total_amount: number;
     credit_note_type?: string;
+    business_case?: string;
+    stock_disposition?: string;
+    warehouse_id?: string;
+    godown?: string;
+    customer_credit_balance?: number;
+    settlement_status?: string;
+    applied_amount?: number;
+    refund_amount?: number;
+    journal_entry_id?: string;
+    journal_entries?: {
+      id: string;
+      entry_number: string;
+      entry_date: string;
+    } | null;
+    nota_retur_id?: string;
+    nota_retur?: {
+      id: string;
+      nota_retur_number: string;
+      coretax_status: string;
+      coretax_reference_number: string;
+    } | null;
     customers?: {
+      id?: string;
       company_name: string;
       address: string;
       city: string;
@@ -51,6 +79,7 @@ interface CreditNoteViewProps {
       pharmacy_license: string;
     };
     material_returns?: {
+      id: string;
       return_number: string;
       return_date: string;
       status: string;
@@ -468,6 +497,217 @@ export function CreditNoteView({ creditNote, items, onClose, companyProfile }: C
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Financial Impact & Operational Ledger Integration Summary Card */}
+          <div className="doc-print-hide border-t-2 border-gray-200 bg-slate-50 p-6 space-y-5 rounded-b-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 tracking-tight">Financial Impact & Ledger Integration Summary</h3>
+                  <p className="text-xs text-gray-500">Autonomous operational, tax, inventory, and General Ledger posting verification</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`px-2.5 py-1 rounded-full font-medium ${
+                  creditNote.settlement_status === 'offset_original' ? 'bg-emerald-100 text-emerald-800' :
+                  creditNote.settlement_status === 'applied_to_invoice' ? 'bg-blue-100 text-blue-800' :
+                  creditNote.settlement_status === 'refunded' ? 'bg-purple-100 text-purple-800' :
+                  'bg-amber-100 text-amber-800'
+                }`}>
+                  Settlement: {creditNote.settlement_status?.replace('_', ' ') || 'Offset Original Invoice'}
+                </span>
+              </div>
+            </div>
+
+            {/* 3-column Grid for Key Dimensions */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              {/* 1. Commercial & Receivables */}
+              <div className="bg-white p-3.5 rounded-lg border border-gray-200 shadow-xs space-y-2">
+                <div className="flex items-center justify-between font-bold text-gray-800 pb-1.5 border-b">
+                  <span className="flex items-center gap-1.5"><FileText className="w-4 h-4 text-blue-600" /> Customer & A/R Impact</span>
+                  <Link
+                    to={`/finance/party-ledger?party=${creditNote.customer_id}`}
+                    className="text-blue-600 hover:text-blue-800 flex items-center gap-0.5 text-[11px]"
+                    title="Open Customer Party Ledger"
+                  >
+                    Party Ledger <ExternalLink className="w-3 h-3" />
+                  </Link>
+                </div>
+                <div className="space-y-1.5 text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Original Invoice:</span>
+                    {creditNote.original_invoice_number || creditNote.sales_invoices?.invoice_number ? (
+                      <Link
+                        to={`/sales/invoices?search=${creditNote.original_invoice_number || creditNote.sales_invoices?.invoice_number}`}
+                        className="font-mono text-blue-600 hover:underline font-semibold"
+                      >
+                        {creditNote.original_invoice_number || creditNote.sales_invoices?.invoice_number}
+                      </Link>
+                    ) : (
+                      <span className="text-gray-400">Direct Concession</span>
+                    )}
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Credited:</span>
+                    <span className="font-semibold text-gray-900">{formatCurrency(creditNote.total_amount)}</span>
+                  </div>
+                  {Number(creditNote.customer_credit_balance || 0) > 0 && (
+                    <div className="flex justify-between text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                      <span>Unsettled Credit Balance:</span>
+                      <span className="font-bold">{formatCurrency(creditNote.customer_credit_balance)}</span>
+                    </div>
+                  )}
+                  {Number(creditNote.refund_amount || 0) > 0 && (
+                    <div className="flex justify-between text-purple-700 bg-purple-50 px-2 py-1 rounded">
+                      <span>Bank Refund Paid:</span>
+                      <span className="font-bold">{formatCurrency(creditNote.refund_amount)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. Physical Return & Inventory */}
+              <div className="bg-white p-3.5 rounded-lg border border-gray-200 shadow-xs space-y-2">
+                <div className="flex items-center justify-between font-bold text-gray-800 pb-1.5 border-b">
+                  <span className="flex items-center gap-1.5"><RefreshCw className="w-4 h-4 text-emerald-600" /> Physical & Inventory</span>
+                  <span className="text-[11px] font-normal text-gray-500">{creditNote.credit_note_type === 'physical_return' ? 'Physical Return' : 'Commercial Concession'}</span>
+                </div>
+                <div className="space-y-1.5 text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Business Case:</span>
+                    <span className="font-medium text-gray-900 capitalize">
+                      {creditNote.business_case?.replace(/_/g, ' ') || (creditNote.credit_note_type === 'commercial_credit' ? 'Price Concession' : 'Physical Return')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Stock Disposition:</span>
+                    <span className="font-semibold text-emerald-700 capitalize">
+                      {creditNote.stock_disposition || 'Saleable (Restocked)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Warehouse / Godown:</span>
+                    <span className="text-gray-700">{creditNote.godown || 'Main Warehouse'}</span>
+                  </div>
+                  {creditNote.material_returns && (
+                    <div className="flex justify-between pt-1">
+                      <span>Originating Return:</span>
+                      <Link
+                        to={`/inventory/returns`}
+                        className="font-mono text-purple-700 bg-purple-50 px-1 py-0.5 rounded hover:underline text-[11px]"
+                      >
+                        {creditNote.material_returns.return_number}
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 3. Indonesian Tax & Coretax */}
+              <div className="bg-white p-3.5 rounded-lg border border-gray-200 shadow-xs space-y-2">
+                <div className="flex items-center justify-between font-bold text-gray-800 pb-1.5 border-b">
+                  <span className="flex items-center gap-1.5"><Landmark className="w-4 h-4 text-purple-600" /> Tax & Nota Retur</span>
+                  <span className="text-[11px] font-normal text-gray-500">DJP / Coretax</span>
+                </div>
+                <div className="space-y-1.5 text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Output PPN (11%):</span>
+                    <span className="font-semibold text-gray-900">{formatCurrency(creditNote.tax_amount)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Nota Retur Status:</span>
+                    <span className="font-medium text-purple-700">
+                      {creditNote.nota_retur?.nota_retur_number || 'Registered with Credit Note'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Coretax Submission:</span>
+                    <span className="text-gray-700 capitalize">
+                      {creditNote.nota_retur?.coretax_status || 'Draft (Ready for Filing)'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* General Ledger Reversal Breakdown Table */}
+            <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-xs space-y-2">
+              <div className="flex items-center justify-between pb-2 border-b">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-xs text-gray-900">General Ledger Journal Entries</span>
+                  {creditNote.journal_entries?.entry_number && (
+                    <Link
+                      to={`/finance/journals?search=${creditNote.journal_entries.entry_number}`}
+                      className="text-xs font-mono text-blue-600 hover:underline flex items-center gap-1"
+                    >
+                      {creditNote.journal_entries.entry_number} <ExternalLink className="w-3 h-3" />
+                    </Link>
+                  )}
+                </div>
+                <span className="text-[11px] text-gray-500">Autonomous Double-Entry Posting</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-600 text-left">
+                      <th className="p-1.5">Account Code & Name</th>
+                      <th className="p-1.5">Posting Role</th>
+                      <th className="p-1.5 text-right">Debit (Rp)</th>
+                      <th className="p-1.5 text-right">Credit (Rp)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    <tr>
+                      <td className="p-1.5 font-medium text-gray-900">4300 - Sales Returns & Allowances</td>
+                      <td className="p-1.5 text-gray-500">Contra Revenue (Subtotal reversal)</td>
+                      <td className="p-1.5 text-right font-mono font-medium text-gray-900">{formatCurrency(creditNote.subtotal)}</td>
+                      <td className="p-1.5 text-right font-mono text-gray-400">-</td>
+                    </tr>
+                    {creditNote.tax_amount > 0 && (
+                      <tr>
+                        <td className="p-1.5 font-medium text-gray-900">2130 - Output PPN Payable</td>
+                        <td className="p-1.5 text-gray-500">VAT Liability Reduction (11% Tax)</td>
+                        <td className="p-1.5 text-right font-mono font-medium text-gray-900">{formatCurrency(creditNote.tax_amount)}</td>
+                        <td className="p-1.5 text-right font-mono text-gray-400">-</td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td className="p-1.5 font-medium text-gray-900">1120 - Accounts Receivable</td>
+                      <td className="p-1.5 text-gray-500">Customer Receivable Reduction</td>
+                      <td className="p-1.5 text-right font-mono text-gray-400">-</td>
+                      <td className="p-1.5 text-right font-mono font-medium text-gray-900">{formatCurrency(creditNote.total_amount)}</td>
+                    </tr>
+                    {creditNote.credit_note_type === 'physical_return' && (
+                      <>
+                        <tr className="bg-emerald-50/50">
+                          <td className="p-1.5 font-medium text-emerald-950">
+                            {creditNote.stock_disposition === 'damaged' || creditNote.stock_disposition === 'scrap'
+                              ? '5190 - Inventory Impairment & Damage Loss'
+                              : '1130 - Merchandise Inventory'}
+                          </td>
+                          <td className="p-1.5 text-emerald-800">
+                            {creditNote.stock_disposition === 'damaged' || creditNote.stock_disposition === 'scrap'
+                              ? 'Damaged / scrap write-down expense recognition'
+                              : 'Recoverable physical stock restored at historical FIFO cost'}
+                          </td>
+                          <td className="p-1.5 text-right font-mono font-medium text-emerald-900">Historical FIFO COGS</td>
+                          <td className="p-1.5 text-right font-mono text-gray-400">-</td>
+                        </tr>
+                        <tr className="bg-emerald-50/50">
+                          <td className="p-1.5 font-medium text-emerald-950">5100 - Cost of Goods Sold</td>
+                          <td className="p-1.5 text-emerald-800">Cost of Goods Sold Reversal</td>
+                          <td className="p-1.5 text-right font-mono text-gray-400">-</td>
+                          <td className="p-1.5 text-right font-mono font-medium text-emerald-900">Historical FIFO COGS</td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>

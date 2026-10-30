@@ -48,7 +48,13 @@ ON CONFLICT (id) DO NOTHING;
 -- Customers
 CREATE TABLE IF NOT EXISTS public.customers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_name text NOT NULL
+  company_name text NOT NULL,
+  address text,
+  city text,
+  phone text,
+  npwp text,
+  email text,
+  is_active boolean DEFAULT true
 );
 
 -- Products & Batches
@@ -124,14 +130,16 @@ CREATE TABLE IF NOT EXISTS public.chart_of_accounts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   code text NOT NULL UNIQUE,
   name text NOT NULL,
-  account_type text NOT NULL
+  account_type text NOT NULL,
+  is_active boolean DEFAULT true
 );
 
 INSERT INTO public.chart_of_accounts (code, name, account_type)
 VALUES ('5100', 'Cost of Goods Sold', 'expense'),
        ('1130', 'Inventory', 'asset'),
        ('4100', 'Sales Revenue', 'revenue'),
-       ('1120', 'Accounts Receivable', 'asset')
+       ('1120', 'Accounts Receivable', 'asset'),
+       ('1102', 'Bank Central Asia - IDR', 'asset')
 ON CONFLICT (code) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.accounting_periods (
@@ -153,87 +161,73 @@ CREATE TABLE IF NOT EXISTS public.journal_entries (
   source_module text,
   reference_id uuid,
   reference_number text,
+  description text,
+  total_debit numeric DEFAULT 0,
+  total_credit numeric DEFAULT 0,
   notes text,
   entry_date date DEFAULT CURRENT_DATE,
   accounting_period_id uuid,
   status text DEFAULT 'posted',
   is_posted boolean DEFAULT true,
-  is_reversed boolean DEFAULT false
+  is_reversed boolean DEFAULT false,
+  posted_by uuid,
+  created_by uuid
 );
 
 CREATE TABLE IF NOT EXISTS public.journal_entry_lines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   journal_entry_id uuid REFERENCES public.journal_entries(id) ON DELETE CASCADE,
+  line_number integer DEFAULT 1,
   account_id uuid REFERENCES public.chart_of_accounts(id),
   sales_invoice_item_id uuid,
-  debit numeric DEFAULT 0,
-  credit numeric DEFAULT 0
-);
-
--- Voucher Allocations & Rounding Adjustments
-CREATE TABLE IF NOT EXISTS public.voucher_allocations (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  voucher_type text DEFAULT 'receipt',
-  sales_invoice_id uuid,
-  invoice_id uuid,
-  allocated_amount numeric DEFAULT 0,
-  status text DEFAULT 'approved'
-);
-
-CREATE TABLE IF NOT EXISTS public.invoice_rounding_adjustments (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  invoice_id uuid,
-  sales_invoice_id uuid,
-  adjustment_amount numeric DEFAULT 0,
-  amount numeric DEFAULT 0
-);
-
--- Expenses & Categories
-CREATE TABLE IF NOT EXISTS public.expense_categories (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name text NOT NULL,
-  category_key text,
-  category_type text DEFAULT 'general',
-  is_sales_related boolean DEFAULT false
-);
-
-CREATE TABLE IF NOT EXISTS public.finance_expenses (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  voucher_number text,
   description text,
-  expense_category text DEFAULT 'general',
-  category_id uuid REFERENCES public.expense_categories(id),
-  sales_invoice_id uuid,
-  sales_order_id uuid,
-  delivery_challan_id uuid,
-  sales_order_allocations jsonb DEFAULT '[]'::jsonb,
-  amount numeric DEFAULT 0,
-  expense_date date DEFAULT CURRENT_DATE,
-  approval_status text DEFAULT 'approved'
+  debit numeric DEFAULT 0,
+  credit numeric DEFAULT 0,
+  customer_id uuid
 );
 
--- Credit Notes
-CREATE TABLE IF NOT EXISTS public.credit_notes (
+CREATE SEQUENCE IF NOT EXISTS public.credit_note_number_seq;
+CREATE SEQUENCE IF NOT EXISTS public.journal_entry_number_seq;
+
+CREATE OR REPLACE FUNCTION public.next_journal_entry_number() RETURNS text AS $$
+DECLARE
+  v_seq integer;
+BEGIN
+  v_seq := nextval('public.credit_note_number_seq');
+  RETURN 'JE' || to_char(CURRENT_DATE, 'YYMM') || '-' || lpad(v_seq::text, 4, '0');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS public.bank_accounts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  credit_note_number text NOT NULL,
-  sales_invoice_id uuid,
-  customer_id uuid,
-  credit_note_date date DEFAULT CURRENT_DATE,
-  status text DEFAULT 'approved',
-  subtotal numeric DEFAULT 0,
-  tax_amount numeric DEFAULT 0,
-  total_amount numeric DEFAULT 0
+  account_name text NOT NULL,
+  bank_name text NOT NULL,
+  account_number text NOT NULL,
+  account_type text NOT NULL DEFAULT 'current',
+  currency text DEFAULT 'IDR',
+  opening_balance numeric DEFAULT 0,
+  current_balance numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  coa_id uuid REFERENCES public.chart_of_accounts(id)
 );
 
-CREATE TABLE IF NOT EXISTS public.credit_note_items (
+CREATE TABLE IF NOT EXISTS public.inventory_transactions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  credit_note_id uuid REFERENCES public.credit_notes(id),
-  product_id uuid REFERENCES public.products(id),
-  batch_id uuid REFERENCES public.batches(id),
-  quantity numeric DEFAULT 0,
-  unit_price numeric DEFAULT 0,
-  total_price numeric(15,2) GENERATED ALWAYS AS ((quantity * unit_price)) STORED
+  product_id uuid,
+  batch_id uuid,
+  transaction_type text NOT NULL,
+  quantity numeric NOT NULL,
+  transaction_date date DEFAULT CURRENT_DATE,
+  reference_number text,
+  reference_type text,
+  reference_id uuid,
+  notes text,
+  created_by uuid,
+  created_at timestamptz DEFAULT now(),
+  metadata jsonb DEFAULT '{}'::jsonb
 );
+
+
 
 -- Sales Invoices Baseline Table
 CREATE TABLE IF NOT EXISTS public.sales_invoices (
@@ -280,6 +274,163 @@ CREATE TABLE IF NOT EXISTS public.sales_invoice_items (
   cogs_unit_cost numeric(15,4)
 );
 
+CREATE TABLE IF NOT EXISTS public.material_returns (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  return_number text,
+  original_dc_id uuid REFERENCES public.delivery_challans(id),
+  original_invoice_id uuid REFERENCES public.sales_invoices(id),
+  customer_id uuid REFERENCES public.customers(id),
+  return_date date DEFAULT CURRENT_DATE,
+  return_type text DEFAULT 'quality_issue',
+  return_reason text DEFAULT 'Customer Return',
+  status text DEFAULT 'pending_approval',
+  approved_by uuid,
+  credit_note_id uuid,
+  credit_note_issued boolean DEFAULT false,
+  credit_note_number text,
+  credit_note_amount numeric DEFAULT 0,
+  restocked boolean DEFAULT false,
+  notes text,
+  nota_retur_id uuid,
+  created_by uuid,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.material_return_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  return_id uuid REFERENCES public.material_returns(id) ON DELETE CASCADE,
+  product_id uuid REFERENCES public.products(id),
+  batch_id uuid REFERENCES public.batches(id),
+  quantity_returned numeric NOT NULL,
+  original_quantity numeric DEFAULT 0,
+  unit_price numeric DEFAULT 0,
+  condition text DEFAULT 'good',
+  disposition text DEFAULT 'pending',
+  notes text,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.nota_retur (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nota_retur_number text DEFAULT 'NR/2026/10/0001',
+  return_date date DEFAULT CURRENT_DATE,
+  material_return_id uuid REFERENCES public.material_returns(id),
+  credit_note_id uuid,
+  sales_invoice_id uuid REFERENCES public.sales_invoices(id),
+  original_invoice_number text NOT NULL,
+  sales_invoice_number text,
+  original_faktur_pajak_number text,
+  original_faktur_pajak_date date,
+  customer_id uuid REFERENCES public.customers(id),
+  customer_name text,
+  customer_address text,
+  currency text DEFAULT 'IDR',
+  dpp_amount numeric(15,2) DEFAULT 0,
+  tax_rate numeric(5,4) DEFAULT 0.1100,
+  ppn_amount numeric(15,2) DEFAULT 0,
+  total_amount numeric(15,2) DEFAULT 0,
+  status text DEFAULT 'draft',
+  coretax_status text DEFAULT 'draft',
+  coretax_reference_number text,
+  coretax_submission_date timestamptz,
+  created_by uuid,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.nota_retur_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nota_retur_id uuid REFERENCES public.nota_retur(id) ON DELETE CASCADE,
+  product_id uuid REFERENCES public.products(id),
+  batch_id uuid REFERENCES public.batches(id),
+  item_name text NOT NULL,
+  quantity numeric(12,3) NOT NULL,
+  unit_price numeric(15,2) DEFAULT 0,
+  dpp_amount numeric(15,2) DEFAULT 0,
+  tax_rate numeric(5,2) DEFAULT 11.00,
+  ppn_amount numeric(15,2) DEFAULT 0,
+  total_amount numeric(15,2) DEFAULT 0
+);
+
+-- Voucher Allocations & Rounding Adjustments
+CREATE TABLE IF NOT EXISTS public.voucher_allocations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  voucher_type text DEFAULT 'receipt',
+  sales_invoice_id uuid,
+  invoice_id uuid,
+  allocated_amount numeric DEFAULT 0,
+  status text DEFAULT 'approved'
+);
+
+CREATE TABLE IF NOT EXISTS public.invoice_rounding_adjustments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id uuid,
+  sales_invoice_id uuid,
+  adjustment_amount numeric DEFAULT 0,
+  amount numeric DEFAULT 0
+);
+
+-- Expenses & Categories
+CREATE TABLE IF NOT EXISTS public.expense_categories (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  category_key text,
+  category_type text DEFAULT 'general',
+  is_sales_related boolean DEFAULT false
+);
+
+CREATE TABLE IF NOT EXISTS public.finance_expenses (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  voucher_number text,
+  description text,
+  expense_category text DEFAULT 'general',
+  category_id uuid REFERENCES public.expense_categories(id),
+  sales_invoice_id uuid,
+  sales_order_id uuid,
+  delivery_challan_id uuid,
+  sales_order_allocations jsonb DEFAULT '[]'::jsonb,
+  product_id uuid REFERENCES public.products(id),
+  amount numeric DEFAULT 0,
+  expense_date date DEFAULT CURRENT_DATE,
+  approval_status text DEFAULT 'approved'
+);
+
+-- Credit Notes
+CREATE TABLE IF NOT EXISTS public.credit_notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  credit_note_number text NOT NULL,
+  original_invoice_id uuid REFERENCES public.sales_invoices(id),
+  sales_invoice_id uuid REFERENCES public.sales_invoices(id),
+  material_return_id uuid REFERENCES public.material_returns(id),
+  customer_id uuid REFERENCES public.customers(id),
+  credit_note_date date DEFAULT CURRENT_DATE,
+  status text DEFAULT 'approved',
+  credit_note_type text DEFAULT 'physical_return',
+  subtotal numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total_amount numeric DEFAULT 0,
+  journal_entry_id uuid REFERENCES public.journal_entries(id),
+  nota_retur_id uuid REFERENCES public.nota_retur(id),
+  created_by uuid,
+  approved_by uuid,
+  approval_date timestamptz,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.credit_note_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  credit_note_id uuid REFERENCES public.credit_notes(id),
+  product_id uuid REFERENCES public.products(id),
+  batch_id uuid REFERENCES public.batches(id),
+  quantity numeric DEFAULT 0,
+  unit_price numeric DEFAULT 0,
+  total_price numeric(15,2) GENERATED ALWAYS AS ((quantity * unit_price)) STORED
+);
+
+
+
 -- Helper Stubs
 CREATE OR REPLACE FUNCTION public.post_inventory_movement(
   p_movement_id uuid, p_product_id uuid, p_batch_id uuid, p_type text,
@@ -317,6 +468,43 @@ BEGIN
   RETURN md5(p_val)::uuid;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION public.get_invoice_credit_note_amount(p_invoice_id uuid)
+RETURNS numeric AS $$
+  SELECT COALESCE(SUM(total_amount), 0)
+  FROM public.credit_notes
+  WHERE original_invoice_id = p_invoice_id
+    AND status = 'approved';
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION public.recalculate_sales_invoice_payment_state(p_invoice_id uuid)
+RETURNS void AS $$
+DECLARE
+  v_invoice record;
+  v_allocated numeric(18,2) := 0;
+  v_credit_note numeric(18,2) := 0;
+  v_paid numeric(18,2);
+BEGIN
+  SELECT id, total_amount INTO v_invoice FROM public.sales_invoices WHERE id = p_invoice_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  SELECT COALESCE(SUM(allocated_amount), 0) INTO v_allocated
+  FROM public.voucher_allocations WHERE sales_invoice_id = p_invoice_id;
+
+  v_credit_note := public.get_invoice_credit_note_amount(p_invoice_id);
+  v_paid := LEAST(GREATEST(v_allocated + v_credit_note, 0), COALESCE(v_invoice.total_amount, 0));
+
+  UPDATE public.sales_invoices
+  SET paid_amount = v_paid,
+      balance_amount = GREATEST(COALESCE(v_invoice.total_amount, 0) - v_paid, 0),
+      payment_status = CASE
+        WHEN v_paid <= 0 THEN 'pending'
+        WHEN v_paid >= v_invoice.total_amount THEN 'paid'
+        ELSE 'partial'
+      END
+  WHERE id = p_invoice_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ------------------------------------------------------------------------------
 -- Existing Production View: dc_invoicing_summary (13 Columns Baseline)

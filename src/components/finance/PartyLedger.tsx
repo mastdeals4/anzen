@@ -278,18 +278,27 @@ export default function PartyLedger() {
       const { data: creditNotes } = await dateRange(
         supabase
           .from('credit_notes')
-          .select('id, credit_note_date, credit_note_number, total_amount')
+          .select(`
+            id, credit_note_date, credit_note_number, total_amount, original_invoice_id,
+            sales_invoices:original_invoice_id(invoice_number),
+            credit_note_items(quantity, products(product_name))
+          `)
           .eq('customer_id', selectedParty)
           .eq('status', 'approved'),
         'credit_note_date',
       ).order('credit_note_date');
 
       if (creditNotes) {
-        creditNotes.forEach(cn => {
+        creditNotes.forEach((cn: any) => {
+          const invNum = cn.sales_invoices?.invoice_number;
+          const totalQty = (cn.credit_note_items || []).reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0);
+          const qtyStr = totalQty > 0 ? ` (${totalQty.toLocaleString('id-ID')} kg)` : '';
+          const invStr = invNum ? ` - Inv: ${invNum}` : '';
+
           entries.push({
             id: cn.id,
             entry_date: cn.credit_note_date,
-            particulars: 'Credit Note',
+            particulars: `Credit Note${invStr}${qtyStr}`,
             reference: cn.credit_note_number,
             debit: 0,
             credit: cn.total_amount,
