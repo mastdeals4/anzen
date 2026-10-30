@@ -4,6 +4,8 @@
 -- Direction-based Party Settlement Engine (Customer, Supplier, Staff, Director, Other)
 -- ==============================================================================
 
+BEGIN;
+
 -- 1. Ensure Standard Settlement & Discount Accounts Exist in chart_of_accounts
 INSERT INTO public.chart_of_accounts (code, name, account_type, normal_balance, is_active)
 VALUES 
@@ -497,6 +499,11 @@ GRANT EXECUTE ON FUNCTION public.save_receipt_voucher_with_allocations TO authen
 
 
 -- 7. RPC: save_payment_voucher_with_allocations (Upgraded)
+-- Disambiguate against legacy 19-parameter and 18-parameter overloads
+DROP FUNCTION IF EXISTS public.save_payment_voucher_with_allocations(uuid, text, date, uuid, text, uuid, text, numeric, numeric, uuid, text, text, numeric, numeric, numeric, uuid, jsonb, uuid, text);
+DROP FUNCTION IF EXISTS public.save_payment_voucher_with_allocations(uuid, text, date, uuid, text, uuid, text, numeric, numeric, uuid, text, text, numeric, numeric, numeric, uuid, jsonb, uuid);
+DROP FUNCTION IF EXISTS public.save_payment_voucher_with_allocations(uuid, text, date, uuid, text, uuid, text, numeric, numeric, uuid, text, text, numeric, numeric, numeric, uuid, jsonb);
+
 CREATE OR REPLACE FUNCTION public.save_payment_voucher_with_allocations(
   p_voucher_id uuid DEFAULT NULL::uuid,
   p_voucher_number text DEFAULT NULL::text,
@@ -659,7 +666,9 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.save_payment_voucher_with_allocations TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.save_payment_voucher_with_allocations(
+  uuid, text, date, uuid, text, uuid, text, numeric, numeric, uuid, text, text, numeric, numeric, numeric, uuid, jsonb, uuid, text, text, uuid, text, numeric, text, uuid, text
+) TO authenticated, service_role;
 
 
 -- 8. RPC: save_payment_voucher_command (Upgraded)
@@ -1307,3 +1316,5 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.post_payment_voucher TO authenticated, service_role;
+
+COMMIT;
