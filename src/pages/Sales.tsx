@@ -1586,6 +1586,15 @@ export function Sales() {
       let invoice: any;
 
       if (editingInvoice) {
+        if (isCancelledInvoice(editingInvoice)) {
+          showToast({
+            type: 'error',
+            title: 'Action Prohibited',
+            message: 'Cancelled invoices cannot be edited. Cancellation is terminal.',
+          });
+          return;
+        }
+
         if (isPostedInvoice(editingInvoice)) {
           if (!isFinancialEditor) {
             showToast({

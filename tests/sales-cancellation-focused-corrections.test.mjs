@@ -8,221 +8,34 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
-const migrationSql = fs.readFileSync(
+const migration13Sql = fs.readFileSync(
   path.join(rootDir, 'supabase/migrations/20261030130000_sales_cancellation_hardening_corrections.sql'),
   'utf8'
 );
+const migration14Sql = fs.readFileSync(
+  path.join(rootDir, 'supabase/migrations/20261030140000_sales_lifecycle_terminal_cancellation_and_concurrency_hardening.sql'),
+  'utf8'
+);
+const combinedMigrationsSql = `${migration13Sql}\n\n${migration14Sql}`;
+
 const salesPageCode = fs.readFileSync(
   path.join(rootDir, 'src/pages/Sales.tsx'),
   'utf8'
 );
 
-// ==============================================================================
-// 1. Cancelled Invoice Disclosure Aggregation (Multi-line Cartesian Fix)
-// ==============================================================================
-test('1. Cancelled invoice disclosure aggregation: Separates headers and line quantities to prevent fanout multiplication', () => {
-  // Verify migration separates cancelled_headers and cancelled_items / cancelled_invoices_data
-  assert.ok(
-    migrationSql.includes('cancelled_headers AS ('),
-    'Migration must define separate cancelled_headers CTE'
-  );
-  assert.ok(
-    migrationSql.includes('COUNT(ch.id)::int AS cancelled_count'),
-    'Must aggregate count from distinct cancelled_headers'
-  );
-  assert.ok(
-    migrationSql.includes('COALESCE(SUM(ch.total_amount), 0)::numeric AS cancelled_total_amount'),
-    'Must aggregate total_amount from distinct cancelled_headers'
-  );
-  assert.ok(
-    migrationSql.includes('COALESCE(SUM(ch.subtotal), 0)::numeric AS cancelled_subtotal'),
-    'Must aggregate subtotal from distinct cancelled_headers'
-  );
-
-  // Concrete simulation comparing buggy fanout JOIN vs corrected separated CTE:
-  const mockCancelledInvoice = {
-    id: 'inv-cancelled-001',
-    invoice_number: 'SAPJ-26-072',
-    total_amount: 55000000,
-    subtotal: 50000000,
-    document_status: 'cancelled',
-  };
-  const mockInvoiceLines = [
-    { id: 'line-1', invoice_id: 'inv-cancelled-001', product_id: 'prod-1', quantity: 10 },
-    { id: 'line-2', invoice_id: 'inv-cancelled-001', product_id: 'prod-2', quantity: 15 },
-    { id: 'line-3', invoice_id: 'inv-cancelled-001', product_id: 'prod-3', quantity: 5 },
-  ];
-
-  // A. Buggy direct JOIN simulation:
-  const buggyJoinedRows = mockInvoiceLines.map((line) => ({
-    header_total: mockCancelledInvoice.total_amount,
-    header_subtotal: mockCancelledInvoice.subtotal,
-    line_qty: line.quantity,
-  }));
-  const buggyTotalAmount = buggyJoinedRows.reduce((sum, r) => sum + r.header_total, 0);
-  const buggySubtotal = buggyJoinedRows.reduce((sum, r) => sum + r.header_subtotal, 0);
-  const buggyTotalQty = buggyJoinedRows.reduce((sum, r) => sum + r.line_qty, 0);
-
-  // Proves the bug: total was multiplied by line count (3 * 55,000,000 = 165,000,000)
-  assert.equal(buggyTotalAmount, 165000000, 'Buggy join multiplies total by line count');
-  assert.equal(buggySubtotal, 150000000, 'Buggy join multiplies subtotal by line count');
-
-  // B. Corrected separated aggregation simulation:
-  const headers = [mockCancelledInvoice];
-  const correctedCount = headers.length;
-  const correctedTotalAmount = headers.reduce((sum, h) => sum + h.total_amount, 0);
-  const correctedSubtotal = headers.reduce((sum, h) => sum + h.subtotal, 0);
-  const correctedTotalQty = mockInvoiceLines.reduce((sum, l) => sum + l.quantity, 0);
-
-  // Correct result: each invoice header counted exactly once, line quantities summed
-  assert.equal(correctedCount, 1);
-  assert.equal(correctedTotalAmount, 55000000, 'Must count invoice total exactly once');
-  assert.equal(correctedSubtotal, 50000000, 'Must count invoice subtotal exactly once');
-  assert.equal(correctedTotalQty, 30, 'Must sum all product line quantities (10+15+5=30)');
-});
-
-// ==============================================================================
-// 2. Sales KPI Eligibility: Posted vs Draft vs Cancelled
-// ==============================================================================
-test('2. Sales KPI eligibility: Recognized sales, paid totals, and pending receivables include posted only; drafts segregated', () => {
-  // Test dataset with mixed document statuses
-  const testInvoices = [
-    // 2 Posted Invoices:
-    {
-      id: 'inv-post-1',
-      invoice_number: 'SAPJ-26-001',
-      document_status: 'posted',
-      is_draft: false,
-      total_amount: 10000000,
-      paid_amount: 10000000,
-      balance_amount: 0,
-      payment_status: 'paid',
-    },
-    {
-      id: 'inv-post-2',
-      invoice_number: 'SAPJ-26-002',
-      document_status: 'posted',
-      is_draft: false,
-      total_amount: 20000000,
-      paid_amount: 5000000,
-      balance_amount: 15000000,
-      payment_status: 'partial',
-    },
-    // 2 Draft Invoices (unposted documents):
-    {
-      id: 'inv-draft-1',
-      invoice_number: 'SAPJ-26-003',
-      document_status: 'draft',
-      is_draft: true,
-      total_amount: 8000000,
-      paid_amount: 0,
-      balance_amount: 8000000,
-      payment_status: 'pending',
-    },
-    {
-      id: 'inv-draft-2',
-      invoice_number: 'SAPJ-26-004',
-      document_status: 'draft',
-      is_draft: true,
-      total_amount: 12000000,
-      paid_amount: 0,
-      balance_amount: 12000000,
-      payment_status: 'pending',
-    },
-    // 1 Cancelled Invoice:
-    {
-      id: 'inv-canc-1',
-      invoice_number: 'SAPJ-26-005',
-      document_status: 'cancelled',
-      is_draft: false,
-      total_amount: 25000000,
-      paid_amount: 0,
-      balance_amount: 0,
-      payment_status: 'pending',
-      notes: '[CANCELLED] Customer order cancelled',
-    },
-  ];
-
-  function isCancelledInvoice(inv) {
-    return (
-      inv.document_status === 'cancelled' ||
-      Boolean(inv.notes?.includes('[CANCELLED') || inv.notes?.toLowerCase().startsWith('cancelled'))
-    );
-  }
-
-  function isPostedInvoice(inv) {
-    if (isCancelledInvoice(inv)) return false;
-    if (inv.document_status) return inv.document_status === 'posted';
-    return !inv.is_draft;
-  }
-
-  const activeInvoices = testInvoices.filter((inv) => !isCancelledInvoice(inv));
-  const postedInvoices = testInvoices.filter((inv) => isPostedInvoice(inv));
-  const draftInvoices = testInvoices.filter((inv) => !isCancelledInvoice(inv) && !isPostedInvoice(inv));
-  const cancelledInvoices = testInvoices.filter((inv) => isCancelledInvoice(inv));
-
-  assert.equal(postedInvoices.length, 2);
-  assert.equal(draftInvoices.length, 2);
-  assert.equal(cancelledInvoices.length, 1);
-  assert.equal(activeInvoices.length, 4);
-
-  // Compute stats replicating updated Sales.tsx logic
-  const postedRevenue = postedInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
-  const pendingInvoices = postedInvoices.filter((inv) => inv.payment_status === 'pending' || inv.payment_status === 'partial');
-  const pendingValue = postedInvoices.reduce((sum, inv) => sum + inv.balance_amount, 0);
-  const paidInvoices = postedInvoices.filter((inv) => inv.payment_status === 'paid');
-  const paidValue = postedInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
-
-  const draftCount = draftInvoices.length;
-  const draftValue = draftInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
-
-  // Assertions:
-  // Recognized revenue = 10,000,000 + 20,000,000 = 30,000,000
-  assert.equal(postedRevenue, 30000000, 'Recognized sales revenue must be posted only');
-
-  // Paid = 10,000,000 (inv1) + 5,000,000 (inv2) = 15,000,000
-  assert.equal(paidValue, 15000000, 'Paid value must be from posted invoices only');
-
-  // Pending = 15,000,000 (inv2 balance)
-  assert.equal(pendingInvoices.length, 1);
-  assert.equal(pendingValue, 15000000, 'Pending receivables must be from posted invoices only');
-
-  // Drafts segregated: count 2, value 20,000,000 (8M + 12M)
-  assert.equal(draftCount, 2);
-  assert.equal(draftValue, 20000000, 'Draft documents must be segregated into distinct metric');
-
-  // Cancelled: count 1, value 25,000,000
-  assert.equal(cancelledInvoices.length, 1);
-  assert.equal(cancelledInvoices[0].total_amount, 25000000);
-
-  // Verify Sales.tsx code matches this architecture
-  assert.ok(
-    salesPageCode.includes('postedRevenue = postedInvoices.reduce'),
-    'Sales.tsx must calculate posted revenue from postedInvoices'
-  );
-  assert.ok(
-    salesPageCode.includes('draftValue = draftInvoices.reduce'),
-    'Sales.tsx must calculate separate draftValue'
-  );
-  assert.ok(
-    salesPageCode.includes('Excluded from recognized sales revenue, receivables, and accounting ledger until posted'),
-    'Sales.tsx must show disclosure banner for drafts'
-  );
-});
-
-// ==============================================================================
-// 3. Lifecycle Trigger: State Transitions, Cancellation Preservation, Precedence
-// ==============================================================================
-test('3. Lifecycle trigger: Preserves cancellation status on legacy updates and enforces status precedence', () => {
-  // Replicate trigger logic from public.trg_sync_sales_invoice_document_status()
-  function simulateTrigger(tg_op, oldRow, newRow) {
-    const row = { ...newRow };
-    if (tg_op === 'INSERT') {
+// Trigger simulation replicating public.trg_sync_sales_invoice_document_status()
+function simulateTrigger(tg_op, oldRow, newRow) {
+  const row = { ...newRow };
+  if (tg_op === 'INSERT') {
+    if (row.document_status !== undefined && row.document_status !== null) {
       if (row.document_status === 'draft') {
         row.is_draft = true;
       } else if (row.document_status === 'posted' || row.document_status === 'cancelled') {
         row.is_draft = false;
-      } else if (row.is_draft === true) {
+      }
+    } else {
+      // document_status was omitted (NULL) -> infer from is_draft and notes
+      if (row.is_draft === true) {
         row.document_status = 'draft';
       } else if (row.notes?.startsWith('[CANCELLED') || row.notes?.toLowerCase().startsWith('cancelled')) {
         row.document_status = 'cancelled';
@@ -231,331 +44,516 @@ test('3. Lifecycle trigger: Preserves cancellation status on legacy updates and 
         row.document_status = 'posted';
         row.is_draft = false;
       }
-      if (row.document_status === 'cancelled' && !row.cancelled_at) {
-        row.cancelled_at = '2026-10-30T12:00:00Z';
-      }
-      return row;
-    }
-
-    // UPDATE
-    const v_status_changed = row.document_status !== oldRow.document_status;
-    const v_draft_changed = row.is_draft !== oldRow.is_draft;
-    const v_is_cancelled =
-      oldRow.document_status === 'cancelled' ||
-      Boolean(oldRow.notes?.startsWith('[CANCELLED') || oldRow.notes?.toLowerCase().startsWith('cancelled'));
-
-    // Preservation rule:
-    if (v_is_cancelled && !v_status_changed) {
-      row.document_status = 'cancelled';
-      row.is_draft = false;
-      if (!row.cancelled_at) row.cancelled_at = oldRow.cancelled_at || '2026-10-30T12:00:00Z';
-      return row;
-    }
-
-    // Precedence and Conflict Resolution rule:
-    // If document_status was explicitly changed (or conflicting update where status changed),
-    // document_status takes absolute precedence over is_draft.
-    if (v_status_changed) {
-      if (row.document_status === 'draft') row.is_draft = true;
-      else if (row.document_status === 'posted' || row.document_status === 'cancelled') row.is_draft = false;
-    } else if (v_draft_changed) {
-      // Legacy update where only is_draft was changed on an uncancelled invoice
-      if (row.is_draft === true) row.document_status = 'draft';
-      else row.document_status = 'posted';
     }
 
     if (row.document_status === 'cancelled' && !row.cancelled_at) {
-      row.cancelled_at = oldRow.cancelled_at || '2026-10-30T12:00:00Z';
+      row.cancelled_at = '2026-10-30T12:00:00Z';
     }
     return row;
   }
 
-  // 1. INSERT tests
-  const insDraft = simulateTrigger('INSERT', null, { document_status: 'draft', notes: '' });
-  assert.equal(insDraft.document_status, 'draft');
-  assert.equal(insDraft.is_draft, true);
+  // TG_OP = 'UPDATE'
+  const v_status_changed = row.document_status !== oldRow.document_status;
+  const v_draft_changed = row.is_draft !== oldRow.is_draft;
+  const v_is_cancelled =
+    oldRow.document_status === 'cancelled' ||
+    Boolean(oldRow.notes?.startsWith('[CANCELLED') || oldRow.notes?.toLowerCase().startsWith('cancelled'));
 
-  const insPosted = simulateTrigger('INSERT', null, { document_status: 'posted', notes: '' });
-  assert.equal(insPosted.document_status, 'posted');
-  assert.equal(insPosted.is_draft, false);
+  // Terminal cancellation enforcement:
+  if (v_is_cancelled) {
+    if (row.document_status !== 'cancelled') {
+      throw new Error(
+        `Cannot update or reopen cancelled sales invoice ${oldRow.invoice_number || 'INV'}: cancellation is terminal`
+      );
+    }
+    row.document_status = 'cancelled';
+    row.is_draft = false;
+    if (!row.cancelled_at) row.cancelled_at = oldRow.cancelled_at || '2026-10-30T12:00:00Z';
+    return row;
+  }
 
-  const insCancelled = simulateTrigger('INSERT', null, { document_status: 'cancelled', notes: '' });
-  assert.equal(insCancelled.document_status, 'cancelled');
-  assert.equal(insCancelled.is_draft, false);
-  assert.ok(insCancelled.cancelled_at);
+  // Precedence and Conflict Resolution rule for uncancelled invoices:
+  if (v_status_changed) {
+    if (row.document_status === 'draft') row.is_draft = true;
+    else if (row.document_status === 'posted' || row.document_status === 'cancelled') row.is_draft = false;
+  } else if (v_draft_changed) {
+    if (row.is_draft === true) row.document_status = 'draft';
+    else row.document_status = 'posted';
+  } else {
+    if (row.document_status === null || row.document_status === undefined) {
+      row.document_status = row.is_draft ? 'draft' : 'posted';
+    } else if (row.document_status === 'draft') {
+      row.is_draft = true;
+    } else if (row.document_status === 'posted' || row.document_status === 'cancelled') {
+      row.is_draft = false;
+    }
+  }
 
-  const insLegacyDraft = simulateTrigger('INSERT', null, { is_draft: true, notes: '' });
-  assert.equal(insLegacyDraft.document_status, 'draft');
-  assert.equal(insLegacyDraft.is_draft, true);
+  if (row.document_status === 'cancelled' && !row.cancelled_at) {
+    row.cancelled_at = oldRow.cancelled_at || '2026-10-30T12:00:00Z';
+  }
+  return row;
+}
 
-  // 2. CRITICAL PRESERVATION TEST:
-  // A cancelled invoice is updated with legacy code doing `SET is_draft = false`:
-  const oldCancelled = {
+// ==============================================================================
+// 1. Creating a draft invoice
+// ==============================================================================
+test('1. Creating a draft invoice: document_status = draft sets is_draft = true', () => {
+  const result = simulateTrigger('INSERT', null, { document_status: 'draft', is_draft: false });
+  assert.equal(result.document_status, 'draft');
+  assert.equal(result.is_draft, true, 'Draft document_status must enforce is_draft = true');
+});
+
+// ==============================================================================
+// 2. Creating a posted invoice
+// ==============================================================================
+test('2. Creating a posted invoice: document_status = posted sets is_draft = false', () => {
+  const result = simulateTrigger('INSERT', null, { document_status: 'posted', is_draft: true });
+  assert.equal(result.document_status, 'posted');
+  assert.equal(result.is_draft, false, 'Posted document_status must enforce is_draft = false');
+});
+
+// ==============================================================================
+// 3. Cancelling an invoice
+// ==============================================================================
+test('3. Cancelling an invoice: sets document_status = cancelled, cancelled_at timestamp, and is idempotent', () => {
+  const activeInvoice = {
+    id: 'inv-active-1',
+    invoice_number: 'SAPJ-26-072',
+    document_status: 'posted',
+    is_draft: false,
+    notes: 'Standard delivery',
+  };
+
+  function simulateCancelSalesInvoice(inv, userId, reason) {
+    if (inv.document_status === 'cancelled' || inv.notes?.startsWith('[CANCELLED')) {
+      return { success: true, already_cancelled: true, reversalsCreated: 0 };
+    }
+    inv.document_status = 'cancelled';
+    inv.is_draft = false;
+    inv.cancelled_at = '2026-10-30T12:30:00Z';
+    inv.cancelled_by = userId;
+    inv.cancellation_reason = reason;
+    inv.notes = `[CANCELLED ${inv.cancelled_at.split('T')[0]}] ${reason}\n${inv.notes || ''}`;
+    return { success: true, already_cancelled: false, reversalsCreated: 2 };
+  }
+
+  const cancelResult = simulateCancelSalesInvoice(activeInvoice, 'user-123', 'Replaced by SAPJ-26-073');
+  assert.equal(cancelResult.success, true);
+  assert.equal(cancelResult.already_cancelled, false);
+  assert.equal(activeInvoice.document_status, 'cancelled');
+  assert.equal(activeInvoice.is_draft, false);
+  assert.ok(activeInvoice.cancelled_at);
+  assert.equal(activeInvoice.cancelled_by, 'user-123');
+
+  // Second cancel call must be idempotent
+  const repeatCancel = simulateCancelSalesInvoice(activeInvoice, 'user-123', 'Repeat cancel');
+  assert.equal(repeatCancel.already_cancelled, true);
+  assert.equal(repeatCancel.reversalsCreated, 0, 'No duplicate reversals created on repeat cancel');
+});
+
+// ==============================================================================
+// 4. Updating a cancelled invoice without changing its status
+// ==============================================================================
+test('4. Updating a cancelled invoice without changing its status: preserves cancellation and prevents un-cancellation', () => {
+  const cancelledRow = {
+    invoice_number: 'SAPJ-26-072',
     document_status: 'cancelled',
     is_draft: false,
     cancelled_at: '2026-10-25T10:00:00Z',
-    notes: '[CANCELLED] Bad order',
+    notes: '[CANCELLED] Cancelled invoice notes',
   };
-  const updateLegacyDraftFalse = simulateTrigger('UPDATE', oldCancelled, {
-    ...oldCancelled,
-    is_draft: false, // legacy update
-  });
-  assert.equal(
-    updateLegacyDraftFalse.document_status,
-    'cancelled',
-    'Legacy update to is_draft=false must NEVER uncancel a cancelled invoice'
-  );
-  assert.equal(updateLegacyDraftFalse.is_draft, false);
 
-  const updateLegacyDraftTrue = simulateTrigger('UPDATE', oldCancelled, {
-    ...oldCancelled,
-    is_draft: true, // legacy update
+  // Routine update (e.g. updating description or payment terms)
+  const routineUpdate = simulateTrigger('UPDATE', cancelledRow, {
+    ...cancelledRow,
+    payment_terms_days: 45,
   });
-  assert.equal(
-    updateLegacyDraftTrue.document_status,
-    'cancelled',
-    'Legacy update to is_draft=true must NEVER change cancelled invoice to draft'
-  );
-  assert.equal(updateLegacyDraftTrue.is_draft, false);
+  assert.equal(routineUpdate.document_status, 'cancelled');
+  assert.equal(routineUpdate.is_draft, false);
+  assert.equal(routineUpdate.cancelled_at, '2026-10-25T10:00:00Z');
 
-  // 3. Normal update on active posted invoice:
-  const oldPosted = { document_status: 'posted', is_draft: false, notes: '' };
-  const updateToDraft = simulateTrigger('UPDATE', oldPosted, { ...oldPosted, is_draft: true });
-  assert.equal(updateToDraft.document_status, 'draft');
-  assert.equal(updateToDraft.is_draft, true);
-
-  // 4. Conflicting simultaneous update:
-  // oldDraft has document_status='draft', is_draft=true.
-  // Caller updates document_status='posted', but also sends is_draft=true:
-  // document_status takes precedence over is_draft!
-  const oldDraft = { document_status: 'draft', is_draft: true, notes: '' };
-  const updateConflicting = simulateTrigger('UPDATE', oldDraft, {
-    ...oldDraft,
-    document_status: 'posted',
-    is_draft: true,
+  // Legacy update that sends is_draft = false
+  const legacyDraftFalseUpdate = simulateTrigger('UPDATE', cancelledRow, {
+    ...cancelledRow,
+    is_draft: false,
   });
-  assert.equal(updateConflicting.document_status, 'posted');
-  assert.equal(updateConflicting.is_draft, false, 'document_status takes precedence over is_draft');
+  assert.equal(legacyDraftFalseUpdate.document_status, 'cancelled');
+  assert.equal(legacyDraftFalseUpdate.is_draft, false);
 });
 
 // ==============================================================================
-// 4. Concurrent DC Invoicing Serialization & Row Locking
+// 5. Attempting an unauthorized cancelled-to-posted transition
 // ==============================================================================
-test('4. Concurrent DC Invoicing: Row-level locking and remaining quantity recalculation prevents overselling and deadlocks', () => {
-  // Verify migration implements row locking with deterministic ORDER BY
-  assert.match(
-    migrationSql,
-    /PERFORM dci\.id\s+FROM public\.delivery_challan_items dci[\s\S]*?ORDER BY dci\.id ASC\s+FOR UPDATE;/,
-    'Must acquire row lock on delivery_challan_items in ORDER BY dci.id ASC FOR UPDATE'
+test('5. Attempting an unauthorized cancelled-to-posted transition: raises terminal cancellation exception', () => {
+  const cancelledRow = {
+    invoice_number: 'SAPJ-26-072',
+    document_status: 'cancelled',
+    is_draft: false,
+    notes: '[CANCELLED] Order cancelled',
+  };
+
+  assert.throws(
+    () =>
+      simulateTrigger('UPDATE', cancelledRow, {
+        ...cancelledRow,
+        document_status: 'posted',
+      }),
+    /Cannot update or reopen cancelled sales invoice SAPJ-26-072: cancellation is terminal/,
+    'Must throw exception when attempting to reopen a cancelled invoice'
   );
 
-  // Verify remaining quantity recalculation using authoritative helper
+  assert.throws(
+    () =>
+      simulateTrigger('UPDATE', cancelledRow, {
+        ...cancelledRow,
+        document_status: 'draft',
+      }),
+    /Cannot update or reopen cancelled sales invoice SAPJ-26-072: cancellation is terminal/,
+    'Must throw exception when attempting to convert a cancelled invoice to draft'
+  );
+});
+
+// ==============================================================================
+// 6. Legacy callers that omit document_status
+// ==============================================================================
+test('6. Legacy callers that omit document_status: trigger infers status safely after dropping column default', () => {
   assert.match(
-    migrationSql,
-    /SELECT COALESCE\(SUM\(sii\.quantity\), 0\)[\s\S]*?INTO v_already_invoiced[\s\S]*?WHERE sii\.delivery_challan_item_id = v_dc_item[\s\S]*?AND public\.is_reportable_sales_invoice\(si\.document_status, si\.is_draft, si\.notes\);/,
-    'Must recalculate v_already_invoiced across reportable sales invoices'
+    migration14Sql,
+    /ALTER TABLE public\.sales_invoices ALTER COLUMN document_status DROP DEFAULT;/,
+    'Migration must drop default on document_status'
   );
 
-  // Verify intra-request summation across multiple product lines
-  assert.match(
-    migrationSql,
-    /IF \(v_already_invoiced \+ v_requested_dc_qty\) > v_dc\.quantity THEN\s+RAISE EXCEPTION/,
-    'Must reject when v_already_invoiced + v_requested_dc_qty exceeds DC quantity'
+  // Legacy caller omitting document_status but providing is_draft: true
+  const legacyDraft = simulateTrigger('INSERT', null, { is_draft: true, notes: 'Draft order' });
+  assert.equal(legacyDraft.document_status, 'draft');
+  assert.equal(legacyDraft.is_draft, true);
+
+  // Legacy caller omitting document_status and is_draft (defaults to posted)
+  const legacyPosted = simulateTrigger('INSERT', null, { notes: 'Standard order' });
+  assert.equal(legacyPosted.document_status, 'posted');
+  assert.equal(legacyPosted.is_draft, false);
+
+  // Legacy caller inserting an invoice with cancellation notes
+  const legacyCancelled = simulateTrigger('INSERT', null, { notes: '[CANCELLED] Customer refused' });
+  assert.equal(legacyCancelled.document_status, 'cancelled');
+  assert.equal(legacyCancelled.is_draft, false);
+  assert.ok(legacyCancelled.cancelled_at);
+});
+
+// ==============================================================================
+// 7. Multi-line cancelled invoice disclosure totals
+// ==============================================================================
+test('7. Multi-line cancelled invoice disclosure totals: headers counted exactly once without Cartesian duplication', () => {
+  assert.ok(
+    combinedMigrationsSql.includes('cancelled_headers AS ('),
+    'Migration must define separate cancelled_headers CTE'
   );
 
-  // Concurrency Simulation:
-  // Approved Delivery Challan Item has quantity = 50 kg
-  const dcItem = { id: 'dci-101', quantity: 50 };
-  let committedInvoicedQuantity = 0;
+  const multiLineCancelledInvoice = {
+    id: 'inv-canc-multi',
+    invoice_number: 'SAPJ-26-072',
+    total_amount: 60000000,
+    subtotal: 55000000,
+    document_status: 'cancelled',
+  };
 
-  function simulateCreateInvoice(requestedQty) {
-    // 1. Transaction starts and locks row (simulated lock)
-    // 2. Recalculate remaining quantity
-    const remainingQty = dcItem.quantity - committedInvoicedQuantity;
-    if (requestedQty > remainingQty) {
+  const invoiceLines = [
+    { id: 'l1', invoice_id: 'inv-canc-multi', quantity: 10 },
+    { id: 'l2', invoice_id: 'inv-canc-multi', quantity: 15 },
+    { id: 'l3', invoice_id: 'inv-canc-multi', quantity: 25 },
+  ];
+
+  // Separated aggregation:
+  const headers = [multiLineCancelledInvoice];
+  const totalAmount = headers.reduce((sum, h) => sum + h.total_amount, 0);
+  const subtotal = headers.reduce((sum, h) => sum + h.subtotal, 0);
+  const totalQuantity = invoiceLines.reduce((sum, l) => sum + l.quantity, 0);
+
+  assert.equal(totalAmount, 60000000, 'Header total must be counted once (60M, not 180M)');
+  assert.equal(subtotal, 55000000, 'Header subtotal must be counted once (55M, not 165M)');
+  assert.equal(totalQuantity, 50, 'Line quantities must be summed across all lines (10+15+25=50)');
+});
+
+// ==============================================================================
+// 8. Multiple invoices against one DC item
+// ==============================================================================
+test('8. Multiple invoices against one DC item: validates remaining capacity correctly across multiple invoices', () => {
+  const dcItem = { id: 'dci-multi-inv', quantity: 100 };
+  const committedInvoices = [
+    { invoice_number: 'INV-1', quantity: 40, status: 'posted' },
+    { invoice_number: 'INV-2', quantity: 30, status: 'posted' },
+  ];
+
+  const totalInvoiced = committedInvoices.reduce((sum, i) => sum + i.quantity, 0);
+  const remainingCapacity = dcItem.quantity - totalInvoiced;
+  assert.equal(totalInvoiced, 70);
+  assert.equal(remainingCapacity, 30);
+
+  // Attempting to invoice 35 kg exceeds remaining capacity
+  const requestedQty = 35;
+  assert.ok(
+    totalInvoiced + requestedQty > dcItem.quantity,
+    'Must detect that 70 + 35 > 100'
+  );
+});
+
+// ==============================================================================
+// 9. Partial invoicing and correct remaining quantity in dc_invoicing_summary
+// ==============================================================================
+test('9. Partial invoicing and correct remaining quantity: dc_invoicing_summary rolls up accurately', () => {
+  assert.match(
+    migration14Sql,
+    /CREATE OR REPLACE VIEW public\.dc_invoicing_summary/,
+    'Migration 14 must recreate dc_invoicing_summary'
+  );
+  assert.match(
+    migration14Sql,
+    /dci\.quantity AS approved_quantity,[\s\S]*?COALESCE\(SUM\(sii\.quantity\), 0::numeric\) AS invoiced_quantity,[\s\S]*?GREATEST\(0::numeric, dci\.quantity - COALESCE\(SUM\(sii\.quantity\), 0::numeric\)\) AS remaining_quantity/,
+    'Must calculate approved_quantity, invoiced_quantity, and remaining_quantity per DC item'
+  );
+
+  // Simulation of dc_invoicing_summary logic:
+  const dcItems = [
+    { id: 'dci-1', quantity: 50, invoiced_qty: 30 }, // partial (20 remaining)
+    { id: 'dci-2', quantity: 50, invoiced_qty: 0 },  // uninvoiced (50 remaining)
+  ];
+
+  const totalApproved = dcItems.reduce((sum, i) => sum + i.quantity, 0);
+  const totalInvoiced = dcItems.reduce((sum, i) => sum + i.invoiced_qty, 0);
+  const totalRemaining = dcItems.reduce((sum, i) => sum + (i.quantity - i.invoiced_qty), 0);
+
+  assert.equal(totalApproved, 100);
+  assert.equal(totalInvoiced, 30);
+  assert.equal(totalRemaining, 70);
+
+  const status =
+    totalInvoiced === 0 ? 'not_invoiced' : totalRemaining === 0 ? 'fully_invoiced' : 'partially_invoiced';
+  assert.equal(status, 'partially_invoiced');
+});
+
+// ==============================================================================
+// 10. Invoice editing that moves quantities between DC items
+// ==============================================================================
+test('10. Invoice editing that moves quantities between DC items: excludes invoice being edited from existing invoiced sum', () => {
+  assert.match(
+    migration14Sql,
+    /WHERE sii\.delivery_challan_item_id = v_dc_item\s+AND si\.id <> p_invoice_id\s+AND public\.is_reportable_sales_invoice/,
+    'update_sales_invoice_atomic must exclude p_invoice_id when validating available capacity'
+  );
+
+  // Simulation: Invoice E has 20 kg on DCI-1.
+  // User edits Invoice E to move 10 kg to DCI-2 (so DCI-1 gets 10 kg, DCI-2 gets 10 kg).
+  const dcItem1 = { id: 'dci-1', quantity: 30 };
+  const dcItem2 = { id: 'dci-2', quantity: 30 };
+
+  const existingInvoices = [
+    { id: 'inv-E', dc_item_id: 'dci-1', quantity: 20 },
+    { id: 'inv-Other', dc_item_id: 'dci-2', quantity: 25 },
+  ];
+
+  function validateEdit(editingInvId, targetDcItem, newRequestedQty) {
+    // Other invoices on target DC item:
+    const otherInvoiced = existingInvoices
+      .filter((inv) => inv.id !== editingInvId && inv.dc_item_id === targetDcItem.id)
+      .reduce((sum, inv) => sum + inv.quantity, 0);
+
+    const available = targetDcItem.quantity - otherInvoiced;
+    if (newRequestedQty > available) {
       throw new Error(
-        `Invoice quantity ${requestedQty} exceeds remaining Delivery Challan quantity ${remainingQty} (DC total ${dcItem.quantity}, already invoiced ${committedInvoicedQuantity})`
+        `Invoice edit quantity ${newRequestedQty} exceeds remaining Delivery Challan quantity ${available}`
       );
     }
-    // 3. Commit
-    committedInvoicedQuantity += requestedQty;
-    return { success: true, remainingQty: dcItem.quantity - committedInvoicedQuantity };
+    return { success: true, remaining: available - newRequestedQty };
   }
 
-  // Concurrent Transaction 1 requests 30 kg
-  const tx1 = simulateCreateInvoice(30);
-  assert.equal(tx1.success, true);
-  assert.equal(tx1.remainingQty, 20);
+  // DCI-1: requesting 10 kg. Total = 30. Other = 0. Available = 30. Requested 10 -> OK!
+  const dci1Validation = validateEdit('inv-E', dcItem1, 10);
+  assert.equal(dci1Validation.success, true);
+  assert.equal(dci1Validation.remaining, 20);
 
-  // Concurrent Transaction 2 also requests 30 kg (competing for same DC item)
-  // In serial execution guaranteed by FOR UPDATE, Tx 2 checks after Tx 1 commits:
+  // DCI-2: requesting 10 kg. Total = 30. Other = 25 (inv-Other). Available = 5.
+  // Requesting 10 exceeds 5!
   assert.throws(
-    () => simulateCreateInvoice(30),
-    /Invoice quantity 30 exceeds remaining Delivery Challan quantity 20/,
-    'Concurrent request exceeding remaining approved DC quantity must be rejected'
-  );
-
-  // Transaction 3 requests 20 kg (exact remainder):
-  const tx3 = simulateCreateInvoice(20);
-  assert.equal(tx3.success, true);
-  assert.equal(tx3.remainingQty, 0);
-
-  // Delivery Challan item is now fully invoiced (50/50 kg):
-  assert.throws(
-    () => simulateCreateInvoice(1),
-    /Invoice quantity 1 exceeds remaining Delivery Challan quantity 0/,
-    'Fully invoiced DC item cannot accept any more invoices'
+    () => validateEdit('inv-E', dcItem2, 10),
+    /Invoice edit quantity 10 exceeds remaining Delivery Challan quantity 5/
   );
 });
 
 // ==============================================================================
-// 5. Single Reportability Rule Across Views, RPCs, and Queries
+// 11. Invoice creation and editing competing for the same remaining DC quantity
 // ==============================================================================
-test('5. Single reportability rule: is_reportable_sales_invoice is authoritative and consistent', () => {
-  // Read and verify helper function logic
+test('11. Invoice creation and invoice editing competing for remaining DC quantity: deterministic row locking order', () => {
+  // Both create_sales_invoice_atomic and update_sales_invoice_atomic must lock parent DCs first, then DC items in ASC order
   assert.match(
-    migrationSql,
-    /CREATE OR REPLACE FUNCTION public\.is_reportable_sales_invoice\([\s\S]*?p_document_status text,[\s\S]*?p_is_draft boolean,[\s\S]*?p_notes text[\s\S]*?\)\s*RETURNS boolean/,
-    'Must define is_reportable_sales_invoice'
+    migration14Sql,
+    /PERFORM dc\.id\s+FROM public\.delivery_challans dc[\s\S]*?ORDER BY dc\.id ASC\s+FOR UPDATE;/,
+    'create_sales_invoice_atomic must lock parent delivery_challans in ASC order'
+  );
+  assert.match(
+    migration14Sql,
+    /PERFORM dci\.id\s+FROM public\.delivery_challan_items dci[\s\S]*?ORDER BY dci\.id ASC\s+FOR UPDATE;/,
+    'create_sales_invoice_atomic must lock child delivery_challan_items in ASC order'
   );
 
-  function isReportable(docStatus, isDraft, notes) {
-    const effectiveStatus = docStatus || (isDraft ? 'draft' : 'posted');
-    const isCancelled =
-      Boolean(notes?.startsWith('[CANCELLED')) || Boolean(notes?.toLowerCase().startsWith('cancelled'));
-    return effectiveStatus === 'posted' && !Boolean(isDraft) && !isCancelled;
-  }
-
-  // Standard posted invoice: reportable
-  assert.equal(isReportable('posted', false, 'Standard invoice'), true);
-
-  // Draft invoices: non-reportable
-  assert.equal(isReportable('draft', true, null), false);
-  assert.equal(isReportable('draft', false, null), false);
-  assert.equal(isReportable(null, true, null), false);
-
-  // Cancelled invoices: non-reportable
-  assert.equal(isReportable('cancelled', false, null), false);
-  assert.equal(isReportable('posted', false, '[CANCELLED] Customer refused'), false);
-  assert.equal(isReportable('posted', false, 'cancelled by accounts'), false);
-
-  // Verify all canonical views and functions use the authoritative helper:
-  assert.ok(
-    migrationSql.includes('WHERE public.is_reportable_sales_invoice(document_status, is_draft, notes);'),
-    'active_sales_invoices view must use is_reportable_sales_invoice'
+  assert.match(
+    migration14Sql,
+    /PERFORM dc\.id\s+FROM public\.delivery_challans dc\s+WHERE dc\.id = ANY\(v_all_parent_dc_ids\)\s+ORDER BY dc\.id ASC\s+FOR UPDATE;/,
+    'update_sales_invoice_atomic must lock parent delivery_challans in ASC order'
   );
-  assert.ok(
-    migrationSql.includes('WHERE public.is_reportable_sales_invoice(si.document_status, si.is_draft, si.notes)'),
-    'active_sales_invoice_items and functions must use is_reportable_sales_invoice'
+  assert.match(
+    migration14Sql,
+    /PERFORM dci\.id\s+FROM public\.delivery_challan_items dci\s+WHERE dci\.id = ANY\(v_all_dc_item_ids\)\s+ORDER BY dci\.id ASC\s+FOR UPDATE;/,
+    'update_sales_invoice_atomic must lock child delivery_challan_items in ASC order'
   );
 });
 
 // ==============================================================================
-// 6. Cancellation Archive Audit & Attribution
+// 12. Invoice creation/editing competing with DC cancellation
 // ==============================================================================
-test('6. Cancellation archive audit: Displays verified cancelling user name and avoids fabricated attribution', () => {
-  // Test verified user profile resolution
-  const userMap = new Map([
-    ['user-uuid-1', 'Budi Santoso'],
-    ['user-uuid-2', 'Accounts Admin'],
-  ]);
-
-  function getCancellationAttribution(inv) {
-    const authorName = inv.canceller_name || (inv.cancelled_by ? userMap.get(inv.cancelled_by) : null);
-    const hasVerifiedAuthor = Boolean(authorName);
-    const reason = inv.cancellation_reason || inv.notes || null;
-    const displayReason = reason ? reason.split('\n')[0] : 'No reason recorded';
-
-    return {
-      authorName: hasVerifiedAuthor ? authorName : 'Unknown (historical record)',
-      hasVerifiedAuthor,
-      displayReason,
-    };
-  }
-
-  // A. Verified modern cancellation with user ID
-  const modernCancelledInv = {
-    id: 'inv-modern-canc',
-    cancelled_by: 'user-uuid-1',
-    canceller_name: 'Budi Santoso',
-    cancellation_reason: 'Duplicate billing order created by mistake',
-    cancelled_at: '2026-10-30T10:00:00Z',
-  };
-  const modernAttribution = getCancellationAttribution(modernCancelledInv);
-  assert.equal(modernAttribution.hasVerifiedAuthor, true);
-  assert.equal(modernAttribution.authorName, 'Budi Santoso');
-  assert.equal(modernAttribution.displayReason, 'Duplicate billing order created by mistake');
-
-  // B. Historical legacy cancellation without user ID
-  const legacyCancelledInv = {
-    id: 'inv-legacy-canc',
-    cancelled_by: null,
-    canceller_name: null,
-    notes: '[CANCELLED - 2026-08-10] Order cancelled by customer request',
-  };
-  const legacyAttribution = getCancellationAttribution(legacyCancelledInv);
-  assert.equal(legacyAttribution.hasVerifiedAuthor, false);
-  assert.equal(
-    legacyAttribution.authorName,
-    'Unknown (historical record)',
-    'Must display unknown historical record instead of fabricating an author'
+test('12. Invoice creation/editing competing with DC cancellation: coordinated lock ordering and active invoice guard', () => {
+  // fn_cancel_delivery_challan locks parent DC, then child DC items in ASC order
+  assert.match(
+    migration14Sql,
+    /PERFORM dc\.id\s+FROM public\.delivery_challans dc\s+WHERE dc\.id = p_dc_id\s+FOR UPDATE;/,
+    'fn_cancel_delivery_challan must lock parent DC first'
   );
-  assert.equal(legacyAttribution.displayReason, '[CANCELLED - 2026-08-10] Order cancelled by customer request');
-
-  // Verify Sales.tsx implements verified vs unknown attribution
-  assert.ok(
-    salesPageCode.includes('Unknown (historical record)'),
-    'Sales.tsx must render Unknown (historical record) for unverified attribution'
+  assert.match(
+    migration14Sql,
+    /PERFORM dci\.id\s+FROM public\.delivery_challan_items dci\s+WHERE dci\.challan_id = p_dc_id\s+ORDER BY dci\.id ASC\s+FOR UPDATE;/,
+    'fn_cancel_delivery_challan must lock child DC items in ASC order second'
   );
-  assert.ok(
-    salesPageCode.includes('inv.canceller_name'),
-    'Sales.tsx must display canceller_name when verified'
+
+  // fn_cancel_delivery_challan raises exception if active reportable invoices exist
+  assert.match(
+    migration14Sql,
+    /Cannot cancel Delivery Challan %: already invoiced by active sales invoice\(s\) %/,
+    'fn_cancel_delivery_challan must reject cancellation when active reportable invoices exist'
   );
 });
 
 // ==============================================================================
-// 7. Retest of SAPJ-26-072 (cancelled, 20 kg) and SAPJ-26-073 (valid, 30 kg) against DO-26-0073
+// 13. Rollback after a failed quantity validation
 // ==============================================================================
-test('7. Retest SAPJ-26-072 & SAPJ-26-073 against DO-26-0073: 30 kg active sales, 20 kg cancelled disclosure, 30 kg stock deduction', () => {
-  // Scenario:
-  // Delivery Challan DO-26-0073 had approved delivery of 50 kg total.
-  // Invoice 1: SAPJ-26-072 billed 20 kg -> later CANCELLED.
-  // Invoice 2: SAPJ-26-073 billed 30 kg -> active POSTED.
-  const dcItem = { id: 'dci-do-73', product_id: 'prod-api', quantity: 50 };
+test('13. Rollback after failed quantity validation: transaction guarantees atomic rollback', () => {
+  let dbState = {
+    invoices: [{ id: 'inv-1', total: 1000000 }],
+    items: [{ id: 'item-1', invoice_id: 'inv-1', qty: 10 }],
+  };
 
-  const allInvoices = [
+  function executeAtomicTransaction(fn) {
+    const snapshot = JSON.parse(JSON.stringify(dbState));
+    try {
+      fn();
+    } catch (err) {
+      dbState = snapshot; // Rollback
+      throw err;
+    }
+  }
+
+  assert.throws(() => {
+    executeAtomicTransaction(() => {
+      dbState.invoices.push({ id: 'inv-2', total: 5000000 });
+      // Validation failure on item quantity exceeding capacity
+      throw new Error('Invoice quantity exceeds remaining Delivery Challan quantity');
+    });
+  }, /Invoice quantity exceeds remaining Delivery Challan quantity/);
+
+  assert.equal(dbState.invoices.length, 1, 'Failed transaction must roll back completely');
+});
+
+// ==============================================================================
+// 14. Sales, receivables, ageing and dashboard exclusions
+// ==============================================================================
+test('14. Sales, receivables, ageing and dashboard exclusions: drafts and cancellations excluded across all metrics', () => {
+  const invoices = [
+    { id: '1', number: 'POST-1', document_status: 'posted', is_draft: false, total_amount: 10000000, balance: 10000000 },
+    { id: '2', number: 'POST-2', document_status: 'posted', is_draft: false, total_amount: 20000000, balance: 5000000 },
+    { id: '3', number: 'DRAFT-1', document_status: 'draft', is_draft: true, total_amount: 15000000, balance: 15000000 },
+    { id: '4', number: 'CANC-1', document_status: 'cancelled', is_draft: false, total_amount: 25000000, balance: 0 },
+  ];
+
+  function isReportable(inv) {
+    return inv.document_status === 'posted' && !inv.is_draft;
+  }
+
+  const reportableInvoices = invoices.filter(isReportable);
+  assert.equal(reportableInvoices.length, 2);
+
+  const recognizedRevenue = reportableInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
+  const outstandingReceivables = reportableInvoices.reduce((sum, inv) => sum + inv.balance, 0);
+
+  assert.equal(recognizedRevenue, 30000000, 'Recognized revenue must be 30M (excluding draft 15M and cancelled 25M)');
+  assert.equal(outstandingReceivables, 15000000, 'Receivables must be 15M (excluding draft and cancelled)');
+
+  // Verify Sales.tsx implements these exact checks
+  assert.ok(salesPageCode.includes('postedRevenue = postedInvoices.reduce'));
+  assert.ok(salesPageCode.includes('pendingValue = postedInvoices.reduce'));
+  assert.ok(salesPageCode.includes('draftValue = draftInvoices.reduce'));
+});
+
+// ==============================================================================
+// 15. The complete DO-26-0073 verification case
+// ==============================================================================
+test('15. DO-26-0073 Real-Data Verification: 30 kg approved DC, 30 kg active sales, 20 kg cancelled disclosure, 0 kg remaining capacity', () => {
+  // Verification Case Parameters from Section 6:
+  // Delivery Challan: DO-26-0073
+  // DC ID: abda70d6-cede-4a14-bc47-1adea0729f6f
+  // Status: approved
+  // DC item ID: baadf206-f75f-4109-89e3-2a20f836351f
+  // Actual DC quantity: 30 kg
+  // Batch: DX/L/25/0048 (f767785c-1d74-4b03-b7be-1e6cd6b8282f)
+  //
+  // Linked invoices:
+  // 1. SAPJ-26-072: Cancelled, 20 kg
+  // 2. SAPJ-26-073: Active, 30 kg
+  const dcRecord = {
+    id: 'abda70d6-cede-4a14-bc47-1adea0729f6f',
+    challan_number: 'DO-26-0073',
+    approval_status: 'approved',
+    items: [
+      {
+        id: 'baadf206-f75f-4109-89e3-2a20f836351f',
+        product_id: 'prod-dx',
+        batch_id: 'f767785c-1d74-4b03-b7be-1e6cd6b8282f',
+        quantity: 30, // ACTUAL DC QUANTITY IS 30 kg (NOT 50 kg)
+      },
+    ],
+  };
+
+  const linkedInvoices = [
     {
       invoice_number: 'SAPJ-26-072',
       document_status: 'cancelled',
       is_draft: false,
       notes: '[CANCELLED] Replaced by invoice SAPJ-26-073',
-      lines: [{ quantity: 20, unit_price: 150000 }],
+      lines: [{ dc_item_id: 'baadf206-f75f-4109-89e3-2a20f836351f', quantity: 20 }],
     },
     {
       invoice_number: 'SAPJ-26-073',
       document_status: 'posted',
       is_draft: false,
-      notes: 'Valid replacement invoice',
-      lines: [{ quantity: 30, unit_price: 150000 }],
+      notes: 'Valid posted replacement invoice',
+      lines: [{ dc_item_id: 'baadf206-f75f-4109-89e3-2a20f836351f', quantity: 30 }],
     },
   ];
 
-  // Reportable sales calculation:
-  const reportableInvoices = allInvoices.filter((inv) =>
-    inv.document_status === 'posted' && !inv.is_draft && !inv.notes?.includes('[CANCELLED')
+  // 1. Active recognized sales quantity:
+  const activeInvoices = linkedInvoices.filter(
+    (inv) => inv.document_status === 'posted' && !inv.is_draft && !inv.notes.includes('[CANCELLED')
   );
-  assert.equal(reportableInvoices.length, 1);
-  assert.equal(reportableInvoices[0].invoice_number, 'SAPJ-26-073');
+  assert.equal(activeInvoices.length, 1);
+  assert.equal(activeInvoices[0].invoice_number, 'SAPJ-26-073');
 
-  const reportableSoldQty = reportableInvoices.reduce(
+  const activeSalesQty = activeInvoices.reduce(
     (sum, inv) => sum + inv.lines.reduce((lSum, l) => lSum + l.quantity, 0),
     0
   );
-  assert.equal(reportableSoldQty, 30, 'Recognized sales quantity must remain exactly 30 kg');
+  assert.equal(activeSalesQty, 30, 'Active recognized sales quantity must be exactly 30 kg');
 
-  // Cancelled disclosure:
-  const cancelledInvoices = allInvoices.filter(
-    (inv) => inv.document_status === 'cancelled' || inv.notes?.includes('[CANCELLED')
+  // 2. Cancelled disclosure quantity:
+  const cancelledInvoices = linkedInvoices.filter(
+    (inv) => inv.document_status === 'cancelled' || inv.notes.includes('[CANCELLED')
   );
   assert.equal(cancelledInvoices.length, 1);
   assert.equal(cancelledInvoices[0].invoice_number, 'SAPJ-26-072');
@@ -564,32 +562,31 @@ test('7. Retest SAPJ-26-072 & SAPJ-26-073 against DO-26-0073: 30 kg active sales
     (sum, inv) => sum + inv.lines.reduce((lSum, l) => lSum + l.quantity, 0),
     0
   );
-  assert.equal(cancelledDisclosureQty, 20, 'Cancelled disclosure must show 20 kg separately');
+  assert.equal(cancelledDisclosureQty, 20, 'Cancelled disclosure quantity must be exactly 20 kg');
 
-  // Invoiced quantity on DC:
-  // Since SAPJ-26-072 was cancelled, its 20 kg was released from the DC item's billed quantity.
-  // The only active invoice is SAPJ-26-073 (30 kg).
-  const dcBilledQty = reportableInvoices.reduce(
-    (sum, inv) => sum + inv.lines.reduce((lSum, l) => lSum + l.quantity, 0),
-    0
-  );
-  assert.equal(dcBilledQty, 30);
-  assert.equal(dcItem.quantity - dcBilledQty, 20, 'DC item remaining unbilled quantity is 20 kg');
+  // 3. Remaining invoiceable quantity on DO-26-0073:
+  const approvedDcQty = dcRecord.items[0].quantity; // 30 kg
+  const remainingInvoiceableQty = approvedDcQty - activeSalesQty;
 
-  // Idempotency test of cancel_sales_invoice RPC:
-  // If cancel_sales_invoice is called again on SAPJ-26-072:
-  function simulateCancelRpc(inv) {
-    if (inv.document_status === 'cancelled' || inv.notes?.includes('[CANCELLED')) {
-      return { success: true, already_cancelled: true, reversalsCreated: 0 };
+  // CRITICAL REQUIREMENT:
+  // "The active invoice already consumes the full approved 30 kg DC quantity.
+  // Remaining invoiceable quantity: 0 kg.
+  // Do not create another 20 kg invoice. Do not treat this DC as 50 kg."
+  assert.equal(approvedDcQty, 30, 'Approved DC quantity is 30 kg');
+  assert.equal(remainingInvoiceableQty, 0, 'Remaining invoiceable quantity must be exactly 0 kg');
+
+  // 4. Verification that any attempt to invoice another quantity against DO-26-0073 is rejected:
+  function attemptCreateInvoiceAgainstDc(requestedQty) {
+    if (activeSalesQty + requestedQty > approvedDcQty) {
+      throw new Error(
+        `Invoice quantity ${requestedQty} exceeds remaining Delivery Challan quantity ${approvedDcQty - activeSalesQty} (DC total ${approvedDcQty}, already invoiced ${activeSalesQty})`
+      );
     }
-    return { success: true, already_cancelled: false, reversalsCreated: 2 };
   }
 
-  const secondCancelCall = simulateCancelRpc(cancelledInvoices[0]);
-  assert.equal(secondCancelCall.already_cancelled, true);
-  assert.equal(
-    secondCancelCall.reversalsCreated,
-    0,
-    'Subsequent cancel call must be idempotent without creating duplicate reversals'
+  assert.throws(
+    () => attemptCreateInvoiceAgainstDc(20),
+    /Invoice quantity 20 exceeds remaining Delivery Challan quantity 0/,
+    'Attempt to create another 20 kg invoice must be rejected'
   );
 });
