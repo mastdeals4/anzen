@@ -69,7 +69,8 @@ test.describe('SAPJ ERP: Unified Receipt & Payment Voucher Upgrade & Party Settl
       'supabase/migrations/20261030190000_unified_party_settlement_and_voucher_upgrade.sql',
       'supabase/migrations/20261030200000_hotfix_sales_profitability_unallocated_expenses.sql',
       'supabase/migrations/20261030210000_optimize_sales_profitability_line_expenses.sql',
-      'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql'
+      'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql',
+      'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql'
     ];
 
     for (const mig of migrations) {

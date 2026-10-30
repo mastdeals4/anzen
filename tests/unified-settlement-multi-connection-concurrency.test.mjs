@@ -67,7 +67,8 @@ test.describe('SAPJ ERP: Multi-Connection Concurrency, Party Isolation & Securit
       'supabase/migrations/20261030190000_unified_party_settlement_and_voucher_upgrade.sql',
       'supabase/migrations/20261030200000_hotfix_sales_profitability_unallocated_expenses.sql',
       'supabase/migrations/20261030210000_optimize_sales_profitability_line_expenses.sql',
-      'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql'
+      'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql',
+      'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql'
     ];
 
     for (const mig of migrations) {
@@ -617,5 +618,246 @@ test.describe('SAPJ ERP: Multi-Connection Concurrency, Party Isolation & Securit
       WHERE jel.supplier_id = $1 AND coa.code = '2110';
     `, [refundSupplierId]);
     assert.equal(parseFloat(glRes.rows[0].net_ap), 0, 'General Ledger 2110 position for supplier must be exactly 0.00');
+
+    // Correction C: Verify get_party_balance_summary deducts supplier refunds received
+    const balRes = await pool.query(`
+      SELECT public.get_party_balance_summary('supplier', $1::text) as summary;
+    `, [refundSupplierId]);
+    const summary = balRes.rows[0].summary;
+    assert.equal(parseFloat(summary.unallocated_advances), 0, 'Supplier unallocated advances must be 0 after refund');
+    assert.equal(parseFloat(summary.net_balance), 0, 'Supplier net balance must be 0 after refund');
+    assert.equal(summary.balance_direction, 'zero', 'Supplier direction must be zero');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 8: Correction C - Customer Refund Balance & GL Integration
+  // ----------------------------------------------------------------------------
+  test('Customer refund scenario: 5M advance deposit minus 2M refund leaves 3M credit with proper GL posting', async () => {
+    // 1. Create a customer
+    const custRes = await pool.query(`
+      INSERT INTO public.customers (company_name, email, phone)
+      VALUES ('Customer Refund Verification PT', 'finance@custrefund.com', '021-998877')
+      RETURNING id;
+    `);
+    const custId = custRes.rows[0].id;
+
+    // 2. Receive Rp 5,000,000 customer advance deposit
+    const rvRes = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE,
+          'party_type', 'customer',
+          'customer_id', $1::text,
+          'bank_account_id', $2::text,
+          'amount', 5000000,
+          'payment_method', 'bank_transfer',
+          'payment_purpose', 'customer_advance',
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [custId, bankAccountId, adminUserId]);
+    const rvId = rvRes.rows[0].id;
+    await pool.query(`SELECT public.post_receipt_voucher($1, $2);`, [rvId, adminUserId]);
+
+    // Check balance before refund: unallocated credits = 5M, net_balance = -5M (credit)
+    let balRes = await pool.query(`SELECT public.get_party_balance_summary('customer', $1::text) as summary;`, [custId]);
+    let summary = balRes.rows[0].summary;
+    assert.equal(parseFloat(summary.unallocated_credits), 5000000, 'Customer unallocated credits must be 5M before refund');
+    assert.equal(parseFloat(summary.net_balance), -5000000, 'Customer net balance must be -5M');
+    assert.equal(summary.balance_direction, 'credit', 'Direction must be credit');
+
+    // 3. Issue Rp 2,000,000 Customer Refund via Payment Voucher using named arguments
+    const pvRes = await pool.query(`
+      SELECT public.save_payment_voucher_with_allocations(
+        p_voucher_number => public.next_payment_voucher_number(CURRENT_DATE),
+        p_voucher_date => CURRENT_DATE,
+        p_party_type => 'customer',
+        p_customer_id => $1::uuid,
+        p_bank_account_id => $2::uuid,
+        p_amount => 2000000::numeric,
+        p_payment_method => 'bank_transfer',
+        p_payment_purpose => 'customer_refund',
+        p_reference_number => 'CUST-REFUND-001',
+        p_description => 'Customer advance deposit refund',
+        p_created_by => $3::uuid
+      ) as id;
+    `, [custId, bankAccountId, adminUserId]);
+    const pvId = pvRes.rows[0].id;
+    await pool.query(`SELECT public.post_payment_voucher($1, $2);`, [pvId, adminUserId]);
+
+    // Check balance after refund: unallocated credits = 3M, net_balance = -3M (credit)
+    balRes = await pool.query(`SELECT public.get_party_balance_summary('customer', $1::text) as summary;`, [custId]);
+    summary = balRes.rows[0].summary;
+    assert.equal(parseFloat(summary.unallocated_credits), 3000000, 'Customer unallocated credits must be 3M after 2M refund');
+    assert.equal(parseFloat(summary.net_balance), -3000000, 'Customer net balance must be -3M');
+    assert.equal(summary.balance_direction, 'credit', 'Direction must remain credit');
+
+    // Verify GL entries for Payment Voucher (customer refund):
+    // Dr Customer Deposit (2140) 2,000,000, Cr Bank (1102) 2,000,000
+    const jelRes = await pool.query(`
+      SELECT jel.line_number, coa.code, jel.debit, jel.credit, jel.customer_id
+      FROM public.journal_entry_lines jel
+      JOIN public.journal_entries je ON je.id = jel.journal_entry_id
+      JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE je.source_module = 'payment' AND je.reference_id = $1
+      ORDER BY jel.line_number ASC;
+    `, [pvId]);
+    assert.equal(jelRes.rows.length, 2, 'Customer refund must have 2 lines: Dr 2140, Cr Bank');
+    assert.equal(jelRes.rows[0].code, '2140', 'Line 1 debits customer deposit control account (2140)');
+    assert.equal(parseFloat(jelRes.rows[0].debit), 2000000);
+    assert.equal(jelRes.rows[0].customer_id, custId, 'Customer ID stamped on deposit line');
+    assert.equal(jelRes.rows[1].code, '1102', 'Line 2 credits bank account (1102)');
+    assert.equal(parseFloat(jelRes.rows[1].credit), 2000000);
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 9: Concurrency 4 - Multi-Connection Customer Refund Over-Settlement Prevention
+  // ----------------------------------------------------------------------------
+  test('Concurrency 4: Simultaneous customer refund postings strictly prevent over-refunding available deposits', async () => {
+    // 1. Create a customer
+    const custRes = await pool.query(`
+      INSERT INTO public.customers (company_name, email, phone)
+      VALUES ('Concurrent Refund Test PT', 'finance@concur-refund.com', '021-123456')
+      RETURNING id;
+    `);
+    const custId = custRes.rows[0].id;
+
+    // 2. Deposit Rp 3,000,000
+    const rvRes = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE,
+          'party_type', 'customer',
+          'customer_id', $1::text,
+          'bank_account_id', $2::text,
+          'amount', 3000000,
+          'payment_method', 'bank_transfer',
+          'payment_purpose', 'customer_advance',
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [custId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_receipt_voucher($1, $2);`, [rvRes.rows[0].id, adminUserId]);
+
+    // 3. Create two payment vouchers, each requesting a full Rp 3,000,000 refund using named arguments
+    const pv1Res = await pool.query(`
+      SELECT public.save_payment_voucher_with_allocations(
+        p_voucher_number => public.next_payment_voucher_number(CURRENT_DATE),
+        p_voucher_date => CURRENT_DATE,
+        p_party_type => 'customer',
+        p_customer_id => $1::uuid,
+        p_bank_account_id => $2::uuid,
+        p_amount => 3000000::numeric,
+        p_payment_method => 'bank_transfer',
+        p_payment_purpose => 'customer_refund',
+        p_reference_number => 'CONCUR-REF-01',
+        p_description => 'Refund attempt 1',
+        p_created_by => $3::uuid
+      ) as id;
+    `, [custId, bankAccountId, adminUserId]);
+    const pv1Id = pv1Res.rows[0].id;
+
+    const pv2Res = await pool.query(`
+      SELECT public.save_payment_voucher_with_allocations(
+        p_voucher_number => public.next_payment_voucher_number(CURRENT_DATE),
+        p_voucher_date => CURRENT_DATE,
+        p_party_type => 'customer',
+        p_customer_id => $1::uuid,
+        p_bank_account_id => $2::uuid,
+        p_amount => 3000000::numeric,
+        p_payment_method => 'bank_transfer',
+        p_payment_purpose => 'customer_refund',
+        p_reference_number => 'CONCUR-REF-02',
+        p_description => 'Refund attempt 2',
+        p_created_by => $3::uuid
+      ) as id;
+    `, [custId, bankAccountId, adminUserId]);
+    const pv2Id = pv2Res.rows[0].id;
+
+    // 4. Fire simultaneous post attempts across separate connections
+    const client1 = new Client(PG_CONFIG);
+    const client2 = new Client(PG_CONFIG);
+    await client1.connect();
+    await client2.connect();
+
+    try {
+      const results = await Promise.allSettled([
+        client1.query(`SELECT public.post_payment_voucher($1, $2);`, [pv1Id, adminUserId]),
+        client2.query(`SELECT public.post_payment_voucher($1, $2);`, [pv2Id, adminUserId])
+      ]);
+
+      const fulfilled = results.filter(r => r.status === 'fulfilled');
+      const rejected = results.filter(r => r.status === 'rejected');
+
+      assert.equal(fulfilled.length, 1, 'Exactly one customer refund should succeed');
+      assert.equal(rejected.length, 1, 'The competing customer refund must be rejected');
+      assert.match(
+        rejected[0].reason.message,
+        /Customer refund amount .* exceeds available customer deposit\/credit balance/i,
+        'Error message must clearly cite deposit insufficiency'
+      );
+    } finally {
+      await client1.end();
+      await client2.end();
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 10: Correction D - Mandatory Director ID and No Global Fallback
+  // ----------------------------------------------------------------------------
+  test('Director validation: get_party_balance_summary strictly validates director ID', async () => {
+    // 1. NULL director ID must be rejected
+    await assert.rejects(
+      async () => {
+        await pool.query(`SELECT public.get_party_balance_summary('director', NULL);`);
+      },
+      /A valid director ID is required for director balance query/i,
+      'Must reject NULL director ID'
+    );
+
+    // 2. Non-existent director ID must be rejected
+    await assert.rejects(
+      async () => {
+        await pool.query(`SELECT public.get_party_balance_summary('director', '00000000-0000-0000-0000-000000000000');`);
+      },
+      /Director with ID .* not found/i,
+      'Must reject non-existent director ID'
+    );
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 11: Correction A & B - Function Privileges Revoked from anon
+  // ----------------------------------------------------------------------------
+  test('Security: Sensitive financial reporting and party balance RPCs are revoked from anon', async () => {
+    const checks = [
+      "has_function_privilege('anon', 'public.get_sales_profitability_summary(date, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.get_sales_profitability_line_expenses(date, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.get_authoritative_sales_line_cogs(date, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.get_sales_profit_summary(date, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.get_sales_profitability_batch_orders(uuid, date, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.get_sales_profitability_product_batches(uuid, date, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.get_party_balance_summary(text, text, date)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.post_receipt_voucher(uuid, uuid)', 'EXECUTE')",
+      "has_function_privilege('anon', 'public.post_payment_voucher(uuid, uuid)', 'EXECUTE')"
+    ];
+
+    for (const check of checks) {
+      const res = await pool.query(`SELECT ${check} as permitted;`);
+      assert.strictEqual(
+        res.rows[0].permitted,
+        false,
+        `anon role must NOT have execute privilege on: ${check}`
+      );
+    }
+
+    // Verify authenticated DOES have execute privilege
+    const authCheck = await pool.query(`
+      SELECT has_function_privilege('authenticated', 'public.get_party_balance_summary(text, text, date)', 'EXECUTE') as permitted;
+    `);
+    assert.strictEqual(authCheck.rows[0].permitted, true, 'authenticated role must have execute privilege');
   });
 });
