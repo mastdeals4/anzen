@@ -70,7 +70,8 @@ test.describe('SAPJ ERP: Unified Receipt & Payment Voucher Upgrade & Party Settl
       'supabase/migrations/20261030200000_hotfix_sales_profitability_unallocated_expenses.sql',
       'supabase/migrations/20261030210000_optimize_sales_profitability_line_expenses.sql',
       'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql',
-      'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql'
+      'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql',
+      'supabase/migrations/20261030235000_supplier_refund_authoritative_validation_and_accounting_integrity.sql'
     ];
 
     for (const mig of migrations) {
@@ -190,6 +191,29 @@ test.describe('SAPJ ERP: Unified Receipt & Payment Voucher Upgrade & Party Settl
   // Scenario 2: Supplier Refund Receipt Works (Money IN from Supplier)
   // ----------------------------------------------------------------------------
   test('Scenario 2: Supplier refund receipt works and credits Supplier AP (2110) with supplier_id', async () => {
+    // 2a. Post initial advance payment to supplier so refundable balance exists
+    const prepayRes = (await pool.query(`
+      SELECT public.save_payment_voucher_with_purpose(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_advance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 2500000,
+          'payment_amount', 2500000,
+          'description', 'Initial supplier advance for material order',
+          'created_by', $3::text
+        ),
+        '[]'::jsonb,
+        'supplier_advance'
+      ) as res;
+    `, [testSupplierId, bankAccountId, adminUserId])).rows[0].res;
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [prepayRes.id, adminUserId]);
+
+    // 2b. Now post the refund receipt
     const rvId = (await pool.query(`
       SELECT public.save_receipt_voucher_with_allocations(
         NULL,

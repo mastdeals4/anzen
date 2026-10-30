@@ -68,7 +68,8 @@ test.describe('SAPJ ERP: Multi-Connection Concurrency, Party Isolation & Securit
       'supabase/migrations/20261030200000_hotfix_sales_profitability_unallocated_expenses.sql',
       'supabase/migrations/20261030210000_optimize_sales_profitability_line_expenses.sql',
       'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql',
-      'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql'
+      'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql',
+      'supabase/migrations/20261030235000_supplier_refund_authoritative_validation_and_accounting_integrity.sql'
     ];
 
     for (const mig of migrations) {
@@ -859,5 +860,537 @@ test.describe('SAPJ ERP: Multi-Connection Concurrency, Party Isolation & Securit
       SELECT has_function_privilege('authenticated', 'public.get_party_balance_summary(text, text, date)', 'EXECUTE') as permitted;
     `);
     assert.strictEqual(authCheck.rows[0].permitted, true, 'authenticated role must have execute privilege');
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 12: Scenario A — Simultaneous Full Supplier Refunds via Separate Connections
+  // ----------------------------------------------------------------------------
+  test('Scenario A: Simultaneous full refunds of Rp 1,666,000 + Rp 3,000 adjustment via separate client connections', async () => {
+    // 1. Create a supplier
+    const suppRes = await pool.query(`
+      INSERT INTO public.suppliers (company_name, email, is_active)
+      VALUES ('Supplier Concurrency A PT', 'finance@supp-a.com', true)
+      RETURNING id;
+    `);
+    const suppId = suppRes.rows[0].id;
+
+    // 2. Post supplier advance of Rp 1,669,000
+    const pvRes = await pool.query(`
+      SELECT public.save_payment_voucher_with_purpose(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_advance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1669000,
+          'payment_amount', 1669000,
+          'description', 'Initial supplier advance Rp 1,669,000',
+          'created_by', $3::text
+        ),
+        '[]'::jsonb,
+        'supplier_advance'
+      ) as res;
+    `, [suppId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [pvRes.rows[0].res.id, adminUserId]);
+
+    // Check balance before refund
+    const balBefore = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+    assert.equal(parseFloat(balBefore.rows[0].s.unallocated_advances), 1669000);
+
+    // 3. Create Refund A and Refund B (both asking for full 1,666,000 + 3,000 adjustment with settlement_against = 'outstanding_balance')
+    const rvARes = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1666000,
+          'settlement_discount', 3000,
+          'adjustment_reason', 'Minor Balance Write-off',
+          'adjustment_account_id', $3::text,
+          'description', 'Refund attempt A',
+          'created_by', $4::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, coaDiffId, adminUserId]);
+    const rvAId = rvARes.rows[0].id;
+
+    const rvBRes = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1666000,
+          'settlement_discount', 3000,
+          'adjustment_reason', 'Minor Balance Write-off',
+          'adjustment_account_id', $3::text,
+          'description', 'Refund attempt B',
+          'created_by', $4::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, coaDiffId, adminUserId]);
+    const rvBId = rvBRes.rows[0].id;
+
+    // 4. Fire simultaneous post attempts across separate connections
+    const client1 = new Client(PG_CONFIG);
+    const client2 = new Client(PG_CONFIG);
+    await client1.connect();
+    await client2.connect();
+
+    try {
+      const results = await Promise.allSettled([
+        client1.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rvAId, adminUserId]),
+        client2.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rvBId, adminUserId])
+      ]);
+
+      const fulfilled = results.filter(r => r.status === 'fulfilled');
+      const rejected = results.filter(r => r.status === 'rejected');
+
+      assert.equal(fulfilled.length, 1, 'Exactly one simultaneous full refund must succeed');
+      assert.equal(rejected.length, 1, 'The competing full refund must be rejected');
+      assert.match(
+        rejected[0].reason.message,
+        /No refundable supplier advance balance available|exceeds available refundable advance/i,
+        'Error must cite advance balance exhaustion'
+      );
+
+      // Verify only ONE refund journal entry was created across rvA and rvB
+      const jeRes = await pool.query(`
+        SELECT count(*) as count FROM public.journal_entries
+        WHERE source_module = 'receipt' AND reference_id IN ($1, $2);
+      `, [rvAId, rvBId]);
+      assert.equal(parseInt(jeRes.rows[0].count, 10), 1, 'Exactly one refund journal entry must exist');
+
+      // Verify supplier advance is now exactly 0
+      const balAfter = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+      assert.equal(parseFloat(balAfter.rows[0].s.unallocated_advances), 0, 'Refundable advance must be 0');
+      assert.equal(parseFloat(balAfter.rows[0].s.net_balance), 0, 'Net balance must be 0');
+      assert.equal(balAfter.rows[0].s.balance_direction, 'zero', 'Direction must be zero');
+    } finally {
+      await client1.end();
+      await client2.end();
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 13: Scenario B — Sequential Duplicate Refund with settlement_against = 'outstanding_balance'
+  // ----------------------------------------------------------------------------
+  test('Scenario B: Sequential duplicate refund with settlement_against = outstanding_balance is strictly rejected', async () => {
+    // 1. Create supplier with advance of Rp 1,669,000
+    const suppRes = await pool.query(`
+      INSERT INTO public.suppliers (company_name, email, is_active)
+      VALUES ('Supplier Concurrency B PT', 'finance@supp-b.com', true)
+      RETURNING id;
+    `);
+    const suppId = suppRes.rows[0].id;
+
+    const pvRes = await pool.query(`
+      SELECT public.save_payment_voucher_with_purpose(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_advance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1669000,
+          'payment_amount', 1669000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb,
+        'supplier_advance'
+      ) as res;
+    `, [suppId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [pvRes.rows[0].res.id, adminUserId]);
+
+    // 2. Post full legitimate refund (1,666,000 + 3,000 diff = 1,669,000)
+    const rv1Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1666000,
+          'settlement_discount', 3000,
+          'adjustment_reason', 'Write-off',
+          'adjustment_account_id', $3::text,
+          'created_by', $4::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, coaDiffId, adminUserId]);
+    await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv1Res.rows[0].id, adminUserId]);
+
+    // Confirm advance balance is 0
+    let bal = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+    assert.equal(parseFloat(bal.rows[0].s.unallocated_advances), 0);
+
+    // 3. Attempt duplicate refund with settlement_against = 'outstanding_balance'
+    const rv2Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1666000,
+          'settlement_discount', 3000,
+          'adjustment_reason', 'Duplicate write-off attempt',
+          'adjustment_account_id', $3::text,
+          'created_by', $4::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, coaDiffId, adminUserId]);
+    const rv2Id = rv2Res.rows[0].id;
+
+    // Must be strictly rejected!
+    await assert.rejects(
+      async () => {
+        await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv2Id, adminUserId]);
+      },
+      /No refundable supplier advance balance available/i,
+      'Duplicate refund must be rejected when advance is exhausted, even with settlement_against = outstanding_balance'
+    );
+
+    // Verify rv2 is NOT posted and has no journal
+    const rv2Check = (await pool.query(`SELECT is_posted, journal_entry_id FROM public.receipt_vouchers WHERE id = $1;`, [rv2Id])).rows[0];
+    assert.strictEqual(rv2Check.is_posted, false);
+    assert.strictEqual(rv2Check.journal_entry_id, null);
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 14: Scenario C — Partial Refunds Summing to Advance
+  // ----------------------------------------------------------------------------
+  test('Scenario C: Legitimate partial refunds succeed until advance is 0, subsequent refund is rejected', async () => {
+    // 1. Create supplier with advance of Rp 1,669,000
+    const suppRes = await pool.query(`
+      INSERT INTO public.suppliers (company_name, email, is_active)
+      VALUES ('Supplier Concurrency C PT', 'finance@supp-c.com', true)
+      RETURNING id;
+    `);
+    const suppId = suppRes.rows[0].id;
+
+    const pvRes = await pool.query(`
+      SELECT public.save_payment_voucher_with_purpose(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_advance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1669000,
+          'payment_amount', 1669000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb,
+        'supplier_advance'
+      ) as res;
+    `, [suppId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [pvRes.rows[0].res.id, adminUserId]);
+
+    // 2. Partial Refund 1: Rp 1,000,000
+    const rv1Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1000000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv1Res.rows[0].id, adminUserId]);
+
+    // Remaining advance should be 669,000
+    let bal = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+    assert.equal(parseFloat(bal.rows[0].s.unallocated_advances), 669000);
+
+    // 3. Partial Refund 2: Rp 666,000 + Rp 3,000 diff = 669,000
+    const rv2Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 666000,
+          'settlement_discount', 3000,
+          'adjustment_reason', 'Final write-off difference',
+          'adjustment_account_id', $3::text,
+          'created_by', $4::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, coaDiffId, adminUserId]);
+    await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv2Res.rows[0].id, adminUserId]);
+
+    // Remaining advance should now be 0
+    bal = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+    assert.equal(parseFloat(bal.rows[0].s.unallocated_advances), 0);
+    assert.equal(parseFloat(bal.rows[0].s.net_balance), 0);
+    assert.equal(bal.rows[0].s.balance_direction, 'zero');
+
+    // 4. Attempt 3rd refund of Rp 50,000 -> must be rejected
+    const rv3Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 50000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, adminUserId]);
+    await assert.rejects(
+      async () => {
+        await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv3Res.rows[0].id, adminUserId]);
+      },
+      /No refundable supplier advance balance available/i,
+      'Further refund must be rejected when balance is zero'
+    );
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 15: Scenario D — Concurrent Partial Refunds Exceeding Advance
+  // ----------------------------------------------------------------------------
+  test('Scenario D: Concurrent partial refunds (1M + 1M) on 1,669,000 advance reject over-settlement', async () => {
+    const suppRes = await pool.query(`
+      INSERT INTO public.suppliers (company_name, email, is_active)
+      VALUES ('Supplier Concurrency D PT', 'finance@supp-d.com', true)
+      RETURNING id;
+    `);
+    const suppId = suppRes.rows[0].id;
+
+    // Advance of Rp 1,669,000
+    const pvRes = await pool.query(`
+      SELECT public.save_payment_voucher_with_purpose(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_advance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1669000,
+          'payment_amount', 1669000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb,
+        'supplier_advance'
+      ) as res;
+    `, [suppId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [pvRes.rows[0].res.id, adminUserId]);
+
+    // Create two 1,000,000 refund vouchers
+    const rv1Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1000000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, adminUserId]);
+    const rv1Id = rv1Res.rows[0].id;
+
+    const rv2Res = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1000000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, adminUserId]);
+    const rv2Id = rv2Res.rows[0].id;
+
+    const client1 = new Client(PG_CONFIG);
+    const client2 = new Client(PG_CONFIG);
+    await client1.connect();
+    await client2.connect();
+
+    try {
+      const results = await Promise.allSettled([
+        client1.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv1Id, adminUserId]),
+        client2.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rv2Id, adminUserId])
+      ]);
+
+      const fulfilled = results.filter(r => r.status === 'fulfilled');
+      const rejected = results.filter(r => r.status === 'rejected');
+
+      assert.equal(fulfilled.length, 1, 'Exactly one 1M refund must succeed');
+      assert.equal(rejected.length, 1, 'Competing 1M refund must be rejected');
+      assert.match(
+        rejected[0].reason.message,
+        /Supplier refund total settlement .* exceeds available refundable advance balance/i,
+        'Error must cite that 1M exceeds remaining 669,000 advance'
+      );
+
+      // Remaining advance must be exactly 669,000
+      const bal = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+      assert.equal(parseFloat(bal.rows[0].s.unallocated_advances), 669000);
+    } finally {
+      await client1.end();
+      await client2.end();
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // Test 16: Scenario E — Failed Transaction Rollback and Safe Retry
+  // ----------------------------------------------------------------------------
+  test('Scenario E: Failed post rolls back completely and allows valid retry to succeed once', async () => {
+    const suppRes = await pool.query(`
+      INSERT INTO public.suppliers (company_name, email, is_active)
+      VALUES ('Supplier Rollback E PT', 'finance@supp-e.com', true)
+      RETURNING id;
+    `);
+    const suppId = suppRes.rows[0].id;
+
+    // Advance of Rp 1,669,000
+    const pvRes = await pool.query(`
+      SELECT public.save_payment_voucher_with_purpose(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_advance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 1669000,
+          'payment_amount', 1669000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb,
+        'supplier_advance'
+      ) as res;
+    `, [suppId, bankAccountId, adminUserId]);
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [pvRes.rows[0].res.id, adminUserId]);
+
+    // Create a voucher requesting 2,500,000 (which exceeds available 1,669,000)
+    const rvRes = await pool.query(`
+      SELECT public.save_receipt_voucher_with_allocations(
+        NULL,
+        jsonb_build_object(
+          'voucher_date', CURRENT_DATE::text,
+          'party_type', 'supplier',
+          'supplier_id', $1::text,
+          'payment_purpose', 'supplier_refund',
+          'settlement_against', 'outstanding_balance',
+          'payment_method', 'bank_transfer',
+          'bank_account_id', $2::text,
+          'amount', 2500000,
+          'created_by', $3::text
+        ),
+        '[]'::jsonb
+      ) as id;
+    `, [suppId, bankAccountId, adminUserId]);
+    const rvId = rvRes.rows[0].id;
+
+    // Attempting to post throws exception because 2,500,000 exceeds available advance
+    await assert.rejects(
+      async () => {
+        await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rvId, adminUserId]);
+      },
+      /exceeds available refundable advance balance/i
+    );
+
+    // Verify complete rollback: voucher unposted, no journal, advance untouched at 1,669,000
+    const rvCheck = (await pool.query(`SELECT is_posted, journal_entry_id FROM public.receipt_vouchers WHERE id = $1;`, [rvId])).rows[0];
+    assert.strictEqual(rvCheck.is_posted, false);
+    assert.strictEqual(rvCheck.journal_entry_id, null);
+
+    const jeCheck = await pool.query(`SELECT count(*) as count FROM public.journal_entries WHERE reference_id = $1;`, [rvId]);
+    assert.equal(parseInt(jeCheck.rows[0].count, 10), 0);
+
+    const balCheck = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+    assert.equal(parseFloat(balCheck.rows[0].s.unallocated_advances), 1669000);
+
+    // Fix the voucher: update amount to 1,666,000 + 3,000 adjustment = 1,669,000
+    await pool.query(`
+      UPDATE public.receipt_vouchers
+      SET amount = 1666000,
+          settlement_discount = 3000,
+          adjustment_reason = 'Valid write-off reason',
+          adjustment_account_id = $1
+      WHERE id = $2;
+    `, [coaDiffId, rvId]);
+
+    // Retry posting: MUST SUCCEED!
+    await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rvId, adminUserId]);
+
+    const rvPosted = (await pool.query(`SELECT is_posted, journal_entry_id FROM public.receipt_vouchers WHERE id = $1;`, [rvId])).rows[0];
+    assert.strictEqual(rvPosted.is_posted, true);
+    assert.ok(rvPosted.journal_entry_id, 'Journal entry must be created on successful retry');
+
+    // Confirm advance is now 0
+    const balFinal = await pool.query(`SELECT public.get_party_balance_summary('supplier', $1::text) as s;`, [suppId]);
+    assert.equal(parseFloat(balFinal.rows[0].s.unallocated_advances), 0);
+    assert.equal(parseFloat(balFinal.rows[0].s.net_balance), 0);
+    assert.equal(balFinal.rows[0].s.balance_direction, 'zero');
   });
 });
