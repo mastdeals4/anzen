@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Pencil as Edit, Trash2, Eye, FileX, Lock, Ban } from 'lucide-react';
+import { Plus, Pencil as Edit, Trash2, Eye, FileX, Lock, Ban, Archive } from 'lucide-react';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -40,6 +40,10 @@ interface SalesInvoice {
   stamp_duty_amount: number;
   discount_amount: number;
   total_amount: number;
+  document_status?: 'draft' | 'posted' | 'cancelled';
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancellation_reason?: string | null;
   payment_status: 'pending' | 'partial' | 'paid';
   delivery_challan_number: string | null;
   po_number: string | null;
@@ -71,17 +75,22 @@ interface SalesInvoice {
 
 function isCancelledInvoice(invoice: SalesInvoice): boolean {
   return Boolean(
-    invoice.notes?.includes('[CANCELLED') || invoice.notes?.toLowerCase().startsWith('cancelled')
+    invoice.document_status === 'cancelled' ||
+    invoice.notes?.includes('[CANCELLED') ||
+    invoice.notes?.toLowerCase().startsWith('cancelled')
   );
 }
 
 function isPostedInvoice(invoice: SalesInvoice): boolean {
+  if (isCancelledInvoice(invoice)) return false;
+  if (invoice.document_status) {
+    return invoice.document_status === 'posted';
+  }
   return (
     (!invoice.is_draft ||
       Boolean(invoice.journal_entry_id) ||
       invoice.payment_status === 'paid' ||
-      Number(invoice.paid_amount || 0) > 0) &&
-    !isCancelledInvoice(invoice)
+      Number(invoice.paid_amount || 0) > 0)
   );
 }
 
@@ -217,6 +226,7 @@ export function Sales() {
   const { navigationData, clearNavigationData, setCurrentPage } = useNavigation();
   const { dateRange } = useFinance();
   const isFinancialEditor = profile?.role === 'admin' || profile?.role === 'accounts';
+  const [activeTab, setActiveTab] = useState<'active' | 'posted' | 'drafts' | 'cancelled'>('active');
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -2494,6 +2504,96 @@ export function Sales() {
     },
   ];
 
+  const cancelledColumns = [
+    {
+      key: 'invoice_date',
+      label: t('common.date'),
+      render: (value: any, inv: SalesInvoice) => formatDate(inv.invoice_date),
+    },
+    {
+      key: 'invoice_number',
+      label: t('sales.invoiceNumber'),
+      render: (value: any, inv: SalesInvoice) => (
+        <div className="font-semibold text-gray-800">{inv.invoice_number}</div>
+      ),
+    },
+    {
+      key: 'customer',
+      label: t('sales.customer'),
+      render: (value: any, inv: SalesInvoice) => (
+        <div className="font-medium text-gray-800">{inv.customers?.company_name}</div>
+      ),
+    },
+    {
+      key: 'total_amount',
+      label: 'Original Amount',
+      render: (value: any, inv: SalesInvoice) => (
+        <span className="font-medium text-sm text-gray-500 line-through">
+          Rp{' '}
+          {inv.total_amount.toLocaleString('id-ID', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          })}
+        </span>
+      ),
+    },
+    {
+      key: 'cancellation_status',
+      label: 'Status',
+      render: () => (
+        <span className="inline-block px-2 py-0.5 rounded-full text-[11px] leading-tight font-medium bg-rose-100 text-rose-800 border border-rose-200">
+          Cancelled (Archived)
+        </span>
+      ),
+    },
+    {
+      key: 'cancellation_details',
+      label: 'Cancellation Reason & Audit Log',
+      thClassName: 'min-w-[220px]',
+      tdClassName: 'min-w-[220px]',
+      render: (value: any, inv: SalesInvoice) => {
+        const reason = inv.cancellation_reason || inv.notes || 'Cancelled';
+        const displayReason = reason.split('\n')[0];
+        return (
+          <div className="text-xs text-rose-950 bg-rose-50/80 border border-rose-200/80 rounded px-2.5 py-1" title={reason}>
+            <div className="truncate font-medium text-[11px]">{displayReason}</div>
+            {inv.cancelled_at && (
+              <div className="text-[10px] text-gray-500 mt-0.5">
+                Cancelled on: {formatDate(inv.cancelled_at.split('T')[0])}
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'so_dc_link',
+      label: 'Linked Docs',
+      thClassName: 'min-w-[150px]',
+      tdClassName: 'min-w-[150px]',
+      render: (_value: any, inv: SalesInvoice) => (
+        <LinkedDocsCell
+          sos={
+            inv.sales_order?.so_number
+              ? [{ id: inv.sales_order_id || '', number: inv.sales_order.so_number, type: 'so' }]
+              : []
+          }
+          dcs={(inv.linked_challans || []).map((dc) => ({
+            id: dc.id,
+            number: dc.challan_number,
+            type: 'dc' as const,
+          }))}
+          invs={[]}
+          show={{ inv: false }}
+          onClick={(doc: LinkedDocRef) => {
+            if (doc.type === 'dc') handleFlyChallanClick(doc.id);
+            if (doc.type === 'so') openLinkedSalesOrderView(doc.id);
+          }}
+        />
+      ),
+    },
+  ];
+
   const canManage =
     profile?.role === 'admin' ||
     profile?.role === 'accounts' ||
@@ -2502,21 +2602,35 @@ export function Sales() {
 
   const isAdmin = profile?.role === 'admin';
 
+  const activeInvoices = invoices.filter((inv) => !isCancelledInvoice(inv));
+  const postedInvoices = invoices.filter((inv) => isPostedInvoice(inv));
+  const draftInvoices = invoices.filter((inv) => !isCancelledInvoice(inv) && !isPostedInvoice(inv));
+  const cancelledInvoices = invoices.filter((inv) => isCancelledInvoice(inv));
+
+  const displayedInvoices =
+    activeTab === 'posted'
+      ? postedInvoices
+      : activeTab === 'drafts'
+        ? draftInvoices
+        : activeTab === 'cancelled'
+          ? cancelledInvoices
+          : activeInvoices;
+
   const stats = {
     total: invoices.filter((inv) => !isCancelledInvoice(inv)).length,
     totalRevenue: invoices
       .filter((inv) => !isCancelledInvoice(inv))
       .reduce((sum, inv) => sum + inv.total_amount, 0),
-    pending: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending')
-      .length,
+    pending: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending').length,
     pendingValue: invoices
       .filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'pending')
       .reduce((sum, inv) => sum + (inv.balance_amount || 0), 0),
-    paid: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid')
-      .length,
+    paid: invoices.filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid').length,
     paidValue: invoices
       .filter((inv) => !isCancelledInvoice(inv) && inv.payment_status === 'paid')
       .reduce((sum, inv) => sum + inv.total_amount, 0),
+    cancelled: cancelledInvoices.length,
+    cancelledValue: cancelledInvoices.reduce((sum, inv) => sum + inv.total_amount, 0),
   };
 
   return (
@@ -2597,9 +2711,54 @@ export function Sales() {
           </div>
         </div>
 
+        {/* Tab Navigation: All Active, Posted, Drafts, Cancelled Archive */}
+        <div className="flex items-center gap-1.5 border-b border-gray-200 pb-2">
+          <button
+            onClick={() => setActiveTab('active')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === 'active'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            All Active ({activeInvoices.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('posted')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === 'posted'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            Posted ({postedInvoices.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('drafts')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === 'drafts'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            Drafts ({draftInvoices.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('cancelled')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              activeTab === 'cancelled'
+                ? 'bg-rose-700 text-white shadow-xs'
+                : 'text-rose-700 hover:bg-rose-50 border border-rose-200'
+            }`}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Cancelled Archive ({cancelledInvoices.length})
+          </button>
+        </div>
+
         <DataTable
-          columns={columns}
-          data={invoices}
+          columns={activeTab === 'cancelled' ? cancelledColumns : columns}
+          data={displayedInvoices}
           loading={loading}
           compact
           tableClassName="w-full min-w-[1200px]"
@@ -2612,7 +2771,7 @@ export function Sales() {
               >
                 <Eye className="w-4 h-4" />
               </button>
-              {canManage && (
+              {canManage && activeTab !== 'cancelled' && (
                 <>
                   {!isCancelledInvoice(invoice) && (
                     <button

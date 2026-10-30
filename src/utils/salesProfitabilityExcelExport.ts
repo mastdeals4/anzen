@@ -208,6 +208,13 @@ function createExecutiveKpiBlock(ws: ExcelJS.Worksheet, company: CompanyProfitab
     }
   });
 
+  if (company?.cancelled_invoices && company.cancelled_invoices.count > 0) {
+    const discRow = ws.addRow([
+      `* AUDIT DISCLOSURE: Excludes ${company.cancelled_invoices.count} cancelled sales invoice(s) totaling Rp ${Number(company.cancelled_invoices.total_amount).toLocaleString('id-ID', { maximumFractionDigits: 0 })} (${Number(company.cancelled_invoices.total_qty).toLocaleString('id-ID', { maximumFractionDigits: 2 })} units). Cancelled transactions are excluded from active sales revenue, COGS, and margin calculations.`,
+    ]);
+    discRow.font = { name: 'Calibri', size: 9, italic: true, bold: true, color: { argb: 'FF991B1B' } };
+  }
+
   ws.addRow([]); // Blank line
 }
 

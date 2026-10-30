@@ -39,6 +39,12 @@ export interface CompanyProfitabilitySummary {
   total_qty_sold: number;
   order_count: number;
   product_count: number;
+  cancelled_invoices?: {
+    count: number;
+    total_amount: number;
+    subtotal: number;
+    total_qty: number;
+  };
 }
 
 export interface ProductProfitabilityRow {
@@ -583,6 +589,22 @@ export function CanonicalSalesProfitReport() {
           </div>
           <div className="text-[11px] text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded font-mono">
             Net Sales: {formatCurrency(company?.net_sales || (company?.gross_sales || 0) - (company?.sales_returns || 0))} &minus; Net Cost: {formatCurrency(company?.net_product_cost || (company?.product_cost || 0) - (company?.return_cogs || 0))} = GP: {formatCurrency(company?.gross_profit || 0)}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Cancelled Sales Invoices Audit Disclosure Banner ─── */}
+      {Boolean(company?.cancelled_invoices && company.cancelled_invoices.count > 0) && (
+        <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 flex flex-wrap items-center justify-between gap-2 shadow-sm">
+          <div className="flex items-center gap-1.5 font-medium">
+            <span className="inline-block w-2 h-2 rounded-full bg-slate-400"></span>
+            <span>Excluded Cancelled Invoices:</span>
+            <span className="font-bold text-slate-900">{company?.cancelled_invoices?.count} invoice(s)</span>
+            <span className="text-slate-600">({formatCurrency(company?.cancelled_invoices?.total_amount || 0)})</span>
+            <span className="text-slate-500 font-normal">&bull; segregated from active sales revenue, inventory COGS, and profit</span>
+          </div>
+          <div className="text-[11px] text-slate-600 bg-slate-200/70 px-2 py-0.5 rounded font-mono">
+            Qty: {formatNumber(company?.cancelled_invoices?.total_qty || 0, 2)} units
           </div>
         </div>
       )}

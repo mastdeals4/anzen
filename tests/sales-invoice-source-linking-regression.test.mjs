@@ -19,9 +19,10 @@ test('new invoices retain item-level Delivery Challan item IDs', () => {
 });
 
 test('new invoice item payload does not read an invoice header before atomic creation', () => {
+  const rpcIdx = sales.search(/supabase\.rpc\(\s*['"]create_sales_invoice_atomic['"]/);
   const creation = sales.slice(
     sales.indexOf('// Filter and map only valid items (with product_id)'),
-    sales.indexOf("supabase.rpc('create_sales_invoice_atomic'"),
+    rpcIdx !== -1 ? rpcIdx : sales.length,
   );
 
   assert.doesNotMatch(creation, /invoice_id:\s*invoice\.id/);
@@ -39,7 +40,7 @@ test('DC navigation and single-DC selection populate header source state', () =>
 test('DC-linked Sales Order PO number is carried into invoice creation', () => {
   assert.match(sales, /from\('sales_orders'\)/);
   assert.match(sales, /select\('customer_po_number'\)/);
-  assert.match(sales, /setFormData\(prev => \(\{ \.\.\.prev, po_number: linkedSO\.customer_po_number \}\)\)/);
+  assert.match(sales, /setFormData\(\(?prev\)? => \(\{ \.\.\.prev, po_number: linkedSO\.customer_po_number \}\)\)/);
 });
 
 test('Sales Order selection carries PO number and requires Delivery Challans', () => {
@@ -73,7 +74,8 @@ test('conflicting Sales Orders are surfaced without guessing', () => {
 });
 
 test('editing preserves source links through the canonical atomic update path', () => {
-  const edit = sales.slice(sales.indexOf("rpc('update_sales_invoice_atomic'"), sales.indexOf('// Fetch updated invoice', sales.indexOf("rpc('update_sales_invoice_atomic'")));
+  const rpcIndex = sales.search(/rpc\(\s*['"]update_sales_invoice_atomic['"]/);
+  const edit = sales.slice(rpcIndex, sales.indexOf('// Fetch updated invoice', rpcIndex));
   assert.match(edit, /linked_challan_ids: sourceDCIds/);
   assert.match(sales, /loadedItems\.map\(\(item: any\) => item\.challan_id/);
 });
@@ -87,7 +89,7 @@ test('sales expenses remain resolved through Delivery Challan ownership', () => 
 test('DC hydration replaces obsolete placeholder and unlinked manual items', () => {
   assert.match(
     sales,
-    /const retained = previous\.filter\(item => Boolean\(item\.delivery_challan_item_id\)\);/,
+    /const retained = previous\.filter\(\(?item\)? => Boolean\(item\.delivery_challan_item_id\)\);/,
     'Must only retain items with valid delivery_challan_item_id when loading DC items'
   );
   assert.doesNotMatch(

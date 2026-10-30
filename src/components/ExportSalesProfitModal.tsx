@@ -319,6 +319,9 @@ export function ExportSalesProfitModal({
                   ? 'Exports a single clean sheet with executive KPI cards, full table borders on all cells, right-aligned currency (Rp), percentage margins, frozen headers, and accounting double-underline totals.'
                   : 'Exports 4 complete sheets (Detailed Audit, Product Summary, Batch Breakdown, and Orders & Challans) with full cell borders, auto column widths, and frozen panes.'}
               </p>
+              <p className="text-[10px] text-emerald-700/90 pt-0.5">
+                Audit Safe: Cancelled sales invoices are automatically excluded from revenue, COGS, and sales totals.
+              </p>
             </div>
 
             {/* Error Message */}

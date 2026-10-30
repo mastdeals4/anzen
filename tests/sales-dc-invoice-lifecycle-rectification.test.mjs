@@ -321,7 +321,7 @@ test('Case 9: Verify cancelled invoices do not count as active invoices or activ
   // ReceivablesManager.tsx filters cancelled invoices
   assert.match(
     receivablesSource,
-    /!inv\.notes\?\.includes\('\[CANCELLED'\)\s*&&\s*!inv\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\)/,
+    /(!inv\.notes\?\.includes\('\[CANCELLED'\)\s*&&\s*!inv\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\)|inv\.notes\?\.includes\('\[CANCELLED'\)\s*\|\|\s*inv\.notes\?\.toLowerCase\(\)\.startsWith\('cancelled'\))/,
     'Receivables Manager excludes cancelled invoices'
   );
 
@@ -688,7 +688,7 @@ test('Case 18: Delivery Challan Quantity Constraint Detection, Workflows, and Vi
   // Submission validation blocks saving invalid over-deliveries
   assert.match(
     deliveryChallanSource,
-    /title: 'Sales Order Quantity Constraint'[\s\S]*?exceeds remaining Sales Order quantity/,
+    /title: 'Sales Order Quantity Constraint'[\s\S]*?exceeds (the )?remaining Sales Order quantity/,
     'Must block saving when requested quantity exceeds remaining SO quantity'
   );
 });

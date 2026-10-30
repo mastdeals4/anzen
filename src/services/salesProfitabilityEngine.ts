@@ -17,6 +17,12 @@ export interface CompanyProfitabilitySummary {
   total_qty_sold: number;
   order_count: number;
   product_count: number;
+  cancelled_invoices?: {
+    count: number;
+    total_amount: number;
+    subtotal: number;
+    total_qty: number;
+  };
 }
 
 export interface ProductProfitabilityRow {
