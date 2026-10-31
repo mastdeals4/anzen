@@ -37,10 +37,12 @@ function runPsqlFile(filePath, db = 'test_rv_posting_gl_integration') {
   ], { encoding: 'utf8' });
 }
 
-test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 20 Required Tests)', () => {
+test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 24 Tests)', () => {
   let pool;
   let adminUserId;
+  let nonFinanceUserId;
   let testSupplierId;
+  let testCustomerId;
   let bankIdBcaIdr;
   let bankIdBcaUsd;
   let bankIdHeaderMapped;
@@ -57,6 +59,7 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 20 Requir
     // 1. Recreate clean test database
     runPsqlCommand('DROP DATABASE IF EXISTS test_rv_posting_gl_integration;', 'postgres');
     runPsqlCommand('CREATE DATABASE test_rv_posting_gl_integration;', 'postgres');
+    runPsqlCommand('CREATE SCHEMA IF NOT EXISTS supabase_migrations; CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text PRIMARY KEY, statements text[], name text, created_by text, idempotency_key text, rollback text[]);', 'test_rv_posting_gl_integration');
 
     // 2. Apply baseline migrations + new migration
     const migrations = [
@@ -73,7 +76,8 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 20 Requir
       'supabase/migrations/20261030220000_harden_unified_settlement_and_party_isolation.sql',
       'supabase/migrations/20261030230000_final_unified_settlement_and_reporting_security_hardening.sql',
       'supabase/migrations/20261030235000_supplier_refund_authoritative_validation_and_accounting_integrity.sql',
-      'supabase/migrations/20261031140000_fix_receipt_voucher_posting_and_bank_account_gl_validation.sql'
+      'supabase/migrations/20261031140000_fix_receipt_voucher_posting_and_bank_account_gl_validation.sql',
+      'supabase/migrations/20261031200000_secure_sync_bank_account_balance.sql'
     ];
 
     for (const mig of migrations) {
@@ -82,15 +86,59 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 20 Requir
 
     pool = new Pool(PG_CONFIG);
 
-    // 3. Seed Admin User Profile
+    // 3. Seed Admin and Non-Finance User Profiles
     adminUserId = 'a0000000-0000-0000-0000-000000000001';
+    nonFinanceUserId = 'b0000000-0000-0000-0000-000000000002';
     await pool.query(`
       INSERT INTO public.user_profiles (id, full_name, role)
-      VALUES ($1, 'Admin Finance User', 'admin')
-      ON CONFLICT (id) DO UPDATE SET role = 'admin';
-    `, [adminUserId]);
+      VALUES 
+        ($1, 'Admin Finance User', 'admin'),
+        ($2, 'Sales Representative', 'sales')
+      ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role;
+    `, [adminUserId, nonFinanceUserId]);
 
     await pool.query(`
+      CREATE OR REPLACE FUNCTION public._sec_check_finance_role()
+      RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $$
+      BEGIN
+        IF current_setting('request.jwt.claim.role', true) = 'authenticated' THEN
+          IF auth.uid() IS NULL OR NOT EXISTS (
+            SELECT 1 FROM public.user_profiles
+            WHERE id = auth.uid()
+              AND role IN ('admin', 'accounts')
+          ) THEN
+            RAISE EXCEPTION 'Permission denied: only admin/accounts can perform finance operations';
+          END IF;
+          RETURN;
+        END IF;
+
+        IF current_setting('request.jwt.claim.role', true) = 'service_role' OR session_user = 'postgres' OR (SELECT rolsuper FROM pg_roles WHERE rolname = session_user) THEN
+          RETURN;
+        END IF;
+
+        IF auth.uid() IS NULL THEN
+          RETURN;
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM public.user_profiles
+          WHERE id = auth.uid()
+            AND role IN ('admin', 'accounts')
+        ) THEN
+          RAISE EXCEPTION 'Permission denied: only admin/accounts can perform finance operations';
+        END IF;
+      END;
+      $$;
+
+      CREATE OR REPLACE FUNCTION public.clear_payment_allocation_rounding_adjustment(
+        p_invoice_id uuid DEFAULT NULL::uuid,
+        p_payment_voucher_id uuid DEFAULT NULL::uuid
+      ) RETURNS void LANGUAGE plpgsql AS $$
+      BEGIN
+        NULL;
+      END;
+      $$;
+
       CREATE OR REPLACE FUNCTION public.cancel_gl_posting(
         p_je_id uuid, p_doc_id uuid, p_table_name text, p_cancelled_by uuid, p_reason text, p_extra_audit jsonb DEFAULT '{}'::jsonb
       ) RETURNS void LANGUAGE plpgsql AS $$
@@ -264,6 +312,16 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 20 Requir
       RETURNING id;
     `);
     testSupplierId = supRes.rows[0].id;
+
+    // 7. Seed Test Customer
+    const custRes = await pool.query(`
+      INSERT INTO public.customers (
+        company_name, is_active
+      ) VALUES (
+        'PT. PHARMA CUSTOMER UTAMA', true
+      ) RETURNING id;
+    `);
+    testCustomerId = custRes.rows[0].id;
 
     // Initial sync of bank account balances
     await pool.query(`SELECT public.sync_bank_account_balance(NULL);`);
@@ -866,5 +924,172 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 20 Requir
     const rvCheck = await pool.query(`SELECT is_posted, journal_entry_id FROM public.receipt_vouchers WHERE id = $1;`, [rvId]);
     assert.equal(rvCheck.rows[0].is_posted, false);
     assert.equal(rvCheck.rows[0].journal_entry_id, null);
+  });
+
+  // ----------------------------------------------------------------------------
+  // TEST 21: Security check on sync_bank_account_balance
+  // ----------------------------------------------------------------------------
+  test('21. sync_bank_account_balance security: non-finance rejected, finance permitted', async () => {
+    // Non-finance user must be rejected
+    await assert.rejects(
+      async () => {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(`SELECT set_config('request.jwt.claim.sub', $1::text, true);`, [nonFinanceUserId]);
+          await client.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true);`);
+          await client.query(`SELECT public.sync_bank_account_balance($1::uuid);`, [bankIdBcaIdr]);
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+        }
+      },
+      /only admin\/accounts can perform finance operations/
+    );
+
+    // Finance user must succeed
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT set_config('request.jwt.claim.sub', $1::text, true);`, [adminUserId]);
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true);`);
+      await client.query(`SELECT public.sync_bank_account_balance($1::uuid);`, [bankIdBcaIdr]);
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // TEST 22: Payment voucher posting, cancellation, supplier ledger & bank sync
+  // ----------------------------------------------------------------------------
+  test('22. Payment voucher posting and cancellation with bank sync and supplier ledger', async () => {
+    const bBefore = Number((await pool.query(`SELECT current_balance FROM public.bank_accounts WHERE id = $1;`, [bankIdBcaIdr])).rows[0].current_balance);
+
+    const pvRes = await pool.query(`
+      INSERT INTO public.payment_vouchers (
+        voucher_number, voucher_date, party_type, supplier_id, payment_method,
+        bank_account_id, amount, is_posted, created_by
+      ) VALUES (
+        'PV-FLOW-022', CURRENT_DATE, 'supplier', $1, 'bank_transfer',
+        $2, 500000, false, $3
+      ) RETURNING id;
+    `, [testSupplierId, bankIdBcaIdr, adminUserId]);
+    const pvId = pvRes.rows[0].id;
+
+    // Post PV
+    await pool.query(`SELECT public.post_payment_voucher($1::uuid, $2::uuid);`, [pvId, adminUserId]);
+
+    const pvCheck = (await pool.query(`SELECT is_posted, journal_entry_id FROM public.payment_vouchers WHERE id = $1;`, [pvId])).rows[0];
+    assert.equal(pvCheck.is_posted, true);
+    assert.ok(pvCheck.journal_entry_id);
+
+    // Verify journal entry lines: Dr 2110 500k, Cr 111101 500k
+    const lines = (await pool.query(`
+      SELECT jel.debit, jel.credit, coa.code, jel.supplier_id
+      FROM public.journal_entry_lines jel
+      JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE jel.journal_entry_id = $1
+      ORDER BY jel.line_number ASC;
+    `, [pvCheck.journal_entry_id])).rows;
+
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0].code, '2110');
+    assert.equal(Number(lines[0].debit), 500000);
+    assert.equal(lines[0].supplier_id, testSupplierId);
+
+    assert.equal(lines[1].code, '111101');
+    assert.equal(Number(lines[1].credit), 500000);
+
+    // Verify bank balance decreased by 500k
+    const bAfter = Number((await pool.query(`SELECT current_balance FROM public.bank_accounts WHERE id = $1;`, [bankIdBcaIdr])).rows[0].current_balance);
+    assert.equal(bBefore - bAfter, 500000);
+
+    // Cancel PV
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT set_config('request.jwt.claim.sub', $1::text, true);`, [adminUserId]);
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true);`);
+      await client.query(`SELECT public.cancel_payment_voucher_posting($1::uuid, $2::uuid, 'Test cancel PV');`, [pvId, adminUserId]);
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+
+    const pvCancelCheck = (await pool.query(`SELECT is_posted, journal_entry_id FROM public.payment_vouchers WHERE id = $1;`, [pvId])).rows[0];
+    assert.equal(pvCancelCheck.is_posted, false);
+    assert.equal(pvCancelCheck.journal_entry_id, null);
+
+    // Verify bank balance restored
+    const bRestored = Number((await pool.query(`SELECT current_balance FROM public.bank_accounts WHERE id = $1;`, [bankIdBcaIdr])).rows[0].current_balance);
+    assert.equal(bRestored, bBefore);
+  });
+
+  // ----------------------------------------------------------------------------
+  // TEST 23: Customer receipt voucher posting & trial balance net balance
+  // ----------------------------------------------------------------------------
+  test('23. Customer receipt voucher posting, customer ledger, and trial balance net balance', async () => {
+    const rvRes = await pool.query(`
+      INSERT INTO public.receipt_vouchers (
+        voucher_number, voucher_date, party_type, customer_id, payment_method,
+        bank_account_id, amount, settlement_amount, payment_purpose, created_by
+      ) VALUES (
+        'RV-CUST-023', CURRENT_DATE, 'customer', $1, 'bank_transfer',
+        $2, 750000, 750000, 'customer_payment', $3
+      ) RETURNING id;
+    `, [testCustomerId, bankIdBcaIdr, adminUserId]);
+    const rvId = rvRes.rows[0].id;
+
+    // Post customer receipt
+    await pool.query(`SELECT public.post_receipt_voucher($1::uuid, $2::uuid);`, [rvId, adminUserId]);
+
+    const rvCheck = (await pool.query(`SELECT is_posted, journal_entry_id FROM public.receipt_vouchers WHERE id = $1;`, [rvId])).rows[0];
+    assert.equal(rvCheck.is_posted, true);
+
+    // Verify lines: Dr 111101 750k, Cr 1120 750k with customer_id
+    const lines = (await pool.query(`
+      SELECT jel.debit, jel.credit, coa.code, jel.customer_id
+      FROM public.journal_entry_lines jel
+      JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE jel.journal_entry_id = $1
+      ORDER BY jel.line_number ASC;
+    `, [rvCheck.journal_entry_id])).rows;
+
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0].code, '111101');
+    assert.equal(Number(lines[0].debit), 750000);
+
+    assert.equal(lines[1].code, '1120');
+    assert.equal(Number(lines[1].credit), 750000);
+    assert.equal(lines[1].customer_id, testCustomerId);
+
+    // Verify trial balance invariant: sum(debit) == sum(credit) across all posted entries
+    const tbRes = (await pool.query(`
+      SELECT SUM(jel.debit) as total_debit, SUM(jel.credit) as total_credit
+      FROM public.journal_entry_lines jel
+      JOIN public.journal_entries je ON je.id = jel.journal_entry_id
+      WHERE je.is_posted = true AND NOT COALESCE(je.is_reversed, false);
+    `)).rows[0];
+
+    assert.equal(Number(tbRes.total_debit), Number(tbRes.total_credit), 'Trial balance debits must equal credits');
+  });
+
+  // ----------------------------------------------------------------------------
+  // TEST 24: Supabase schema migrations reconciliation table reflects versions
+  // ----------------------------------------------------------------------------
+  test('24. Supabase schema migrations reconciliation table reflects 20261031140000 and 20261031200000', async () => {
+    const migs = (await pool.query(`
+      SELECT version, name FROM supabase_migrations.schema_migrations
+      WHERE version IN ('20261031140000', '20261031200000')
+      ORDER BY version ASC;
+    `)).rows;
+
+    assert.equal(migs.length, 2);
+    assert.equal(migs[0].version, '20261031140000');
+    assert.equal(migs[1].version, '20261031200000');
   });
 });

@@ -56,6 +56,13 @@ SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $$
 BEGIN
+  -- If invoked in an authenticated API session, enforce finance role authorization
+  IF auth.role() = 'authenticated' AND auth.uid() IS NOT NULL THEN
+    PERFORM public._sec_check_finance_role();
+  ELSIF auth.role() = 'anon' THEN
+    RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+  END IF;
+
   UPDATE public.bank_accounts ba
   SET current_balance = COALESCE(ba.opening_balance, 0) + COALESCE((
     SELECT SUM(
@@ -74,6 +81,8 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.sync_bank_account_balance(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_bank_account_balance(uuid) FROM anon;
 GRANT EXECUTE ON FUNCTION public.sync_bank_account_balance(uuid) TO authenticated, service_role;
 
 -- ------------------------------------------------------------------------------
