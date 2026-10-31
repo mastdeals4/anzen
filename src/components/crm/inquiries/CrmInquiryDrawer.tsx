@@ -6,6 +6,7 @@ import { showToast } from '../../ToastNotification';
 import { getSignedUrlCached } from '../../../utils/signedUrlCache';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { PipelineStatusBadge } from '../PipelineStatusBadge';
+import { KunalCustomerQuoteModal } from '../KunalCustomerQuoteModal';
 import {
   X,
   User,
@@ -115,6 +116,9 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
   // Pricing & sourcing state
   const [aiPricingReview, setAiPricingReview] = useState<any>(null);
   const [landedCost, setLandedCost] = useState<number | null>(null);
+  const [pricingOptions, setPricingOptions] = useState<any[]>([]);
+  const [acceptingOptionId, setAcceptingOptionId] = useState<string | null>(null);
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
 
   // Unified timeline state (Email + WhatsApp + Internal)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -171,6 +175,16 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
       } else {
         setLandedCost(null);
       }
+
+      // 1b. Fetch Sourcing & Pricing Options
+      const { data: pricingOpts } = await supabase
+        .from('crm_inquiry_pricing_options')
+        .select('*')
+        .eq('inquiry_id', inquiryId)
+        .order('is_selected', { ascending: false })
+        .order('created_at', { ascending: true });
+
+      setPricingOptions(pricingOpts || []);
 
       // 2. Fetch Unified Timeline Events (Email + WhatsApp + Internal)
       const events: TimelineEvent[] = [];
@@ -383,6 +397,33 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
       showToast({ type: 'error', title: 'Update Failed', message: err.message || 'Could not update status' });
     } finally {
       setUpdatingStage(false);
+    }
+  };
+
+  const handleAcceptOption = async (optionId: string) => {
+    if (!inquiry) return;
+    setAcceptingOptionId(optionId);
+    try {
+      const { data, error } = await supabase.rpc('accept_crm_inquiry_pricing_option', {
+        p_inquiry_id: inquiry.id,
+        p_option_id: optionId,
+      });
+      if (error) throw error;
+      showToast({
+        type: 'success',
+        title: 'Option Accepted',
+        message: `Accepted Option: ${data?.accepted_make || 'Make'} at ${data?.accepted_price_currency || 'USD'} ${data?.accepted_price}.`,
+      });
+      await loadInquiryDetails(inquiry.id);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Acceptance Failed',
+        message: err.message || 'Could not record option acceptance.',
+      });
+    } finally {
+      setAcceptingOptionId(null);
     }
   };
 
@@ -665,7 +706,7 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
           )}
 
           {/* ============================================================ */}
-          {/* 2. SOURCING & PRICING SECTION */}
+          {/* 2. SOURCING & PRICING SECTION (MULTI-MAKE OPTIONS & QUOTING) */}
           {/* ============================================================ */}
           {activeTab === 'pricing' && (
             <div className="space-y-4">
@@ -682,47 +723,124 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
                 </div>
               )}
 
+              {/* Sourcing Options Table */}
               <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
-                <div className="flex items-center justify-between border-b pb-2">
-                  <h4 className="font-bold text-gray-900 text-xs uppercase tracking-wide flex items-center gap-1.5">
-                    <DollarSign className="w-3.5 h-3.5 text-blue-600" />
-                    Supplier Quotation & Costing
-                  </h4>
-                  <button
-                    onClick={handleOpenKunalPricing}
-                    className="text-xs text-blue-600 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Full Worksheet</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-bold text-gray-900 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                      <DollarSign className="w-3.5 h-3.5 text-blue-600" />
+                      Sourcing Options & Competing Makes ({pricingOptions.length})
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowQuoteModal(true)}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>Send Customer Quote</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenKunalPricing}
+                      className="text-xs text-blue-600 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Full Worksheet</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div>
-                    <span className="text-gray-400 text-[10px] uppercase font-semibold">Supplier</span>
-                    <div className="font-semibold text-gray-900">{inquiry.supplier_name || aiPricingReview?.detected_data?.supplier_name || 'Awaiting quote'}</div>
+                {pricingOptions.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-gray-500">
+                    No sourcing options recorded for this inquiry yet.{' '}
+                    <button onClick={handleOpenKunalPricing} className="text-blue-600 font-semibold hover:underline">
+                      Open Kunal Pricing
+                    </button>{' '}
+                    to calculate and save rates.
                   </div>
-                  <div>
-                    <span className="text-gray-400 text-[10px] uppercase font-semibold">Offered Make</span>
-                    <div className="font-semibold text-gray-900">{inquiry.offered_make || aiPricingReview?.detected_data?.offered_make || '-'}</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50 text-gray-600 border-b border-gray-200 text-[11px] font-semibold">
+                          <th className="py-2 px-2.5">Option</th>
+                          <th className="py-2 px-2.5">Make / Brand</th>
+                          <th className="py-2 px-2.5">Supplier</th>
+                          <th className="py-2 px-2.5">Source Rate</th>
+                          <th className="py-2 px-2.5">Est. Landed (USD)</th>
+                          <th className="py-2 px-2.5">Customer Quote</th>
+                          <th className="py-2 px-2.5 text-center">Quote Inclusion</th>
+                          <th className="py-2 px-2.5 text-right">Acceptance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {pricingOptions.map((opt, idx) => {
+                          const optLetter = String.fromCharCode(65 + idx);
+                          return (
+                            <tr key={opt.id || idx} className={`hover:bg-slate-50/80 transition-colors ${opt.is_accepted ? 'bg-emerald-50/40' : ''}`}>
+                              <td className="py-2 px-2.5 font-bold">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                  opt.is_selected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                  Option {optLetter}
+                                </span>
+                                {opt.is_selected && (
+                                  <span className="ml-1 text-[10px] text-blue-600 font-medium">Active</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-2.5 font-semibold text-gray-900">
+                                {opt.offered_make || 'Unspecified'}
+                                {opt.origin ? <span className="text-[10px] text-gray-400 font-normal block">{opt.origin}</span> : null}
+                              </td>
+                              <td className="py-2 px-2.5 text-gray-600">
+                                {opt.supplier || '—'}
+                              </td>
+                              <td className="py-2 px-2.5 font-mono text-gray-900 font-medium">
+                                {opt.source_price != null ? `${opt.source_currency || 'INR'} ${Number(opt.source_price).toLocaleString()}` : '—'}
+                              </td>
+                              <td className="py-2 px-2.5 font-mono text-gray-700">
+                                {opt.landed_cost_usd != null ? `$${Number(opt.landed_cost_usd).toFixed(2)}/kg` : '—'}
+                              </td>
+                              <td className="py-2 px-2.5 font-mono font-bold text-blue-700">
+                                {opt.selling_price != null ? `${opt.selling_currency || 'USD'} ${Number(opt.selling_price).toFixed(2)}` : '—'}
+                              </td>
+                              <td className="py-2 px-2.5 text-center">
+                                {opt.include_in_customer_quote !== false ? (
+                                  <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[10px] font-medium">
+                                    Included
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px]">
+                                    Excluded
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-2.5 text-right">
+                                {opt.is_accepted ? (
+                                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold text-[10px] inline-flex items-center gap-1">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    Accepted
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={acceptingOptionId === opt.id}
+                                    onClick={() => handleAcceptOption(opt.id)}
+                                    className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded text-[10px] font-semibold cursor-pointer transition-colors"
+                                  >
+                                    {acceptingOptionId === opt.id ? 'Saving...' : 'Accept Make'}
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                  <div>
-                    <span className="text-gray-400 text-[10px] uppercase font-semibold">Source Rate</span>
-                    <div className="font-mono font-bold text-base text-gray-900">
-                      {aiPricingReview?.detected_data?.source_price
-                        ? `${aiPricingReview.detected_data.source_currency} ${aiPricingReview.detected_data.source_price} / ${aiPricingReview.detected_data.unit || 'KG'}`
-                        : inquiry.purchase_price != null
-                        ? `${inquiry.purchase_price_currency || 'INR'} ${inquiry.purchase_price}`
-                        : '—'}
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-gray-400 text-[10px] uppercase font-semibold">Est. Landed Cost (IDR)</span>
-                    <div className="font-mono font-bold text-base text-emerald-700">
-                      {landedCost ? `Rp ${landedCost.toLocaleString('id-ID')}` : '—'}
-                    </div>
-                  </div>
-                </div>
+                )}
 
                 {/* AI Evidence Quote */}
                 {aiPricingReview?.evidence?.why && (
@@ -1030,6 +1148,24 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
           )}
         </div>
       </div>
+
+      {showQuoteModal && inquiry && (
+        <KunalCustomerQuoteModal
+          isOpen={showQuoteModal}
+          onClose={() => setShowQuoteModal(false)}
+          inquiry={{
+            id: inquiry.id,
+            inquiry_number: inquiry.inquiry_number,
+            aceerp_no: inquiry.aceerp_no || null,
+            product_name: inquiry.product_name,
+            quantity: inquiry.quantity || null,
+            contact_email: inquiry.contact_email || null,
+            company_name: inquiry.company_name || null,
+          }}
+          option={pricingOptions.find(o => o.is_selected) || pricingOptions[0] || null}
+          options={pricingOptions}
+        />
+      )}
     </div>
   );
 }

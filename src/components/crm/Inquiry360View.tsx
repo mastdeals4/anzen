@@ -20,6 +20,8 @@ type Inquiry = {
   contact_email?: string | null;
   contact_phone?: string | null;
   supplier_name?: string | null;
+  requested_make?: string | null;
+  offered_make?: string | null;
   offered_price?: number | null;
   offered_price_currency?: string | null;
   delivery_date?: string | null;
@@ -247,19 +249,42 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
     }
   };
 
-  const createSalesOrder = () => {
+  const createSalesOrder = async () => {
     if (!selected?.customer_id) return;
+
+    let acceptedMake = selected.supplier_name || selected.offered_make || null;
+    let acceptedPrice = Number(selected.offered_price) || 0;
+    let acceptedCurrency = selected.offered_price_currency || 'USD';
+
+    try {
+      const { data: acceptedOpt } = await supabase
+        .from('crm_inquiry_pricing_options')
+        .select('*')
+        .eq('inquiry_id', selected.id)
+        .eq('is_accepted', true)
+        .maybeSingle();
+
+      if (acceptedOpt) {
+        if (acceptedOpt.offered_make) acceptedMake = acceptedOpt.offered_make;
+        if (acceptedOpt.selling_price) acceptedPrice = Number(acceptedOpt.selling_price);
+        if (acceptedOpt.selling_currency) acceptedCurrency = acceptedOpt.selling_currency;
+      }
+    } catch {
+      // fallback to inquiry defaults
+    }
+
     setNavigationData({
       createSalesOrder: true,
       salesOrderPrefill: {
         inquiry_id: selected.id,
         customer_id: selected.customer_id,
         product_name: selected.product_name,
+        make_name: acceptedMake,
         quantity: Number(selected.quantity) || 1,
-        unit_price: Number(selected.offered_price) || 0,
-        quoted_usd_unit_price: selected.offered_price_currency === 'USD' ? Number(selected.offered_price) || null : null,
+        unit_price: acceptedPrice,
+        quoted_usd_unit_price: acceptedCurrency === 'USD' ? acceptedPrice : null,
         expected_delivery_date: selected.delivery_date || '',
-        notes: `Created from inquiry ${selected.inquiry_number}${selected.delivery_terms ? ` · ${selected.delivery_terms}` : ''}`,
+        notes: `Created from inquiry ${selected.inquiry_number}${acceptedMake ? ` · Make: ${acceptedMake}` : ''}${selected.delivery_terms ? ` · ${selected.delivery_terms}` : ''}`,
       },
     });
     setCurrentPage('sales-orders');

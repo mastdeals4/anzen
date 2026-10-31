@@ -52,7 +52,8 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   inquiry: CustomerQuoteInquiry;
-  option: CustomerQuoteOption | null;
+  option?: CustomerQuoteOption | null;
+  options?: any[] | null;
 }
 
 function parseRecipients(raw: string): string[] {
@@ -66,27 +67,50 @@ function fmtPrice(price: number | null, currency: string): string {
 
 function buildBody(
   inquiry: CustomerQuoteInquiry,
-  option: CustomerQuoteOption | null,
+  option: CustomerQuoteOption | null | undefined,
+  options: any[] | null | undefined,
   userName: string,
   co?: CompanySnapshot | null,
 ): string {
-  const row: CustomerQuoteRow = {
-    product: inquiry.product_name,
-    make: option?.offered_make ?? null,
-    origin: option?.origin ?? null,
-    specification: option?.specification ?? null,
-    moq: option?.moq ?? null,
-    packing: option?.packing ?? null,
-    leadTime: option?.lead_time ?? null,
-    qty: inquiry.quantity,
-    quotePrice: fmtPrice(option?.selling_price ?? null, option?.selling_currency || option?.source_currency || 'USD'),
-    remarks: option?.remark ?? null,
-  };
+  let candidateOptions: any[] = [];
+  if (options && options.length > 0) {
+    candidateOptions = options.filter(o => o.include_in_customer_quote !== false);
+  } else if (option) {
+    candidateOptions = [option];
+  }
+
+  if (candidateOptions.length === 0 && option) {
+    candidateOptions = [option];
+  }
+
+  const rows: CustomerQuoteRow[] = candidateOptions.map((opt, idx) => {
+    let makeLabel = opt.offered_make || null;
+    if (candidateOptions.length > 1 && makeLabel) {
+      makeLabel = `${makeLabel} (Option ${String.fromCharCode(65 + idx)}${idx === 0 ? ' — Primary' : ' — Alternate'})`;
+    }
+    return {
+      product: inquiry.product_name,
+      make: makeLabel,
+      origin: opt.origin ?? null,
+      specification: opt.specification ?? null,
+      moq: opt.moq ?? null,
+      packing: opt.packing ?? null,
+      leadTime: opt.lead_time ?? null,
+      qty: inquiry.quantity,
+      quotePrice: fmtPrice(opt.selling_price ?? null, opt.selling_currency || opt.source_currency || 'USD'),
+      remarks: opt.remark ?? null,
+    };
+  });
+
   const greeting = inquiry.company_name ? `Dear ${escapeHtml(inquiry.company_name)} team,` : 'Dear Sir/Madam,';
+  const intro = candidateOptions.length > 1
+    ? `<p>Thank you for your inquiry. Please find our quotation for <strong>${escapeHtml(inquiry.product_name)}</strong> below offering ${candidateOptions.length} sourcing options for your consideration:</p>`
+    : `<p>Thank you for your inquiry. Please find our quotation for <strong>${escapeHtml(inquiry.product_name)}</strong> below:</p>`;
+
   return (
     `<p>${greeting}</p>` +
-    `<p>Thank you for your inquiry. Please find our quotation for <strong>${escapeHtml(inquiry.product_name)}</strong> below:</p>` +
-    buildCustomerQuoteTable([row]) +
+    intro +
+    buildCustomerQuoteTable(rows) +
     `<p style="margin-top:12px;">Prices are subject to confirmation at the time of order. We look forward to your valued order.</p>` +
     buildCompanySignature(userName, co)
   );
@@ -99,7 +123,7 @@ function buildSubject(inquiry: CustomerQuoteInquiry): string {
   return `Quotation: ${inquiry.product_name} — ${inquiry.inquiry_number}`;
 }
 
-export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Props) {
+export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, options }: Props) {
   const [toEmail, setToEmail] = useState('');
   const [ccEmail, setCcEmail] = useState('');
   const [bccEmail, setBccEmail] = useState('');
@@ -146,7 +170,7 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
       setSelectedDocs(new Set());
       setToEmail(inquiry.contact_email || '');
       setSubject(buildSubject(inquiry));
-      setBody(buildBody(inquiry, option, name, co));
+      setBody(buildBody(inquiry, option, options, name, co));
 
       if (inqResult.data?.customer_id) {
         setResolvedCustomerId(inqResult.data.customer_id);
@@ -228,13 +252,26 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option }: Pr
           inquiry_id: inquiry.id,
           link_type: 'generic',
         }).then(() => {}, () => {});
+        const candidateOptions = (options && options.length > 0)
+          ? options.filter((o: any) => o.include_in_customer_quote !== false)
+          : (option ? [option] : []);
+
         supabase.from('crm_inquiry_timeline').insert({
           inquiry_id: inquiry.id,
-          event_type: 'email_sent',
+          event_type: 'quote_sent',
           event_title: 'Customer quotation sent',
           event_description: `Quotation sent to ${toList.join(', ')}${attachments.length ? ` with ${attachments.length} attachment(s)` : ''}`,
           performed_by: user.id,
+          metadata: {
+            pricing_option_ids: candidateOptions.map((o: any) => o.id).filter(Boolean),
+            makes: candidateOptions.map((o: any) => o.offered_make).filter(Boolean),
+          },
         }).then(() => {}, () => {});
+
+        supabase.from('crm_inquiries').update({
+          quote_status: 'sent',
+          updated_at: new Date().toISOString(),
+        }).eq('id', inquiry.id).then(() => {}, () => {});
       }
 
       showToast({ type: 'success', title: 'Quotation sent', message: `Sent to ${toList.join(', ')}.` });

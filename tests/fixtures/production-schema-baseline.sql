@@ -7,6 +7,10 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
   SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
 $$ LANGUAGE sql STABLE;
 
+CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS $$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'authenticated')::text;
+$$ LANGUAGE sql STABLE;
+
 CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $$
   SELECT COALESCE(
     NULLIF(current_setting('request.jwt.claims', true), '')::jsonb,

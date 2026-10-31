@@ -73,6 +73,23 @@ export type PricingRowStatus =
 import { isProductMatch } from '../services/sourceReplyParser';
 export { isProductMatch };
 
+export function isGenericMake(make?: string | null): boolean {
+  if (!make) return false;
+  const clean = make.trim().toLowerCase();
+  return (
+    clean === 'any' ||
+    clean === 'any india' ||
+    clean === 'any, india' ||
+    clean === 'any / india' ||
+    clean === 'any make' ||
+    clean === 'standard' ||
+    clean === 'standard make' ||
+    clean === 'open' ||
+    clean === 'none' ||
+    clean === 'n/a'
+  );
+}
+
 export interface InquiryPricingOptionItem {
   id?: string;
   inquiry_id?: string;
@@ -86,10 +103,14 @@ export interface InquiryPricingOptionItem {
   suggested_quote_usd?: number | null;
   margin_pct?: number;
   is_selected: boolean;
+  include_in_customer_quote?: boolean;
+  is_accepted?: boolean;
   supplier?: string;
   moq?: string;
+  packing?: string;
   lead_time?: string;
   specification?: string;
+  origin?: string;
   remark?: string;
   availability?: 'available' | 'partial' | 'na';
 }
@@ -854,9 +875,13 @@ export function PricingWorksheet() {
             suggested_quote_usd: optSuggested,
             margin_pct: Number(opt.margin_pct) || 4.0,
             is_selected: Boolean(opt.is_selected),
+            include_in_customer_quote: opt.include_in_customer_quote !== undefined ? Boolean(opt.include_in_customer_quote) : Boolean(opt.is_selected),
+            is_accepted: Boolean(opt.is_accepted),
             supplier: opt.supplier || '',
             moq: opt.moq || '',
+            packing: opt.packing || '',
             lead_time: opt.lead_time || '',
+            origin: opt.origin || '',
             specification: opt.specification || inq.specification || '',
             remark: opt.remark || '',
             availability: (opt.availability as any) || 'available',
@@ -876,6 +901,8 @@ export function PricingWorksheet() {
             selling_price: initSellingPrice,
             selling_currency: (inq.offered_price_currency as any) === 'IDR' ? 'IDR' : 'USD',
             is_selected: true,
+            include_in_customer_quote: true,
+            is_accepted: false,
             supplier: inq.supplier_name || '',
             specification: inq.specification || '',
             availability: 'available',
@@ -1026,7 +1053,7 @@ export function PricingWorksheet() {
           emailDate: inq.created_at,
           isAiPrepared: false,
           alternativeMakeDetected: Boolean(
-            requestedMake && offeredMake && requestedMake.toLowerCase() !== offeredMake.toLowerCase(),
+            requestedMake && offeredMake && !isGenericMake(requestedMake) && requestedMake.toLowerCase() !== offeredMake.toLowerCase(),
           ),
           needsManualLink: false,
           documents: docs,
@@ -1977,7 +2004,7 @@ export function PricingWorksheet() {
       calcBreakdown: calc.calcBreakdown,
       allPricingOptions: updatedOptions,
       alternativeMakeDetected: Boolean(
-        row.requestedMake && nextMake && row.requestedMake.toLowerCase() !== nextMake.toLowerCase()
+        row.requestedMake && nextMake && !isGenericMake(row.requestedMake) && row.requestedMake.toLowerCase() !== nextMake.toLowerCase()
       ),
     });
   };
@@ -2037,6 +2064,214 @@ export function PricingWorksheet() {
     }));
   };
 
+  const handleToggleIncludeBoth = (rowId: string, includeBoth: boolean) => {
+    setRows(prev => prev.map(r => {
+      if (r.id !== rowId) return r;
+      const options = (r.allPricingOptions || []).map(opt => ({
+        ...opt,
+        include_in_customer_quote: includeBoth ? true : Boolean(opt.is_selected),
+      }));
+      return { ...r, allPricingOptions: options };
+    }));
+  };
+
+  const handleUseAlternativeMake = (row: UnifiedPricingRow) => {
+    const reqMake = (row.requestedMake || '').trim();
+    const altMake = (row.offeredMake || '').trim();
+    if (!altMake) {
+      updateRow(row.id, { alternativeMakeDetected: false });
+      return;
+    }
+
+    const options = [...(row.allPricingOptions || [])];
+
+    // If requested make is a real make (not generic) and not yet in options, preserve as Option A
+    if (reqMake && !isGenericMake(reqMake)) {
+      const existingReq = options.find(o => o.offered_make?.trim().toLowerCase() === reqMake.toLowerCase());
+      if (!existingReq) {
+        options.unshift({
+          inquiry_id: row.inquiryId || undefined,
+          source_type: row.sourceType || 'india',
+          offered_make: reqMake,
+          source_price: row.sourcePrice,
+          source_currency: row.sourceCurrency || 'INR',
+          selling_price: row.quotePrice,
+          selling_currency: row.quoteCurrency || 'USD',
+          is_selected: false,
+          include_in_customer_quote: true,
+          supplier: row.supplierName,
+          specification: row.specification,
+          availability: 'available',
+        });
+      } else {
+        existingReq.is_selected = false;
+        existingReq.include_in_customer_quote = true;
+      }
+    }
+
+    // Ensure alternative make exists as an option and is selected
+    let altOpt = options.find(o => o.offered_make?.trim().toLowerCase() === altMake.toLowerCase());
+    if (!altOpt) {
+      altOpt = {
+        inquiry_id: row.inquiryId || undefined,
+        source_type: row.sourceType || 'india',
+        offered_make: altMake,
+        source_price: row.sourcePrice,
+        source_currency: row.sourceCurrency || 'INR',
+        selling_price: row.quotePrice,
+        selling_currency: row.quoteCurrency || 'USD',
+        is_selected: true,
+        include_in_customer_quote: true,
+        supplier: row.supplierName,
+        specification: row.specification,
+        availability: 'available',
+      };
+      options.push(altOpt);
+    } else {
+      altOpt.is_selected = true;
+      altOpt.include_in_customer_quote = true;
+    }
+
+    // Recalculate canonical pricing for options
+    options.forEach(opt => {
+      if (opt.source_price && opt.source_price > 0) {
+        const calc = calculateCanonicalPricing(
+          opt.source_price,
+          opt.source_currency,
+          row.quantity,
+          config,
+          {
+            containerType: row.containerType,
+            packingType: row.packingType,
+            effectiveInrRate: row.effectiveInrRate,
+            indiaMarginPct: row.indiaMarginPct,
+            freightUsdPerKg: row.freightUsdPerKg,
+            dutyPct: row.dutyPct,
+            insurancePct: row.insurancePct,
+            clearanceUsd: row.clearanceUsd,
+            indonesiaMarginPct: opt.margin_pct || row.indonesiaMarginPct,
+            quotePriceOverride: opt.selling_price,
+          }
+        );
+        opt.landed_cost_usd = calc.landedCostUsd;
+        opt.suggested_quote_usd = calc.suggestedQuoteUsd;
+      }
+    });
+
+    updateRow(row.id, {
+      offeredMake: altMake,
+      pricingOptionId: altOpt.id || null,
+      alternativeMakeDetected: false,
+      allPricingOptions: options,
+    });
+
+    showToast({
+      type: 'info',
+      title: 'Alternative Make Selected',
+      message: `Switched to ${altMake}. Both ${reqMake || 'Primary'} and ${altMake} are preserved as sourcing options.`,
+    });
+  };
+
+  const handleKeepRequestedMake = (row: UnifiedPricingRow) => {
+    const reqMake = (row.requestedMake || '').trim();
+    const altMake = (row.offeredMake || '').trim();
+    if (!reqMake) {
+      updateRow(row.id, { alternativeMakeDetected: false });
+      return;
+    }
+
+    const options = [...(row.allPricingOptions || [])];
+
+    // Ensure alternative make remains preserved
+    if (altMake && !isGenericMake(altMake)) {
+      let existingAlt = options.find(o => o.offered_make?.trim().toLowerCase() === altMake.toLowerCase());
+      if (!existingAlt) {
+        options.push({
+          inquiry_id: row.inquiryId || undefined,
+          source_type: row.sourceType || 'india',
+          offered_make: altMake,
+          source_price: row.sourcePrice,
+          source_currency: row.sourceCurrency || 'INR',
+          selling_price: row.quotePrice,
+          selling_currency: row.quoteCurrency || 'USD',
+          is_selected: false,
+          include_in_customer_quote: true,
+          supplier: row.supplierName,
+          specification: row.specification,
+          availability: 'available',
+        });
+      } else {
+        existingAlt.is_selected = false;
+      }
+    }
+
+    // Ensure requested make exists and is active
+    let reqOpt = options.find(o => o.offered_make?.trim().toLowerCase() === reqMake.toLowerCase());
+    if (!reqOpt) {
+      reqOpt = {
+        inquiry_id: row.inquiryId || undefined,
+        source_type: row.sourceType || 'india',
+        offered_make: reqMake,
+        source_price: row.sourcePrice,
+        source_currency: row.sourceCurrency || 'INR',
+        selling_price: row.quotePrice,
+        selling_currency: row.quoteCurrency || 'USD',
+        is_selected: true,
+        include_in_customer_quote: true,
+        supplier: row.supplierName,
+        specification: row.specification,
+        availability: 'available',
+      };
+      options.unshift(reqOpt);
+    } else {
+      reqOpt.is_selected = true;
+    }
+
+    // Recalculate options
+    options.forEach(opt => {
+      if (opt.source_price && opt.source_price > 0) {
+        const calc = calculateCanonicalPricing(
+          opt.source_price,
+          opt.source_currency,
+          row.quantity,
+          config,
+          {
+            containerType: row.containerType,
+            packingType: row.packingType,
+            effectiveInrRate: row.effectiveInrRate,
+            indiaMarginPct: row.indiaMarginPct,
+            freightUsdPerKg: row.freightUsdPerKg,
+            dutyPct: row.dutyPct,
+            insurancePct: row.insurancePct,
+            clearanceUsd: row.clearanceUsd,
+            indonesiaMarginPct: opt.margin_pct || row.indonesiaMarginPct,
+            quotePriceOverride: opt.selling_price,
+          }
+        );
+        opt.landed_cost_usd = calc.landedCostUsd;
+        opt.suggested_quote_usd = calc.suggestedQuoteUsd;
+      }
+    });
+
+    updateRow(row.id, {
+      offeredMake: reqMake,
+      pricingOptionId: reqOpt.id || null,
+      sourcePrice: reqOpt.source_price ?? row.sourcePrice,
+      sourceCurrency: reqOpt.source_currency ?? row.sourceCurrency,
+      quotePrice: reqOpt.selling_price ?? row.quotePrice,
+      landedCostUsd: reqOpt.landed_cost_usd ?? row.landedCostUsd,
+      suggestedQuoteUsd: reqOpt.suggested_quote_usd ?? row.suggestedQuoteUsd,
+      alternativeMakeDetected: false,
+      allPricingOptions: options,
+    });
+
+    showToast({
+      type: 'info',
+      title: 'Requested Make Kept',
+      message: `Active make is ${reqMake}. ${altMake} remains preserved in Sourcing Options.`,
+    });
+  };
+
   const handleAddOption = (rowId: string) => {
     setRows(prev => prev.map(r => {
       if (r.id !== rowId) return r;
@@ -2050,6 +2285,8 @@ export function PricingWorksheet() {
         selling_price: null,
         selling_currency: 'USD',
         is_selected: false,
+        include_in_customer_quote: true,
+        is_accepted: false,
         supplier: '',
         specification: r.specification,
         availability: 'available',
@@ -2134,10 +2371,10 @@ export function PricingWorksheet() {
       }
 
       const now = new Date().toISOString();
-
-      // 1. Save all pricing options for this inquiry
       let optionId = row.pricingOptionId;
-      const optionsToSave = (row.allPricingOptions && row.allPricingOptions.length > 0)
+
+      // 1. Save all pricing options for this inquiry atomically via RPC
+      const optionsToSave: InquiryPricingOptionItem[] = (row.allPricingOptions && row.allPricingOptions.length > 0)
         ? row.allPricingOptions
         : [{
             id: row.pricingOptionId || undefined,
@@ -2145,67 +2382,138 @@ export function PricingWorksheet() {
             source_type: row.sourceType || 'india',
             offered_make: row.offeredMake || row.requestedMake,
             source_price: row.sourcePrice,
-            source_currency: row.sourceCurrency,
-            specification: row.specification || null,
+            source_currency: row.sourceCurrency || 'INR',
+            specification: row.specification || '',
             availability: row.availability,
             supplier: row.supplierName,
             moq: row.moq,
+            packing: row.packingType,
             lead_time: row.leadTime,
+            origin: '',
+            remark: '',
             margin_pct: row.indonesiaMarginPct,
             selling_price: row.quotePrice,
             selling_currency: row.quoteCurrency,
+            landed_cost_usd: row.landedCostUsd,
+            suggested_quote_usd: row.suggestedQuoteUsd,
             is_selected: true,
+            include_in_customer_quote: true,
           }];
 
-      for (let i = 0; i < optionsToSave.length; i++) {
-        const opt = optionsToSave[i];
-        const isCurrentSelected = opt.id
+      const payload = optionsToSave.map((opt, i) => {
+        const isCurrent = opt.id
           ? opt.id === row.pricingOptionId
           : (opt.offered_make === row.offeredMake || (!row.pricingOptionId && i === 0));
 
-        const optPayload = {
+        return {
+          id: opt.id || null,
           inquiry_id: targetInquiryId,
           source_type: opt.source_type || row.sourceType || 'india',
           offered_make: opt.offered_make || row.requestedMake,
-          source_price: isCurrentSelected ? row.sourcePrice : opt.source_price,
-          source_currency: isCurrentSelected ? row.sourceCurrency : (opt.source_currency || 'INR'),
+          source_price: isCurrent ? row.sourcePrice : opt.source_price,
+          source_currency: isCurrent ? row.sourceCurrency : (opt.source_currency || 'INR'),
           specification: opt.specification || row.specification || null,
-          availability: opt.availability || row.availability,
-          document_status: row.documents.length > 0 ? 'received' : 'pending',
+          availability: opt.availability || row.availability || 'available',
           supplier: opt.supplier || row.supplierName,
           moq: opt.moq || row.moq,
+          packing: opt.packing || row.packingType,
           lead_time: opt.lead_time || row.leadTime,
+          origin: opt.origin || null,
+          remark: opt.remark || null,
           margin_pct: opt.margin_pct || row.indonesiaMarginPct,
-          selling_price: isCurrentSelected ? row.quotePrice : opt.selling_price,
-          selling_currency: isCurrentSelected ? row.quoteCurrency : (opt.selling_currency || 'USD'),
-          is_selected: isCurrentSelected,
-          updated_at: now,
+          selling_price: isCurrent ? row.quotePrice : opt.selling_price,
+          selling_currency: isCurrent ? row.quoteCurrency : (opt.selling_currency || 'USD'),
+          landed_cost_usd: isCurrent ? row.landedCostUsd : opt.landed_cost_usd,
+          suggested_quote_usd: isCurrent ? row.suggestedQuoteUsd : opt.suggested_quote_usd,
+          is_selected: isCurrent,
+          include_in_customer_quote: opt.include_in_customer_quote !== false,
         };
+      });
 
-        if (opt.id) {
-          const { error: optUpdateErr } = await supabase
-            .from('crm_inquiry_pricing_options')
-            .update(optPayload)
-            .eq('id', opt.id);
-          if (optUpdateErr) console.warn('Pricing option update warning:', optUpdateErr);
-        } else {
-          const { data: newOpt, error: optInsertErr } = await supabase
-            .from('crm_inquiry_pricing_options')
-            .insert({
+      let savedRpcOptions: any[] | null = null;
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        'save_crm_inquiry_pricing_options',
+        {
+          p_inquiry_id: targetInquiryId,
+          p_options: payload,
+          p_selected_option_id: row.pricingOptionId || null,
+        }
+      );
+
+      if (!rpcErr && Array.isArray(rpcData)) {
+        savedRpcOptions = rpcData;
+      } else {
+        // Fallback: direct table update/insert
+        for (const opt of optionsToSave) {
+          const isCurrentSelected = opt.id
+            ? opt.id === row.pricingOptionId
+            : (opt.offered_make === row.offeredMake || (!row.pricingOptionId));
+          const optPayload = {
+            inquiry_id: targetInquiryId,
+            source_type: opt.source_type || row.sourceType || 'india',
+            offered_make: opt.offered_make || row.requestedMake,
+            source_price: isCurrentSelected ? row.sourcePrice : opt.source_price,
+            source_currency: isCurrentSelected ? row.sourceCurrency : (opt.source_currency || 'INR'),
+            specification: opt.specification || row.specification || null,
+            availability: opt.availability || row.availability || 'available',
+            supplier: opt.supplier || row.supplierName,
+            moq: opt.moq || row.moq,
+            lead_time: opt.lead_time || row.leadTime,
+            margin_pct: opt.margin_pct || row.indonesiaMarginPct,
+            selling_price: isCurrentSelected ? row.quotePrice : opt.selling_price,
+            selling_currency: isCurrentSelected ? row.quoteCurrency : (opt.selling_currency || 'USD'),
+            landed_cost_usd: isCurrentSelected ? row.landedCostUsd : opt.landed_cost_usd,
+            suggested_quote_usd: isCurrentSelected ? row.suggestedQuoteUsd : opt.suggested_quote_usd,
+            is_selected: isCurrentSelected,
+            include_in_customer_quote: opt.include_in_customer_quote !== false,
+            updated_at: now,
+          };
+
+          if (opt.id) {
+            await supabase.from('crm_inquiry_pricing_options').update(optPayload).eq('id', opt.id);
+          } else {
+            await supabase.from('crm_inquiry_pricing_options').insert({
               ...optPayload,
               created_by: profile?.id || null,
-            })
-            .select('id')
-            .single();
-          if (optInsertErr) console.warn('Pricing option insert warning:', optInsertErr);
-          if (newOpt) {
-            opt.id = newOpt.id;
-            if (isCurrentSelected) {
-              optionId = newOpt.id;
-              updateRow(row.id, { pricingOptionId: optionId });
-            }
+            });
           }
         }
+      }
+
+      if (Array.isArray(savedRpcOptions)) {
+        const mappedSaved: InquiryPricingOptionItem[] = savedRpcOptions.map((d: any) => ({
+          id: d.id,
+          inquiry_id: targetInquiryId,
+          source_type: d.source_type || 'india',
+          offered_make: d.offered_make || '',
+          source_price: d.source_price != null ? Number(d.source_price) : null,
+          source_currency: d.source_currency === 'USD' ? 'USD' : 'INR',
+          selling_price: d.selling_price != null ? Number(d.selling_price) : null,
+          selling_currency: d.selling_currency === 'IDR' ? 'IDR' : 'USD',
+          landed_cost_usd: d.landed_cost_usd != null ? Number(d.landed_cost_usd) : null,
+          suggested_quote_usd: d.suggested_quote_usd != null ? Number(d.suggested_quote_usd) : null,
+          margin_pct: d.margin_pct != null ? Number(d.margin_pct) : 4.0,
+          is_selected: Boolean(d.is_selected),
+          include_in_customer_quote: Boolean(d.include_in_customer_quote),
+          is_accepted: Boolean(d.is_accepted),
+          supplier: d.supplier || '',
+          moq: d.moq || '',
+          packing: d.packing || '',
+          lead_time: d.lead_time || '',
+          specification: d.specification || '',
+          origin: d.origin || '',
+          remark: d.remark || '',
+          availability: (d.availability as any) || 'available',
+        }));
+
+        const selectedSaved = mappedSaved.find(o => o.is_selected) || mappedSaved[0];
+        if (selectedSaved?.id) {
+          optionId = selectedSaved.id;
+        }
+        updateRow(row.id, {
+          pricingOptionId: selectedSaved?.id || null,
+          allPricingOptions: mappedSaved,
+        });
       }
 
       // 2. Update CRM Inquiry with validated landed cost and quote price
@@ -3043,18 +3351,31 @@ export function PricingWorksheet() {
 
                                     {/* Alternate Sourcing Options (Multiple Sources / Competing Makes under SAME CRM Inquiry) */}
                                     <div className="bg-slate-50 border border-slate-200 rounded-md p-2.5 space-y-2">
-                                      <div className="flex items-center justify-between">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
                                         <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                                           <span>Sourcing Options & Competing Makes ({(row.allPricingOptions || []).length})</span>
                                           <span className="text-[10px] text-gray-500 font-normal">Independent landed cost and customer quote per make/supplier</span>
                                         </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleAddOption(row.id)}
-                                          className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-0.5 cursor-pointer"
-                                        >
-                                          <Plus className="w-3 h-3" /> Add Option
-                                        </button>
+                                        <div className="flex items-center gap-3">
+                                          {(row.allPricingOptions || []).length > 1 && (
+                                            <label className="flex items-center gap-1.5 text-[11px] font-medium text-purple-900 bg-purple-50 px-2 py-0.5 rounded border border-purple-200 cursor-pointer hover:bg-purple-100 transition-colors">
+                                              <input
+                                                type="checkbox"
+                                                checked={(row.allPricingOptions || []).length > 1 && (row.allPricingOptions || []).every(o => o.include_in_customer_quote !== false)}
+                                                onChange={(e) => handleToggleIncludeBoth(row.id, e.target.checked)}
+                                                className="rounded text-purple-600 focus:ring-purple-500 h-3.5 w-3.5"
+                                              />
+                                              <span>Include BOTH options in customer quotation</span>
+                                            </label>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => handleAddOption(row.id)}
+                                            className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-0.5 cursor-pointer"
+                                          >
+                                            <Plus className="w-3 h-3" /> Add Option
+                                          </button>
+                                        </div>
                                       </div>
 
                                       {/* Quick switcher pill buttons */}
@@ -3103,7 +3424,7 @@ export function PricingWorksheet() {
                                               }`}
                                             >
                                               <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex flex-wrap items-center gap-2">
                                                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                                                     isCurrent ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
                                                   }`}>
@@ -3122,9 +3443,23 @@ export function PricingWorksheet() {
                                                       ✓ Active for Main Quote
                                                     </span>
                                                   )}
+                                                  {opt.is_accepted && (
+                                                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded">
+                                                      ✓ Customer Accepted
+                                                    </span>
+                                                  )}
                                                 </div>
 
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex items-center gap-2">
+                                                  <label className="flex items-center gap-1 text-[11px] text-slate-700 font-medium cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={opt.include_in_customer_quote !== false}
+                                                      onChange={(e) => handleUpdateOption(row.id, optIdx, { include_in_customer_quote: e.target.checked })}
+                                                      className="rounded text-blue-600 focus:ring-blue-500 h-3.5 w-3.5"
+                                                    />
+                                                    <span>Include in Quote</span>
+                                                  </label>
                                                   {!isCurrent && (
                                                     <button
                                                       type="button"
@@ -3232,18 +3567,13 @@ export function PricingWorksheet() {
                                         </div>
                                         <div className="flex gap-1.5 pt-0.5">
                                           <button
-                                            onClick={() => updateRow(row.id, { alternativeMakeDetected: false })}
+                                            onClick={() => handleUseAlternativeMake(row)}
                                             className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-[10px] font-medium cursor-pointer"
                                           >
                                             USE ALTERNATIVE MAKE
                                           </button>
                                           <button
-                                            onClick={() =>
-                                              updateRow(row.id, {
-                                                offeredMake: row.requestedMake,
-                                                alternativeMakeDetected: false,
-                                              })
-                                            }
+                                            onClick={() => handleKeepRequestedMake(row)}
                                             className="px-2 py-0.5 bg-white border border-purple-300 text-purple-800 hover:bg-purple-50 rounded text-[10px] font-medium cursor-pointer"
                                           >
                                             KEEP REQUESTED MAKE

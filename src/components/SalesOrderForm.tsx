@@ -84,6 +84,8 @@ interface SalesOrderFormProps {
     customer_id?: string;
     product_id?: string;
     product_name?: string;
+    make_name?: string | null;
+    make_id?: string | null;
     quantity?: number;
     unit_price?: number;
     quoted_usd_unit_price?: number | null;
@@ -202,7 +204,30 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       if (resolvedProductId) {
         const quantity = Number(prefill.quantity) || 1;
         const unitPrice = Number(prefill.unit_price) || 0;
-        setItems([{ product_id: resolvedProductId, make_id: null, quantity, unit_price: unitPrice, discount_percent: 0, discount_amount: 0, tax_percent: 0, tax_amount: 0, line_total: quantity * unitPrice, item_delivery_date: prefill.expected_delivery_date || '', notes: '', quoted_usd_unit_price: prefill.quoted_usd_unit_price ?? null }]);
+        fetchProductMakes(resolvedProductId).then(makes => {
+          let resolvedMakeId = prefill.make_id || null;
+          if (!resolvedMakeId && prefill.make_name) {
+            const matched = makes.find(m => (m.supplier_name || '').toLowerCase() === prefill.make_name!.toLowerCase());
+            if (matched) resolvedMakeId = matched.id;
+          }
+          if (!resolvedMakeId && makes.length === 1) {
+            resolvedMakeId = makes[0].id;
+          }
+          setItems([{
+            product_id: resolvedProductId,
+            make_id: resolvedMakeId,
+            quantity,
+            unit_price: unitPrice,
+            discount_percent: 0,
+            discount_amount: 0,
+            tax_percent: 0,
+            tax_amount: 0,
+            line_total: quantity * unitPrice,
+            item_delivery_date: prefill.expected_delivery_date || '',
+            notes: '',
+            quoted_usd_unit_price: prefill.quoted_usd_unit_price ?? null
+          }]);
+        });
         fetchStockInfo(resolvedProductId);
       }
     }
