@@ -943,6 +943,11 @@ export function ReceiptVoucherManager({
       return;
     }
 
+    if (formData.payment_method !== 'cash' && !formData.bank_account_id) {
+      showToast({ type: 'error', title: 'Bank Account Required', message: 'Please select an active bank account for bank transfer receipts.' });
+      return;
+    }
+
     if (bankReconStatementLineId) {
       if (formData.payment_method === 'cash') {
         showToast({ type: 'error', title: 'Invalid Method', message: 'A reconciled bank receipt must use the bank transfer payment method.' });
@@ -1090,6 +1095,10 @@ export function ReceiptVoucherManager({
 
   const handlePostVoucher = async (v: ReceiptVoucher) => {
     if (!profile?.id) return;
+    if (v.payment_method !== 'cash' && !v.bank_account_id) {
+      showToast({ type: 'error', title: 'Bank Account Required', message: `Voucher ${v.voucher_number} has no bank account selected. Please edit the voucher and select a bank account before posting.` });
+      return;
+    }
     setPostingLoading(v.id);
     try {
       const { error } = await supabase.rpc('post_receipt_voucher', {
@@ -1939,7 +1948,7 @@ export function ReceiptVoucherManager({
             </div>
             <div className="space-y-1 font-mono text-[11px] bg-white p-2.5 rounded border border-slate-200">
               <div className="flex justify-between text-slate-700">
-                <span>Dr {bankAccounts.find(b => b.id === formData.bank_account_id)?.alias || (formData.payment_method === 'cash' ? 'Cash on Hand (1110)' : 'Bank Account')}</span>
+                <span>Dr {bankAccounts.find(b => b.id === formData.bank_account_id)?.alias || (formData.payment_method === 'cash' ? 'Petty Cash (1102)' : 'Bank Account')}</span>
                 <span>{formatCurrency(formData.amount, formCurrency)}</span>
               </div>
               {formData.settlement_discount > 0 && (

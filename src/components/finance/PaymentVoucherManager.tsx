@@ -1111,6 +1111,10 @@ export function PaymentVoucherManager({
 
   const handlePostVoucher = async (v: PaymentVoucher) => {
     if (!profile?.id) return;
+    if (v.payment_method !== 'cash' && v.payment_method !== 'advance_adjustment' && !v.bank_account_id) {
+      alert(`Voucher ${v.voucher_number} has no bank account selected. Please edit the voucher and select a bank account before posting.`);
+      return;
+    }
     setPostingLoading(v.id);
     try {
       const { error } = await supabase.rpc('post_payment_voucher', {
@@ -1497,6 +1501,11 @@ export function PaymentVoucherManager({
     }
     if (formData.payment_purpose === 'salary_advance' && currentPartyType !== 'employee') {
       alert('Salary Advance requires a staff payee.');
+      return;
+    }
+
+    if (formData.payment_method !== 'cash' && formData.payment_method !== 'advance_adjustment' && !formData.bank_account_id) {
+      alert('Please select an active bank account for bank transfer payments.');
       return;
     }
 
@@ -2354,7 +2363,7 @@ export function PaymentVoucherManager({
                 <span>{fmt(formData.amount + (formData.settlement_discount || 0), bankCurrency)}</span>
               </div>
               <div className="flex justify-between text-slate-700 border-t border-slate-200 pt-1">
-                <span>Cr {selectedBank?.alias || (formData.payment_method === 'cash' ? 'Cash on Hand (1110)' : 'Bank Account')}</span>
+                <span>Cr {selectedBank?.alias || (formData.payment_method === 'cash' ? 'Petty Cash (1102)' : 'Bank Account')}</span>
                 <span>{fmt(formData.amount, bankCurrency)}</span>
               </div>
               {formData.settlement_discount > 0 && (
