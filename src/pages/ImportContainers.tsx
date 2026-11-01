@@ -35,6 +35,7 @@ interface ImportContainer {
   import_invoice_value: number;
   currency: string;
   exchange_rate: number;
+  customs_ndpbm_rate?: number | null;
   other_import_costs: number;
   total_import_expenses: number;
   allocated_expenses: number;
@@ -140,6 +141,7 @@ export default function ImportContainers() {
     import_invoice_value: 0,
     currency: 'USD',
     exchange_rate: 15000,
+    customs_ndpbm_rate: null as number | null,
     other_import_costs: 0,
     notes: ''
   });
@@ -451,8 +453,9 @@ export default function ImportContainers() {
         import_invoice_value: formData.import_invoice_value,
         currency: formData.currency,
         exchange_rate: formData.exchange_rate,
+        customs_ndpbm_rate: formData.customs_ndpbm_rate ? Number(formData.customs_ndpbm_rate) : null,
         other_import_costs: formData.other_import_costs,
-      } : editingContainer ? {} : { import_invoice_value: 0, currency: 'USD', exchange_rate: 15000, other_import_costs: 0 };
+      } : editingContainer ? {} : { import_invoice_value: 0, currency: 'USD', exchange_rate: 15000, customs_ndpbm_rate: null, other_import_costs: 0 };
       const containerData = { ...operationalData, ...costingData };
 
       let containerId = editingContainer?.id;
@@ -507,6 +510,7 @@ export default function ImportContainers() {
       import_invoice_value: 0,
       currency: 'USD',
       exchange_rate: 15000,
+      customs_ndpbm_rate: null,
       other_import_costs: 0,
       notes: ''
     });
@@ -572,13 +576,13 @@ export default function ImportContainers() {
     const previousInclusionMap = { ...inclusionMap };
     const updates: Record<string, boolean> = {};
     for (const item of unifiedItems) {
-      if (!item.isPIB && item.isCapitalizable) { updates[item.id] = true; }
+      if (item.isCapitalizable) { updates[item.id] = true; }
     }
     setInclusionMap(prev => ({ ...prev, ...updates }));
     setSavingInclusion(true);
     try {
       for (const item of unifiedItems) {
-        if (!item.isPIB && item.isCapitalizable) {
+        if (item.isCapitalizable) {
           const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
           const { error } = await supabase.from(table).update({ include_in_landed_cost: true }).eq('id', item.id);
           if (error) throw error;
@@ -599,17 +603,15 @@ export default function ImportContainers() {
     const previousInclusionMap = { ...inclusionMap };
     const updates: Record<string, boolean> = {};
     for (const item of unifiedItems) {
-      if (!item.isPIB) { updates[item.id] = false; }
+      updates[item.id] = false;
     }
     setInclusionMap(prev => ({ ...prev, ...updates }));
     setSavingInclusion(true);
     try {
       for (const item of unifiedItems) {
-        if (!item.isPIB) {
-          const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
-          const { error } = await supabase.from(table).update({ include_in_landed_cost: false }).eq('id', item.id);
-          if (error) throw error;
-        }
+        const table = item.source === 'expense' ? 'finance_expenses' : 'petty_cash_transactions';
+        const { error } = await supabase.from(table).update({ include_in_landed_cost: false }).eq('id', item.id);
+        if (error) throw error;
       }
     } catch (error: any) {
       setInclusionMap(previousInclusionMap);
@@ -656,6 +658,7 @@ export default function ImportContainers() {
       import_invoice_value: container.import_invoice_value || 0,
       currency: container.currency || 'USD',
       exchange_rate: container.exchange_rate || 15000,
+      customs_ndpbm_rate: container.customs_ndpbm_rate ? Number(container.customs_ndpbm_rate) : null,
       other_import_costs: container.other_import_costs || 0,
       notes: container.notes || ''
     });
@@ -685,19 +688,26 @@ export default function ImportContainers() {
   };
 
   const unifiedItems: UnifiedLinkedItem[] = [
-    ...linkedExpenses.filter(e => e.expense_category !== 'pib_import').map(e => ({
-      id: e.id,
-      source: 'expense' as SourceType,
-      referenceNumber: e.voucher_number || e.invoice_number || 'EXP',
-      category: e.expense_category,
-      amount: calculateExpenseLandedCostAmount(e).amount,
-      date: e.expense_date,
-      description: e.description || '',
-      include_in_landed_cost: inclusionMap[e.id] ?? false,
-      isCapitalizable: isCapitalizableLandedCostCategory(e.expense_category),
-      isPIB: false,
-      rawExpense: e,
-    })),
+    ...linkedExpenses.map(e => {
+      const isPIB = e.expense_category === 'pib_import';
+      const landedCostAmount = calculateExpenseLandedCostAmount(e).amount;
+      return {
+        id: e.id,
+        source: 'expense' as SourceType,
+        referenceNumber: e.voucher_number || e.invoice_number || 'EXP',
+        category: e.expense_category,
+        amount: landedCostAmount,
+        date: e.expense_date,
+        description: isPIB ? `${e.description || 'PIB Import'} (Bea Masuk / Customs Duty)` : (e.description || ''),
+        include_in_landed_cost: inclusionMap[e.id] ?? (e.include_in_landed_cost === true),
+        isCapitalizable: isCapitalizableLandedCostCategory(e.expense_category),
+        isPIB,
+        pib_bm_amount: e.pib_bm_amount,
+        pib_ppn_amount: e.pib_ppn_amount,
+        pib_pph_amount: e.pib_pph_amount,
+        rawExpense: e,
+      };
+    }),
     ...linkedPettyCash.map(pc => ({
       id: pc.id,
       source: 'petty_cash' as SourceType,
@@ -706,7 +716,7 @@ export default function ImportContainers() {
       amount: Number(pc.amount || 0),
       date: pc.transaction_date,
       description: pc.description || '',
-      include_in_landed_cost: inclusionMap[pc.id] ?? false,
+      include_in_landed_cost: inclusionMap[pc.id] ?? (pc.include_in_landed_cost === true),
       isCapitalizable: isCapitalizableLandedCostCategory(pc.expense_category || pc.transaction_type),
       isPIB: false,
     }))
@@ -1050,7 +1060,7 @@ export default function ImportContainers() {
                     label={`${t('importContainers.invoiceValue')} (Goods Subtotal)`}
                     filled={!!formData.import_invoice_value}
                     required
-                    span={12}
+                    span={6}
                     hint={selectedPiIds.length > 0 ? `Auto-derived goods subtotal from ${selectedPiIds.length} linked PI(s).` : undefined}
                   >
                     <MoneyInput
@@ -1058,6 +1068,23 @@ export default function ImportContainers() {
                       onChange={(amount) => setFormData({ ...formData, import_invoice_value: amount })}
                       className={FLOAT_INPUT}
                       required
+                    />
+                  </FloatingField>
+                  <FloatingField
+                    label={`Customs Duty FX Rate (NDPBM) (IDR per ${formData.currency})`}
+                    filled={formData.customs_ndpbm_rate !== null && formData.customs_ndpbm_rate !== undefined && formData.customs_ndpbm_rate > 0}
+                    span={6}
+                    hint="Official Customs Duty FX rate (NDPBM) for Bea Masuk / PIB valuation"
+                  >
+                    <input
+                      name="customs_ndpbm_rate"
+                      aria-label="Customs Duty FX Rate (NDPBM)"
+                      type="number"
+                      step="0.01"
+                      value={formData.customs_ndpbm_rate || ''}
+                      onChange={(e) => setFormData({ ...formData, customs_ndpbm_rate: e.target.value ? parseFloat(e.target.value) : null })}
+                      placeholder="e.g. 16813.00"
+                      className={FLOAT_INPUT}
                     />
                   </FloatingField>
                 </SapRow>

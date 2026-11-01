@@ -235,7 +235,7 @@ export function calculateContainerLandedCostPool(
 
   const pibExpenses = linkedExpenses.filter((e) => e.expense_category === 'pib_import');
   const pibDutyTotal = pibExpenses.reduce((sum, e) => {
-    const isSelected = inclusionMap[e.id] ?? (e.include_in_landed_cost !== false);
+    const isSelected = inclusionMap[e.id] ?? (e.include_in_landed_cost === true);
     return isSelected ? sum + Number(e.pib_bm_amount || 0) : sum;
   }, 0);
   const pibPpnTotal = pibExpenses.reduce((sum, e) => sum + Number(e.pib_ppn_amount || 0), 0);
