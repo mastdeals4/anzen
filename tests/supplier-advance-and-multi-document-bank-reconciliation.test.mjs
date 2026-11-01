@@ -345,7 +345,7 @@ test.describe('SAPJ ERP: Complete Supplier Advance, Multi-Document Bank Recon & 
         settlement_against, created_by
       ) VALUES (
         'PV/26-26/030', '2026-10-15', 'supplier', $1,
-        'bank_transfer', $2, 1669000, 1669000, 'supplier_advance',
+        'bank_transfer', $2, 1669000, 1669000, 'general',
         'advance', $3
       ) RETURNING id;
     `, [testSupplierId, bankAccountBcaId, adminUserId]);
@@ -479,7 +479,7 @@ test.describe('SAPJ ERP: Complete Supplier Advance, Multi-Document Bank Recon & 
         settlement_against, created_by
       ) VALUES (
         'PV-TEST-006', '2026-10-15', 'supplier', $1,
-        'bank_transfer', $2, 1669000, 'supplier_advance',
+        'bank_transfer', $2, 1669000, 'general',
         'advance', $3
       ) RETURNING id;
     `, [testSupplier6Id, bankAccountBcaId, adminUserId]);
@@ -545,7 +545,7 @@ test.describe('SAPJ ERP: Complete Supplier Advance, Multi-Document Bank Recon & 
         settlement_against, created_by
       ) VALUES (
         'PV-TEST-007', '2026-10-15', 'supplier', $1,
-        'bank_transfer', $2, 1669000, 'supplier_advance',
+        'bank_transfer', $2, 1669000, 'general',
         'advance', $3
       ) RETURNING id;
     `, [testSupplier7Id, bankAccountBcaId, adminUserId]);
@@ -684,10 +684,10 @@ test.describe('SAPJ ERP: Complete Supplier Advance, Multi-Document Bank Recon & 
     assert.match(jeNumCurr, /^JE\d{4}-\d{4}$/, 'No-arg overload must generate valid JE prefix');
 
     // Verify old journal is marked reversed
-    const oldJeCheck = (await pool.query(`SELECT is_reversed, reversed_by_id, notes FROM public.journal_entries WHERE id = $1;`, [oldJeId])).rows[0];
+    const oldJeCheck = (await pool.query(`SELECT is_reversed, reversed_by_id, description FROM public.journal_entries WHERE id = $1;`, [oldJeId])).rows[0];
     assert.equal(oldJeCheck.is_reversed, true);
     assert.equal(oldJeCheck.reversed_by_id, repairRes.reversal_journal.id);
-    assert.match(oldJeCheck.notes, /authoritative advance refund/i);
+    assert.match(oldJeCheck.description, /Authoritative Advance Refund/i);
 
     // Verify reversal journal metadata
     const revJe = (await pool.query(`

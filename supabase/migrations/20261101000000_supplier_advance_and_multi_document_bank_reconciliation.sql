@@ -1565,7 +1565,7 @@ BEGIN
   FROM public.payment_vouchers
   WHERE supplier_id = v_supplier_id
     AND amount = 1669000.00
-    AND payment_purpose = 'supplier_advance'
+    AND (payment_purpose = 'supplier_advance' OR payment_purpose = 'general')
     AND settlement_against = 'advance'
     AND reference_number = '1510/FTSCY/WS95051'
     AND is_posted = true
@@ -1575,7 +1575,7 @@ BEGIN
   FROM public.payment_vouchers
   WHERE supplier_id = v_supplier_id
     AND amount = 1669000.00
-    AND payment_purpose = 'supplier_advance'
+    AND (payment_purpose = 'supplier_advance' OR payment_purpose = 'general')
     AND settlement_against = 'advance'
     AND reference_number = '1510/FTSCY/WS95051'
     AND is_posted = false
@@ -1705,7 +1705,7 @@ BEGIN
           'supplier', 'PT. TRANS EXIS JAYA',
           'amount', 1669000.00,
           'voucher_date', '2026-10-15',
-          'payment_purpose', 'supplier_advance',
+          'payment_purpose', 'general',
           'settlement_against', 'advance',
           'reference_number', '1510/FTSCY/WS95051',
           'proposed_journal', jsonb_build_object(
@@ -1805,7 +1805,7 @@ BEGIN
       1669000.00,
       'IDR',
       1.000000,
-      'supplier_advance',
+      'general',
       'advance',
       'Supplier advance from bank payment remainder: 1510/FTSCY/WS95051',
       v_actor
@@ -1916,7 +1916,7 @@ BEGIN
   UPDATE public.journal_entries
      SET is_reversed = true,
          reversed_by_id = v_rev_je_id,
-         notes = 'Replaced by authoritative advance refund posting referencing COA 1170'
+         description = COALESCE(description, '') || ' [Reversed: Authoritative Advance Refund]'
    WHERE id = v_old_rv_je_id;
 
   -- Step 4: Create Replacement Receipt Journal Linked to GL 1170 with complete accounting metadata
