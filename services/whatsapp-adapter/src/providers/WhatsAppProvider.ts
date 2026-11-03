@@ -17,6 +17,9 @@ export interface WhatsAppConnectionStatus {
   status: WhatsAppConnectionState;
   session: string;
   businessPhone?: string | null;
+  businessJid?: string | null;
+  identityVerifiedAt?: string | null;
+  identitySource?: string | null;
   lastSeen?: string;
   qrCode?: string | null; // Data URL or ASCII string if unpaired
   error?: string;

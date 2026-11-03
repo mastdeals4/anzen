@@ -44,23 +44,27 @@ const analyzeFnCode = readFileSync(
 );
 
 function runDbScript(sql) {
-  const tmpPath = join(tmpdir(), `wa_test_${Date.now()}_${Math.random().toString(36).slice(2)}.sql`);
-  writeFileSync(tmpPath, sql, 'utf8');
+  const tmpScript = join(tmpdir(), `wa_runner_${Date.now()}_${Math.random().toString(36).slice(2)}.cjs`);
+  const pgPath = join(process.cwd(), 'node_modules/pg');
+  const runnerContent = `
+    const { Client } = require(${JSON.stringify(pgPath)});
+    const client = new Client({ connectionString: process.env.DATABASE_URL || 'postgresql://postgres.dkrtsqienlhpouohmfki:Kunallunkad%40123@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres' });
+    client.connect().then(async () => {
+      const res = await client.query(${JSON.stringify(sql)});
+      const rows = Array.isArray(res) ? (res[res.length - 1]?.rows || []) : (res.rows || []);
+      console.log(JSON.stringify(rows));
+      await client.end();
+    }).catch(e => { console.error(e); process.exit(1); });
+  `;
+  writeFileSync(tmpScript, runnerContent, 'utf8');
   try {
-    const cmd = `npx supabase db query --linked --file "${tmpPath}"`;
-    const output = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    const jsonStart = output.indexOf('{');
-    if (jsonStart === -1) {
-      throw new Error(`No JSON found in output: ${output}`);
-    }
-    const jsonEnd = output.lastIndexOf('}');
-    const parsed = JSON.parse(output.slice(jsonStart, jsonEnd + 1));
-    return parsed.rows || [];
+    const output = execSync(`node "${tmpScript}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return JSON.parse(output.trim() || '[]');
   } catch (err) {
     const msg = err.stderr || err.stdout || err.message;
     throw new Error(`Database query failed: ${msg}`);
   } finally {
-    try { unlinkSync(tmpPath); } catch {}
+    try { unlinkSync(tmpScript); } catch {}
   }
 }
 
@@ -151,7 +155,7 @@ test('2. Duplicate webhook idempotency: identical webhook re-insert is handled g
   `;
 
   const rows = runDbScript(sql);
-  assert.equal(rows[0].msg_count, 1, 'Exactly one message row must exist despite duplicate delivery attempt');
+  assert.equal(Number(rows[0].msg_count), 1, 'Exactly one message row must exist despite duplicate delivery attempt');
 });
 
 test('3. Duplicate external message ID protection: DB index uq_enq_msg_channel_external_id verified', () => {
@@ -429,7 +433,7 @@ test('17. No autonomous task creation: zero tasks created during WhatsApp messag
   `;
 
   const rows = runDbScript(sql);
-  assert.equal(rows[0].count, 0, 'Zero autonomous tasks must be created');
+  assert.equal(Number(rows[0].count), 0, 'Zero autonomous tasks must be created');
 });
 
 test('18. No pricing mutation: pricing tables remain unmutated by WhatsApp ingestion', () => {
@@ -445,7 +449,7 @@ test('18. No pricing mutation: pricing tables remain unmutated by WhatsApp inges
   `;
 
   const rows = runDbScript(sql);
-  assert.equal(rows[0].count, 0, 'Pricing tables must not be mutated');
+  assert.equal(Number(rows[0].count), 0, 'Pricing tables must not be mutated');
 });
 
 test('19. No autonomous outbound AI sending: AI Reply Drafter has zero autonomous send code', () => {

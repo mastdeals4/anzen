@@ -40,16 +40,16 @@ export const CAPITALIZABLE_LANDED_COST_CATEGORIES = new Set([
   'import_broker',
   'other_import',
   'pib_import',
+  'bpom_ski_fees',
 ]);
 
 export const CAPITALIZABLE_LANDED_COST_CATEGORIES_ARRAY = Array.from(CAPITALIZABLE_LANDED_COST_CATEGORIES);
 
 /**
  * Import-related categories that are associated with import shipments but
- * are NOT capitalized to inventory (e.g. operational P&L or tax balance-sheet assets).
+ * are NOT capitalized to inventory (e.g. tax balance-sheet assets or non-capitalizable costs).
  */
 export const NON_CAPITALIZABLE_IMPORT_CATEGORIES = new Set([
-  'bpom_ski_fees',
   'ppn_import',
   'pph_import',
   'freight_charges',

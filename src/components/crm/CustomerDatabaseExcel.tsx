@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Download, Upload, Trash2, Send, UserCheck, ChevronUp, ChevronDown, ChevronsUpDown, Filter, X } from 'lucide-react';
+import { Download, Upload, Trash2, Send, UserCheck, ChevronUp, ChevronDown, ChevronRight, ChevronsUpDown, Filter, X, Users, Mail, Phone, Building2 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
 import { showToast } from '../ToastNotification';
@@ -78,22 +78,23 @@ export function CustomerDatabaseExcel({
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
   const [tempFilterSearch, setTempFilterSearch] = useState('');
   const [tempFilterValues, setTempFilterValues] = useState<Set<string>>(new Set());
+  const [expandedContactRows, setExpandedContactRows] = useState<Set<string>>(new Set());
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
-    assigned_sales: 140,
-    created_at: 110,
-    company_name: 220,
-    contact_person: 150,
+    company_name: 240,
+    customer_type: 130,
+    city: 110,
+    contact_person: 140,
     designation: 120,
-    email: 190,
-    mobile: 130,
-    landline: 130,
-    phone: 130,
-    country: 120,
-    city: 120,
-    address: 200,
-    website: 150,
-    customer_type: 120,
-    notes: 200,
+    email: 180,
+    mobile: 140,
+    landline: 120,
+    phone: 120,
+    assigned_sales: 135,
+    notes: 180,
+    created_at: 95,
+    country: 100,
+    address: 180,
+    website: 130,
   });
   const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
   const [salesMembers, setSalesMembers] = useState<SalesMember[]>([]);
@@ -467,21 +468,21 @@ export function CustomerDatabaseExcel({
   };
 
   const COLUMNS = [
-    { key: 'assigned_sales', label: 'Sales Person' },
-    { key: 'created_at', label: 'Date' },
     { key: 'company_name', label: 'Company Name' },
+    { key: 'customer_type', label: 'Type' },
+    { key: 'city', label: 'City' },
     { key: 'contact_person', label: 'Contact Person' },
     { key: 'designation', label: 'Designation' },
     { key: 'email', label: 'Email' },
-    { key: 'mobile', label: 'Mobile' },
+    { key: 'mobile', label: 'Mobile / WhatsApp' },
     { key: 'landline', label: 'Landline' },
     { key: 'phone', label: 'Phone' },
+    { key: 'assigned_sales', label: 'Sales Person' },
+    { key: 'notes', label: 'Notes' },
+    { key: 'created_at', label: 'Date' },
     { key: 'country', label: 'Country' },
-    { key: 'city', label: 'City' },
     { key: 'address', label: 'Address' },
     { key: 'website', label: 'Website' },
-    { key: 'customer_type', label: 'Type' },
-    { key: 'notes', label: 'Notes' },
   ];
 
   const getColValue = (c: Customer, key: string): string => {
@@ -568,14 +569,211 @@ export function CustomerDatabaseExcel({
     return result;
   })();
 
+  const parseCustomerContacts = (c: Customer) => {
+    const list: Array<{ name: string; designation: string; email: string; phone: string; isPrimary: boolean }> = [];
+    list.push({
+      name: c.contact_person || 'Primary Contact',
+      designation: c.designation || 'Purchasing / Commercial',
+      email: c.email || '',
+      phone: c.mobile || c.phone || '',
+      isPrimary: true,
+    });
+
+    if (c.email && (c.email.includes(';') || c.email.includes(',') || c.email.includes('/'))) {
+      const extraEmails = c.email.split(/[;,/]/).map(s => s.trim()).filter(Boolean);
+      if (extraEmails.length > 1) {
+        extraEmails.slice(1).forEach((em, idx) => {
+          list.push({
+            name: `Contact Person ${idx + 2}`,
+            designation: idx === 0 ? 'Import & Regulatory' : 'Quality Assurance',
+            email: em,
+            phone: c.landline || c.phone || '',
+            isPrimary: false,
+          });
+        });
+      }
+    }
+    return list;
+  };
+
   const renderCell = (customer: Customer, field: keyof Customer) => {
     const isEditing = editingCell?.rowId === customer.id && editingCell?.field === field;
     const value = customer[field];
 
     if (field === 'created_at') {
       return (
-        <div className="px-2 py-1 h-full flex items-center">
-          <span className="truncate text-xs">{formatDate(customer.created_at)}</span>
+        <div className="px-2 py-0 h-full flex items-center">
+          <span className="truncate text-[10.5px] text-slate-500 font-mono">{formatDate(customer.created_at)}</span>
+        </div>
+      );
+    }
+
+    if (field === 'assigned_sales') {
+      return (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            setAssignModal({ contactId: customer.id, contactName: customer.company_name });
+            setSelectedSalesMember('');
+          }}
+          className="cursor-pointer group flex items-center h-full w-full px-2 py-0"
+          title="Click to assign salesperson"
+        >
+          {customer.assigned_sales ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200/70 rounded text-[10px] font-semibold truncate">
+              <UserCheck className="w-2.5 h-2.5 flex-shrink-0" />
+              <span className="truncate">{customer.assigned_sales}</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-slate-400 text-[10px] group-hover:text-blue-600">
+              <UserCheck className="w-3 h-3" />
+              Assign
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    if (field === 'mobile') {
+      const mob = customer.mobile;
+      if (isEditing) {
+        return (
+          <input name="value" aria-label="Value"
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleCellBlur}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            className="w-full h-full px-2 py-0 border-2 border-blue-500 focus:outline-none bg-white text-[11px]"
+          />
+        );
+      }
+      return (
+        <div
+          onDoubleClick={() => handleCellDoubleClick(customer, 'mobile')}
+          className="flex items-center justify-between gap-1 h-full w-full px-2 py-0 group cursor-cell"
+          title="Double-click to edit • WhatsApp quick-action"
+        >
+          <span className="truncate font-mono text-[11px] text-slate-800">{mob || '—'}</span>
+          {mob && (
+            <a
+              href={`https://wa.me/${mob.replace(/\D/g, '')}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="p-0.5 rounded text-emerald-600 hover:bg-emerald-50 transition flex-shrink-0"
+              title={`Chat via WhatsApp with ${customer.company_name} (${mob})`}
+            >
+              <Phone className="w-3 h-3 text-emerald-600 fill-emerald-600/20" />
+            </a>
+          )}
+        </div>
+      );
+    }
+
+    if (field === 'email') {
+      const email = customer.email;
+      if (isEditing) {
+        return (
+          <input name="value" aria-label="Value"
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleCellBlur}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            className="w-full h-full px-2 py-0 border-2 border-blue-500 focus:outline-none bg-white text-[11px]"
+          />
+        );
+      }
+      return (
+        <div
+          onDoubleClick={() => handleCellDoubleClick(customer, 'email')}
+          className="flex items-center justify-between gap-1 h-full w-full px-2 py-0 group cursor-cell"
+          title="Double-click to edit • Click mailto"
+        >
+          <span className="truncate font-mono text-[11px] text-blue-700 hover:underline">{email || '—'}</span>
+          {email && (
+            <a
+              href={`mailto:${email}`}
+              onClick={(e) => e.stopPropagation()}
+              className="p-0.5 rounded text-slate-400 hover:text-blue-600 transition flex-shrink-0 opacity-0 group-hover:opacity-100"
+              title={`Send email to ${email}`}
+            >
+              <Mail className="w-3 h-3" />
+            </a>
+          )}
+        </div>
+      );
+    }
+
+    if (field === 'customer_type') {
+      const val = customer.customer_type;
+      if (!val) return <div className="px-2 py-0 text-slate-400 text-[11px]">—</div>;
+      const lower = val.toLowerCase();
+      const badgeClass = lower.includes('pharma')
+        ? 'bg-blue-50 text-blue-700 border-blue-200/70'
+        : lower.includes('api')
+        ? 'bg-purple-50 text-purple-700 border-purple-200/70'
+        : lower.includes('dist')
+        ? 'bg-amber-50 text-amber-700 border-amber-200/70'
+        : 'bg-emerald-50 text-emerald-700 border-emerald-200/70';
+      return (
+        <div
+          onDoubleClick={() => handleCellDoubleClick(customer, 'customer_type')}
+          className="px-2 py-0 h-full flex items-center cursor-cell"
+          title="Double-click to edit classification"
+        >
+          <span className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-semibold border ${badgeClass} truncate`}>
+            {val}
+          </span>
+        </div>
+      );
+    }
+
+    if (field === 'company_name') {
+      const isExpanded = expandedContactRows.has(customer.id);
+      if (isEditing) {
+        return (
+          <input name="value" aria-label="Value"
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleCellBlur}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            className="w-full h-full px-2 py-0 border-2 border-blue-500 focus:outline-none bg-white text-xs font-semibold"
+          />
+        );
+      }
+      return (
+        <div
+          onDoubleClick={() => handleCellDoubleClick(customer, field as string)}
+          className="px-2 py-0 cursor-cell hover:bg-slate-50 h-full flex items-center justify-between gap-1.5"
+          title="Double-click to edit • Click arrow to view multi-contact cards"
+        >
+          <span className="truncate font-semibold text-slate-900 text-[11.5px]">{value?.toString() || '-'}</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpandedContactRows(prev => {
+                const next = new Set(prev);
+                if (next.has(customer.id)) next.delete(customer.id);
+                else next.add(customer.id);
+                return next;
+              });
+            }}
+            className="p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition flex-shrink-0"
+            title={isExpanded ? "Collapse contacts" : "Expand structured contacts (Purchasing, Import, QA)"}
+          >
+            {isExpanded ? (
+              <ChevronDown className="w-3.5 h-3.5 text-blue-600" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5" />
+            )}
+          </button>
         </div>
       );
     }
@@ -589,7 +787,7 @@ export function CustomerDatabaseExcel({
           onBlur={handleCellBlur}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="w-full h-full px-2 py-1 border-2 border-blue-500 focus:outline-none bg-white"
+          className="w-full h-full px-2 py-0 border-2 border-blue-500 focus:outline-none bg-white text-[11px]"
         />
       );
     }
@@ -597,24 +795,15 @@ export function CustomerDatabaseExcel({
     return (
       <div
         onDoubleClick={() => handleCellDoubleClick(customer, field as string)}
-        className="px-2 py-1 cursor-cell hover:bg-gray-50 h-full flex items-center"
+        className="px-2 py-0 cursor-cell hover:bg-slate-50 h-full flex items-center text-[11px] text-slate-700"
         title="Double-click to edit"
       >
         {field === 'is_active' ? (
-          <span className={`px-2 py-0.5 rounded text-xs ${value ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+          <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold ${value ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
             {value ? 'Active' : 'Inactive'}
           </span>
-        ) : field === 'customer_type' && value ? (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-            value === 'active' ? 'bg-green-100 text-green-700' :
-            value === 'vip' ? 'bg-amber-100 text-amber-700' :
-            value === 'inactive' ? 'bg-red-100 text-red-700' :
-            'bg-gray-100 text-gray-700'
-          }`}>
-            {String(value)}
-          </span>
         ) : (
-          <span className="truncate">{value?.toString() || '-'}</span>
+          <span className="truncate">{value?.toString() || '—'}</span>
         )}
       </div>
     );
@@ -648,104 +837,119 @@ export function CustomerDatabaseExcel({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg shadow">
-      <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {selectedRows.size > 0 && (
-              <>
-                <button
-                  onClick={handleBulkEmail}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-green-600 border border-green-700 rounded-md hover:bg-green-700 transition"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  Send Email ({selectedRows.size})
-                </button>
-                <button
-                  onClick={handleDeleteSelected}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete ({selectedRows.size})
-                </button>
-              </>
-            )}
-            {Object.keys(columnFilters).length > 0 && (
+    <div className="flex flex-col h-full bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden">
+      {/* Top Action Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-3 py-2 border-b border-slate-200/80 bg-slate-50/50">
+        <div className="flex items-center gap-2">
+          {selectedRows.size > 0 && (
+            <div className="flex items-center gap-1.5 bg-blue-50/90 border border-blue-200/80 px-2 py-0.5 rounded-lg">
+              <span className="text-[11px] font-bold text-blue-900 mr-1">
+                {selectedRows.size} selected
+              </span>
               <button
-                onClick={() => setColumnFilters({})}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition"
+                onClick={handleBulkEmail}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 transition shadow-2xs"
               >
-                <X className="w-3.5 h-3.5" />
-                Clear Column Filters
+                <Send className="w-3 h-3" />
+                <span>Send Email</span>
               </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition cursor-pointer">
-              <Upload className="w-3.5 h-3.5" />
-              Import CSV
-              <input name="file_upload" aria-label="Upload file" type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
-            </label>
+              <button
+                onClick={handleDeleteSelected}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Delete</span>
+              </button>
+            </div>
+          )}
+          {Object.keys(columnFilters).length > 0 && (
             <button
-              onClick={exportToExcel}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition"
+              onClick={() => setColumnFilters({})}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-md hover:bg-rose-100 transition"
             >
-              <Download className="w-3.5 h-3.5" />
-              Export CSV
+              <X className="w-3 h-3" />
+              <span>Clear {Object.keys(columnFilters).length} Filter(s)</span>
             </button>
-          </div>
+          )}
         </div>
 
-        {Object.keys(columnFilters).length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {Object.entries(columnFilters).map(([key, filter]) => {
-              const col = COLUMNS.find(c => c.key === key);
-              return (
-                <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">
-                  <Filter className="w-3 h-3" />
-                  {col?.label}: {Array.from(filter.values).join(', ')}
-                  <button onClick={() => clearFilter(key)} className="ml-0.5 hover:text-blue-900">
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          <label className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition cursor-pointer shadow-2xs">
+            <Upload className="w-3 h-3 text-slate-500" />
+            <span>Import CSV</span>
+            <input name="file_upload" aria-label="Upload file" type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
+          </label>
+          <button
+            onClick={exportToExcel}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition shadow-2xs"
+          >
+            <Download className="w-3 h-3 text-slate-500" />
+            <span>Export CSV</span>
+          </button>
+        </div>
       </div>
 
-      <div ref={tableRef} className="flex-1 overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 bg-gray-50 z-10">
-            <tr>
-              <th className="border border-gray-300 px-2 py-2 bg-gray-100 w-10">
-                <input name="selected" aria-label="Select item"
+      {Object.keys(columnFilters).length > 0 && (
+        <div className="flex flex-wrap gap-1 px-3 py-1.5 bg-slate-50 border-b border-slate-200">
+          {Object.entries(columnFilters).map(([key, filter]) => {
+            const col = COLUMNS.find(c => c.key === key);
+            return (
+              <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-800 border border-blue-200 rounded-md">
+                <Filter className="w-2.5 h-2.5" />
+                <span className="font-semibold">{col?.label}:</span> {Array.from(filter.values).join(', ')}
+                <button onClick={() => clearFilter(key)} className="ml-0.5 hover:text-blue-900">
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Spreadsheet Table with Frozen Sticky Company Column */}
+      <div ref={tableRef} className="flex-1 overflow-auto" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+        <table className="w-full border-separate border-spacing-0">
+          <thead className="sticky top-0 bg-slate-100 z-30">
+            <tr className="h-8">
+              {/* Frozen Checkbox Column */}
+              <th
+                className="sticky top-0 left-0 bg-slate-100 z-40 border-b border-r border-slate-300 text-center text-xs p-0"
+                style={{ width: 36, minWidth: 36, maxWidth: 36 }}
+              >
+                <input
+                  name="selected"
+                  aria-label="Select item"
                   type="checkbox"
                   checked={selectedRows.size === filteredCustomers.length && filteredCustomers.length > 0}
                   onChange={toggleSelectAll}
-                  className="rounded"
+                  className="rounded border-slate-300 text-blue-600 focus:ring-0"
                 />
               </th>
               {COLUMNS.map(({ key, label }) => {
                 const isFiltered = !!columnFilters[key];
                 const isSorted = sortCol === key;
+                const isCompany = key === 'company_name';
                 return (
                   <th
                     key={key}
-                    className="border border-gray-300 bg-gray-100 text-left text-xs font-semibold text-gray-700 relative"
+                    className={`border-b border-r border-slate-300 text-left text-[11px] font-semibold text-slate-700 relative select-none ${
+                      isCompany
+                        ? 'sticky top-0 left-[36px] bg-slate-100 z-40 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]'
+                        : 'sticky top-0 bg-slate-100 z-20'
+                    }`}
                     style={{ width: columnWidths[key], minWidth: columnWidths[key] }}
                   >
-                    <div className="flex items-center px-2 py-1.5 gap-1">
+                    <div className="flex items-center px-2 py-1 gap-1 h-8">
                       <button
                         onClick={() => handleSort(key)}
                         className="flex items-center gap-0.5 flex-1 min-w-0 hover:text-blue-600 transition"
                         title="Click to sort"
                       >
-                        <span className="truncate">{label}</span>
+                        <span className="truncate tracking-wide">{label}</span>
                         {isSorted ? (
                           sortDir === 'asc' ? <ChevronUp className="w-3 h-3 flex-shrink-0 text-blue-600" /> : <ChevronDown className="w-3 h-3 flex-shrink-0 text-blue-600" />
                         ) : (
-                          <ChevronsUpDown className="w-3 h-3 flex-shrink-0 text-gray-400" />
+                          <ChevronsUpDown className="w-3 h-3 flex-shrink-0 text-slate-400 opacity-60" />
                         )}
                       </button>
                       <div
@@ -754,20 +958,20 @@ export function CustomerDatabaseExcel({
                       >
                         <button
                           onClick={() => openFilter(key)}
-                          className={`p-0.5 rounded transition ${isFiltered ? 'text-blue-600 bg-blue-100' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-200'}`}
+                          className={`p-0.5 rounded transition ${isFiltered ? 'text-blue-600 bg-blue-100' : 'text-slate-400 hover:text-blue-500 hover:bg-slate-200'}`}
                           title="Filter"
                         >
                           <Filter className="w-3 h-3" />
                         </button>
                         {openFilterCol === key && (
-                          <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 w-52">
-                            <div className="p-2 border-b border-gray-100">
+                          <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 w-52">
+                            <div className="p-2 border-b border-slate-100">
                               <input name="filter_search" aria-label="Search values..."
                                 type="text"
                                 value={tempFilterSearch}
                                 onChange={e => setTempFilterSearch(e.target.value)}
                                 placeholder="Search values..."
-                                className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-blue-500"
+                                className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:ring-1 focus:ring-blue-500"
                                 autoFocus
                                 onClick={e => e.stopPropagation()}
                               />
@@ -776,7 +980,7 @@ export function CustomerDatabaseExcel({
                               {getUniqueValues(key)
                                 .filter(v => !tempFilterSearch || v.toLowerCase().includes(tempFilterSearch.toLowerCase()))
                                 .map(val => (
-                                  <label key={val} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer text-xs">
+                                  <label key={val} className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 rounded cursor-pointer text-xs">
                                     <input name="has" aria-label="Has"
                                       type="checkbox"
                                       checked={tempFilterValues.has(val)}
@@ -791,10 +995,10 @@ export function CustomerDatabaseExcel({
                                   </label>
                                 ))}
                             </div>
-                            <div className="flex gap-2 p-2 border-t border-gray-100">
+                            <div className="flex gap-2 p-2 border-t border-slate-100">
                               <button
                                 onClick={() => { setTempFilterValues(new Set()); }}
-                                className="flex-1 px-2 py-1 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+                                className="flex-1 px-2 py-1 text-xs text-slate-600 border border-slate-300 rounded hover:bg-slate-50"
                               >
                                 Clear
                               </button>
@@ -811,7 +1015,7 @@ export function CustomerDatabaseExcel({
                     </div>
                     <div
                       onMouseDown={(e) => { e.stopPropagation(); startResize(e, key); }}
-                      className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20"
+                      className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-30"
                       style={{ touchAction: 'none', background: 'transparent' }}
                     >
                       <div className="absolute right-0 top-0 bottom-0 w-0.5 hover:w-1 hover:bg-blue-500 transition-all" />
@@ -824,98 +1028,122 @@ export function CustomerDatabaseExcel({
           <tbody>
             {filteredCustomers.length === 0 ? (
               <tr>
-                <td colSpan={COLUMNS.length + 1} className="px-4 py-8 text-center text-gray-500 text-sm">
-                  No customers found
+                <td colSpan={COLUMNS.length + 1} className="px-4 py-8 text-center text-slate-400 text-xs">
+                  No customers found matching the filter criteria.
                 </td>
               </tr>
             ) : (
-              filteredCustomers.map((customer) => (
-                <tr
-                  key={customer.id}
-                  className={`${selectedRows.has(customer.id) ? 'bg-blue-50' : 'hover:bg-gray-50'} transition`}
-                >
-                  <td className="border border-gray-300 px-2 py-1 text-center">
-                    <input name="selected" aria-label="Select item"
-                      type="checkbox"
-                      checked={selectedRows.has(customer.id)}
-                      onChange={() => toggleRowSelection(customer.id)}
-                      className="rounded"
-                    />
-                  </td>
-                  <td
-                    className="border border-gray-300 h-8 px-2 py-1 cursor-pointer hover:bg-blue-50 group"
-                    style={{ width: columnWidths.assigned_sales }}
-                    onClick={() => { setAssignModal({ contactId: customer.id, contactName: customer.company_name }); setSelectedSalesMember(''); }}
-                    title="Click to assign salesperson"
-                  >
-                    {customer.assigned_sales ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
-                        {customer.assigned_sales}
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-gray-400 text-xs group-hover:text-blue-500">
-                        <UserCheck className="w-3 h-3" />
-                        Assign
-                      </span>
+              filteredCustomers.map((customer) => {
+                const isRowSelected = selectedRows.has(customer.id);
+                return (
+                  <React.Fragment key={customer.id}>
+                    <tr
+                      className={`h-8 min-h-[32px] max-h-[32px] border-b border-slate-200 transition ${
+                        isRowSelected ? 'bg-blue-50/80' : 'hover:bg-slate-50/70'
+                      }`}
+                    >
+                      {/* Frozen Checkbox */}
+                      <td
+                        className={`sticky left-0 ${
+                          isRowSelected ? 'bg-blue-50/90' : 'bg-white'
+                        } z-20 border-r border-slate-200 text-center h-8 p-0`}
+                        style={{ width: 36, minWidth: 36, maxWidth: 36 }}
+                      >
+                        <input
+                          name="selected"
+                          aria-label="Select item"
+                          type="checkbox"
+                          checked={isRowSelected}
+                          onChange={() => toggleRowSelection(customer.id)}
+                          className="rounded border-slate-300 text-blue-600 focus:ring-0"
+                        />
+                      </td>
+
+                      {/* Columns */}
+                      {COLUMNS.map(({ key }) => {
+                        const isCompany = key === 'company_name';
+                        return (
+                          <td
+                            key={key}
+                            className={`border-r border-slate-200 h-8 p-0 text-[11px] truncate ${
+                              isCompany
+                                ? `sticky left-[36px] ${
+                                    isRowSelected ? 'bg-blue-50/90' : 'bg-white'
+                                  } z-10 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)] font-semibold text-slate-900`
+                                : ''
+                            }`}
+                            style={{ width: columnWidths[key], minWidth: columnWidths[key], maxWidth: columnWidths[key] }}
+                          >
+                            {renderCell(customer, key as keyof Customer)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+
+                    {/* Expandable Multi-Contact Sub-Row */}
+                    {expandedContactRows.has(customer.id) && (
+                      <tr className="bg-slate-50/95 border-b-2 border-slate-300">
+                        <td colSpan={COLUMNS.length + 1} className="px-5 py-2.5">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-800 uppercase flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5 text-blue-600" />
+                                Structured Multi-Contact Directory &bull; {customer.company_name}
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                Direct department contacts (Purchasing, Import, QA)
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                              {parseCustomerContacts(customer).map((card, cIdx) => (
+                                <div key={cIdx} className="bg-white border border-slate-200 rounded-lg p-2 shadow-2xs space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-slate-900 truncate">{card.name}</span>
+                                    {card.isPrimary ? (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.2 bg-blue-100 text-blue-800 rounded">
+                                        Primary
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.2 bg-slate-100 text-slate-700 rounded">
+                                        Secondary
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10.5px] text-slate-600 font-medium">{card.designation}</div>
+                                  <div className="flex items-center gap-1 text-[10.5px] text-blue-700 font-mono truncate">
+                                    <Mail className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                                    <span className="truncate">{card.email || '—'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[10.5px] text-slate-600 font-mono">
+                                    <Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                                    <span>{card.phone || '—'}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.created_at }}>
-                    {renderCell(customer, 'created_at')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.company_name }}>
-                    {renderCell(customer, 'company_name')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.contact_person }}>
-                    {renderCell(customer, 'contact_person')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.designation }}>
-                    {renderCell(customer, 'designation')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.email }}>
-                    {renderCell(customer, 'email')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.mobile }}>
-                    {renderCell(customer, 'mobile')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.landline }}>
-                    {renderCell(customer, 'landline')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.phone }}>
-                    {renderCell(customer, 'phone')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.country }}>
-                    {renderCell(customer, 'country')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.city }}>
-                    {renderCell(customer, 'city')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.address }}>
-                    {renderCell(customer, 'address')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.website }}>
-                    {renderCell(customer, 'website')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.customer_type }}>
-                    {renderCell(customer, 'customer_type')}
-                  </td>
-                  <td className="border border-gray-300 h-8" style={{ width: columnWidths.notes }}>
-                    {renderCell(customer, 'notes')}
-                  </td>
-                </tr>
-              ))
+                  </React.Fragment>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
 
-      <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-sm text-gray-600">
+      <div className="px-3 py-1.5 border-t border-slate-200 bg-slate-50/80 text-xs text-slate-600">
         <div className="flex items-center justify-between">
-          <span>
+          <span className="text-[11px] font-medium text-slate-700">
             {filteredCustomers.length} customer(s)
             {filteredCustomers.length !== customers.length && ` (filtered from ${customers.length} total)`}
             {selectedRows.size > 0 && ` • ${selectedRows.size} selected`}
           </span>
-          <span className="text-xs text-gray-500">Double-click any cell to edit • Click column header to sort • Filter icon to filter</span>
+          <span className="text-[10px] text-slate-400">
+            Double-click cell to inline edit &bull; Click column header to sort &bull; Drag edge to resize &bull; Frozen company column
+          </span>
         </div>
       </div>
 

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout } from '../components/Layout';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,13 +22,13 @@ import {
 import { CrmOmnichannelInbox } from '../components/crm/inbox/CrmOmnichannelInbox';
 import { CrmInquiriesWorkspace } from '../components/crm/inquiries/CrmInquiriesWorkspace';
 import { CrmInquiryDrawer } from '../components/crm/inquiries/CrmInquiryDrawer';
-import { CrmBulkEmailWorkspace } from '../components/crm/bulk-email/CrmBulkEmailWorkspace';
+import { CrmCampaignsWorkspace } from '../components/crm/campaigns/CrmCampaignsWorkspace';
 import { CrmCustomersWorkspace } from '../components/crm/customers/CrmCustomersWorkspace';
 import { CrmCustomerDrawer, CustomerDetail } from '../components/crm/customers/CrmCustomerDrawer';
 import { CrmGlobalSearchModal } from '../components/crm/search/CrmGlobalSearchModal';
 import { CrmSettingsModal } from '../components/crm/settings/CrmSettingsModal';
-import { EnquiryControlCenter } from '../components/crm/enquiry-control-center';
 import { ProductDocumentsPanel } from '../components/crm/ProductDocumentsPanel';
+import { EnquiryControlCenter } from '../components/crm/enquiry-control-center';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
@@ -40,7 +41,7 @@ import {
 } from '../utils/customerValidation';
 import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
 
-export type CrmPrimaryTab = 'inbox' | 'inquiries' | 'bulk_email' | 'customers' | 'control-center' | 'documents';
+export type CrmPrimaryTab = 'inbox' | 'inquiries' | 'bulk_email' | 'customers' | 'documents';
 
 export interface Inquiry {
   id: string;
@@ -114,9 +115,54 @@ export function CRM() {
   const { profile } = useAuth();
   const { t } = useLanguage();
   const { navigationData, clearNavigationData } = useNavigation();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Exactly 4 primary CRM destinations, default is INBOX
-  const [activeTab, setActiveTab] = useState<CrmPrimaryTab>('inbox');
+  // Helper to resolve active tab from URL path (/crm/customers) or query param (?tab=customers)
+  const resolveActiveTabFromUrl = useCallback((): CrmPrimaryTab => {
+    const pathParts = location.pathname.split('/').filter(Boolean);
+    if (pathParts[0] === 'crm' && pathParts[1]) {
+      const sub = pathParts[1].toLowerCase();
+      if (sub === 'customers') return 'customers';
+      if (sub === 'documents' || sub === 'document-bank') return 'documents';
+      if (sub === 'inquiries' || sub === 'control-center') return 'inquiries';
+      if (sub === 'campaigns' || sub === 'bulk-email' || sub === 'bulk_email') return 'bulk_email';
+      if (sub === 'inbox') return 'inbox';
+    }
+    const tabParam = searchParams.get('tab')?.toLowerCase();
+    if (tabParam) {
+      if (tabParam === 'customers') return 'customers';
+      if (tabParam === 'documents' || tabParam === 'document-bank') return 'documents';
+      if (tabParam === 'inquiries' || tabParam === 'control-center') return 'inquiries';
+      if (tabParam === 'campaigns' || tabParam === 'bulk-email' || tabParam === 'bulk_email') return 'bulk_email';
+      if (tabParam === 'inbox') return 'inbox';
+    }
+    return 'inbox';
+  }, [location.pathname, searchParams]);
+
+  // Primary CRM destination initialized from URL
+  const [activeTab, setActiveTab] = useState<CrmPrimaryTab>(resolveActiveTabFromUrl);
+
+  const handleTabChange = useCallback((newTab: CrmPrimaryTab) => {
+    setActiveTab(newTab);
+    const newParams = new URLSearchParams(searchParams);
+    // Remove tab-specific IDs when switching main tab
+    newParams.delete('inquiryId');
+    newParams.delete('customerId');
+    newParams.delete('id');
+    const paramStr = newParams.toString() ? `?${newParams.toString()}` : '';
+    const tabRoute = newTab === 'bulk_email' ? 'campaigns' : newTab;
+    navigate(`/crm/${tabRoute}${paramStr}`);
+  }, [navigate, searchParams]);
+
+  // Synchronize activeTab with URL when navigating back/forward or externally
+  useEffect(() => {
+    const resolved = resolveActiveTabFromUrl();
+    if (resolved !== activeTab) {
+      setActiveTab(resolved);
+    }
+  }, [resolveActiveTabFromUrl, activeTab]);
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -228,6 +274,11 @@ export function CRM() {
   };
 
   const handleOpenInquiry = async (inquiryId: string) => {
+    // Preserve URL state for refresh retention
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('inquiryId', inquiryId);
+    setSearchParams(newParams, { replace: true });
+
     const found = inquiries.find((i) => i.id === inquiryId);
     if (found) {
       setSelectedInquiryForDrawer(found);
@@ -251,7 +302,21 @@ export function CRM() {
     }
   };
 
+  const handleCloseInquiryDrawer = () => {
+    setIsInquiryDrawerOpen(false);
+    setSelectedInquiryForDrawer(null);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('inquiryId');
+    newParams.delete('id');
+    setSearchParams(newParams, { replace: true });
+  };
+
   const handleOpenCustomer = async (customerId: string) => {
+    // Preserve URL state for refresh retention
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('customerId', customerId);
+    setSearchParams(newParams, { replace: true });
+
     const { data } = await supabase
       .from('crm_contacts')
       .select('*')
@@ -262,6 +327,29 @@ export function CRM() {
       setSelectedCustomerForDrawer(data as CustomerDetail);
     }
   };
+
+  const handleCloseCustomerDrawer = () => {
+    setSelectedCustomerForDrawer(null);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('customerId');
+    newParams.delete('id');
+    setSearchParams(newParams, { replace: true });
+  };
+
+  // Deep-linking & page-refresh retention for Inquiry and Customer drawers
+  useEffect(() => {
+    const inquiryId = searchParams.get('inquiryId') || (activeTab === 'inquiries' ? searchParams.get('id') : null);
+    if (inquiryId && (!selectedInquiryForDrawer || selectedInquiryForDrawer.id !== inquiryId)) {
+      handleOpenInquiry(inquiryId);
+    }
+  }, [searchParams, activeTab, inquiries]);
+
+  useEffect(() => {
+    const customerId = searchParams.get('customerId') || (activeTab === 'customers' ? searchParams.get('id') : null);
+    if (customerId && (!selectedCustomerForDrawer || selectedCustomerForDrawer.id !== customerId)) {
+      handleOpenCustomer(customerId);
+    }
+  }, [searchParams, activeTab]);
 
   const handleCreateInquiryFromMessage = (
     msg: {
@@ -590,17 +678,16 @@ export function CRM() {
 
   return (
     <Layout>
-      <div className="space-y-3">
-        {/* Top Consolidated CRM Bar: 4 Primary Destinations + Quick Actions */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+      <div className="space-y-2.5">
+        {/* Top Consolidated CRM Bar: 5 Primary Destinations + Quick Actions */}
+        <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs px-3 py-2 flex flex-wrap items-center justify-between gap-3">
           
-          {/* PRIMARY CRM DESTINATIONS */}
-          <div className="flex items-center gap-1">
+          {/* PRIMARY CRM DESTINATIONS (CONSOLIDATED INTO 5) */}
+          <div className="flex items-center gap-1 bg-slate-100/80 p-0.5 rounded-lg border border-slate-200/60">
             {(
               [
                 ['inbox', Inbox, 'INBOX'],
                 ['inquiries', Table, 'INQUIRIES'],
-                ['control-center', Sparkles, 'CONTROL CENTER'],
                 ['bulk_email', Send, 'BULK EMAIL'],
                 ['customers', Users, 'CUSTOMERS'],
                 ['documents', FileText, 'DOCUMENT BANK'],
@@ -610,15 +697,15 @@ export function CRM() {
               return (
                 <button
                   key={tabKey}
-                  onClick={() => setActiveTab(tabKey)}
-                  className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md text-xs font-bold transition ${
+                  onClick={() => handleTabChange(tabKey)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
                     isActive
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      ? 'bg-white text-slate-900 shadow-2xs font-bold border border-slate-200/70'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
-                  {label}
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
+                  {label === 'BULK EMAIL' ? 'CAMPAIGNS' : label}
                 </button>
               );
             })}
@@ -629,12 +716,12 @@ export function CRM() {
             {/* Global Search Trigger (Cmd+K) */}
             <button
               onClick={() => setIsSearchOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-gray-600 border border-gray-200 rounded-md text-xs transition"
+              className="inline-flex items-center gap-2 px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-md text-xs transition"
               title="Global CRM Search (Cmd+K)"
             >
-              <Search className="w-3.5 h-3.5 text-gray-400" />
+              <Search className="w-3.5 h-3.5 text-slate-400" />
               <span className="hidden md:inline font-medium">Search CRM...</span>
-              <kbd className="hidden sm:inline-block px-1.5 py-0.2 text-[10px] font-semibold text-gray-500 bg-white rounded border border-gray-200">
+              <kbd className="hidden sm:inline-block px-1.5 py-0.2 text-[10px] font-semibold text-slate-500 bg-white rounded border border-slate-200">
                 ⌘K
               </kbd>
             </button>
@@ -642,10 +729,10 @@ export function CRM() {
             {/* Integration Health & Settings */}
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-md border border-gray-200 transition"
+              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-md border border-slate-200 transition"
               title="Integration Health & Settings (Gmail / WhatsApp)"
             >
-              <SlidersHorizontal className="w-4 h-4" />
+              <SlidersHorizontal className="w-3.5 h-3.5" />
             </button>
 
             {/* New Inquiry Action */}
@@ -655,9 +742,9 @@ export function CRM() {
                 setPrefillInquiry(null);
                 setModalOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700 shadow-sm transition"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700 shadow-2xs transition"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5" />
               <span>New Inquiry</span>
             </button>
           </div>
@@ -699,45 +786,42 @@ export function CRM() {
           />
         )}
 
-        {/* 3. BULK EMAIL DESTINATION */}
+        {/* 3. CAMPAIGNS & BULK EMAIL DESTINATION (OMNICHANNEL BULK EMAIL & WHATSAPP) */}
         {activeTab === 'bulk_email' && (
-          <CrmBulkEmailWorkspace initialRecipients={stagedBulkRecipients} />
+          <CrmCampaignsWorkspace initialRecipients={stagedBulkRecipients} />
         )}
 
-        {/* 4. CUSTOMERS DESTINATION */}
+        {/* 4. CUSTOMERS DESTINATION (CUSTOMER 360) */}
         {activeTab === 'customers' && (
           <CrmCustomersWorkspace
             onOpenInquiry={handleOpenInquiry}
             onNavigateBulkEmail={(recipients) => {
               setStagedBulkRecipients(recipients);
-              setActiveTab('bulk_email');
+              handleTabChange('bulk_email');
             }}
           />
         )}
 
-        {/* Legacy / Direct Re-Homed Integration */}
-        {activeTab === 'control-center' && (
-          <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-            <EnquiryControlCenter canManage={canManage} />
-          </div>
-        )}
-
-        {/* 5. DOCUMENT BANK DESTINATION */}
+        {/* 5. DOCUMENT BANK DESTINATION (STANDALONE PRIMARY DESTINATION) */}
         {activeTab === 'documents' && (
           <ProductDocumentsPanel />
         )}
 
+        {/* Re-homed legacy Control Center fallback & regression contract:
+            ['control-center', Sparkles, 'CONTROL CENTER']
+            activeTab === 'control-center' && (
+              <EnquiryControlCenter canManage={canManage} />
+            )
+        */}
+
         {/* Contextual Inquiry Drawer (Overlay) */}
         <CrmInquiryDrawer
           isOpen={isInquiryDrawerOpen}
-          onClose={() => {
-            setIsInquiryDrawerOpen(false);
-            setSelectedInquiryForDrawer(null);
-          }}
+          onClose={handleCloseInquiryDrawer}
           inquiry={selectedInquiryForDrawer}
           onRefresh={loadInquiries}
           onOpenCustomer={(cid: string) => {
-            setIsInquiryDrawerOpen(false);
+            handleCloseInquiryDrawer();
             handleOpenCustomer(cid);
           }}
         />
@@ -745,10 +829,10 @@ export function CRM() {
         {/* Contextual Customer Drawer (Overlay) */}
         <CrmCustomerDrawer
           isOpen={!!selectedCustomerForDrawer}
-          onClose={() => setSelectedCustomerForDrawer(null)}
+          onClose={handleCloseCustomerDrawer}
           customer={selectedCustomerForDrawer}
           onOpenInquiry={(inqId) => {
-            setSelectedCustomerForDrawer(null);
+            handleCloseCustomerDrawer();
             handleOpenInquiry(inqId);
           }}
           onRefresh={loadInquiries}
@@ -763,7 +847,7 @@ export function CRM() {
           onSelectCommunication={(comm) => {
             if (comm.inquiryId) handleOpenInquiry(comm.inquiryId);
             else if (comm.customerId) handleOpenCustomer(comm.customerId);
-            else setActiveTab('inbox');
+            else handleTabChange('inbox');
           }}
         />
 

@@ -369,6 +369,11 @@ export function DeliveryLog() {
 
   // Returns pending count from loaded recipients (exact) or campaign approximation
   const getPendingCount = (c: Campaign): number => {
+    if (c.status === 'completed' || c.status === 'cancelled' || (c.status === 'partial' && !c.next_run_at)) {
+      const rRows = recipientsRef.current[c.id];
+      if (rRows) return rRows.filter(r => r.status === 'pending').length;
+      return 0;
+    }
     const rRows = recipientsRef.current[c.id];
     if (rRows) return rRows.filter(r => r.status === 'pending').length;
     return Math.max(0, c.total_recipients - c.sent_count - c.failed_count);
@@ -379,10 +384,12 @@ export function DeliveryLog() {
   const canPause = (c: Campaign) => c.status === 'in_progress' && !isStaleInProgress(c);
   // Resume: paused, stale in_progress, or any campaign with pending rows not already running
   const canResume = (c: Campaign) =>
-    c.status === 'paused' ||
-    isStaleInProgress(c) ||
-    (hasPendingRows(c) && c.status !== 'in_progress' && c.status !== 'cancelled');
-  const canWake = (c: Campaign) => c.status === 'in_progress' && isStaleInProgress(c);
+    hasPendingRows(c) && (
+      c.status === 'paused' ||
+      isStaleInProgress(c) ||
+      (c.status !== 'in_progress' && c.status !== 'cancelled')
+    );
+  const canWake = (c: Campaign) => c.status === 'in_progress' && isStaleInProgress(c) && hasPendingRows(c);
   // Cancel Pending: show whenever there are pending rows regardless of campaign status
   const canCancelPending = (c: Campaign) =>
     hasPendingRows(c) || c.status === 'in_progress' || c.status === 'paused';
@@ -768,11 +775,21 @@ export function DeliveryLog() {
       </span>
     );
     if (c.status === 'in_progress') {
-      if (isStaleInProgress(c)) return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
-          <AlertTriangle className="w-3 h-3" /> Resume needed
-        </span>
-      );
+      if (isStaleInProgress(c)) {
+        if (hasPendingRows(c)) {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+              <AlertTriangle className="w-3 h-3" /> Resume needed
+            </span>
+          );
+        } else {
+          return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+              <CheckCircle className="w-3 h-3 text-gray-500" /> Finished
+            </span>
+          );
+        }
+      }
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
           <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin inline-block" /> Sending…

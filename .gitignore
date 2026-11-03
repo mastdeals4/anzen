@@ -39,4 +39,6 @@ wa_qr_extracted.png
 services/whatsapp-adapter/*.plist
 services/whatsapp-adapter/config.yml
 services/whatsapp-adapter/logs/
+services/whatsapp-adapter/*.png
 /*.png
+scratch/

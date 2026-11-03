@@ -1171,7 +1171,23 @@ export default function ImportContainers() {
                               <span className="font-semibold text-gray-800">
                                 {getCategoryLabel(item.category)}
                               </span>
-                              {!item.isCapitalizable && (
+                              {item.category === 'bpom_ski_fees' ? (
+                                isChecked ? (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200"
+                                    title="Capitalized into container landed cost and absorbed into inventory asset (Account 1130)."
+                                  >
+                                    Capitalizable Import Cost
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200"
+                                    title="Operational regulatory fee posted to P&L 5410. Excluded from inventory landed cost."
+                                  >
+                                    Operational (P&L 5410)
+                                  </span>
+                                )
+                              ) : !item.isCapitalizable && (
                                 <span
                                   className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200"
                                   title="Operational regulatory fee posted to P&L 5410. Excluded from inventory landed-cost capitalization to prevent duplicate COGS 5100 expense recognition."

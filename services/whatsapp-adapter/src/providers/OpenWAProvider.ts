@@ -38,6 +38,10 @@ export class OpenWAProvider implements WhatsAppProvider {
   private monitorInterval: NodeJS.Timeout | null = null;
   private isInitializing: boolean = false;
   private lastDiagnosticTime: number = 0;
+  private authenticatedPhone: string | null = null;
+  private authenticatedJid: string | null = null;
+  private identityVerifiedAt: string | null = null;
+  private identitySource: string | null = null;
 
   constructor(config: OpenWAProviderConfig) {
     const isMock = process.env.MOCK_MODE === 'true';
@@ -49,7 +53,7 @@ export class OpenWAProvider implements WhatsAppProvider {
     this.config = {
       sessionId: process.env.SESSION_ID || config.sessionId || 'sapj-business-whatsapp',
       headless: process.env.HEADLESS !== 'false',
-      businessPhone: process.env.BUSINESS_PHONE || config.businessPhone || '+628119999999',
+      businessPhone: process.env.BUSINESS_PHONE || config.businessPhone,
       sessionDataPath: resolvedSessionPath,
       mockMode: isMock,
       ...config,
@@ -198,8 +202,13 @@ export class OpenWAProvider implements WhatsAppProvider {
             this.lastError = undefined;
             this.lastSeen = new Date().toISOString();
 
+            // Extract real authenticated WhatsApp Business session identity
+            await this.extractSessionIdentity();
+
             // Inject inbound message observer into WhatsApp Web
             await this.injectInboundObserver();
+          } else if (!this.authenticatedPhone) {
+            await this.extractSessionIdentity();
           }
           return;
         }
@@ -279,7 +288,87 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   /**
-   * Injects an observer to capture incoming messages from WhatsApp Web DOM
+   * Retrieves the authenticated account's actual WhatsApp number/JID directly from the runtime transport.
+   * Direct inspection of WAWebUserPrefsMeUser / localStorage in the active page context.
+   */
+  public async extractSessionIdentity(): Promise<{
+    phone: string | null;
+    jid: string | null;
+    source: string | null;
+    verifiedAt: string | null;
+  }> {
+    if (!this.page || this.page.isClosed()) {
+      return {
+        phone: this.authenticatedPhone,
+        jid: this.authenticatedJid,
+        source: this.identitySource,
+        verifiedAt: this.identityVerifiedAt,
+      };
+    }
+
+    try {
+      const identity = await this.page.evaluate(() => {
+        try {
+          // 1. Primary: WhatsApp Web internal session API (WAWebUserPrefsMeUser)
+          // @ts-ignore
+          if (typeof window.require === 'function') {
+            try {
+              // @ts-ignore
+              const meMod = window.require('WAWebUserPrefsMeUser');
+              if (meMod && typeof meMod.getMaybeMePnUser === 'function') {
+                const pn = meMod.getMaybeMePnUser();
+                if (pn && pn.user) {
+                  const clean = String(pn.user).replace(/\D/g, '');
+                  if (clean) {
+                    return {
+                      phone: `+${clean}`,
+                      jid: pn._serialized || `${clean}@c.us`,
+                      source: 'WAWebUserPrefsMeUser.getMaybeMePnUser()',
+                    };
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+
+          // 2. Secondary fallback: localStorage (last-wid-md or last-wid)
+          const rawWid = localStorage.getItem('last-wid-md') || localStorage.getItem('last-wid');
+          if (rawWid) {
+            const unquoted = typeof rawWid === 'string' ? rawWid.replace(/^"|"$/g, '') : '';
+            const match = unquoted.match(/^(\d+)/);
+            if (match && match[1]) {
+              return {
+                phone: `+${match[1]}`,
+                jid: `${match[1]}@c.us`,
+                source: 'localStorage.last-wid-md',
+              };
+            }
+          }
+        } catch (e) {}
+        return null;
+      });
+
+      if (identity && identity.phone) {
+        this.authenticatedPhone = identity.phone;
+        this.authenticatedJid = identity.jid;
+        this.identitySource = identity.source;
+        this.identityVerifiedAt = new Date().toISOString();
+        console.log(`[OpenWAProvider] Runtime session identity detected: ${this.authenticatedPhone} via ${this.identitySource}`);
+      }
+    } catch (err: any) {
+      console.warn('[OpenWAProvider] Error extracting session identity:', err.message);
+    }
+
+    return {
+      phone: this.authenticatedPhone,
+      jid: this.authenticatedJid,
+      source: this.identitySource,
+      verifiedAt: this.identityVerifiedAt,
+    };
+  }
+
+  /**
+   * Injects an observer to capture incoming messages from WhatsApp Web (MsgCollection + DOM fallback)
    */
   private async injectInboundObserver(): Promise<void> {
     if (!this.page || this.page.isClosed()) return;
@@ -291,27 +380,92 @@ export class OpenWAProvider implements WhatsAppProvider {
         // @ts-ignore
         window.__anzenWaObserverInstalled = true;
 
+        // 1. Hook into WhatsApp Web internal MsgCollection if available
+        try {
+          // @ts-ignore
+          if (typeof window.require === 'function') {
+            // @ts-ignore
+            const msgColMod = window.require('WAWebMsgCollection');
+            const msgCol = msgColMod?.MsgCollection;
+            if (msgCol && typeof msgCol.on === 'function') {
+              msgCol.on('add', (msg: any) => {
+                try {
+                  if (!msg || msg.fromMe) return;
+
+                  let senderPhone = '';
+                  let senderName = '';
+                  const chat = msg.chat;
+
+                  if (chat) {
+                    if (chat.formattedTitle && /\d/.test(chat.formattedTitle)) {
+                      senderPhone = '+' + chat.formattedTitle.replace(/\D/g, '');
+                    } else if (chat.contact && chat.contact.phoneNumber) {
+                      senderPhone = '+' + String(chat.contact.phoneNumber).replace(/\D/g, '');
+                    }
+                    senderName = chat.contact?.pushname || chat.contact?.name || chat.formattedTitle || '';
+                  }
+
+                  if (!senderPhone && msg.from?._serialized) {
+                    const match = msg.from._serialized.match(/^(\d+)/);
+                    if (match) senderPhone = '+' + match[1];
+                  }
+
+                  const text = msg.body || msg.caption || '';
+                  if (!text && !msg.type) return;
+
+                  const messageId = msg.id?._serialized || `wa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                  const chatId = msg.from?._serialized || chat?.id?._serialized || (senderPhone ? `${senderPhone.replace(/\D/g, '')}@c.us` : 'unknown@c.us');
+
+                  const payload = {
+                    messageId,
+                    chatId,
+                    senderPhone: senderPhone || '+628000000000',
+                    senderName: senderName || 'WhatsApp Contact',
+                    text,
+                    receivedAt: msg.t ? new Date(msg.t * 1000).toISOString() : new Date().toISOString(),
+                    isGroup: msg.isGroupMsg || false,
+                  };
+
+                  // @ts-ignore
+                  window.onInboundWhatsAppMessageBridge?.(JSON.stringify(payload));
+                } catch (err) {
+                  console.error('[WhatsApp Observer] Error handling MsgCollection event:', err);
+                }
+              });
+              console.log('[Anzen Observer] WhatsApp Web MsgCollection listener attached.');
+            }
+          }
+        } catch (e) {
+          console.warn('[Anzen Observer] Could not attach to MsgCollection:', e);
+        }
+
+        // 2. Secondary fallback: MutationObserver for DOM message rows
         const observer = new MutationObserver((mutations) => {
           for (const m of mutations) {
             for (const node of Array.from(m.addedNodes)) {
               if (node instanceof HTMLElement) {
-                // Check if incoming message bubble
                 const msgRow = node.closest('[data-testid="msg-container"]') || node.querySelector('[data-testid="msg-container"]');
                 if (msgRow) {
-                  const textEl = msgRow.querySelector('.selectable-text, [data-testid="selectable-text"]');
-                  const text = textEl ? textEl.textContent?.trim() : '';
-
-                  // Ensure it's incoming (message-in)
                   const isIncoming = msgRow.classList.contains('message-in') || msgRow.closest('.message-in');
-                  if (isIncoming && text) {
-                    const messageId = `wa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                  if (isIncoming) {
+                    const textEl = msgRow.querySelector('.selectable-text, [data-testid="selectable-text"]');
+                    const text = textEl ? textEl.textContent?.trim() : '';
+
+                    // Resolve chat header title
+                    const chatHeaderTitle = document.querySelector('#main header [title]')?.getAttribute('title') || '';
+                    const cleanPhone = chatHeaderTitle.replace(/\D/g, '');
+                    const senderPhone = cleanPhone ? `+${cleanPhone}` : '+628000000000';
+
+                    const messageId = `wa_dom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
                     const payload = {
                       messageId,
-                      chatId: 'inbound_chat@c.us',
-                      senderPhone: 'customer',
-                      text,
+                      chatId: `${senderPhone.replace(/\D/g, '')}@c.us`,
+                      senderPhone,
+                      senderName: chatHeaderTitle || 'WhatsApp Contact',
+                      text: text || '',
                       receivedAt: new Date().toISOString(),
                     };
+
                     // @ts-ignore
                     window.onInboundWhatsAppMessageBridge?.(JSON.stringify(payload));
                   }
@@ -410,13 +564,12 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   public async pair(phone?: string): Promise<WhatsAppConnectionStatus> {
-    const businessNumber = phone || this.config.businessPhone || '+628119999999';
-    this.config.businessPhone = businessNumber;
     this.status = 'connected';
     this.qrCode = null;
     this.lastError = undefined;
     this.lastSeen = new Date().toISOString();
-    console.log(`[OpenWAProvider] WhatsApp Business paired/connected for ${businessNumber}`);
+    await this.extractSessionIdentity();
+    console.log(`[OpenWAProvider] WhatsApp Business paired/connected for ${this.authenticatedPhone || phone || 'live-session'}`);
     return this.getStatus();
   }
 
@@ -495,10 +648,17 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   public async getStatus(): Promise<WhatsAppConnectionStatus> {
+    if (this.status === 'connected' && !this.authenticatedPhone) {
+      await this.extractSessionIdentity();
+    }
+
     return {
       status: this.status,
       session: this.config.sessionId || 'sapj-business-whatsapp',
-      businessPhone: this.status === 'connected' ? (this.config.businessPhone || '+628119999999') : null,
+      businessPhone: this.status === 'connected' ? (this.authenticatedPhone || null) : null,
+      businessJid: this.status === 'connected' ? (this.authenticatedJid || null) : null,
+      identityVerifiedAt: this.identityVerifiedAt || null,
+      identitySource: this.identitySource || null,
       lastSeen: this.lastSeen,
       qrCode: this.status === 'unpaired' ? this.qrCode : null,
       error: this.lastError,

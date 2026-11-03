@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify';
 import { supabase } from '../../../lib/supabase';
 import { useNavigation } from '../../../contexts/NavigationContext';
 import { showToast } from '../../ToastNotification';
+import { SpeechToTextButton } from '../SpeechToTextButton';
 import { getSignedUrlCached } from '../../../utils/signedUrlCache';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { PipelineStatusBadge } from '../PipelineStatusBadge';
@@ -62,6 +63,7 @@ interface InquiryDetail {
   aceerp_no?: string | null;
   remarks?: string | null;
   internal_notes?: string | null;
+  customer_id?: string | null;
   assigned_to?: string | null;
   user_profiles?: {
     full_name: string;
@@ -145,9 +147,60 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
+  // Staff Assignment State
+  const [staffProfiles, setStaffProfiles] = useState<Array<{ id: string; full_name: string; email?: string }>>([]);
+  const [currentAssignedTo, setCurrentAssignedTo] = useState<string | null>(inquiry?.assigned_to || null);
+  const [isReassigning, setIsReassigning] = useState(false);
+
+  useEffect(() => {
+    supabase
+      .from('user_profiles')
+      .select('id, full_name, email')
+      .order('full_name', { ascending: true })
+      .then(({ data }) => {
+        if (data) setStaffProfiles(data);
+      });
+  }, []);
+
+  const handleReassignStaff = async (newStaffId: string) => {
+    if (!inquiry) return;
+    setIsReassigning(true);
+    try {
+      const targetStaff = staffProfiles.find(s => s.id === newStaffId);
+      const assignedName = targetStaff?.full_name || 'Unassigned';
+
+      const { error } = await supabase
+        .from('crm_inquiries')
+        .update({ assigned_to: newStaffId || null })
+        .eq('id', inquiry.id);
+
+      if (error) throw error;
+
+      // Log audit activity
+      const { data: auth } = await supabase.auth.getUser();
+      await supabase.from('crm_activities').insert({
+        inquiry_id: inquiry.id,
+        customer_id: inquiry.customer_id || null,
+        activity_type: 'Reassignment',
+        subject: `Salesperson reassigned to ${assignedName}`,
+        created_by: auth.user?.id || null,
+        is_completed: true,
+      });
+
+      setCurrentAssignedTo(newStaffId || null);
+      if (onRefresh) onRefresh();
+      showToast({ type: 'success', title: 'Salesperson Reassigned', message: `Assigned to ${assignedName}` });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Reassignment Failed', message: err.message || 'Could not update staff assignment' });
+    } finally {
+      setIsReassigning(false);
+    }
+  };
+
   useEffect(() => {
     if (inquiry) {
       setCurrentStage(inquiry.pipeline_status || 'new');
+      setCurrentAssignedTo(inquiry.assigned_to || null);
       loadInquiryDetails(inquiry.id);
     }
   }, [inquiry?.id]);
@@ -556,7 +609,20 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
             <div className="text-xs text-gray-500 mt-1 flex items-center gap-3">
               <span>Product: <strong className="text-gray-800">{inquiry.product_name}</strong></span>
               <span>• Qty: <strong className="text-gray-800">{inquiry.quantity || '-'}</strong></span>
-              <span>• Owner: <strong className="text-gray-800">{inquiry.user_profiles?.full_name || 'Unassigned'}</strong></span>
+              <span className="flex items-center gap-1">
+                • Owner:
+                <select
+                  value={currentAssignedTo || ''}
+                  disabled={isReassigning}
+                  onChange={e => handleReassignStaff(e.target.value)}
+                  className="text-xs font-semibold text-gray-800 bg-white border border-gray-200 rounded px-1.5 py-0.5 hover:border-blue-500 focus:outline-none cursor-pointer"
+                >
+                  <option value="">Unassigned</option>
+                  {staffProfiles.map(s => (
+                    <option key={s.id} value={s.id}>{s.full_name}</option>
+                  ))}
+                </select>
+              </span>
             </div>
           </div>
 
@@ -1110,7 +1176,10 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
                   placeholder="Record customer discussion or follow-up note..."
                   className="w-full text-xs p-2 border border-gray-300 rounded focus:outline-blue-500 font-sans"
                 />
-                <div className="flex justify-end">
+                <div className="flex justify-between items-center">
+                  <SpeechToTextButton
+                    onTranscript={(text) => setNewNote((prev) => (prev ? prev + ' ' + text : text))}
+                  />
                   <button
                     onClick={handleAddNote}
                     disabled={savingNote || !newNote.trim()}

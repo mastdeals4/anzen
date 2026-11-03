@@ -26,7 +26,8 @@ test('CRM Information Architecture & Consolidation Verification', async (t) => {
   });
 
   await t.test('CRM defaults to opening directly into INBOX', () => {
-    assert.match(crmContent, /useState<CrmPrimaryTab>\('inbox'\)/);
+    assert.match(crmContent, /resolveActiveTabFromUrl|useState<CrmPrimaryTab>\('inbox'\)/);
+    assert.match(crmContent, /return 'inbox'/);
   });
 
   await t.test('Inquiries Workspace contains [ LIST ] [ PIPELINE ] and quick filters', () => {

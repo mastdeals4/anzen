@@ -45,6 +45,7 @@ export function CrmCustomersWorkspace({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'active' | 'inquiries' | 'orders' | 'dormant'>('all');
+  const [classificationFilter, setClassificationFilter] = useState<string>('all');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomerForDrawer, setSelectedCustomerForDrawer] = useState<CustomerDetail | null>(null);
   const [viewMode, setViewMode] = useState<'directory' | 'excel'>('excel');
@@ -244,8 +245,25 @@ export function CrmCustomersWorkspace({
       list = list.filter(c => c.openInquiriesCount === 0 && c.openOrdersCount === 0);
     }
 
+    // Classification filter (Target Customer 400 Programme)
+    if (classificationFilter !== 'all') {
+      list = list.filter((c) => {
+        const type = (c.customer_type || (c as any).company_type || (c as any).industry || '').toLowerCase();
+        if (classificationFilter === 'pharma_mfr') {
+          return type.includes('pharma') || type.includes('manufacturer') || type.includes('mfr') || type.includes('pabrik');
+        } else if (classificationFilter === 'api_mfr') {
+          return type.includes('api') || type.includes('active pharmaceutical');
+        } else if (classificationFilter === 'distributor') {
+          return type.includes('distributor') || type.includes('trader') || type.includes('wholesaler') || type.includes('pbf');
+        } else if (classificationFilter === 'food_nutra') {
+          return type.includes('food') || type.includes('nutra') || type.includes('makanan');
+        }
+        return true;
+      });
+    }
+
     return list;
-  }, [customers, searchQuery, filterType]);
+  }, [customers, searchQuery, filterType, classificationFilter]);
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -284,18 +302,18 @@ export function CrmCustomersWorkspace({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5">
       {/* Top Workspace Controls */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3.5 rounded-lg border border-gray-200 shadow-sm">
-        <div className="flex items-center gap-2 flex-1 max-w-lg">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white p-2.5 rounded-xl border border-slate-200/90 shadow-2xs">
+        <div className="flex items-center gap-2 flex-1 max-w-xl">
           <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search customers by company, contact person, email, phone or city..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
             />
           </div>
 
@@ -305,23 +323,37 @@ export function CrmCustomersWorkspace({
               setExcelRefreshKey(k => k + 1);
             }}
             disabled={loading}
-            className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded border border-gray-200 transition"
+            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg border border-slate-200 transition"
             title="Refresh Customers"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
+
+          {/* Prospect Classification Filter */}
+          <select
+            value={classificationFilter}
+            onChange={(e) => setClassificationFilter(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 font-medium text-slate-700 hover:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            title="Filter by Industry / Customer Classification"
+          >
+            <option value="all">All Classifications</option>
+            <option value="pharma_mfr">Pharma Manufacturer</option>
+            <option value="api_mfr">API Manufacturer</option>
+            <option value="distributor">Distributor / PBF</option>
+            <option value="food_nutra">Food & Nutraceuticals</option>
+          </select>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
           {/* View Toggle */}
-          <div className="flex items-center bg-gray-100 p-0.5 rounded-md border border-gray-200">
+          <div className="flex items-center bg-slate-100/80 p-0.5 rounded-lg border border-slate-200/60">
             <button
               type="button"
               onClick={() => setViewMode('directory')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded transition ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
                 viewMode === 'directory'
-                  ? 'bg-white text-gray-900 shadow-2xs font-bold'
-                  : 'text-gray-500 hover:text-gray-900'
+                  ? 'bg-white text-slate-900 shadow-2xs font-bold border border-slate-200/70'
+                  : 'text-slate-500 hover:text-slate-900'
               }`}
               title="Directory View"
             >
@@ -331,10 +363,10 @@ export function CrmCustomersWorkspace({
             <button
               type="button"
               onClick={() => setViewMode('excel')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded transition ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
                 viewMode === 'excel'
-                  ? 'bg-white text-blue-700 shadow-2xs font-bold'
-                  : 'text-gray-500 hover:text-gray-900'
+                  ? 'bg-white text-blue-700 shadow-2xs font-bold border border-slate-200/70'
+                  : 'text-slate-500 hover:text-slate-900'
               }`}
               title="Excel Spreadsheet View"
             >
@@ -346,7 +378,7 @@ export function CrmCustomersWorkspace({
           {viewMode === 'directory' && selectedIds.size > 0 && (
             <button
               onClick={handleStartBulkEmail}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md text-xs font-semibold hover:bg-indigo-100 transition"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold hover:bg-indigo-100 transition"
             >
               <Send className="w-3.5 h-3.5" />
               Send Bulk Email ({selectedIds.size})
@@ -355,9 +387,9 @@ export function CrmCustomersWorkspace({
 
           <button
             onClick={() => setShowNewModal(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700 shadow-sm transition"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 shadow-2xs transition"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
             New Customer
           </button>
         </div>

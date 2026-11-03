@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { showToast } from '../../ToastNotification';
@@ -31,6 +32,11 @@ import {
   Globe,
   Bot,
   Zap,
+  Building,
+  Phone,
+  Calendar,
+  CheckSquare,
+  CornerDownLeft,
 } from 'lucide-react';
 import { analyzeWhatsAppMessage } from '../../../services/crm/whatsappIntelligenceService';
 
@@ -58,11 +64,9 @@ export interface InboxConversation {
   ownerName?: string | null;
   direction?: 'inbound' | 'outbound';
   mailboxAccount?: string;
-  // Specific payload IDs
   gmailMessageId?: string;
   gmailThreadId?: string;
   whatsAppConversationId?: string;
-  // Universal WhatsApp Intelligence
   language?: 'id' | 'en' | 'mixed';
   languageLabel?: string;
   intent?: string;
@@ -115,11 +119,41 @@ export function CrmOmnichannelInbox({
   onOpenCustomer,
   onCreateInquiryFromMessage,
 }: Props) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlChannel = searchParams.get('channel')?.toLowerCase();
+  const initialChannel: ChannelFilter = (urlChannel && ['all', 'email', 'whatsapp', 'unlinked'].includes(urlChannel))
+    ? (urlChannel as ChannelFilter)
+    : 'all';
+  const urlConversationId = searchParams.get('conversationId');
+
   const [activeMailbox, setActiveMailbox] = useState<ActiveMailbox>('sales@avira.co.id');
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('inbox');
-  const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all');
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>(initialChannel);
   const [conversations, setConversations] = useState<InboxConversation[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(urlConversationId);
+
+  const handleSelectConversation = useCallback((id: string | null) => {
+    setSelectedId(id);
+    const newParams = new URLSearchParams(searchParams);
+    if (id) {
+      newParams.set('conversationId', id);
+    } else {
+      newParams.delete('conversationId');
+    }
+    setSearchParams(newParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const handleChannelFilterChange = useCallback((filter: ChannelFilter) => {
+    setChannelFilter(filter);
+    const newParams = new URLSearchParams(searchParams);
+    if (filter !== 'all') {
+      newParams.set('channel', filter);
+    } else {
+      newParams.delete('channel');
+    }
+    setSearchParams(newParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -129,16 +163,26 @@ export function CrmOmnichannelInbox({
   const [threadMessages, setThreadMessages] = useState<ThreadMessage[]>([]);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [expandedMsgIds, setExpandedMsgIds] = useState<Record<string, boolean>>({});
+  const [showAiDetails, setShowAiDetails] = useState(false);
 
   // Reply states
   const [replyText, setReplyText] = useState('');
   const [replySubject, setReplySubject] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
 
+  // Right column contextual details
+  const [linkedInquiryDetail, setLinkedInquiryDetail] = useState<any>(null);
+  const [customerDetail, setCustomerDetail] = useState<any>(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [reschedulingFollowUp, setReschedulingFollowUp] = useState(false);
+
   // Link dialog states
   const [showLinkDialog, setShowLinkDialog] = useState(false);
-  const [allInquiries, setAllInquiries] = useState<Array<{ id: string; inquiry_number: string; company_name: string; product_name: string }>>([]);
+  const [linkTargetType, setLinkTargetType] = useState<'inquiry' | 'customer'>('inquiry');
+  const [allInquiries, setAllInquiries] = useState<Array<{ id: string; inquiry_number: string; company_name: string; product_name: string; customer_id?: string }>>([]);
+  const [allCustomers, setAllCustomers] = useState<Array<{ id: string; company_name: string }>>([]);
   const [selectedInquiryToLink, setSelectedInquiryToLink] = useState('');
+  const [selectedCustomerToLink, setSelectedCustomerToLink] = useState('');
   const [isLinking, setIsLinking] = useState(false);
   const [isExtractingAi, setIsExtractingAi] = useState(false);
 
@@ -211,107 +255,109 @@ export function CrmOmnichannelInbox({
         });
 
         if (!gmailError && gmailData?.success && Array.isArray(gmailData.messages)) {
-          // Pre-fetch inquiry associations
           const messageIds = gmailData.messages.map((m: any) => m.messageId).filter(Boolean);
           const { data: linkedReviews } = await supabase
             .from('kunal_ai_email_reviews')
-            .select('id, gmail_message_id, gmail_thread_id, inquiry_id, product_name, status, action_reason, crm_inquiries(inquiry_number, company_name)')
+            .select('gmail_message_id, inquiry_id, crm_inquiries(inquiry_number, product_name, company_name, customer_id)')
             .in('gmail_message_id', messageIds);
 
-          const reviewMap = new Map((linkedReviews || []).map((r: any) => [r.gmail_message_id, r]));
+          const linkMap = new Map();
+          (linkedReviews || []).forEach((r: any) => {
+            if (r.gmail_message_id && r.crm_inquiries) {
+              linkMap.set(r.gmail_message_id, r.crm_inquiries);
+            }
+          });
 
-          for (const msg of gmailData.messages) {
-            const review: any = reviewMap.get(msg.messageId);
-            const inq = review?.crm_inquiries;
-            const isUnlinked = !msg.matchedInquiryId && !review?.inquiry_id;
-
-            // Extract sender name
-            const fromMatch = (msg.from || '').match(/^(.*?)\s*<(.+?)>$/);
-            const senderName = fromMatch ? fromMatch[1].replace(/^"|"$/g, '').trim() : msg.from;
-            const senderAddress = fromMatch ? fromMatch[2].trim() : msg.from;
-            const isOutbound = ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
-              (senderAddress || '').toLowerCase().includes(internal)
-            );
-
+          for (const m of gmailData.messages) {
+            const inq = linkMap.get(m.messageId);
             items.push({
-              id: `email-${msg.messageId}`,
+              id: `email-${m.messageId || m.threadId}`,
               channel: 'email',
-              direction: isOutbound ? 'outbound' : 'inbound',
+              direction: folderFilter === 'sent' ? 'outbound' : 'inbound',
               mailboxAccount: activeMailbox,
-              senderName: senderName || 'Unknown Sender',
-              senderAddress: senderAddress || msg.from,
-              recipientAddress: msg.to,
-              subject: msg.subject || '(No Subject)',
-              snippet: msg.snippet || '',
-              timestamp: msg.date || new Date().toISOString(),
-              unread: (msg.labels || []).includes('UNREAD'),
-              needsAction: review?.status === 'Needs Review' || review?.status === 'Price Received',
-              actionReason: review?.action_reason || undefined,
-              inquiryId: review?.inquiry_id || msg.matchedInquiryId || null,
-              inquiryNumber: inq?.inquiry_number || null,
-              productName: review?.product_name || inq?.product_name || null,
-              customerName: inq?.company_name || null,
-              gmailMessageId: msg.messageId,
-              gmailThreadId: msg.threadId || msg.messageId,
+              senderName: m.fromName || m.fromEmail || 'Email Sender',
+              senderAddress: m.fromEmail || '',
+              recipientAddress: m.toEmail || '',
+              subject: m.subject || '(No Subject)',
+              snippet: m.snippet || '',
+              timestamp: m.date || new Date().toISOString(),
+              unread: m.isUnread ?? false,
+              needsAction: false,
+              inquiryId: inq ? inq.id : null,
+              inquiryNumber: inq ? inq.inquiry_number : null,
+              productName: inq ? inq.product_name : null,
+              customerName: inq ? inq.company_name : null,
+              customerId: inq ? inq.customer_id : null,
+              gmailMessageId: m.messageId,
+              gmailThreadId: m.threadId,
             });
           }
         }
       } catch (gErr) {
-        console.warn('[CrmOmnichannelInbox] Gmail fetch warning:', gErr);
+        console.warn('[CrmOmnichannelInbox] Gmail fetch notice:', gErr);
       }
 
-      // 2. Fetch WhatsApp & Canonical conversations
+      // 2. Fetch WhatsApp & Canonical ERP conversations from enquiry_conversations
       try {
-        const { data: convRows } = await supabase
+        const { data: dbConversations, error: convError } = await supabase
           .from('enquiry_conversations')
           .select(`
             id,
             channel,
             title,
+            external_thread_id,
+            status,
+            customer_id,
+            last_message_at,
+            created_at,
             metadata,
             participant_identifiers,
-            last_message_at,
-            customer_id,
-            customers(id, company_name),
-            enquiry_conversation_links(
-              inquiry_id,
-              crm_inquiries(inquiry_number, company_name, product_name)
+            customers:customer_id (
+              id,
+              company_name
             ),
-            enquiry_conversation_messages(
+            enquiry_conversation_links (
+              inquiry_id,
+              is_active,
+              crm_inquiries:inquiry_id (
+                id,
+                inquiry_number,
+                product_name,
+                company_name
+              )
+            ),
+            enquiry_conversation_messages (
               id,
               sender_name,
               sender_address,
+              recipient_addresses,
+              subject,
               body_text,
-              received_or_sent_at,
               direction,
-              ai_processed,
-              ai_summary,
+              received_or_sent_at,
+              external_message_id,
+              metadata,
               ai_proposal,
-              attachments
+              ai_summary
             )
           `)
           .order('last_message_at', { ascending: false })
-          .limit(50);
+          .limit(60);
 
-        if (Array.isArray(convRows)) {
-          for (const c of convRows) {
-            const msgs = (c.enquiry_conversation_messages || []) as any[];
+        if (!convError && dbConversations) {
+          for (const c of dbConversations) {
+            const msgs = (c.enquiry_conversation_messages || []).sort(
+              (a: any, b: any) => new Date(a.received_or_sent_at).getTime() - new Date(b.received_or_sent_at).getTime()
+            );
             const lastMsg = msgs[msgs.length - 1];
-            const link = c.enquiry_conversation_links?.[0];
-            const inq: any = Array.isArray(link?.crm_inquiries) ? link.crm_inquiries[0] : link?.crm_inquiries;
+
+            const activeLinks = (c.enquiry_conversation_links || []).filter((l: any) => l.is_active);
+            const link = activeLinks[0];
+            const inq: any = Array.isArray(link?.crm_inquiries) ? link?.crm_inquiries[0] : link?.crm_inquiries;
             const cust: any = Array.isArray(c.customers) ? c.customers[0] : c.customers;
 
-            const meta = (c.metadata || {}) as Record<string, any>;
-            let intel = lastMsg?.ai_proposal || null;
-            if (!intel && lastMsg?.body_text) {
-              intel = analyzeWhatsAppMessage(lastMsg.body_text, {
-                senderName: lastMsg.sender_name || c.title,
-                senderPhone: lastMsg.sender_address,
-                customerCompanyName: inq?.company_name || cust?.company_name,
-                linkedInquiryNumber: inq?.inquiry_number,
-                hasAttachments: lastMsg.attachments?.length > 0,
-              });
-            }
+            const meta = c.metadata || {};
+            const intel = lastMsg?.ai_proposal || meta.intelligence || null;
 
             const language = meta.language || intel?.language || 'id';
             const intent = meta.intent || intel?.intent || 'General Information';
@@ -331,7 +377,6 @@ export function CrmOmnichannelInbox({
             const extMsgId = lastMsg?.external_message_id || meta.gmail_message_id || meta.message_id || null;
             const extThreadId = meta.gmail_thread_id || meta.thread_id || extMsgId || null;
 
-            // Determine canonical conversation mailbox ownership
             const allParticipants = [lastMsg?.sender_address, recipAddr, ...(c.participant_identifiers || [])].filter(Boolean).map((s: string) => s.toLowerCase());
             const canonicalMailbox = allParticipants.some((p: string) => p.includes('kunal@avira.co.id'))
               ? 'kunal@avira.co.id'
@@ -379,8 +424,12 @@ export function CrmOmnichannelInbox({
       items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setConversations(items);
 
-      if (items.length > 0 && !selectedId) {
-        setSelectedId(items[0].id);
+      if (items.length > 0) {
+        if (urlConversationId && items.some(i => i.id === urlConversationId)) {
+          setSelectedId(urlConversationId);
+        } else if (!selectedId) {
+          handleSelectConversation(items[0].id);
+        }
       }
     } catch (err: any) {
       console.error('[CrmOmnichannelInbox] Load error:', err);
@@ -394,38 +443,43 @@ export function CrmOmnichannelInbox({
     loadConversations();
   }, [activeMailbox, folderFilter]);
 
-  // Pre-fetch inquiry list for quick linking
+  // Pre-fetch inquiry and customer list for quick linking
   useEffect(() => {
     supabase
       .from('crm_inquiries')
-      .select('id, inquiry_number, company_name, product_name')
+      .select('id, inquiry_number, company_name, product_name, customer_id')
       .order('created_at', { ascending: false })
       .limit(100)
       .then(({ data }) => {
         if (data) setAllInquiries(data);
+      });
+
+    supabase
+      .from('customers')
+      .select('id, company_name')
+      .order('company_name', { ascending: true })
+      .limit(200)
+      .then(({ data }) => {
+        if (data) setAllCustomers(data);
       });
   }, []);
 
   // Filter conversations
   const filteredConversations = useMemo(() => {
     return conversations.filter(c => {
-      // 1. Mailbox account filter: if item belongs to a specific mailbox, ensure it matches activeMailbox
       if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) {
         return false;
       }
 
-      // 2. Folder filter: In Inbox, show inbound messages. In Sent, show outbound messages.
       if (c.channel === 'email') {
         if (folderFilter === 'inbox' && c.direction === 'outbound') return false;
         if (folderFilter === 'sent' && c.direction !== 'outbound') return false;
       }
 
-      // 3. Channel filter
       if (channelFilter === 'email' && c.channel !== 'email') return false;
       if (channelFilter === 'whatsapp' && c.channel !== 'whatsapp') return false;
       if (channelFilter === 'unlinked' && c.inquiryId) return false;
 
-      // Text search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesText =
@@ -447,6 +501,94 @@ export function CrmOmnichannelInbox({
     return conversations.find(c => c.id === selectedId) || null;
   }, [conversations, selectedId]);
 
+  // Load contextual details for Column 3 (Customer 360 & Linked Inquiry)
+  useEffect(() => {
+    if (!selectedConversation) {
+      setLinkedInquiryDetail(null);
+      setCustomerDetail(null);
+      return;
+    }
+
+    let isCancelled = false;
+    setLoadingContext(true);
+
+    const fetchContextData = async () => {
+      try {
+        // 1. Fetch linked inquiry if inquiryId is available
+        if (selectedConversation.inquiryId) {
+          const { data: inq } = await supabase
+            .from('crm_inquiries')
+            .select(`
+              *,
+              user_profiles:assigned_to (
+                full_name
+              )
+            `)
+            .eq('id', selectedConversation.inquiryId)
+            .maybeSingle();
+
+          if (!isCancelled) setLinkedInquiryDetail(inq);
+        } else {
+          if (!isCancelled) setLinkedInquiryDetail(null);
+        }
+
+        // 2. Fetch customer details
+        let cust: any = null;
+        if (selectedConversation.customerId) {
+          const { data } = await supabase
+            .from('crm_contacts')
+            .select('*')
+            .eq('id', selectedConversation.customerId)
+            .maybeSingle();
+          cust = data;
+        }
+
+        if (!cust && selectedConversation.customerName) {
+          const { data } = await supabase
+            .from('crm_contacts')
+            .select('*')
+            .ilike('company_name', selectedConversation.customerName.trim())
+            .maybeSingle();
+          cust = data;
+        }
+
+        if (!isCancelled) setCustomerDetail(cust);
+      } catch (err) {
+        console.warn('Error loading contextual sidebar details:', err);
+      } finally {
+        if (!isCancelled) setLoadingContext(false);
+      }
+    };
+
+    fetchContextData();
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedConversation]);
+
+  // Quick Reschedule Follow-up in Column 3
+  const handleRescheduleFollowUp = async (daysToAdd: number) => {
+    if (!linkedInquiryDetail?.id) return;
+    setReschedulingFollowUp(true);
+    try {
+      const d = new Date();
+      d.setDate(d.getDate() + daysToAdd);
+      const iso = d.toISOString().split('T')[0];
+      const { error } = await supabase
+        .from('crm_inquiries')
+        .update({ next_follow_up: iso })
+        .eq('id', linkedInquiryDetail.id);
+
+      if (error) throw error;
+      setLinkedInquiryDetail((prev: any) => ({ ...prev, next_follow_up: iso }));
+      showToast({ type: 'success', title: 'Follow-up Scheduled', message: `Rescheduled to ${iso}` });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Update Failed', message: err.message });
+    } finally {
+      setReschedulingFollowUp(false);
+    }
+  };
+
   // Load selected conversation thread
   const loadThread = useCallback(async () => {
     if (!selectedConversation) {
@@ -464,7 +606,6 @@ export function CrmOmnichannelInbox({
         let fetchedMsgs: ThreadMessage[] = [];
         let fetchError: string | null = null;
 
-        // 1. Try live Gmail retrieval if threadId or messageId is present
         if (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId) {
           try {
             const threadMailbox = selectedConversation.mailboxAccount || activeMailbox;
@@ -511,9 +652,7 @@ export function CrmOmnichannelInbox({
           }
         }
 
-        // 2. If Gmail didn't return messages, fall back to canonical database tables
         if (fetchedMsgs.length === 0) {
-          // Check enquiry_conversation_messages
           if (selectedConversation.whatsAppConversationId) {
             const { data: convMsgs } = await supabase
               .from('enquiry_conversation_messages')
@@ -536,7 +675,6 @@ export function CrmOmnichannelInbox({
             }
           }
 
-          // Also check crm_email_inbox for matching thread or message ID
           if (fetchedMsgs.length === 0 && (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId)) {
             let q = supabase.from('crm_email_inbox').select('*');
             if (selectedConversation.gmailThreadId) {
@@ -573,7 +711,7 @@ export function CrmOmnichannelInbox({
           setDetailError(fetchError || 'Conversation messages could not be retrieved from Gmail or local records.');
         }
       } else {
-        // WhatsApp conversation from canonical tables
+        // WhatsApp messages
         const { data: waMsgs, error: waError } = await supabase
           .from('enquiry_conversation_messages')
           .select('*')
@@ -612,7 +750,6 @@ export function CrmOmnichannelInbox({
 
         setThreadMessages(msgs);
 
-        // Expand latest message by default
         const exp: Record<string, boolean> = {};
         if (msgs.length > 0) {
           exp[msgs[msgs.length - 1].id] = true;
@@ -625,7 +762,7 @@ export function CrmOmnichannelInbox({
     } finally {
       setLoadingDetail(false);
     }
-  }, [selectedConversation]);
+  }, [selectedConversation, activeMailbox]);
 
   useEffect(() => {
     loadThread();
@@ -643,7 +780,6 @@ export function CrmOmnichannelInbox({
     return selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
   };
 
-  // Handle Send Reply
   const handleSendReply = async () => {
     if (!selectedConversation || !replyText.trim()) return;
     setSendingReply(true);
@@ -658,8 +794,8 @@ export function CrmOmnichannelInbox({
 
         showToast({ type: 'success', title: 'WhatsApp Sent', message: 'Reply sent successfully.' });
         setReplyText('');
+        loadThread();
       } else {
-        // Email reply via send-bulk-email from appropriate mailbox (preserving sourcing vs quote rules)
         const replyRecipient = getReplyRecipient();
         if (!replyRecipient) {
           throw new Error('No recipient email address found for this conversation');
@@ -693,8 +829,9 @@ export function CrmOmnichannelInbox({
           throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
         }
 
-        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from ${replySender} to ${replyRecipient}` });
+        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from ${resolvedSender} to ${replyRecipient}` });
         setReplyText('');
+        loadThread();
       }
     } catch (err: any) {
       showToast({ type: 'error', title: 'Send Failed', message: err.message || 'Could not send message' });
@@ -703,59 +840,148 @@ export function CrmOmnichannelInbox({
     }
   };
 
-  // Handle Link to Inquiry
+  // Link / Unlink Handlers
   const handleConfirmLink = async () => {
-    if (!selectedConversation || !selectedInquiryToLink) return;
+    if (!selectedConversation) return;
     setIsLinking(true);
     try {
-      const inq = allInquiries.find(i => i.id === selectedInquiryToLink);
-      if (!inq) throw new Error('Selected inquiry not found');
+      if (linkTargetType === 'inquiry') {
+        if (!selectedInquiryToLink) throw new Error('Please select an inquiry to link');
+        const inq = allInquiries.find(i => i.id === selectedInquiryToLink);
+        if (!inq) throw new Error('Selected inquiry not found');
 
-      if (selectedConversation.gmailMessageId) {
-        await supabase.from('crm_email_inbox').upsert({
-          message_id: selectedConversation.gmailMessageId,
-          thread_id: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId,
-          from_email: selectedConversation.senderAddress,
-          from_name: selectedConversation.senderName,
-          to_email: selectedConversation.recipientAddress || '',
-          subject: selectedConversation.subject,
-          body: selectedConversation.snippet,
-          received_date: selectedConversation.timestamp,
-          is_processed: true,
-          converted_to_inquiry: inq.id,
-        }, { onConflict: 'message_id' });
+        if (selectedConversation.gmailMessageId) {
+          await supabase.from('crm_email_inbox').upsert({
+            message_id: selectedConversation.gmailMessageId,
+            thread_id: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId,
+            from_email: selectedConversation.senderAddress,
+            from_name: selectedConversation.senderName,
+            to_email: selectedConversation.recipientAddress || '',
+            subject: selectedConversation.subject,
+            body: selectedConversation.snippet,
+            received_date: selectedConversation.timestamp,
+            is_processed: true,
+            converted_to_inquiry: inq.id,
+          }, { onConflict: 'message_id' });
+        }
 
-        await supabase.from('crm_email_activities').insert({
-          inquiry_id: inq.id,
-          email_type: 'received',
-          from_email: selectedConversation.senderAddress,
-          to_email: selectedConversation.recipientAddress ? [selectedConversation.recipientAddress] : [],
-          subject: selectedConversation.subject,
-          body: selectedConversation.snippet,
-          sent_date: selectedConversation.timestamp,
-        });
+        if (selectedConversation.whatsAppConversationId) {
+          const { data: existingLink } = await supabase
+            .from('enquiry_conversation_links')
+            .select('id')
+            .eq('conversation_id', selectedConversation.whatsAppConversationId)
+            .eq('inquiry_id', inq.id)
+            .maybeSingle();
+
+          if (existingLink) {
+            await supabase
+              .from('enquiry_conversation_links')
+              .update({ is_active: true, link_type: 'primary' })
+              .eq('id', existingLink.id);
+          } else {
+            await supabase
+              .from('enquiry_conversation_links')
+              .insert({
+                conversation_id: selectedConversation.whatsAppConversationId,
+                inquiry_id: inq.id,
+                link_type: 'primary',
+                is_active: true,
+              });
+          }
+        }
+
+        setConversations(prev =>
+          prev.map(c =>
+            c.id === selectedConversation.id
+              ? {
+                  ...c,
+                  inquiryId: inq.id,
+                  inquiryNumber: inq.inquiry_number,
+                  customerName: inq.company_name,
+                  productName: inq.product_name,
+                  customerId: inq.customer_id || c.customerId,
+                  linkedContextType: 'Inquiry',
+                }
+              : c
+          )
+        );
+
+        setShowLinkDialog(false);
+        showToast({ type: 'success', title: 'Inquiry Linked', message: `Linked to ${inq.inquiry_number}` });
+      } else {
+        if (!selectedCustomerToLink) throw new Error('Please select a customer to link');
+        const cust = allCustomers.find(c => c.id === selectedCustomerToLink);
+        if (!cust) throw new Error('Selected customer not found');
+
+        if (selectedConversation.whatsAppConversationId) {
+          await supabase
+            .from('enquiry_conversations')
+            .update({ customer_id: cust.id })
+            .eq('id', selectedConversation.whatsAppConversationId);
+        }
+
+        setConversations(prev =>
+          prev.map(c =>
+            c.id === selectedConversation.id
+              ? {
+                  ...c,
+                  customerId: cust.id,
+                  customerName: cust.company_name,
+                  linkedContextType: 'Customer',
+                }
+              : c
+          )
+        );
+
+        setShowLinkDialog(false);
+        showToast({ type: 'success', title: 'Customer Linked', message: `Linked to ${cust.company_name}` });
       }
-
-      // Update local state
-      setConversations(prev =>
-        prev.map(c =>
-          c.id === selectedConversation.id
-            ? { ...c, inquiryId: inq.id, inquiryNumber: inq.inquiry_number, customerName: inq.company_name, productName: inq.product_name }
-            : c
-        )
-      );
-
-      setShowLinkDialog(false);
-      showToast({ type: 'success', title: 'Inquiry Linked', message: `Successfully linked to ${inq.inquiry_number}` });
     } catch (err: any) {
-      showToast({ type: 'error', title: 'Link Failed', message: err.message || 'Could not link inquiry' });
+      showToast({ type: 'error', title: 'Link Failed', message: err.message || 'Could not link' });
     } finally {
       setIsLinking(false);
     }
   };
 
-  // Handle open document
-  const handleOpenDoc = async (storagePath?: string | null, filename?: string) => {
+  const handleUnlinkConversation = async () => {
+    if (!selectedConversation) return;
+    setIsLinking(true);
+    try {
+      if (selectedConversation.whatsAppConversationId) {
+        await supabase
+          .from('enquiry_conversation_links')
+          .update({ is_active: false })
+          .eq('conversation_id', selectedConversation.whatsAppConversationId);
+      }
+
+      setConversations(prev =>
+        prev.map(c =>
+          c.id === selectedConversation.id
+            ? {
+                ...c,
+                inquiryId: null,
+                inquiryNumber: null,
+                productName: null,
+                linkedContextType: 'General Communication',
+              }
+            : c
+        )
+      );
+
+      setShowLinkDialog(false);
+      showToast({
+        type: 'info',
+        title: 'Unlinked',
+        message: 'Marked as General Communication.',
+      });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Unlink Failed', message: err.message });
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
+  const handleOpenDoc = async (storagePath?: string | null) => {
     if (!storagePath) {
       showToast({ type: 'warning', title: 'File Missing', message: 'Attachment file path not recorded in storage.' });
       return;
@@ -766,10 +992,10 @@ export function CrmOmnichannelInbox({
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)] min-h-[640px] bg-white border border-gray-200 rounded-lg overflow-hidden shadow-xs">
-      {/* Top Mailbox, Folder & Channel Filter Navigation */}
+      {/* Top Mailbox, Channel & Sync Bar */}
       <div className="border-b border-gray-200 bg-gray-50/80 px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
-          {/* 1. Connected Mailbox Selector */}
+          {/* Mailbox Selector */}
           <div className="flex items-center gap-1.5 border-r border-gray-200 pr-3">
             <span className="text-xs font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1">
               <Mail className="w-3.5 h-3.5 text-blue-600" />
@@ -779,83 +1005,70 @@ export function CrmOmnichannelInbox({
               aria-label="Active Mailbox"
               value={activeMailbox}
               onChange={e => setActiveMailbox(e.target.value as ActiveMailbox)}
-              className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500 shadow-2xs"
+              className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500"
             >
-              <option value="sales@avira.co.id">sales@avira.co.id (CRM / Quotes)</option>
-              <option value="kunal@avira.co.id">kunal@avira.co.id (Pricing / Sourcing)</option>
+              <option value="sales@avira.co.id">sales@avira.co.id (Commercial Sales)</option>
+              <option value="kunal@avira.co.id">kunal@avira.co.id (Pricing & Sourcing)</option>
             </select>
           </div>
 
-          {/* 2. Folder Selector: Inbox vs Sent */}
+          {/* Folder Filter */}
           <div className="flex items-center gap-1 border-r border-gray-200 pr-3">
             <button
               onClick={() => setFolderFilter('inbox')}
-              className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+              className={`px-2.5 py-1 text-xs font-semibold rounded transition ${
                 folderFilter === 'inbox'
                   ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              <Inbox className="w-3 h-3" />
-              <span>Inbox</span>
+              Inbox
             </button>
             <button
               onClick={() => setFolderFilter('sent')}
-              className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+              className={`px-2.5 py-1 text-xs font-semibold rounded transition ${
                 folderFilter === 'sent'
                   ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              <Send className="w-3 h-3" />
-              <span>Sent</span>
+              Sent
             </button>
           </div>
 
-          {/* 3. Channel Filters */}
-          <div className="flex items-center gap-1.5">
-            {(['all', 'email', 'whatsapp', 'unlinked'] as const).map(ch => {
-              const isActive = channelFilter === ch;
-              const count = conversations.filter(c => {
-                if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) return false;
-                if (c.channel === 'email') {
-                  if (folderFilter === 'inbox' && c.direction === 'outbound') return false;
-                  if (folderFilter === 'sent' && c.direction !== 'outbound') return false;
-                }
-                if (ch === 'all') return true;
-                if (ch === 'email') return c.channel === 'email';
-                if (ch === 'whatsapp') return c.channel === 'whatsapp';
-                if (ch === 'unlinked') return !c.inquiryId;
-                return true;
-              }).length;
-
+          {/* Channel Filter */}
+          <div className="flex items-center gap-1">
+            {(
+              [
+                ['all', 'All Channels'],
+                ['whatsapp', 'WhatsApp'],
+                ['email', 'Email'],
+                ['unlinked', 'Unlinked Only'],
+              ] as const
+            ).map(([key, label]) => {
+              const isActive = channelFilter === key;
               return (
                 <button
-                  key={ch}
-                  onClick={() => setChannelFilter(ch)}
-                  className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                  key={key}
+                  onClick={() => handleChannelFilterChange(key)}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded transition ${
                     isActive
-                      ? 'bg-blue-600 text-white shadow-2xs'
-                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                      ? 'bg-slate-800 text-white shadow-2xs'
+                      : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
-                  {ch === 'email' && <Mail className="w-3 h-3" />}
-                  {ch === 'whatsapp' && <MessageSquare className="w-3 h-3 text-emerald-400" />}
-                  {ch === 'unlinked' && <AlertTriangle className="w-3 h-3 text-amber-300" />}
-                  <span className="capitalize">{ch}</span>
-                  <span className={`text-[10px] px-1 py-0.2 rounded-full ${isActive ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                    {count}
-                  </span>
+                  {label}
                 </button>
               );
             })}
           </div>
         </div>
 
+        {/* Sync Button */}
         <button
           onClick={loadConversations}
           disabled={loadingList}
-          className="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1 px-2.5 py-1 bg-white border border-gray-200 rounded cursor-pointer disabled:opacity-50"
+          className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded text-xs font-semibold shadow-2xs cursor-pointer transition"
           title="Refresh Messages"
         >
           <RefreshCw className={`w-3 h-3 ${loadingList ? 'animate-spin' : ''}`} />
@@ -863,25 +1076,25 @@ export function CrmOmnichannelInbox({
         </button>
       </div>
 
-      {/* Master-Detail Split Workspace */}
+      {/* 3-COLUMN MASTER-DETAIL WORKSPACE */}
       <div className="flex-1 flex overflow-hidden">
-        {/* LEFT COLUMN: Conversation List (~400px) */}
-        <div className="w-full md:w-[420px] border-r border-gray-200 flex flex-col bg-white flex-shrink-0">
-          {/* Search Bar */}
-          <div className="p-2.5 border-b border-gray-200 bg-gray-50/50">
+        {/* COLUMN 1: Conversation List (~340px) */}
+        <div className="w-full md:w-[340px] border-r border-gray-200 flex flex-col bg-white flex-shrink-0">
+          {/* Search Box */}
+          <div className="p-2 border-b border-gray-200 bg-gray-50/50">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search sender, subject, product, inquiry..."
+                placeholder="Search sender, subject, product..."
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-gray-200 rounded-md focus:outline-blue-500"
               />
             </div>
           </div>
 
-          {/* List items */}
+          {/* List Items */}
           <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
             {loadingList && conversations.length === 0 && (
               <div className="p-8 text-center text-xs text-gray-500">
@@ -903,8 +1116,8 @@ export function CrmOmnichannelInbox({
               return (
                 <div
                   key={conv.id}
-                  onClick={() => setSelectedId(conv.id)}
-                  className={`p-3 text-xs cursor-pointer transition select-none flex flex-col gap-1.5 ${
+                  onClick={() => handleSelectConversation(conv.id)}
+                  className={`p-3 text-xs cursor-pointer transition select-none flex flex-col gap-1 ${
                     isSelected
                       ? 'bg-blue-50/80 border-l-3 border-blue-600'
                       : 'hover:bg-gray-50 border-l-3 border-transparent'
@@ -923,23 +1136,12 @@ export function CrmOmnichannelInbox({
                       <span className={`font-semibold truncate ${isSelected ? 'text-blue-950 font-bold' : 'text-gray-900'}`}>
                         {conv.senderName}
                       </span>
-                      {conv.unread && (
-                        <span className="w-2 h-2 rounded-full bg-blue-600 flex-shrink-0" title="Unread" />
-                      )}
                     </div>
+
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {conv.channel === 'whatsapp' && conv.language && (
-                        <span
-                          className={`text-[9px] font-bold px-1 py-0.2 rounded border ${
-                            conv.language === 'id'
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                              : conv.language === 'mixed'
-                              ? 'bg-purple-50 text-purple-700 border-purple-200'
-                              : 'bg-blue-50 text-blue-700 border-blue-200'
-                          }`}
-                          title={`Language: ${conv.languageLabel || conv.language.toUpperCase()}`}
-                        >
-                          {conv.language === 'id' ? 'ID' : conv.language === 'mixed' ? 'MIXED' : 'EN'}
+                        <span className="text-[9px] font-bold px-1 py-0.2 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">
+                          {conv.language.toUpperCase()}
                         </span>
                       )}
                       <span className="text-[10px] text-gray-400 whitespace-nowrap">
@@ -948,29 +1150,17 @@ export function CrmOmnichannelInbox({
                     </div>
                   </div>
 
-                  <div className={`flex items-center gap-1.5 truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
-                    {conv.intent && conv.channel === 'whatsapp' && (
-                      <span className="text-[9px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded flex-shrink-0">
-                        {conv.intent}
-                      </span>
-                    )}
-                    <span className="truncate">{conv.subject}</span>
+                  <div className={`truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                    {conv.subject}
                   </div>
 
                   <div className="text-[10.5px] text-gray-500 truncate font-sans">
                     {conv.snippet}
                   </div>
 
-                  {/* Association & Action badges */}
                   <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                     {conv.inquiryNumber ? (
-                      <span
-                        onClick={e => {
-                          e.stopPropagation();
-                          if (conv.inquiryId && onOpenInquiry) onOpenInquiry(conv.inquiryId);
-                        }}
-                        className="text-[9px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.2 rounded hover:underline cursor-pointer flex items-center gap-0.5"
-                      >
+                      <span className="text-[9px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.2 rounded flex items-center gap-0.5">
                         <Tag className="w-2.5 h-2.5" />
                         {conv.inquiryNumber}
                       </span>
@@ -980,19 +1170,9 @@ export function CrmOmnichannelInbox({
                       </span>
                     )}
 
-                    {conv.productName && (
-                      <span className="text-[9px] text-gray-600 bg-gray-100 px-1 rounded truncate max-w-[120px]">
-                        {conv.productName}
-                      </span>
-                    )}
-
-                    {conv.needsAction ? (
-                      <span className="text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.2 rounded flex items-center gap-0.5">
-                        ⚡ {conv.actionReason || 'Action Required'}
-                      </span>
-                    ) : (
-                      <span className="text-[9px] font-medium bg-slate-100 text-slate-500 px-1 py-0.2 rounded">
-                        ✓ No Action
+                    {conv.needsAction && (
+                      <span className="text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.2 rounded">
+                        ⚡ Action Required
                       </span>
                     )}
                   </div>
@@ -1002,8 +1182,8 @@ export function CrmOmnichannelInbox({
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Conversation Detail & Chronological Thread */}
-        <div className="flex-1 flex flex-col bg-white overflow-hidden">
+        {/* COLUMN 2: Conversation Thread & Quick Reply (flex-1) */}
+        <div className="flex-1 flex flex-col bg-white overflow-hidden min-w-0 border-r border-gray-200">
           {!selectedConversation ? (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8 text-center">
               <Inbox className="w-12 h-12 text-gray-200 mb-3" />
@@ -1012,7 +1192,7 @@ export function CrmOmnichannelInbox({
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Conversation Top Action Bar */}
+              {/* Header Action Bar */}
               <div className="p-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -1035,14 +1215,14 @@ export function CrmOmnichannelInbox({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {selectedConversation.inquiryId ? (
                     <button
                       onClick={() => onOpenInquiry && onOpenInquiry(selectedConversation.inquiryId!)}
                       className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
                     >
                       <ExternalLink className="w-3 h-3" />
-                      <span>Open Inquiry ({selectedConversation.inquiryNumber})</span>
+                      <span>Inquiry #{selectedConversation.inquiryNumber}</span>
                     </button>
                   ) : (
                     <div className="flex items-center gap-1.5">
@@ -1050,151 +1230,81 @@ export function CrmOmnichannelInbox({
                         onClick={() => handleExtractAndCreate(selectedConversation)}
                         disabled={isExtractingAi}
                         className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        title="Extract products, quantities, specifications, and documents using AI"
+                        title="Extract products, quantities, specifications using AI"
                       >
                         <Sparkles className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin' : ''}`} />
-                        <span>{isExtractingAi ? 'Extracting with AI...' : 'AI Extract & Create'}</span>
+                        <span>AI Extract & Create</span>
                       </button>
                       <button
                         onClick={() => setShowLinkDialog(true)}
                         className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
                       >
                         <LinkIcon className="w-3 h-3" />
-                        <span>Link to Inquiry</span>
-                      </button>
-                      <button
-                        onClick={() =>
-                          onCreateInquiryFromMessage &&
-                          onCreateInquiryFromMessage({
-                            subject: selectedConversation.subject,
-                            body: selectedConversation.snippet,
-                            fromEmail: selectedConversation.senderAddress,
-                            fromName: selectedConversation.senderName,
-                            id: selectedConversation.id,
-                          })
-                        }
-                        className="px-2.5 py-1 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 text-xs font-semibold rounded cursor-pointer"
-                      >
-                        Create Inquiry
+                        <span>Link</span>
                       </button>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Universal AI Communication Intelligence Banner (WhatsApp) */}
+              {/* Compact Collapsible AI Intelligence Pill */}
               {selectedConversation.channel === 'whatsapp' && (
-                <div className="bg-gradient-to-r from-emerald-50/90 via-teal-50/80 to-blue-50/70 border-b border-emerald-200/80 p-3.5 px-4 space-y-2">
+                <div className="bg-emerald-50/70 border-b border-emerald-200 px-4 py-2 flex flex-col gap-1.5 transition">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-                        <Bot className="w-4 h-4 text-emerald-600" />
-                        Universal Communication Intelligence
-                      </span>
-                      {selectedConversation.language && (
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white border border-emerald-300 text-emerald-800 flex items-center gap-1">
-                          <Globe className="w-3 h-3 text-emerald-600" />
-                          {selectedConversation.languageLabel || selectedConversation.language.toUpperCase()}
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowAiDetails(!showAiDetails)}
+                        title="Universal Communication Intelligence"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition cursor-pointer"
+                      >
+                        <Bot className="w-3 h-3 text-emerald-600" />
+                        <span>AI Intelligence ({selectedConversation.languageLabel || selectedConversation.language?.toUpperCase() || 'ID'})</span>
+                        {showAiDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      </button>
                       {selectedConversation.intent && (
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100/80 text-emerald-900 border border-emerald-300">
+                        <span className="text-[10px] font-semibold text-emerald-900 bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-300">
                           {selectedConversation.intent}
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1.5">
-                      {selectedConversation.needsAction ? (
-                        <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
-                          <Zap className="w-3 h-3 text-rose-600" />
-                          Needs Action: {selectedConversation.actionReason || 'Action Required'}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          No Pending Action (Noted)
-                        </span>
-                      )}
-                    </div>
+                    {selectedConversation.latestSummary && (
+                      <span className="text-[11px] text-emerald-950 font-medium truncate max-w-sm italic">
+                        "{selectedConversation.latestSummary}"
+                      </span>
+                    )}
                   </div>
 
-                  {/* English Running Summary */}
-                  {selectedConversation.latestSummary && (
-                    <div className="bg-white/90 border border-emerald-200/60 rounded p-2 text-xs text-slate-800 leading-relaxed font-sans shadow-2xs">
-                      <div className="text-[10px] font-bold text-emerald-800 uppercase flex items-center gap-1 mb-0.5">
-                        <Sparkles className="w-3 h-3 text-amber-500" />
-                        <span>English Running Summary:</span>
-                      </div>
-                      <p className="text-slate-900 font-medium">{selectedConversation.latestSummary}</p>
-                    </div>
-                  )}
+                  {showAiDetails && (
+                    <div className="pt-2 border-t border-emerald-200/60 space-y-2">
+                      {selectedConversation.englishTranslation && (
+                        <div className="bg-white p-2 rounded border border-emerald-200 text-xs text-slate-800">
+                          <strong className="text-[10px] text-emerald-800 uppercase block mb-0.5">English Translation:</strong>
+                          <p>{selectedConversation.englishTranslation}</p>
+                        </div>
+                      )}
 
-                  {/* Extracted Entity Tags */}
-                  {selectedConversation.entities && (
-                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                      {selectedConversation.entities.product && (
-                        <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold">
-                          📦 Product: {selectedConversation.entities.product}
-                        </span>
-                      )}
-                      {selectedConversation.entities.make && (
-                        <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 font-semibold">
-                          🏭 Make: {selectedConversation.entities.make}
-                        </span>
-                      )}
-                      {selectedConversation.entities.quantity && (
-                        <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200 font-semibold">
-                          ⚖️ Qty: {selectedConversation.entities.quantity} {selectedConversation.entities.unit || 'kg'}
-                        </span>
-                      )}
-                      {selectedConversation.entities.batch && (
-                        <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-200 font-semibold">
-                          🔖 Batch: {selectedConversation.entities.batch}
-                        </span>
-                      )}
-                      {selectedConversation.entities.document_requested && (
-                        <span className="text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded border border-teal-200 font-semibold">
-                          📄 Document: {selectedConversation.entities.document_requested}
-                        </span>
-                      )}
-                      {selectedConversation.entities.payment_info && (
-                        <span className="text-[10px] bg-cyan-50 text-cyan-700 px-2 py-0.5 rounded border border-cyan-200 font-semibold">
-                          💳 Payment: {selectedConversation.entities.payment_info}
-                        </span>
-                      )}
-                      {selectedConversation.entities.delivery_details && (
-                        <span className="text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded border border-orange-200 font-semibold">
-                          🚚 Delivery: {selectedConversation.entities.delivery_details}
-                        </span>
+                      {selectedConversation.entities && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {Object.entries(selectedConversation.entities).map(([k, v]) => (
+                            <span key={k} className="text-[10px] bg-white border border-emerald-200 text-emerald-900 px-2 py-0.5 rounded font-medium">
+                              <strong>{k}:</strong> {String(v)}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Unlinked Alert Notice */}
-              {!selectedConversation.inquiryId && (
-                <div className="bg-amber-50 border-b border-amber-200 p-2.5 px-4 flex items-center justify-between text-xs text-amber-900">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                    <span>This communication is not yet linked to an inquiry. It is tracked under <strong>{selectedConversation.customerName || 'General Communication'}</strong>.</span>
-                  </div>
-                  <button
-                    onClick={() => setShowLinkDialog(true)}
-                    className="text-xs font-bold text-amber-800 hover:underline cursor-pointer"
-                  >
-                    Link to Inquiry →
-                  </button>
-                </div>
-              )}
-
-              {/* Scrollable Message Thread */}
+              {/* Message Thread Scrollable */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/40">
                 {loadingDetail && (
                   <div className="p-12 text-center text-xs text-gray-500">
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
-                    Loading complete thread...
+                    Loading conversation thread...
                   </div>
                 )}
 
@@ -1222,13 +1332,53 @@ export function CrmOmnichannelInbox({
 
                 {threadMessages.map((msg, idx) => {
                   const isExpanded = Boolean(expandedMsgIds[msg.id]);
+                  const isWhatsApp = selectedConversation.channel === 'whatsapp';
+                  const isOutbound = msg.direction === 'outbound';
 
+                  // Render WhatsApp styled bubbles
+                  if (isWhatsApp) {
+                    return (
+                      <div
+                        key={msg.id || idx}
+                        className={`flex flex-col ${isOutbound ? 'items-end' : 'items-start'} max-w-full`}
+                      >
+                        <div
+                          className={`rounded-lg p-3 text-xs shadow-2xs max-w-[85%] font-sans leading-relaxed ${
+                            isOutbound
+                              ? 'bg-[#d9fdd3] text-gray-900 rounded-tr-none'
+                              : 'bg-white text-gray-900 border border-gray-200 rounded-tl-none'
+                          }`}
+                        >
+                          <div className="font-semibold text-[10px] text-gray-500 mb-1">
+                            {isOutbound ? 'You (Sales)' : msg.from}
+                          </div>
+
+                          <div className="whitespace-pre-wrap selection:bg-emerald-100">
+                            {msg.body}
+                          </div>
+
+                          {msg.englishTranslation && !isOutbound && (
+                            <div className="mt-2 pt-1.5 border-t border-gray-200 text-[11px] text-slate-700 bg-slate-50 p-1.5 rounded">
+                              <span className="text-[9px] uppercase font-bold text-slate-500 block">English Translation:</span>
+                              {msg.englishTranslation}
+                            </div>
+                          )}
+
+                          <div className="text-[9px] text-gray-400 text-right mt-1.5">
+                            {msg.date ? new Date(msg.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            {isOutbound && ' ✓✓'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Render Email Cards
                   return (
                     <div
                       key={msg.id || idx}
                       className="border border-gray-200 rounded-lg bg-white shadow-2xs overflow-hidden"
                     >
-                      {/* Message Accordion Header */}
                       <div
                         onClick={() => setExpandedMsgIds(prev => ({ ...prev, [msg.id]: !prev[msg.id] }))}
                         className="p-3 bg-gray-50/60 hover:bg-gray-50 flex items-center justify-between gap-3 cursor-pointer select-none"
@@ -1257,7 +1407,6 @@ export function CrmOmnichannelInbox({
                         </div>
                       </div>
 
-                      {/* Expanded Message Body */}
                       {isExpanded && (
                         <div className="p-3.5 border-t border-gray-100 space-y-3">
                           {msg.subject && (
@@ -1266,7 +1415,6 @@ export function CrmOmnichannelInbox({
                             </div>
                           )}
 
-                          {/* Original Message Body */}
                           {msg.bodyHtml ? (
                             <div
                               className="text-xs leading-relaxed text-gray-800 font-sans selection:bg-blue-100 overflow-x-auto"
@@ -1278,49 +1426,6 @@ export function CrmOmnichannelInbox({
                             </div>
                           )}
 
-                          {/* English Translation Box for Inbound WhatsApp */}
-                          {selectedConversation.channel === 'whatsapp' && msg.direction === 'inbound' && msg.englishTranslation && (
-                            <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-700 space-y-1">
-                              <div className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
-                                <Globe className="w-3 h-3 text-blue-500" />
-                                <span>English Translation / Normalization (Internal ERP):</span>
-                              </div>
-                              <p className="font-medium text-slate-900 whitespace-pre-wrap">{msg.englishTranslation}</p>
-                            </div>
-                          )}
-
-                          {/* Message Level Entity Chips */}
-                          {msg.entities && (
-                            <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                              {msg.entities.product && (
-                                <span className="text-[9px] bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded border border-blue-200 font-semibold">
-                                  📦 {msg.entities.product}
-                                </span>
-                              )}
-                              {msg.entities.quantity && (
-                                <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200 font-semibold">
-                                  ⚖️ {msg.entities.quantity} {msg.entities.unit || 'kg'}
-                                </span>
-                              )}
-                              {msg.entities.batch && (
-                                <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded border border-amber-200 font-semibold">
-                                  🔖 Batch {msg.entities.batch}
-                                </span>
-                              )}
-                              {msg.entities.document_requested && (
-                                <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.2 rounded border border-teal-200 font-semibold">
-                                  📄 Doc: {msg.entities.document_requested}
-                                </span>
-                              )}
-                              {msg.entities.payment_info && (
-                                <span className="text-[9px] bg-cyan-50 text-cyan-700 px-1.5 py-0.2 rounded border border-cyan-200 font-semibold">
-                                  💳 {msg.entities.payment_info}
-                                </span>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Attachments */}
                           {msg.attachments && msg.attachments.length > 0 && (
                             <div className="pt-2 border-t border-gray-100 space-y-1.5">
                               <div className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
@@ -1341,7 +1446,7 @@ export function CrmOmnichannelInbox({
                                     </div>
                                     <button
                                       type="button"
-                                      onClick={() => handleOpenDoc(att.storagePath, att.filename)}
+                                      onClick={() => handleOpenDoc(att.storagePath)}
                                       className="px-2 py-0.5 bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 rounded text-[10px] flex items-center gap-1 cursor-pointer"
                                     >
                                       <Eye className="w-3 h-3" />
@@ -1361,37 +1466,33 @@ export function CrmOmnichannelInbox({
 
               {/* Bottom Quick Reply Composer */}
               <div className="p-3 border-t border-gray-200 bg-white space-y-2">
-                {(() => {
-                  const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase();
-                  const isPricingReply = replySender.includes('kunal@avira.co.id');
-                  return (
-                    <>
-                      <div className="flex items-center justify-between text-xs text-gray-600">
-                        <span className="font-semibold flex items-center gap-1.5 flex-wrap">
-                          {selectedConversation.channel === 'whatsapp' ? (
-                            <>
-                              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                              Reply via WhatsApp to {selectedConversation.senderAddress}
-                            </>
-                          ) : (
-                            <>
-                              <Mail className="w-3.5 h-3.5 text-blue-600" />
-                              Reply via Email to {getReplyRecipient()}
-                              <span className="text-[10.5px] font-mono bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 select-none">
-                                {isPricingReply ? 'Sending from: kunal@avira.co.id' : 'Sending from: sales@avira.co.id'}
-                              </span>
-                            </>
-                          )}
+                <div className="flex items-center justify-between text-xs text-gray-600">
+                  <span className="font-semibold flex items-center gap-1.5 flex-wrap">
+                    {selectedConversation.channel === 'whatsapp' ? (
+                      <>
+                        <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                        Reply via WhatsApp to {selectedConversation.senderAddress}
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Reply via Email to {getReplyRecipient()}</span>
+                        <span className="text-[10px] text-gray-500 font-mono bg-gray-50 px-1 py-0.2 rounded border border-gray-200">
+                          Sending from: sales@avira.co.id
                         </span>
+                      </>
+                    )}
+                  </span>
 
                   {selectedConversation.channel === 'whatsapp' && selectedConversation.suggestedReply && (
                     <button
                       type="button"
                       onClick={() => setReplyText(selectedConversation.suggestedReply || '')}
+                      title="Draft Reply in Customer Language"
                       className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1 transition cursor-pointer"
                     >
                       <Sparkles className="w-3 h-3 text-emerald-600" />
-                      <span>Draft Reply in Customer Language ({selectedConversation.language === 'en' ? 'English' : 'Indonesian'})</span>
+                      <span>Draft AI Reply</span>
                     </button>
                   )}
                 </div>
@@ -1400,7 +1501,13 @@ export function CrmOmnichannelInbox({
                   rows={2}
                   value={replyText}
                   onChange={e => setReplyText(e.target.value)}
-                  placeholder={`Type your reply to ${selectedConversation.senderName}...`}
+                  onKeyDown={e => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSendReply();
+                    }
+                  }}
+                  placeholder={`Type your reply (Cmd+Enter to send)...`}
                   className="w-full text-xs p-2.5 border border-gray-300 rounded-md focus:outline-blue-500 font-sans"
                 />
 
@@ -1418,57 +1525,308 @@ export function CrmOmnichannelInbox({
                     <span>{sendingReply ? 'Sending...' : 'Send Reply'}</span>
                   </button>
                 </div>
-              </>
-            );
-          })()}
-        </div>
+              </div>
             </div>
+          )}
+        </div>
+
+        {/* COLUMN 3: Context & Customer 360 (~320px) */}
+        <div className="hidden lg:flex w-[320px] bg-slate-50/70 flex-col overflow-y-auto flex-shrink-0 p-3 space-y-3">
+          {!selectedConversation ? (
+            <div className="text-center text-gray-400 py-12 text-xs">
+              Context & Customer 360 will appear here.
+            </div>
+          ) : (
+            <>
+              {/* Customer 360 Profile Box */}
+              <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between border-b pb-1.5">
+                  <span className="text-[11px] font-bold text-gray-800 uppercase flex items-center gap-1.5">
+                    <Building className="w-3.5 h-3.5 text-blue-600" />
+                    Customer 360
+                  </span>
+                  {customerDetail?.id && (
+                    <button
+                      onClick={() => onOpenCustomer?.(customerDetail.id)}
+                      className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-0.5"
+                    >
+                      <span>View</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-1 text-xs">
+                  <div className="font-bold text-gray-900">
+                    {customerDetail?.company_name || selectedConversation.customerName || selectedConversation.senderName}
+                  </div>
+                  {customerDetail?.contact_person && (
+                    <div className="text-gray-600 flex items-center gap-1">
+                      <User className="w-3 h-3 text-gray-400" />
+                      <span>{customerDetail.contact_person}</span>
+                    </div>
+                  )}
+                  {customerDetail?.phone && (
+                    <div className="text-gray-600 flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-gray-400" />
+                      <span>{customerDetail.phone}</span>
+                    </div>
+                  )}
+                  {customerDetail?.city && (
+                    <div className="text-gray-500 text-[11px]">
+                      📍 {customerDetail.city}, {customerDetail.country || 'Indonesia'}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Linked Inquiry Card */}
+              <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between border-b pb-1.5">
+                  <span className="text-[11px] font-bold text-gray-800 uppercase flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                    Linked Sourcing Inquiry
+                  </span>
+                  {selectedConversation.inquiryId && (
+                    <button
+                      onClick={() => onOpenInquiry?.(selectedConversation.inquiryId!)}
+                      className="text-[11px] text-blue-600 font-semibold hover:underline"
+                    >
+                      Open
+                    </button>
+                  )}
+                </div>
+
+                {linkedInquiryDetail ? (
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-blue-900">{linkedInquiryDetail.inquiry_number}</span>
+                      <span className="text-[10px] bg-blue-50 text-blue-800 px-1.5 py-0.2 rounded font-semibold border border-blue-200">
+                        {linkedInquiryDetail.pipeline_status || linkedInquiryDetail.status || 'New'}
+                      </span>
+                    </div>
+
+                    <div className="text-gray-900 font-semibold">
+                      📦 {linkedInquiryDetail.product_name}
+                    </div>
+
+                    {linkedInquiryDetail.quantity && (
+                      <div className="text-gray-600 text-[11px]">
+                        Qty: <strong>{linkedInquiryDetail.quantity}</strong>
+                      </div>
+                    )}
+
+                    {linkedInquiryDetail.offered_price && (
+                      <div className="text-gray-600 text-[11px]">
+                        Offered: <strong>{linkedInquiryDetail.offered_price_currency || 'IDR'} {Number(linkedInquiryDetail.offered_price).toLocaleString()}</strong>
+                      </div>
+                    )}
+
+                    {linkedInquiryDetail.user_profiles?.full_name && (
+                      <div className="text-gray-500 text-[11px]">
+                        Owner: <strong>{linkedInquiryDetail.user_profiles.full_name}</strong>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-500 py-2">
+                    <p className="mb-2">No inquiry linked to this conversation.</p>
+                    <button
+                      onClick={() => setShowLinkDialog(true)}
+                      className="w-full py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-xs font-semibold transition"
+                    >
+                      + Link Existing Inquiry
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Follow-up Tracker & Reschedule Buttons */}
+              {linkedInquiryDetail && (
+                <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-2xs space-y-2">
+                  <div className="flex items-center justify-between border-b pb-1.5">
+                    <span className="text-[11px] font-bold text-gray-800 uppercase flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                      Follow-up Tracker
+                    </span>
+                    {linkedInquiryDetail.next_follow_up && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                        {linkedInquiryDetail.next_follow_up}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] text-gray-600">
+                    Quick reschedule customer follow-up:
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1 pt-1">
+                    <button
+                      onClick={() => handleRescheduleFollowUp(1)}
+                      disabled={reschedulingFollowUp}
+                      className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded text-[10px] font-bold text-gray-700 transition"
+                    >
+                      +1 Day
+                    </button>
+                    <button
+                      onClick={() => handleRescheduleFollowUp(3)}
+                      disabled={reschedulingFollowUp}
+                      className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded text-[10px] font-bold text-gray-700 transition"
+                    >
+                      +3 Days
+                    </button>
+                    <button
+                      onClick={() => handleRescheduleFollowUp(7)}
+                      disabled={reschedulingFollowUp}
+                      className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded text-[10px] font-bold text-gray-700 transition"
+                    >
+                      +1 Week
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Pending Items Commercial Checklist */}
+              {linkedInquiryDetail && (
+                <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-2xs space-y-2">
+                  <span className="text-[11px] font-bold text-gray-800 uppercase flex items-center gap-1.5 border-b pb-1.5">
+                    <CheckSquare className="w-3.5 h-3.5 text-purple-600" />
+                    Commercial Checklist
+                  </span>
+
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-700">Price Quoted:</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.price_quoted || linkedInquiryDetail.quote_sent_at ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                        {linkedInquiryDetail.price_quoted || linkedInquiryDetail.quote_sent_at ? '✓ Sent' : 'Pending'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-700">COA Document:</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.coa_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                        {linkedInquiryDetail.coa_sent ? '✓ Sent' : 'Pending'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-700">MSDS Document:</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.msds_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                        {linkedInquiryDetail.msds_sent ? '✓ Sent' : 'Pending'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-700">Sample:</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.sample_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                        {linkedInquiryDetail.sample_sent ? '✓ Sent' : 'Pending'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {/* Link to Inquiry Dialog */}
+      {/* Link Dialog */}
       {showLinkDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-4 space-y-3">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-sm font-bold text-gray-900">Link Communication to Inquiry</h3>
+              <h3 className="text-sm font-bold text-gray-900">Link Communication</h3>
               <button onClick={() => setShowLinkDialog(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-gray-600">
-              Select an existing inquiry to link this message from <strong>{selectedConversation?.senderName}</strong>:
-            </p>
-
-            <select
-              value={selectedInquiryToLink}
-              onChange={e => setSelectedInquiryToLink(e.target.value)}
-              className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
-            >
-              <option value="">Select an Inquiry ▼</option>
-              {allInquiries.map(i => (
-                <option key={i.id} value={i.id}>
-                  {i.inquiry_number} — {i.company_name} ({i.product_name})
-                </option>
-              ))}
-            </select>
-
-            <div className="pt-2 flex justify-end gap-2 border-t">
+            <div className="flex border-b border-gray-200">
               <button
-                onClick={() => setShowLinkDialog(false)}
-                className="px-3 py-1.5 border rounded text-xs text-gray-600 hover:bg-gray-100"
+                type="button"
+                onClick={() => setLinkTargetType('inquiry')}
+                className={`py-1.5 px-3 text-xs font-semibold border-b-2 transition ${
+                  linkTargetType === 'inquiry'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
               >
-                Cancel
+                Link to Inquiry
               </button>
               <button
-                onClick={handleConfirmLink}
-                disabled={!selectedInquiryToLink || isLinking}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold disabled:opacity-50"
+                type="button"
+                onClick={() => setLinkTargetType('customer')}
+                className={`py-1.5 px-3 text-xs font-semibold border-b-2 transition ${
+                  linkTargetType === 'customer'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
               >
-                {isLinking ? 'Linking...' : 'Confirm Link'}
+                Link to Customer
               </button>
+            </div>
+
+            {linkTargetType === 'inquiry' ? (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-600">
+                  Select an inquiry to link with <strong>{selectedConversation?.senderName}</strong>:
+                </p>
+                <select
+                  value={selectedInquiryToLink}
+                  onChange={e => setSelectedInquiryToLink(e.target.value)}
+                  className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
+                >
+                  <option value="">Select an Inquiry ▼</option>
+                  {allInquiries.map(i => (
+                    <option key={i.id} value={i.id}>
+                      {i.inquiry_number} — {i.company_name} ({i.product_name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-600">
+                  Select a customer to associate with <strong>{selectedConversation?.senderName}</strong>:
+                </p>
+                <select
+                  value={selectedCustomerToLink}
+                  onChange={e => setSelectedCustomerToLink(e.target.value)}
+                  className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
+                >
+                  <option value="">Select a Customer ▼</option>
+                  {allCustomers.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.company_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="pt-2 flex justify-between items-center gap-2 border-t">
+              <button
+                onClick={handleUnlinkConversation}
+                disabled={isLinking}
+                className="text-xs text-rose-600 hover:underline"
+              >
+                Set as General
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowLinkDialog(false)}
+                  className="px-3 py-1.5 border rounded text-xs text-gray-600 hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmLink}
+                  disabled={(linkTargetType === 'inquiry' ? !selectedInquiryToLink : !selectedCustomerToLink) || isLinking}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold disabled:opacity-50"
+                >
+                  {isLinking ? 'Linking...' : 'Confirm Link'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

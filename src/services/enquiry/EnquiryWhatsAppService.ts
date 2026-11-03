@@ -23,9 +23,13 @@ export interface WhatsAppConnectionStatusResult {
   status: 'connected' | 'disconnected' | 'unpaired' | 'error';
   session: string;
   businessPhone?: string | null;
+  businessJid?: string | null;
+  identityVerifiedAt?: string | null;
+  identitySource?: string | null;
   lastSeen?: string;
   qrCode?: string | null;
   error?: string;
+  protected?: boolean;
 }
 
 export class EnquiryWhatsAppService {
@@ -74,13 +78,24 @@ export class EnquiryWhatsAppService {
     }
   }
 
+  private static getBaseUrl(): string {
+    return import.meta.env.VITE_WHATSAPP_PROXY_URL || '/api/whatsapp';
+  }
+
+  private static getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+    };
+  }
+
   /**
    * Fetches WhatsApp transport adapter connection and pairing status.
    */
   static async getConnectionStatus(): Promise<WhatsAppConnectionStatusResult> {
     try {
-      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
-      const res = await fetch(`${adapterUrl}/api/status`);
+      const res = await fetch(`${this.getBaseUrl()}/api/status`, {
+        headers: this.getHeaders(),
+      });
       if (!res.ok) {
         return {
           status: 'error',
@@ -93,7 +108,7 @@ export class EnquiryWhatsAppService {
       return {
         status: 'disconnected',
         session: 'sapj-business-whatsapp',
-        error: err.message || 'WhatsApp adapter service unreachable on port 3100',
+        error: err.message || 'WhatsApp adapter service unreachable via proxy',
       };
     }
   }
@@ -103,10 +118,9 @@ export class EnquiryWhatsAppService {
    */
   static async connectSession(): Promise<WhatsAppConnectionStatusResult> {
     try {
-      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
-      const res = await fetch(`${adapterUrl}/api/session/connect`, {
+      const res = await fetch(`${this.getBaseUrl()}/api/session/connect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getHeaders(),
       });
       if (!res.ok) {
         return {
@@ -130,10 +144,9 @@ export class EnquiryWhatsAppService {
    */
   static async disconnectSession(): Promise<WhatsAppConnectionStatusResult> {
     try {
-      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
-      const res = await fetch(`${adapterUrl}/api/session/disconnect`, {
+      const res = await fetch(`${this.getBaseUrl()}/api/session/disconnect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getHeaders(),
       });
       if (!res.ok) {
         return {
@@ -157,10 +170,9 @@ export class EnquiryWhatsAppService {
    */
   static async refreshQr(): Promise<WhatsAppConnectionStatusResult> {
     try {
-      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
-      const res = await fetch(`${adapterUrl}/api/session/refresh-qr`, {
+      const res = await fetch(`${this.getBaseUrl()}/api/session/refresh-qr`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getHeaders(),
       });
       if (!res.ok) {
         return {
@@ -184,10 +196,9 @@ export class EnquiryWhatsAppService {
    */
   static async pairSession(phone?: string): Promise<WhatsAppConnectionStatusResult> {
     try {
-      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
-      const res = await fetch(`${adapterUrl}/api/session/pair`, {
+      const res = await fetch(`${this.getBaseUrl()}/api/session/pair`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getHeaders(),
         body: JSON.stringify({ phone }),
       });
       if (!res.ok) {
@@ -212,10 +223,9 @@ export class EnquiryWhatsAppService {
    */
   static async injectTestInbound(payload: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
     try {
-      const adapterUrl = import.meta.env.VITE_WHATSAPP_ADAPTER_URL || 'http://localhost:3100';
-      const res = await fetch(`${adapterUrl}/api/test/inject-inbound`, {
+      const res = await fetch(`${this.getBaseUrl()}/api/test/inject-inbound`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getHeaders(),
         body: JSON.stringify(payload),
       });
       return await res.json();

@@ -22,12 +22,12 @@ test('1. Capitalizable Categories Whitelist: Matches PostgreSQL authoritative ru
   assert.equal(isCapitalizableLandedCostCategory('duty'), true);
   assert.equal(isCapitalizableLandedCostCategory('duty_import'), true);
   assert.equal(isCapitalizableLandedCostCategory('other_import'), true);
+  assert.equal(isCapitalizableLandedCostCategory('bpom_ski_fees'), true, 'bpom_ski_fees is capitalizable for import shipments');
 
   // Non-capitalizable / operational categories strictly excluded
   assert.equal(isCapitalizableLandedCostCategory('freight_charges'), false, 'freight_charges is rejected by PostgreSQL whitelist');
   assert.equal(isCapitalizableLandedCostCategory('transportation'), false, 'transportation is rejected by PostgreSQL whitelist');
   assert.equal(isCapitalizableLandedCostCategory('other_import_costs'), false, 'other_import_costs is rejected by PostgreSQL whitelist');
-  assert.equal(isCapitalizableLandedCostCategory('bpom_ski_fees'), false, 'BPOM/SKI is operational P&L 5410');
   assert.equal(isCapitalizableLandedCostCategory('ppn_import'), false, 'PPN is recoverable asset 1150');
   assert.equal(isCapitalizableLandedCostCategory('pph_import'), false, 'PPh 22 is prepaid tax asset 1155');
   assert.equal(isCapitalizableLandedCostCategory('staff_welfare'), false, 'Staff welfare is operational expense');
@@ -74,12 +74,12 @@ test('2. Exact Container Reconciliation: Proves Rp 66,658,805 pool and explains 
       pib_pph_amount: 19466050,
       include_in_landed_cost: true,
     },
-    // 5 BPOM/SKI regulatory fees (Account 5410, Rp 50,000 each = Rp 250,000)
-    { id: 'exp-ski-1', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-2', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-3', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-4', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-5', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
+    // 5 BPOM/SKI regulatory fees unselected/operational (Account 5410, Rp 50,000 each = Rp 250,000)
+    { id: 'exp-ski-1', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-2', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-3', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-4', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-5', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
   ];
 
   const linkedPettyCash = [
@@ -122,8 +122,8 @@ test('2. Exact Container Reconciliation: Proves Rp 66,658,805 pool and explains 
   assert.equal(breakdown.pibPpnTotal, 85650988);
   assert.equal(breakdown.pibPphTotal, 19466050);
 
-  // Excluded Operational Expenses (5 x 50,000 BPOM + 482,000 staff welfare) = 732,000
-  assert.equal(breakdown.excludedOperationalExpensesTotal, 732000);
+  // Excluded staff welfare = 482,000
+  assert.equal(breakdown.excludedOperationalExpensesTotal, 482000);
 
   // The 5 BPOM fees alone total exactly Rp 250,000:
   const bpomOnly = linkedExpenses
@@ -192,19 +192,11 @@ test('4. Currency & Rounding Precision: Indonesian Rupiah rounding is consistent
 test('5. Duplicate References & Repeated Transactions: Distinguishes distinct items with identical descriptions', () => {
   const linkedExpenses = [
     {
-      id: 'exp-ski-1',
+      id: 'exp-welfare-1',
       voucher_number: 'EXP/26-26/061',
-      description: 'Registration fee BPOM',
-      expense_category: 'bpom_ski_fees',
-      amount: 50000,
-      include_in_landed_cost: true,
-    },
-    {
-      id: 'exp-ski-2',
-      voucher_number: 'EXP/26-26/062',
-      description: 'Registration fee BPOM',
-      expense_category: 'bpom_ski_fees',
-      amount: 50000,
+      description: 'Office staff welfare',
+      expense_category: 'staff_welfare',
+      amount: 100000,
       include_in_landed_cost: true,
     },
     {

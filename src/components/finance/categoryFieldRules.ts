@@ -83,6 +83,13 @@ const IMPORT_BROKER_RULES: CategoryFieldRules = {
   brokerLines: 'show',
 };
 
+const PIB_RULES: CategoryFieldRules = {
+  ...DEFAULT,
+  supplier:   'hide', // Statutory customs duty & taxes are payable to Kas Negara, not a trade supplier
+  container:  'show', // Requires import container reference
+  payeeLabel: 'Kas Negara (Bea Cukai)',
+};
+
 const MARKETING_COMMISSION_RULES: CategoryFieldRules = {
   ...DEFAULT,
   supplier:         'hide',
@@ -162,6 +169,7 @@ export function getCategoryFieldRules(category: string | null | undefined): Cate
   if (STAFF_CATEGORIES.has(c)) return STAFF_RULES;
   if (UTILITY_CATEGORIES.has(c)) return UTILITY_RULES;
   if (IMPORT_BROKER_CATEGORIES.has(c)) return IMPORT_BROKER_RULES;
+  if (c === 'pib_import') return PIB_RULES;
   return DEFAULT;
 }
 

@@ -22,7 +22,7 @@ test('1. TypeScript and PostgreSQL Category Rules Parity: 100% Exact Match', () 
   // Read live definition from PostgreSQL migration
   const migrationPath = path.join(
     rootDir,
-    'supabase/migrations/20260921220000_fix_costing_engine_pib_null_and_stale_costs.sql'
+    'supabase/migrations/20261102000000_enable_shipment_specific_ski_fee_capitalization.sql'
   );
   const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 
@@ -41,13 +41,13 @@ test('1. TypeScript and PostgreSQL Category Rules Parity: 100% Exact Match', () 
   // Exact parity checks:
   assert.equal(
     postgresCategories.size,
-    13,
-    'PostgreSQL authoritative whitelist must contain exactly 13 categories'
+    14,
+    'PostgreSQL authoritative whitelist must contain exactly 14 categories (including bpom_ski_fees)'
   );
   assert.equal(
     CAPITALIZABLE_LANDED_COST_CATEGORIES.size,
-    13,
-    'TypeScript CAPITALIZABLE_LANDED_COST_CATEGORIES must contain exactly 13 categories'
+    14,
+    'TypeScript CAPITALIZABLE_LANDED_COST_CATEGORIES must contain exactly 14 categories (including bpom_ski_fees)'
   );
 
   // Every category in PostgreSQL must be in TypeScript Set
@@ -76,7 +76,6 @@ test('1. TypeScript and PostgreSQL Category Rules Parity: 100% Exact Match', () 
     'freight_charges',
     'transportation',
     'other_import_costs',
-    'bpom_ski_fees',
     'staff_welfare',
     'ppn_import',
     'pph_import',
@@ -134,12 +133,12 @@ test('2. Container E0000085/2627: Canonical Landed Cost Pool equals exactly Rp 6
       pib_pph_amount: 19466050,
       include_in_landed_cost: true,
     },
-    // 5 BPOM/SKI regulatory registration fees (Account 5410, Rp 50,000 each = Rp 250,000)
-    { id: 'exp-ski-1', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-2', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-3', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-4', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
-    { id: 'exp-ski-5', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: true },
+    // 5 BPOM/SKI regulatory registration fees unselected/operational (Account 5410, Rp 50,000 each = Rp 250,000)
+    { id: 'exp-ski-1', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-2', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-3', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-4', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
+    { id: 'exp-ski-5', expense_category: 'bpom_ski_fees', amount: 50000, include_in_landed_cost: false },
   ];
 
   const linkedPettyCash = [
@@ -176,8 +175,8 @@ test('2. Container E0000085/2627: Canonical Landed Cost Pool equals exactly Rp 6
   assert.equal(pool.pibPpnTotal, 85650988);
   assert.equal(pool.pibPphTotal, 19466050);
 
-  // Excluded BPOM fees (250,000) + staff welfare (482,000) = 732,000
-  assert.equal(pool.excludedOperationalExpensesTotal, 732000);
+  // Excluded staff welfare (482,000)
+  assert.equal(pool.excludedOperationalExpensesTotal, 482000);
 });
 
 test('3. Modal Scroll-Reset Regression: Scroll position preserved during form updates and re-renders', () => {

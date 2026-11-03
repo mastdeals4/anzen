@@ -32,6 +32,15 @@ interface InboundWebhookBody {
   rawPayload?: Record<string, unknown> | null;
 }
 
+async function timingSafeEqualString(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [hashA, hashB] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  return crypto.subtle.timingSafeEqual(new Uint8Array(hashA), new Uint8Array(hashB));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -44,18 +53,27 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // 1. Authenticate webhook caller via shared secret
+  // 1. Authenticate webhook caller via shared secret (Fail closed: No fallback secrets permitted)
   const expectedSecret =
     Deno.env.get("WHATSAPP_WEBHOOK_SECRET") ||
-    Deno.env.get("OPENWA_WEBHOOK_SECRET") ||
-    "test_whatsapp_secret_key_dev";
+    Deno.env.get("OPENWA_WEBHOOK_SECRET");
+
+  if (!expectedSecret) {
+    console.error("[WhatsApp Ingress] Missing WHATSAPP_WEBHOOK_SECRET in environment (failing closed)");
+    return new Response(
+      JSON.stringify({ success: false, error: "Webhook secret is not configured on server" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
   const secretHeader = req.headers.get("X-Webhook-Secret") || "";
   const authHeader = req.headers.get("Authorization") || "";
   const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
   const providedSecret = secretHeader || bearerToken;
-  if (!providedSecret || providedSecret !== expectedSecret) {
+  const isMatch = providedSecret ? await timingSafeEqualString(providedSecret, expectedSecret) : false;
+
+  if (!isMatch) {
     return new Response(
       JSON.stringify({ success: false, error: "Unauthorized webhook caller" }),
       { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }

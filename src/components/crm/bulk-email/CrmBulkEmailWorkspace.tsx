@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
 import { BulkEmailComposer } from '../BulkEmailComposer';
 import { DeliveryLog } from '../DeliveryLog';
+import { BulkWhatsAppPilotModal } from '../BulkWhatsAppPilotModal';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../../finance/FloatingField';
 import { SapRow } from '../../finance/SapLayout';
 import {
@@ -18,6 +20,7 @@ import {
   Edit3,
   RefreshCw,
   FolderOpen,
+  MessageCircle,
 } from 'lucide-react';
 
 interface RecipientTarget {
@@ -27,6 +30,8 @@ interface RecipientTarget {
   contact_person: string | null;
   customer_type?: string | null;
   city?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
 }
 
 interface TemplateRow {
@@ -46,9 +51,28 @@ interface Props {
 type BulkEmailTab = 'compose' | 'recipients' | 'templates' | 'history' | 'drafts';
 
 export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
-  const [activeTab, setActiveTab] = useState<BulkEmailTab>(
-    initialRecipients && initialRecipients.length > 0 ? 'compose' : 'compose'
-  );
+  const [searchParams, setSearchParams] = useSearchParams();
+  const subtabParam = searchParams.get('subtab')?.toLowerCase() as BulkEmailTab | null;
+  const initialSubtab: BulkEmailTab = (subtabParam && ['compose', 'recipients', 'templates', 'history', 'drafts'].includes(subtabParam))
+    ? subtabParam
+    : 'compose';
+
+  const [activeTab, setActiveTab] = useState<BulkEmailTab>(initialSubtab);
+
+  const handleTabChange = useCallback((tab: BulkEmailTab) => {
+    setActiveTab(tab);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('subtab', tab);
+    setSearchParams(newParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (subtabParam && ['compose', 'recipients', 'templates', 'history', 'drafts'].includes(subtabParam)) {
+      if (subtabParam !== activeTab) {
+        setActiveTab(subtabParam);
+      }
+    }
+  }, [subtabParam, activeTab]);
 
   // Selected recipients for composition
   const [selectedRecipients, setSelectedRecipients] = useState<RecipientTarget[]>(
@@ -70,6 +94,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
   const [newTemplateBody, setNewTemplateBody] = useState('');
   const [newTemplateCategory, setNewTemplateCategory] = useState('Marketing');
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [showBulkWhatsAppPilot, setShowBulkWhatsAppPilot] = useState(false);
 
   useEffect(() => {
     if (initialRecipients && initialRecipients.length > 0) {
@@ -89,14 +114,22 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
     try {
       const { data, error } = await supabase
         .from('crm_contacts')
-        .select('id, company_name, email, contact_person, customer_type, city')
+        .select('id, company_name, email, contact_person, customer_type, city, phone, mobile')
         .not('email', 'is', null)
         .eq('is_active', true)
         .order('company_name');
 
       if (error) throw error;
-      const valid = (data || []).filter((c: any) => c.email && c.email.includes('@'));
-      setAllContacts(valid);
+      const seenEmails = new Set<string>();
+      const deduplicated: RecipientTarget[] = [];
+      for (const c of data || []) {
+        const emailClean = (c.email || '').trim().toLowerCase();
+        if (emailClean && emailClean.includes('@') && !seenEmails.has(emailClean)) {
+          seenEmails.add(emailClean);
+          deduplicated.push({ ...c, email: emailClean });
+        }
+      }
+      setAllContacts(deduplicated);
     } catch (err: any) {
       console.error('Failed to load contacts for bulk email:', err);
     } finally {
@@ -146,7 +179,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
       return;
     }
     setSelectedRecipients(chosen);
-    setActiveTab('compose');
+    handleTabChange('compose');
     showToast({ type: 'success', title: 'Recipients Ready', message: `${chosen.length} recipients staged for email.` });
   };
 
@@ -221,7 +254,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
           ).map(([key, Icon, label]) => (
             <button
               key={key}
-              onClick={() => setActiveTab(key as BulkEmailTab)}
+              onClick={() => handleTabChange(key as BulkEmailTab)}
               className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md text-xs font-semibold transition ${
                 activeTab === key
                   ? 'bg-blue-600 text-white shadow-xs'
@@ -235,13 +268,23 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
         </div>
 
         {activeTab === 'recipients' && selectedContactIds.size > 0 && (
-          <button
-            onClick={handleApplySelectedToCompose}
-            className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white rounded-md text-xs font-semibold hover:bg-emerald-700 transition"
-          >
-            <Send className="w-3.5 h-3.5" />
-            Stage {selectedContactIds.size} for Compose
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowBulkWhatsAppPilot(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-teal-600 text-white rounded-md text-xs font-semibold hover:bg-teal-700 transition"
+              title="Send controlled pilot WhatsApp messages"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              Pilot WhatsApp ({selectedContactIds.size})
+            </button>
+            <button
+              onClick={handleApplySelectedToCompose}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white rounded-md text-xs font-semibold hover:bg-emerald-700 transition"
+            >
+              <Send className="w-3.5 h-3.5" />
+              Stage {selectedContactIds.size} for Compose
+            </button>
+          </div>
         )}
 
         {activeTab === 'templates' && (
@@ -266,7 +309,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
                 Choose recipients from your customer directory or recent inquiries before launching a campaign.
               </p>
               <button
-                onClick={() => setActiveTab('recipients')}
+                onClick={() => handleTabChange('recipients')}
                 className="px-4 py-2 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700 shadow-sm"
               >
                 Select Recipients ({allContacts.length} available)
@@ -279,7 +322,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
                   Targeted Recipients: <span className="text-blue-600 font-bold">{selectedRecipients.length} companies</span>
                 </span>
                 <button
-                  onClick={() => setActiveTab('recipients')}
+                  onClick={() => handleTabChange('recipients')}
                   className="text-blue-600 hover:underline font-medium"
                 >
                   Change Recipients
@@ -291,7 +334,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
                 onClose={() => setSelectedRecipients([])}
                 onComplete={() => {
                   showToast({ type: 'success', title: 'Bulk Email Queued', message: 'Campaign is running in background worker.' });
-                  setActiveTab('history');
+                  handleTabChange('history');
                 }}
               />
             </div>
@@ -418,7 +461,7 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
                       if (selectedRecipients.length === 0 && allContacts.length > 0) {
                         setSelectedRecipients(allContacts.slice(0, 10));
                       }
-                      setActiveTab('compose');
+                      handleTabChange('compose');
                     }}
                     className="text-blue-600 hover:underline font-semibold"
                   >
@@ -535,6 +578,16 @@ export function CrmBulkEmailWorkspace({ initialRecipients }: Props) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Controlled Bulk WhatsApp Pilot Modal */}
+      {showBulkWhatsAppPilot && (
+        <BulkWhatsAppPilotModal
+          isOpen={showBulkWhatsAppPilot}
+          onClose={() => setShowBulkWhatsAppPilot(false)}
+          recipients={allContacts.filter((c) => selectedContactIds.has(c.id))}
+          onComplete={() => setShowBulkWhatsAppPilot(false)}
+        />
       )}
     </div>
   );

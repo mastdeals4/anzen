@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Modal } from '../components/Modal';
 import { FileUpload } from '../components/FileUpload';
@@ -34,6 +34,10 @@ interface Batch {
   import_price_usd: number | null;
   import_price_per_unit: number | null;
   exchange_rate_usd_to_idr: number | null;
+  customs_ndpbm_rate?: number | null;
+  customs_assessable_value_idr?: number | null;
+  estimated_duty_charges?: number | null;
+  actual_duty_charges?: number | null;
   duty_charges: number;
   duty_percent: number | null;
   duty_charge_type?: 'percentage' | 'fixed' | null;
@@ -54,6 +58,7 @@ interface Batch {
   product_sources?: { supplier_name: string | null; grade: string | null } | null;
   import_containers?: {
     container_ref: string;
+    customs_ndpbm_rate?: number | null;
   };
   document_count?: number;
 }
@@ -73,6 +78,7 @@ interface ImportContainer {
   id: string;
   container_ref: string;
   status: string;
+  customs_ndpbm_rate?: number | null;
 }
 
 interface BatchDocument {
@@ -132,6 +138,15 @@ export function Batches() {
   const [showArchived, setShowArchived] = useState(false);
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
   const [pendingInwards, setPendingInwards] = useState<PendingInward[]>([]);
+  const containerMap = useMemo(() => {
+    const map = new Map<string, string>();
+    importContainers.forEach(c => {
+      if (c.id && c.container_ref) {
+        map.set(c.id, c.container_ref);
+      }
+    });
+    return map;
+  }, [importContainers]);
   const [pendingInwardContext, setPendingInwardContext] = useState<{ invoice_id: string; item_id: string } | null>(null);
   const [companySettings, setCompanySettings] = useState<any>(null);
   const batchOperationIdRef = useRef<string | null>(null);
@@ -147,6 +162,7 @@ export function Batches() {
     import_price_usd: 0,
     import_price_idr: 0,
     exchange_rate_usd_to_idr: 0,
+    customs_ndpbm_rate: null as number | null,
     duty_charges: 0,
     duty_percent: 0,
     duty_charge_type: 'fixed' as 'percentage' | 'fixed',
@@ -246,7 +262,7 @@ export function Batches() {
       const perPack = parseFloat(defaultPerPack);
       if (perPack > 0) {
         const packs = (row.pending / perPack).toFixed(0);
-        const inwardUnit = abbreviateUnit(product?.unit || row.unit || 'KG');
+        const inwardUnit = abbreviateUnit(product?.unit || row.unit || '');
         packagingDetails = `${packs} ${defaultPackType}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}${inwardUnit}`;
       }
     }
@@ -255,6 +271,7 @@ export function Batches() {
     setPendingInwardContext({ invoice_id: row.invoice_id, item_id: row.item_id });
     setProductMakes(makes || []);
     setUploadedFiles([]);
+    const linkedContainer = importContainers.find(c => c.id === row.import_container_id);
     setFormData({
       batch_number: row.batch_number || '',
       product_id: row.product_id,
@@ -266,6 +283,7 @@ export function Batches() {
       import_price_usd: row.currency === 'USD' ? row.unit_price : 0,
       import_price_idr: row.currency === 'USD' ? 0 : row.unit_price,
       exchange_rate_usd_to_idr: row.currency === 'USD' ? row.exchange_rate : 0,
+      customs_ndpbm_rate: linkedContainer?.customs_ndpbm_rate ?? null,
       duty_charges: 0,
       duty_percent: product?.duty_percent || 0,
       duty_charge_type: 'percentage',
@@ -350,7 +368,7 @@ export function Batches() {
           ${batchColumns},
           products(product_name, product_code, unit),
           product_sources!batches_make_id_fkey(supplier_name, grade),
-          import_containers(container_ref),
+          import_containers(container_ref, customs_ndpbm_rate),
           stock_reservations(id, reserved_quantity, status, sales_orders(so_number))
         `)
         .order('import_date', { ascending: false });
@@ -437,7 +455,7 @@ export function Batches() {
     try {
       const { data, error } = await supabase
         .from('import_containers')
-        .select('id, container_ref, status')
+        .select('id, container_ref, status, customs_ndpbm_rate')
         .order('container_ref', { ascending: false });
 
       if (error) throw error;
@@ -500,13 +518,11 @@ export function Batches() {
         return amount;
       };
 
-      // Percentage duty is derived from the batch's own duty percentage.
-      // Fixed-duty batches retain their stored absolute charge when edited.
-      const dutyChargeType = editingBatch?.duty_charge_type === 'fixed' ? 'fixed' : 'percentage';
-      const calculatedDutyAmount = (importPriceIDR * formData.duty_percent) / 100;
-      const dutyAmount = dutyChargeType === 'fixed' && editingBatch
-        ? Number(formData.duty_charges ?? editingBatch.duty_charges ?? 0)
-        : calculatedDutyAmount;
+      // Duty is dynamically calculated from USD assessable value × Customs NDPBM FX × Duty %
+      // Incorporates official Indonesian Customs (DJBC) thousand-rupiah billing rounding
+      const dutyDetails = getDutyDetails();
+      const dutyAmount = dutyDetails.perUnit;
+      const totalDuty = dutyDetails.total;
       const freightAmount = calculateCharge(formData.freight_charges, formData.freight_charge_type, importPriceIDR);
       const otherAmount = calculateCharge(formData.other_charges, formData.other_charge_type, importPriceIDR);
 
@@ -523,7 +539,7 @@ export function Batches() {
         exchange_rate_usd_to_idr: canViewCosting ? formData.exchange_rate_usd_to_idr || null : editingBatch?.exchange_rate_usd_to_idr || null,
         duty_percent: canViewCosting ? formData.duty_percent || 0 : editingBatch?.duty_percent || 0,
         duty_charges: canViewCosting ? dutyAmount : editingBatch?.duty_charges || 0,
-        duty_charge_type: dutyChargeType,
+        duty_charge_type: 'percentage',
         freight_charges: canViewCosting ? freightAmount : editingBatch?.freight_charges || 0,
         freight_charge_type: canViewCosting ? formData.freight_charge_type : 'fixed',
         other_charges: canViewCosting ? otherAmount : editingBatch?.other_charges || 0,
@@ -551,6 +567,27 @@ export function Batches() {
         throw new Error(result?.error || 'Canonical batch save failed');
       }
       const batchId = result.batch_id as string;
+
+      if (canViewCosting) {
+        const assessableValueIdr = (formData.import_price_usd > 0 && formData.customs_ndpbm_rate && formData.customs_ndpbm_rate > 0)
+          ? formData.import_price_usd * formData.customs_ndpbm_rate * (Number(formData.import_quantity) || 1)
+          : null;
+
+        await supabase.from('batches').update({
+          customs_ndpbm_rate: formData.customs_ndpbm_rate ? Number(formData.customs_ndpbm_rate) : null,
+          duty_charges: dutyAmount,
+          actual_duty_charges: totalDuty,
+          estimated_duty_charges: totalDuty,
+          customs_assessable_value_idr: assessableValueIdr,
+        }).eq('id', batchId);
+
+        // Propagate cost changes dynamically through container, layers, inventory, and COGS
+        if (formData.import_container_id) {
+          await supabase.rpc('reallocate_container_costs', { p_container_id: formData.import_container_id });
+        } else {
+          await supabase.rpc('propagate_batch_cost_change', { p_batch_id: batchId });
+        }
+      }
 
       await uploadFilesToBatch(batchId);
 
@@ -626,6 +663,8 @@ export function Batches() {
     const productDutyPercent = selectedProduct?.duty_percent || 0;
     const batchUnit = selectedProduct?.unit || (batch as any).products?.unit;
     const sanitizedPackaging = formatPackagingDetails(batch.packaging_details, batchUnit);
+    const linkedContainer = importContainers.find(c => c.id === batch.import_container_id);
+    const resolvedNdpbm = batch.customs_ndpbm_rate ?? batch.import_containers?.customs_ndpbm_rate ?? linkedContainer?.customs_ndpbm_rate ?? null;
 
     setFormData({
       batch_number: batch.batch_number,
@@ -638,6 +677,7 @@ export function Batches() {
       import_price_usd: batch.import_price_usd || 0,
       import_price_idr: batch.import_price || 0,
       exchange_rate_usd_to_idr: batch.exchange_rate_usd_to_idr || 0,
+      customs_ndpbm_rate: resolvedNdpbm ? Number(resolvedNdpbm) : null,
       duty_percent: batch.duty_percent ?? productDutyPercent,
       duty_charges: batch.duty_charges,
       duty_charge_type: batch.duty_charge_type ?? 'percentage',
@@ -761,6 +801,7 @@ export function Batches() {
       import_price_usd: 0,
       import_price_idr: 0,
       exchange_rate_usd_to_idr: 0,
+      customs_ndpbm_rate: null,
       duty_percent: 0,
       duty_charges: 0,
       duty_charge_type: 'fixed',
@@ -776,7 +817,7 @@ export function Batches() {
   };
 
   const showTransactionHistory = (productId: string, productName: string, productCode: string, batchId?: string, batchNumber?: string, unit?: string) => {
-    setSelectedProductForHistory({ id: productId, name: productName, code: productCode, batchId, batchNumber, unit: unit || 'KG' });
+    setSelectedProductForHistory({ id: productId, name: productName, code: productCode, batchId, batchNumber, unit: unit || '' });
     setTransactionHistoryModal(true);
   };
 
@@ -845,6 +886,32 @@ export function Batches() {
     return new Date(batch.expiry_date) <= thirtyDaysFromNow && !isExpired(batch);
   };
 
+  // Simplified dynamic duty calculation: USD assessable value × NDPBM FX × Duty %
+  // Incorporates official Indonesian Customs (DJBC) thousand-rupiah billing rounding
+  const getDutyDetails = () => {
+    const assessableUsd = Number(formData.import_price_usd) || 0;
+    const ndpbm = Number(formData.customs_ndpbm_rate) || 0;
+    const dutyPercent = Number(formData.duty_percent) || 0;
+    const qty = Number(formData.import_quantity) || 1;
+
+    if (dutyPercent <= 0 || assessableUsd <= 0 || ndpbm <= 0) {
+      return { perUnit: 0, total: 0, formula: '', roundingDiff: 0 };
+    }
+
+    const rawTotal = assessableUsd * qty * ndpbm * (dutyPercent / 100);
+    // Official Indonesian Customs DJBC rule: Billing Bea Masuk is rounded up to the nearest thousand IDR
+    const customsTotal = Math.ceil(rawTotal / 1000) * 1000;
+    const roundingDiff = Number((customsTotal - rawTotal).toFixed(2));
+    const perUnit = qty > 0 ? customsTotal / qty : 0;
+    const formula = `${formatCurrency(assessableUsd, 'USD')} × Rp ${ndpbm.toLocaleString()} × ${dutyPercent}%`;
+
+    return { perUnit, total: customsTotal, formula, roundingDiff };
+  };
+
+  const getDutyPerUnit = (): number => {
+    return getDutyDetails().perUnit;
+  };
+
   const calculateTotalCostIDR = () => {
     const importPriceIDR = formData.import_price_idr > 0 && formData.import_price_usd <= 0
       ? formData.import_price_idr
@@ -857,7 +924,7 @@ export function Batches() {
       return amount;
     };
 
-    const dutyAmount = (importPriceIDR * formData.duty_percent) / 100;
+    const dutyAmount = getDutyPerUnit();
     const freightAmount = calculateCharge(formData.freight_charges, formData.freight_charge_type);
     const otherAmount = calculateCharge(formData.other_charges, formData.other_charge_type);
 
@@ -962,11 +1029,11 @@ export function Batches() {
           <div className="p-3 border-b border-gray-200 flex items-center gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input name="batch_search" aria-label="Search batches..."
+              <input name="batch_search" aria-label="Search by batch #, product, or import container..."
                 type="text"
                 value={batchSearch}
                 onChange={(e) => setBatchSearch(e.target.value)}
-                placeholder="Search batches..."
+                placeholder="Search by batch #, product, or import container..."
                 className="w-full pl-9 pr-4 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
               />
             </div>
@@ -997,17 +1064,40 @@ export function Batches() {
               <p className="mt-3 text-gray-500 text-sm">Loading batches...</p>
             </div>
           ) : (() => {
+            const q = batchSearch.trim().toLowerCase().replace(/\s+/g, ' ');
             const filtered = batches.filter(batch => {
               const isArchived = !batch.is_active;
               if (!showArchived && isArchived) return false;
-              if (!batchSearch) return true;
-              const q = batchSearch.toLowerCase();
-              return (
-                batch.batch_number?.toLowerCase().includes(q) ||
-                batch.products?.product_name?.toLowerCase().includes(q) ||
-                batch.products?.product_code?.toLowerCase().includes(q) ||
-                batch.product_sources?.supplier_name?.toLowerCase().includes(q)
-              );
+              if (!q) return true;
+
+              const batchNo = (batch.batch_number || '').toLowerCase();
+              const prodName = (batch.products?.product_name || '').toLowerCase();
+              const prodCode = (batch.products?.product_code || '').toLowerCase();
+              const supplier = (batch.product_sources?.supplier_name || '').toLowerCase();
+              const containerRef = (
+                batch.import_containers?.container_ref ||
+                (batch.import_container_id ? containerMap.get(batch.import_container_id) : '') ||
+                ''
+              ).toLowerCase();
+
+              // 1. Direct match on any of the unified search dimensions (Batch #, Product, or Container)
+              if (
+                batchNo.includes(q) ||
+                prodName.includes(q) ||
+                prodCode.includes(q) ||
+                supplier.includes(q) ||
+                containerRef.includes(q)
+              ) {
+                return true;
+              }
+
+              // 2. Multi-word keyword match across combined batch identity
+              if (q.includes(' ')) {
+                const combined = `${batchNo} ${prodName} ${prodCode} ${supplier} ${containerRef}`;
+                return q.split(' ').every(word => combined.includes(word));
+              }
+
+              return false;
             });
 
             const grouped = new Map<string, { productName: string; productCode: string; unit: string; productId: string; batches: typeof filtered }>();
@@ -1146,7 +1236,7 @@ export function Batches() {
                                     <tr key={batch.id} className={`border-t border-gray-100 hover:bg-gray-50 ${isArchived ? 'opacity-50 bg-gray-50' : isSoldOut ? 'bg-orange-50/30' : ''}`}>
                                       <td className="px-3 py-1.5">
                                         <button
-                                          onClick={() => showTransactionHistory(batch.product_id, batch.products?.product_name || '', batch.products?.product_code || '', batch.id, batch.batch_number, batch.products?.unit || 'KG')}
+                                          onClick={() => showTransactionHistory(batch.product_id, batch.products?.product_name || '', batch.products?.product_code || '', batch.id, batch.batch_number, batch.products?.unit || '')}
                                           className="font-mono text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
                                         >
                                           {batch.batch_number}
@@ -1217,8 +1307,8 @@ export function Batches() {
                                           <span className="ml-0.5">{batch.document_count || 0}</span>
                                         </button>
                                       </td>
-                                      <td className="px-3 py-1.5 text-right text-gray-400 text-[10px] truncate max-w-[130px]">
-                                        {batch.import_containers?.container_ref || '—'}
+                                      <td className="px-3 py-1.5 text-right text-gray-400 text-[10px] truncate max-w-[130px]" title={batch.import_containers?.container_ref || (batch.import_container_id ? containerMap.get(batch.import_container_id) : '') || undefined}>
+                                        {batch.import_containers?.container_ref || (batch.import_container_id ? containerMap.get(batch.import_container_id) : '') || '—'}
                                       </td>
                                       {canEdit && (
                                         <td className="px-3 py-1.5 text-center">
@@ -1397,7 +1487,7 @@ export function Batches() {
                         const perPack = parseFloat(defaultPerPack);
                         if (perPack > 0) {
                           const packs = (formData.import_quantity / perPack).toFixed(0);
-                          const prodUnit = abbreviateUnit(selectedProduct?.unit || 'KG');
+                          const prodUnit = abbreviateUnit(selectedProduct?.unit || '');
                           newFormData.packaging_details = `${packs} ${normPackType}${parseInt(packs) !== 1 ? 's' : ''} x ${perPack}${prodUnit}`;
                         }
                       }
@@ -1430,7 +1520,14 @@ export function Batches() {
                 <FloatingField label="Import Container (Optional)" filled={!!formData.import_container_id} span={4}>
                   <SearchableSelect
                     value={formData.import_container_id}
-                    onChange={(value) => setFormData({ ...formData, import_container_id: value })}
+                    onChange={(value) => {
+                      const selectedContainer = importContainers.find(c => c.id === value);
+                      setFormData(prev => ({
+                        ...prev,
+                        import_container_id: value,
+                        customs_ndpbm_rate: prev.customs_ndpbm_rate || selectedContainer?.customs_ndpbm_rate || null,
+                      }));
+                    }}
                     options={[
                       { value: '', label: 'Select Container (Optional)' },
                       ...importContainers.map(c => ({
@@ -1620,7 +1717,7 @@ export function Batches() {
                 <div className="border-b pb-1.5">
                   <h3 className="text-xs font-semibold text-gray-900 mb-1">Additional Charges</h3>
                   <SapRow>
-                    <FloatingField label="Duty (Form A1 %)" filled={!!formData.duty_percent} span={4}
+                    <FloatingField label="Duty (Form A1 %)" filled={!!formData.duty_percent} span={3}
                       right={<div className="text-xs text-gray-500 flex items-center px-1">%</div>}>
                       <input name="duty_form_a1" aria-label="Duty (Form A1 %)"
                         type="number"
@@ -1633,13 +1730,27 @@ export function Batches() {
                         placeholder="Auto from product"
                       />
                     </FloatingField>
-                    {formData.duty_percent > 0 && (formData.import_price_usd > 0 || formData.import_price_idr > 0) && (
-                      <p className="text-xs text-gray-600 mt-0.5">
-                        = {formatCurrency((formData.import_price_idr > 0 && formData.import_price_usd <= 0 ? formData.import_price_idr : formData.import_price_usd * formData.exchange_rate_usd_to_idr) * formData.duty_percent / 100)}
-                      </p>
-                    )}
 
-                    <FloatingField label="Freight" filled={!!formData.freight_charges} span={4}
+                    <FloatingField
+                      label="Customs NDPBM (IDR per USD)"
+                      filled={formData.customs_ndpbm_rate !== null && formData.customs_ndpbm_rate !== undefined && formData.customs_ndpbm_rate > 0}
+                      span={3}
+                      hint={formData.import_container_id ? 'Auto from linked container' : 'PIB Customs Duty FX Rate'}
+                    >
+                      <input
+                        name="customs_ndpbm_rate"
+                        aria-label="Customs NDPBM (IDR per USD)"
+                        type="number"
+                        value={formData.customs_ndpbm_rate === 0 || !formData.customs_ndpbm_rate ? '' : formData.customs_ndpbm_rate}
+                        onChange={(e) => setFormData({ ...formData, customs_ndpbm_rate: e.target.value === '' ? null : Number(e.target.value) })}
+                        className={FLOAT_INPUT}
+                        min="0"
+                        step="0.0001"
+                        placeholder="e.g. 16813.00"
+                      />
+                    </FloatingField>
+
+                    <FloatingField label="Freight" filled={!!formData.freight_charges} span={3}
                       right={
                         <select name="freight_charge_type" aria-label="Freight Charge Type"
                           value={formData.freight_charge_type}
@@ -1672,13 +1783,8 @@ export function Batches() {
                         />
                       )}
                     </FloatingField>
-                    {formData.freight_charges > 0 && (
-                      <p className="text-xs text-gray-600 mt-0.5">
-                        = {formatCurrency(getChargeAmount(formData.freight_charges, formData.freight_charge_type))}
-                      </p>
-                    )}
 
-                    <FloatingField label="Other" filled={!!formData.other_charges} span={4}
+                    <FloatingField label="Other" filled={!!formData.other_charges} span={3}
                       right={
                         <select name="other_charge_type" aria-label="Other Charge Type"
                           value={formData.other_charge_type}
@@ -1711,12 +1817,56 @@ export function Batches() {
                         />
                       )}
                     </FloatingField>
-                    {formData.other_charges > 0 && (
-                      <p className="text-xs text-gray-600 mt-0.5">
-                        = {formatCurrency(getChargeAmount(formData.other_charges, formData.other_charge_type))}
-                      </p>
-                    )}
                   </SapRow>
+
+                  {/* Missing NDPBM Warning if container linked but no NDPBM */}
+                  {formData.import_container_id && (!formData.customs_ndpbm_rate || formData.customs_ndpbm_rate <= 0) && (
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded text-xs text-amber-900 flex items-start gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-semibold">Missing Customs NDPBM Rate:</span> The linked import container has no saved Customs Duty FX Rate (NDPBM). Duty cannot be calculated without an official NDPBM rate. Supplier Purchase FX will not be used as fallback.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Simplified Duty Calculation Display */}
+                  {(formData.duty_percent > 0 || (formData.customs_ndpbm_rate && formData.customs_ndpbm_rate > 0)) && (
+                    <div className="mt-1.5 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded text-xs flex flex-wrap items-center justify-between gap-1 text-blue-900">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-blue-950">Calculated Duty:</span>
+                        <span className="font-mono font-bold text-blue-900">
+                          {formatCurrency(getDutyPerUnit())} {modalProductDisplayUnit ? `/ ${modalProductDisplayUnit}` : '/ unit'}
+                        </span>
+                        {getDutyDetails().formula && (
+                          <span className="text-blue-600 text-[11px]">
+                            ({getDutyDetails().formula})
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-blue-700 font-medium">Total Duty: </span>
+                        <span className="font-mono font-bold text-blue-950">
+                          {formatCurrency(getDutyDetails().total)}
+                        </span>
+                        {getDutyDetails().roundingDiff > 0 && (
+                          <span className="text-blue-500 text-[10px] ml-1">
+                            (DJBC +{formatCurrency(getDutyDetails().roundingDiff)})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {formData.freight_charges > 0 && (
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      Freight: = {formatCurrency(getChargeAmount(formData.freight_charges, formData.freight_charge_type))}
+                    </p>
+                  )}
+                  {formData.other_charges > 0 && (
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      Other: = {formatCurrency(getChargeAmount(formData.other_charges, formData.other_charge_type))}
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -1731,13 +1881,25 @@ export function Batches() {
                     {formatCurrency(formData.import_price_idr > 0 && formData.import_price_usd <= 0 ? formData.import_price_idr : formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Duty (Form A1):</span>
-                  <span className="font-medium">
-                    {formatCurrency((formData.import_price_idr > 0 && formData.import_price_usd <= 0 ? formData.import_price_idr : formData.import_price_usd * formData.exchange_rate_usd_to_idr) * formData.duty_percent / 100)}
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span>Duty (Form A1):</span>
                     {formData.duty_percent > 0 && (
-                      <span className="text-xs ml-1">({formData.duty_percent}%)</span>
+                      <span className="text-xs ml-1 font-normal">({formData.duty_percent}%)</span>
                     )}
+                    {getDutyPerUnit() > 0 && (
+                      <div className="text-[10px] text-blue-600 font-normal">
+                        Total: {formatCurrency(getDutyDetails().total)} at NDPBM Rp {Number(formData.customs_ndpbm_rate).toLocaleString()}
+                      </div>
+                    )}
+                    {formData.duty_percent > 0 && (!formData.customs_ndpbm_rate || formData.customs_ndpbm_rate <= 0) && (
+                      <div className="text-[10px] text-amber-600 font-normal">
+                        (Missing NDPBM rate — duty not capitalized)
+                      </div>
+                    )}
+                  </div>
+                  <span className="font-medium text-right">
+                    {formatCurrency(getDutyPerUnit())}
                   </span>
                 </div>
                 <div className="flex justify-between">

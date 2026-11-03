@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Download, ExternalLink, FileText, Search, Trash2, Upload, X, ShieldCheck, Clock, CheckCircle } from 'lucide-react';
+import { Download, ExternalLink, FileText, Search, Trash2, Upload, X, ShieldCheck, Clock, CheckCircle, MessageSquare, Mail } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { showToast } from '../ToastNotification';
 import { getSignedUrlCached, invalidateSignedUrl } from '../../utils/signedUrlCache';
@@ -27,16 +27,19 @@ export type CrmProductDocument = {
 
 type InquiryOption = { id: string; inquiry_number: string; product_name: string };
 
-const DOC_TYPES = ['COA', 'MSDS', 'MHD', 'TDS', 'SPEC', 'COC', 'GMP', 'ISO', 'DMF', 'OTHER'] as const;
+const DOC_TYPES = ['COA', 'MSDS', 'HALAL', 'GMP', 'SPEC', 'DMF', 'TDS', 'MHD', 'COC', 'ISO', 'OTHER'] as const;
 const COMMON_SPECS = ['USP', 'BP', 'EP', 'IP', 'JP', 'Ph.Eur.', 'Technical', 'Food Grade'] as const;
 
 const DOC_TYPE_COLOR: Record<string, string> = {
-  COA: 'bg-green-100 text-green-800 border-green-200',
-  MSDS: 'bg-red-100 text-red-800 border-red-200',
-  TDS: 'bg-blue-100 text-blue-800 border-blue-200',
-  SPEC: 'bg-amber-100 text-amber-800 border-amber-200',
-  MHD: 'bg-teal-100 text-teal-800 border-teal-200',
-  GMP: 'bg-purple-100 text-purple-800 border-purple-200',
+  COA: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  MSDS: 'bg-rose-50 text-rose-800 border-rose-200',
+  HALAL: 'bg-teal-50 text-teal-800 border-teal-200',
+  GMP: 'bg-purple-50 text-purple-800 border-purple-200',
+  DMF: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+  SPEC: 'bg-amber-50 text-amber-800 border-amber-200',
+  TDS: 'bg-blue-50 text-blue-800 border-blue-200',
+  MHD: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+  COC: 'bg-slate-50 text-slate-800 border-slate-200',
 };
 
 export function ProductDocumentsPanel() {
@@ -66,14 +69,21 @@ export function ProductDocumentsPanel() {
 
   const loadDocuments = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('crm_product_documents')
-      .select('id,inquiry_id,product_name,make,document_type,specification,is_permanent,pricing_option_id,original_file_name,display_file_name,storage_path,source_gmail_message_id,uploaded_by,created_at,crm_inquiries(inquiry_number)')
-      .order('created_at', { ascending: false })
-      .limit(500);
-    if (error) console.error(error);
-    setDocuments((data || []) as unknown as CrmProductDocument[]);
-    setLoading(false);
+    try {
+      const { data, error } = await supabase
+        .from('crm_product_documents')
+        .select('id,inquiry_id,product_name,make,document_type,specification,is_permanent,pricing_option_id,original_file_name,display_file_name,storage_path,source_gmail_message_id,uploaded_by,created_at,crm_inquiries(inquiry_number)')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) {
+        console.warn('Document bank query notice:', error);
+      }
+      setDocuments((data || []) as unknown as CrmProductDocument[]);
+    } catch (err) {
+      console.error('Failed to load CRM documents:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loadInquiries = async () => {
@@ -345,18 +355,18 @@ export function ProductDocumentsPanel() {
         {/* Global Multi-Field Filters */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2">
           <div className="relative md:col-span-2">
-            <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Search product, make, file, inquiry, or spec..."
-              className="w-full border border-gray-300 rounded-md pl-8 pr-2.5 py-1.5 text-xs bg-white"
+              className="w-full border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
           <select
             value={documentTypeFilter}
             onChange={e => setDocumentTypeFilter(e.target.value)}
-            className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white font-medium"
+            className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 font-medium text-slate-700"
           >
             <option value="all">All Document Types</option>
             {DOC_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
@@ -364,7 +374,7 @@ export function ProductDocumentsPanel() {
           <select
             value={specificationFilter}
             onChange={e => setSpecificationFilter(e.target.value)}
-            className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white"
+            className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 text-slate-700"
           >
             <option value="all">All Specifications</option>
             {COMMON_SPECS.map(s => <option key={s} value={s}>{s}</option>)}
@@ -372,75 +382,93 @@ export function ProductDocumentsPanel() {
           <select
             value={lifecycleFilter}
             onChange={e => setLifecycleFilter(e.target.value as any)}
-            className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white"
+            className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50 text-slate-700"
           >
             <option value="all">All Lifecycle States</option>
             <option value="permanent">Permanent / Banked</option>
             <option value="temporary">AI Temporary</option>
           </select>
         </div>
+
+        {/* Quick Certificate Type Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1 text-xs">
+          {(['all', 'COA', 'MSDS', 'HALAL', 'GMP', 'SPEC', 'DMF', 'TDS'] as const).map(pill => (
+            <button
+              key={pill}
+              type="button"
+              onClick={() => setDocumentTypeFilter(pill)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+                documentTypeFilter === pill
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100/70'
+              }`}
+            >
+              {pill === 'all' ? 'All Types' : pill}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Documents Table */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-2xs">
+      <div className="bg-white border border-slate-200/90 rounded-xl overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
-            <thead className="bg-gray-50 border-b border-gray-200 text-gray-600 font-semibold uppercase text-[10px] tracking-wider">
-              <tr>
-                <th className="px-3 py-2 text-left">Product</th>
-                <th className="px-3 py-2 text-left">Make / Source</th>
-                <th className="px-3 py-2 text-left">Spec</th>
-                <th className="px-3 py-2 text-left">Doc Type</th>
-                <th className="px-3 py-2 text-left">File Name</th>
-                <th className="px-3 py-2 text-left">Inquiry</th>
-                <th className="px-3 py-2 text-left">Lifecycle</th>
-                <th className="px-3 py-2 text-right">Actions</th>
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10.5px] tracking-wider">
+              <tr className="h-8">
+                <th className="px-3 py-1 text-left">Product</th>
+                <th className="px-3 py-1 text-left">Make / Source</th>
+                <th className="px-3 py-1 text-left">Spec</th>
+                <th className="px-3 py-1 text-left">Doc Type</th>
+                <th className="px-3 py-1 text-left">File Name</th>
+                <th className="px-3 py-1 text-left">Inquiry</th>
+                <th className="px-3 py-1 text-left">Lifecycle</th>
+                <th className="px-3 py-1 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">Loading documents from bank…</td></tr>
               ) : filteredDocuments.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No documents match the active search filters.</td></tr>
               ) : filteredDocuments.map(doc => (
-                <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-3 py-2 font-medium text-gray-900">{doc.product_name || 'Unassigned Item'}</td>
-                  <td className="px-3 py-2 text-gray-700 font-medium">{doc.make || '-'}</td>
-                  <td className="px-3 py-2">
+                <tr key={doc.id} className="h-8 hover:bg-slate-50 transition-colors">
+                  <td className="px-3 py-1 font-semibold text-slate-900">{doc.product_name || 'Unassigned Item'}</td>
+                  <td className="px-3 py-1 text-slate-700 font-medium">{doc.make || '-'}</td>
+                  <td className="px-3 py-1">
                     {doc.specification ? (
                       <span className="font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">
                         {doc.specification}
                       </span>
                     ) : (
-                      <span className="text-gray-400">-</span>
+                      <span className="text-slate-400">-</span>
                     )}
                   </td>
-                  <td className="px-3 py-2">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${DOC_TYPE_COLOR[doc.document_type] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                  <td className="px-3 py-1">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${DOC_TYPE_COLOR[doc.document_type] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                       {doc.document_type}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={doc.original_file_name || doc.display_file_name || ''}>
+                  <td className="px-3 py-1 text-slate-700 max-w-[220px] truncate font-mono text-[11px]" title={doc.original_file_name || doc.display_file_name || ''}>
                     {doc.display_file_name || doc.original_file_name || doc.storage_path.split('/').pop()}
                   </td>
-                  <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                  <td className="px-3 py-1 text-slate-700 whitespace-nowrap">
                     {(doc.crm_inquiries as any)?.[0]?.inquiry_number || '-'}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  <td className="px-3 py-1 whitespace-nowrap">
                     {doc.is_permanent ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-green-700 font-semibold bg-green-50 border border-green-200 px-1.5 py-0.5 rounded">
-                        <CheckCircle className="w-3 h-3" />
+                      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                        <CheckCircle className="w-2.5 h-2.5" />
                         Banked
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] text-amber-700 font-medium bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
-                        <Clock className="w-3 h-3" />
+                        <Clock className="w-2.5 h-2.5" />
                         AI Temp
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-1.5">
+                  <td className="px-3 py-1 text-right whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1">
                       {!doc.is_permanent && canUpload && (
                         <button
                           onClick={() => handlePromoteToPermanent(doc)}
@@ -453,22 +481,38 @@ export function ProductDocumentsPanel() {
                       )}
                       <button
                         onClick={() => openDocument(doc, false)}
-                        className="p-1 text-gray-600 hover:text-blue-600 hover:bg-gray-100 rounded cursor-pointer"
+                        className="p-1 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded cursor-pointer"
                         title="View Document"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => openDocument(doc, true)}
-                        className="p-1 text-gray-600 hover:text-blue-600 hover:bg-gray-100 rounded cursor-pointer"
+                        className="p-1 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded cursor-pointer"
                         title="Download Document"
                       >
                         <Download className="w-3.5 h-3.5" />
                       </button>
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(`Halo, berikut dokumen teknis ${doc.document_type} untuk produk ${doc.product_name || 'Bahan Baku'} (${doc.make || ''}): ${doc.display_file_name || doc.original_file_name || ''}`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                        title="Quick Share via WhatsApp"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                      </a>
+                      <a
+                        href={`mailto:?subject=${encodeURIComponent(`[SAPJ Document Bank] ${doc.document_type} - ${doc.product_name || 'Product'}`)}&body=${encodeURIComponent(`Dear Partner,\n\nTerlampir referensi dokumen ${doc.document_type} (${doc.specification || ''}) untuk ${doc.product_name || ''}.\n\nSalam,\nPT Shubham Anzen Pharma Jaya`)}`}
+                        className="p-1 text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
+                        title="Quick Share via Email"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                      </a>
                       {canUpload && (
                         <button
                           onClick={() => deleteDocument(doc)}
-                          className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                          className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer"
                           title="Delete Document"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

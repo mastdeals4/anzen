@@ -28,7 +28,22 @@ interface Props {
   onRefresh: () => void;
 }
 
+export type FollowUpCategory =
+  | 'COA Pending'
+  | 'Specification Pending'
+  | 'Revised Price Pending'
+  | 'Price Negotiation'
+  | 'Stock Confirmation'
+  | 'Sample Pending'
+  | 'Delivery Confirmation'
+  | 'Customer Feedback'
+  | 'Order Confirmation'
+  | 'General Customer Question';
+
 export function CustomerFollowUpModal({ isOpen, onClose, inquiry, onRefresh }: Props) {
+  const [category, setCategory] = useState<FollowUpCategory>('Customer Feedback');
+  const [sapjPromisedDate, setSapjPromisedDate] = useState<string>('');
+  const [customerPromisedDate, setCustomerPromisedDate] = useState<string>('');
   const [followUpDate, setFollowUpDate] = useState(() => {
     const nextWeek = new Date();
     nextWeek.setDate(nextWeek.getDate() + 3);
@@ -103,12 +118,14 @@ Kunal`
         });
       }
 
+      const activitySummary = `[${category}] ${notes}\nSAPJ Commitment: ${sapjPromisedDate || 'N/A'}\nCustomer Commitment: ${customerPromisedDate || 'N/A'}`;
+
       // 2. Record CRM Activity Log
       await supabase.from('crm_activities').insert({
         inquiry_id: inquiry.id,
         activity_type: sendEmail ? 'email' : 'note',
-        title: 'Customer Follow-up',
-        description: notes,
+        title: `Customer Follow-up (${category})`,
+        description: activitySummary,
         activity_date: now.split('T')[0],
         next_follow_up_date: followUpDate || null,
         is_completed: true,
@@ -119,8 +136,8 @@ Kunal`
       await supabase.from('crm_inquiry_timeline').insert({
         inquiry_id: inquiry.id,
         event_type: 'follow_up',
-        event_title: sendEmail ? 'Follow-up email sent to customer' : 'Customer follow-up scheduled',
-        event_description: `Next follow-up: ${followUpDate || 'Not set'}. ${sendEmail ? 'Email sent from sales@avira.co.id.' : ''}`,
+        event_title: sendEmail ? `Follow-up email sent (${category})` : `Follow-up scheduled (${category})`,
+        event_description: `Next follow-up: ${followUpDate || 'Not set'}. SAPJ promised: ${sapjPromisedDate || 'None'}. Customer promised: ${customerPromisedDate || 'None'}. ${sendEmail ? 'Email sent from sales@avira.co.id.' : ''}`,
         performed_by: user.id,
         event_timestamp: now,
       });
@@ -180,7 +197,46 @@ Kunal`
           </div>
 
           <SapRow>
-            <FloatingField label="Next Follow-up Date" span={6} filled={!!followUpDate} prefix={<Calendar className="w-3.5 h-3.5 text-gray-500" />}>
+            <FloatingField label="Pending Request Category" span={12} filled={!!category}>
+              <select
+                value={category}
+                onChange={e => setCategory(e.target.value as FollowUpCategory)}
+                className={FLOAT_INPUT}
+              >
+                <option value="COA Pending">COA Pending</option>
+                <option value="Specification Pending">Specification Pending</option>
+                <option value="Revised Price Pending">Revised Price Pending</option>
+                <option value="Price Negotiation">Price Negotiation</option>
+                <option value="Stock Confirmation">Stock Confirmation</option>
+                <option value="Sample Pending">Sample Pending</option>
+                <option value="Delivery Confirmation">Delivery Confirmation</option>
+                <option value="Customer Feedback">Customer Feedback</option>
+                <option value="Order Confirmation">Order Confirmation</option>
+                <option value="General Customer Question">General Customer Question</option>
+              </select>
+            </FloatingField>
+          </SapRow>
+
+          <SapRow>
+            <FloatingField label="SAPJ Promised Date (Our commitment)" span={4} filled={!!sapjPromisedDate} prefix={<Calendar className="w-3.5 h-3.5 text-blue-500" />}>
+              <input
+                type="date"
+                value={sapjPromisedDate}
+                onChange={e => setSapjPromisedDate(e.target.value)}
+                className={FLOAT_INPUT}
+              />
+            </FloatingField>
+
+            <FloatingField label="Customer Promised Date (Their reply)" span={4} filled={!!customerPromisedDate} prefix={<Calendar className="w-3.5 h-3.5 text-amber-500" />}>
+              <input
+                type="date"
+                value={customerPromisedDate}
+                onChange={e => setCustomerPromisedDate(e.target.value)}
+                className={FLOAT_INPUT}
+              />
+            </FloatingField>
+
+            <FloatingField label="SAPJ Next Follow-up Date" span={4} filled={!!followUpDate} prefix={<Calendar className="w-3.5 h-3.5 text-emerald-500" />}>
               <input
                 type="date"
                 value={followUpDate}
@@ -188,18 +244,19 @@ Kunal`
                 className={FLOAT_INPUT}
               />
             </FloatingField>
-            <div className="sm:col-span-6 flex flex-col justify-end pb-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={sendEmail}
-                  onChange={e => setSendEmail(e.target.checked)}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="font-medium text-gray-700">Send follow-up email</span>
-              </label>
-            </div>
           </SapRow>
+
+          <div className="py-1">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sendEmail}
+                onChange={e => setSendEmail(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="font-semibold text-gray-800">Queue follow-up email from sales@avira.co.id (Human Review Required)</span>
+            </label>
+          </div>
 
           {sendEmail && (
             <SapRow>

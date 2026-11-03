@@ -132,6 +132,16 @@ test('6. Live Adapter Service Verification (Port 3100)', async (t) => {
   const healthData = await healthRes.json();
   assert.equal(healthData.service, 'anzen-whatsapp-adapter');
 
+  // If live adapter is running with real paired WhatsApp session, verify live status without disconnecting
+  if (healthData.mode === 'real') {
+    const statusRes = await fetch('http://localhost:3100/api/status');
+    assert.equal(statusRes.status, 200);
+    const statusData = await statusRes.json();
+    assert.equal(statusData.status, 'connected');
+    assert.ok(statusData.businessPhone, 'Business phone must be detected from live session');
+    return;
+  }
+
   // Test /api/session/pair
   const pairRes = await fetch('http://localhost:3100/api/session/pair', {
     method: 'POST',

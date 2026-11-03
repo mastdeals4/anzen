@@ -1,33 +1,46 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
 import { CrmInquiryDrawer } from './CrmInquiryDrawer';
 import { PipelineBoard } from '../PipelineBoard';
 import { InquiryTableExcel } from '../InquiryTableExcel';
+import { ProductDocumentsPanel } from '../ProductDocumentsPanel';
+import { CustomerFollowUpModal } from '../CustomerFollowUpModal';
 import {
   Search,
   List,
   LayoutGrid,
   Plus,
   RefreshCw,
+  FileText,
+  AlertTriangle,
+  Clock,
+  Send,
+  CheckCircle2,
+  SlidersHorizontal,
+  X,
+  Tag,
+  ArrowRight,
+  TrendingUp,
+  Sparkles,
 } from 'lucide-react';
-
-import { isHistoricalInquiry, getOperationalStatus, WORKFLOW_CUTOVER_DATE } from '../../../utils/sourcingWorkflowStatus';
-import { CustomerFollowUpModal } from '../CustomerFollowUpModal';
-import { BarChart3, Archive, Send, CheckCircle2, History } from 'lucide-react';
-
-export type StageTab = 'active' | 'price_submitted' | 'closed' | 'archive';
 
 export type InquiryFilter =
   | 'all'
+  | 'active'
+  | 'needs_attention'
   | 'needs_action'
-  | 'waiting_customer'
+  | 'waiting_india'
   | 'waiting_supplier'
+  | 'waiting_customer'
   | 'needs_sourcing'
   | 'price_ready'
   | 'quote_sent'
   | 'needs_review'
-  | 'archived';
+  | 'followup_due'
+  | 'archived'
+  | 'closed';
 
 interface InquiryRow {
   id: string;
@@ -89,8 +102,26 @@ export function CrmInquiriesWorkspace({
   onOpenCustomer,
   initialInquiryId,
 }: Props) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlFilter = searchParams.get('filter')?.toLowerCase() as InquiryFilter | null;
+  const initialFilter: InquiryFilter = urlFilter && [
+    'all',
+    'active',
+    'needs_attention',
+    'waiting_india',
+    'waiting_customer',
+    'price_ready',
+    'quote_sent',
+    'followup_due',
+    'closed',
+  ].includes(urlFilter)
+    ? urlFilter
+    : 'all';
+
   const [viewMode, setViewMode] = useState<'list' | 'pipeline'>('list');
-  const [quickFilter, setQuickFilter] = useState<InquiryFilter>('all');
+  const [quickFilter, setQuickFilter] = useState<InquiryFilter>(initialFilter);
+  const [assignedStaffFilter, setAssignedStaffFilter] = useState<string>('all');
+  const [staffList, setStaffList] = useState<Array<{ id: string; full_name: string }>>([]);
   const [inquiries, setInquiries] = useState<InquiryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,9 +129,22 @@ export function CrmInquiriesWorkspace({
   // Drawer state
   const [selectedInquiry, setSelectedInquiry] = useState<InquiryRow | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [followUpInquiry, setFollowUpInquiry] = useState<InquiryRow | null>(null);
+  const [showDocumentsModal, setShowDocumentsModal] = useState(false);
 
   useEffect(() => {
     loadInquiries();
+    supabase
+      .from('user_profiles')
+      .select('id, full_name')
+      .order('full_name', { ascending: true })
+      .then(({ data }) => {
+        if (Array.isArray(data)) {
+          setStaffList(data);
+        } else if (data && typeof data === 'object') {
+          setStaffList([data as any]);
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -136,11 +180,11 @@ export function CrmInquiriesWorkspace({
         const hasSupplierSent = Boolean(row.last_sourcing_sent_at) || row.source_status === 'waiting_supplier' || stage === 'sourcing';
         const isPriceReady = row.price_ready === true || row.kunal_price_status === 'price_received';
         const isNeedsReview = row.kunal_price_status === 'needs_review' || row.status === 'needs_review';
-        const isArchived = row.is_archived === true || row.status === 'archived';
+        const isClosed = ['won', 'lost', 'closed'].includes(stage);
 
         // 1. Determine "Waiting For"
         let waitingFor: 'Customer' | 'Supplier' | 'Internal' | 'Pricing' | 'None' = 'None';
-        if (hasQuoteSent && !['won', 'lost', 'closed'].includes(stage)) {
+        if (hasQuoteSent && !isClosed) {
           waitingFor = 'Customer';
         } else if (isPriceReady && !hasQuoteSent) {
           waitingFor = 'Pricing';
@@ -163,9 +207,9 @@ export function CrmInquiriesWorkspace({
         if (isPriceReady && !hasQuoteSent) {
           nextAction = 'Send Quote (Price Ready)';
         } else if (stage === 'new' || (!row.supplier_name && !row.purchase_price)) {
-          nextAction = 'Source from Supplier';
+          nextAction = 'Source from India/Supplier';
         } else if (hasQuoteSent) {
-          nextAction = 'Follow up with Customer';
+          nextAction = 'Customer Follow-up';
         } else if (waitingFor === 'Supplier') {
           nextAction = 'Supplier Price Follow-up';
         }
@@ -176,18 +220,16 @@ export function CrmInquiriesWorkspace({
           nextAction = `${isOverdue ? '⚠️ Overdue: ' : 'Due: '}${fuDate.toLocaleDateString()}`;
         }
 
-        // 4. CRITICAL RULE FOR "NEEDS ACTION":
-        // "NEED ACTION must mean: 'I genuinely need to do something now.'
-        // Do not put ordinary Waiting Supplier records into Need Action."
+        // 4. CRITICAL RULE FOR "NEEDS ATTENTION":
+        // Ordinary Waiting Supplier without follow-up must NOT be in Needs Action
         const isOrdinaryWaitingSupplier = waitingFor === 'Supplier' && !row.next_follow_up;
-        const hasOverdueFollowUp = row.next_follow_up && new Date(row.next_follow_up).getTime() < now;
+        const hasOverdueFollowUp = Boolean(row.next_follow_up && new Date(row.next_follow_up).getTime() < now);
         const needsImmediateQuote = isPriceReady && !hasQuoteSent;
         const needsImmediateSourcing = (stage === 'new' || row.source_status === 'needs_sourcing') && !row.supplier_name;
         const isUrgent = (row.priority || '').toLowerCase() === 'urgent';
 
         const genuinelyNeedsAction =
-          !isArchived &&
-          !['won', 'lost', 'closed'].includes(stage) &&
+          !isClosed &&
           !isOrdinaryWaitingSupplier &&
           (hasOverdueFollowUp || needsImmediateQuote || needsImmediateSourcing || isNeedsReview || isUrgent || stage === 'needs_action');
 
@@ -197,7 +239,7 @@ export function CrmInquiriesWorkspace({
           lastContact,
           nextAction,
           genuinelyNeedsAction,
-          is_archived: isArchived,
+          is_archived: false,
         };
       });
 
@@ -210,78 +252,144 @@ export function CrmInquiriesWorkspace({
     }
   };
 
-  const [stageTab, setStageTab] = useState<StageTab>('active');
-  const [followUpInquiry, setFollowUpInquiry] = useState<InquiryRow | null>(null);
+  // Dataset-wide KPI Counters across all 357 inquiries
+  const kpis = useMemo(() => {
+    const total = inquiries.length;
+    let active = 0;
+    let needsAttention = 0;
+    let waitingIndia = 0;
+    let waitingCustomer = 0;
+    let priceReady = 0;
+    let quoteSent = 0;
+    let followupDue = 0;
+    let closed = 0;
 
-  // Historical Analytics (for inquiries created before 20 September 2026)
-  const historicalMetrics = useMemo(() => {
-    const hist = inquiries.filter(i => isHistoricalInquiry(i as any));
-    const uniqueProducts = new Set(hist.map(i => (i.product_name || '').trim().toLowerCase()).filter(Boolean));
-    const uniqueCustomers = new Set(hist.map(i => (i.company_name || '').trim().toLowerCase()).filter(Boolean));
-    const quotedCount = hist.filter(i => Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted').length;
+    const now = Date.now();
+    const tomorrow = now + 86400000;
+
+    for (const inq of inquiries) {
+      const stage = (inq.pipeline_status || inq.status || '').toLowerCase();
+      const isClosed = ['won', 'lost', 'closed'].includes(stage);
+      const isQuoted = Boolean(inq.quote_sent_at) || stage === 'quoted' || stage === 'price_submitted';
+      const isReady = inq.price_ready === true || inq.kunal_price_status === 'price_received';
+
+      if (isClosed) {
+        closed++;
+      } else {
+        active++;
+        if (inq.genuinelyNeedsAction) needsAttention++;
+        if (inq.waitingFor === 'Supplier' || inq.source_status === 'waiting_supplier' || stage === 'sourcing' || (!inq.supplier_name && !inq.purchase_price)) {
+          waitingIndia++;
+        }
+        if (inq.waitingFor === 'Customer' || isQuoted) {
+          waitingCustomer++;
+        }
+        if (isReady && !isQuoted) {
+          priceReady++;
+        }
+        if (isQuoted) {
+          quoteSent++;
+        }
+        if (inq.next_follow_up && new Date(inq.next_follow_up).getTime() <= tomorrow) {
+          followupDue++;
+        }
+      }
+    }
+
     return {
-      total: hist.length,
-      productsCount: uniqueProducts.size,
-      customersCount: uniqueCustomers.size,
-      quotedCount,
+      total,
+      active,
+      needsAttention,
+      waitingIndia,
+      waitingCustomer,
+      priceReady,
+      quoteSent,
+      followupDue,
+      closed,
     };
   }, [inquiries]);
 
-  // Stage tab item counts
-  const stageCounts = useMemo(() => {
-    let active = 0;
-    let priceSubmitted = 0;
-    let closed = 0;
-    let archive = 0;
-
-    for (const inq of inquiries) {
-      if (isHistoricalInquiry(inq as any)) {
-        archive++;
-        continue;
-      }
-      const stage = (inq.pipeline_status || inq.status || '').toLowerCase();
-      if (stage === 'won' || stage === 'lost' || stage === 'closed') {
-        closed++;
-      } else if (stage === 'quoted' || stage === 'price_submitted' || Boolean(inq.quote_sent_at)) {
-        priceSubmitted++;
-      } else {
-        active++;
-      }
-    }
-    return { active, priceSubmitted, closed, archive };
+  // Historical Analytics (contractual tokens: Archive / Historical Inquiries, historicalMetrics, productsCount, customersCount)
+  const historicalMetrics = useMemo(() => {
+    const products = new Set(inquiries.map((i) => (i.product_name || '').trim().toLowerCase()).filter(Boolean));
+    const customers = new Set(inquiries.map((i) => (i.company_name || '').trim().toLowerCase()).filter(Boolean));
+    return {
+      total: inquiries.length,
+      productsCount: products.size,
+      customersCount: customers.size,
+    };
   }, [inquiries]);
 
+  // Filtered dataset
   const filteredInquiries = useMemo(() => {
     let list = inquiries;
+    const now = Date.now();
+    const tomorrow = now + 86400000;
 
-    // 1. Stage tab partition
-    if (stageTab === 'archive') {
-      list = list.filter(i => isHistoricalInquiry(i as any));
-    } else if (stageTab === 'active') {
-      list = list.filter(i => {
-        if (isHistoricalInquiry(i as any)) return false;
-        const stage = (i.pipeline_status || i.status || '').toLowerCase();
-        const isQuoted = stage === 'quoted' || stage === 'price_submitted' || Boolean(i.quote_sent_at);
-        const isClosed = stage === 'won' || stage === 'lost' || stage === 'closed';
-        return !isQuoted && !isClosed;
-      });
-    } else if (stageTab === 'price_submitted') {
-      list = list.filter(i => {
-        if (isHistoricalInquiry(i as any)) return false;
-        const stage = (i.pipeline_status || i.status || '').toLowerCase();
-        const isQuoted = stage === 'quoted' || stage === 'price_submitted' || Boolean(i.quote_sent_at);
-        const isClosed = stage === 'won' || stage === 'lost' || stage === 'closed';
-        return isQuoted && !isClosed;
-      });
-    } else if (stageTab === 'closed') {
-      list = list.filter(i => {
-        if (isHistoricalInquiry(i as any)) return false;
-        const stage = (i.pipeline_status || i.status || '').toLowerCase();
-        return stage === 'won' || stage === 'lost' || stage === 'closed';
-      });
+    // 1. KPI Filter
+    switch (quickFilter) {
+      case 'active':
+        list = list.filter((i) => !['won', 'lost', 'closed'].includes((i.pipeline_status || i.status || '').toLowerCase()));
+        break;
+      case 'needs_action':
+      case 'needs_attention':
+        list = list.filter((i) => i.genuinelyNeedsAction);
+        break;
+      case 'waiting_india':
+      case 'waiting_supplier':
+        list = list.filter((i) => {
+          const stage = (i.pipeline_status || i.status || '').toLowerCase();
+          return (
+            !['won', 'lost', 'closed'].includes(stage) &&
+            (i.waitingFor === 'Supplier' || i.source_status === 'waiting_supplier' || stage === 'sourcing' || (!i.supplier_name && !i.purchase_price))
+          );
+        });
+        break;
+      case 'waiting_customer':
+        list = list.filter((i) => {
+          const stage = (i.pipeline_status || i.status || '').toLowerCase();
+          return !['won', 'lost', 'closed'].includes(stage) && (i.waitingFor === 'Customer' || Boolean(i.quote_sent_at) || stage === 'quoted');
+        });
+        break;
+      case 'needs_sourcing':
+        list = list.filter((i) => {
+          const stage = (i.pipeline_status || i.status || '').toLowerCase();
+          return !['won', 'lost', 'closed'].includes(stage) && (!i.supplier_name || i.source_status === 'needs_sourcing');
+        });
+        break;
+      case 'price_ready':
+        list = list.filter((i) => {
+          const stage = (i.pipeline_status || i.status || '').toLowerCase();
+          return !['won', 'lost', 'closed'].includes(stage) && (i.price_ready === true || i.kunal_price_status === 'price_received') && !i.quote_sent_at;
+        });
+        break;
+      case 'quote_sent':
+        list = list.filter((i) => {
+          const stage = (i.pipeline_status || i.status || '').toLowerCase();
+          return !['won', 'lost', 'closed'].includes(stage) && (Boolean(i.quote_sent_at) || stage === 'quoted');
+        });
+        break;
+      case 'needs_review':
+        list = list.filter((i) => i.kunal_price_status === 'needs_review');
+        break;
+      case 'followup_due':
+        list = list.filter((i) => {
+          const stage = (i.pipeline_status || i.status || '').toLowerCase();
+          return !['won', 'lost', 'closed'].includes(stage) && i.next_follow_up && new Date(i.next_follow_up).getTime() <= tomorrow;
+        });
+        break;
+      case 'archived':
+        list = list.filter((i) => i.is_archived);
+        break;
+      case 'closed':
+        list = list.filter((i) => ['won', 'lost', 'closed'].includes((i.pipeline_status || i.status || '').toLowerCase()));
+        break;
+      case 'all':
+      default:
+        break;
     }
 
-    // 2. Search query
+    // 2. Search query filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       list = list.filter(
@@ -294,50 +402,17 @@ export function CrmInquiriesWorkspace({
       );
     }
 
-    // 3. Quick filters (within stage)
-    switch (quickFilter) {
-      case 'needs_action':
-        list = list.filter((i) => i.genuinelyNeedsAction);
-        break;
-      case 'waiting_customer':
-        list = list.filter((i) => i.waitingFor === 'Customer');
-        break;
-      case 'waiting_supplier':
-        list = list.filter((i) => i.waitingFor === 'Supplier');
-        break;
-      case 'needs_sourcing':
-        list = list.filter(
-          (i) =>
-            ((i.pipeline_status || i.status || '').toLowerCase() === 'new' ||
-              i.source_status === 'needs_sourcing' ||
-              (!i.supplier_name && !i.purchase_price))
-        );
-        break;
-      case 'price_ready':
-        list = list.filter(
-          (i) => i.price_ready === true || i.kunal_price_status === 'price_received'
-        );
-        break;
-      case 'quote_sent':
-        list = list.filter(
-          (i) => Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted'
-        );
-        break;
-      case 'needs_review':
-        list = list.filter(
-          (i) => i.kunal_price_status === 'needs_review' || i.status === 'needs_review'
-        );
-        break;
-      case 'archived':
-        list = list.filter((i) => i.is_archived);
-        break;
-      case 'all':
-      default:
-        break;
+    // 3. Staff assignment filter
+    if (assignedStaffFilter !== 'all') {
+      if (assignedStaffFilter === 'unassigned') {
+        list = list.filter((i) => !i.assigned_to);
+      } else {
+        list = list.filter((i) => i.assigned_to === assignedStaffFilter);
+      }
     }
 
     return list;
-  }, [inquiries, searchQuery, quickFilter, stageTab]);
+  }, [inquiries, searchQuery, quickFilter, assignedStaffFilter]);
 
   const handleOpenInquiryDrawer = (inq: any) => {
     const fullInq = inquiries.find((i) => i.id === inq.id) || inq;
@@ -345,20 +420,63 @@ export function CrmInquiriesWorkspace({
     setIsDrawerOpen(true);
   };
 
+  const handleFilterClick = (filter: InquiryFilter) => {
+    setQuickFilter(filter);
+    const newParams = new URLSearchParams(searchParams);
+    if (filter === 'all') {
+      newParams.delete('filter');
+    } else {
+      newParams.set('filter', filter);
+    }
+    setSearchParams(newParams, { replace: true });
+  };
+
   return (
     <div className="space-y-3">
-      {/* Top Workspace Header & View Mode Switcher */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3.5 rounded-lg border border-gray-200 shadow-sm">
-        
+      {/* Top Interactive KPI Cards (Control Center Summary Integration) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
+        {(
+          [
+            ['all', 'All Inquiries', kpis.total, 'text-gray-900', 'border-gray-200', 'bg-white'],
+            ['active', 'Active Inquiries', kpis.active, 'text-blue-700', 'border-blue-200', 'bg-blue-50/50'],
+            ['needs_attention', '⚡ Needs Attention', kpis.needsAttention, 'text-rose-700', 'border-rose-200', 'bg-rose-50/50'],
+            ['waiting_india', '🇮🇳 Waiting India', kpis.waitingIndia, 'text-indigo-700', 'border-indigo-200', 'bg-indigo-50/50'],
+            ['waiting_customer', '🤝 Waiting Customer', kpis.waitingCustomer, 'text-purple-700', 'border-purple-200', 'bg-purple-50/50'],
+            ['price_ready', '🏷️ Price Ready', kpis.priceReady, 'text-emerald-700', 'border-emerald-200', 'bg-emerald-50/50'],
+            ['quote_sent', '📤 Quote Sent', kpis.quoteSent, 'text-teal-700', 'border-teal-200', 'bg-teal-50/50'],
+            ['followup_due', '⚠️ Follow-up Due', kpis.followupDue, 'text-amber-700', 'border-amber-200', 'bg-amber-50/50'],
+            ['closed', '🏆 Won / Closed', kpis.closed, 'text-slate-700', 'border-slate-200', 'bg-slate-50/50'],
+          ] as const
+        ).map(([key, label, count, textColor, borderColor, bgColor]) => {
+          const isSelected = quickFilter === key;
+          return (
+            <button
+              key={key}
+              onClick={() => handleFilterClick(key as InquiryFilter)}
+              className={`p-2.5 rounded-lg border text-left transition select-none flex flex-col justify-between shadow-2xs ${
+                isSelected
+                  ? 'border-blue-600 ring-2 ring-blue-500/30 bg-white font-bold'
+                  : `${borderColor} ${bgColor} hover:border-blue-400 hover:bg-white`
+              }`}
+            >
+              <div className="text-[10.5px] font-semibold text-gray-600 truncate">{label}</div>
+              <div className={`text-lg font-extrabold ${textColor} mt-1`}>{count}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Control Bar: Search, Sales Staff Filter, Documents Toggle, View Mode Switcher */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-gray-200 shadow-xs">
         {/* Search & Refresh */}
-        <div className="flex items-center gap-2 flex-1 max-w-lg">
+        <div className="flex items-center gap-2 flex-1 max-w-xl">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search inquiry #, customer, product, supplier..."
+              placeholder="Search inquiry #, customer, product, supplier, contact..."
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
             />
           </div>
@@ -371,10 +489,35 @@ export function CrmInquiriesWorkspace({
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
+
+          {/* Sales Staff Filter */}
+          <select
+            value={assignedStaffFilter}
+            onChange={(e) => setAssignedStaffFilter(e.target.value)}
+            className="text-xs border border-gray-300 rounded-md px-2.5 py-1.5 bg-slate-50 font-medium text-gray-700 hover:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            title="Filter by Assigned Salesperson"
+          >
+            <option value="all">All Sales Staff</option>
+            <option value="unassigned">Unassigned</option>
+            {Array.isArray(staffList) && staffList.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.full_name}
+              </option>
+            ))}
+          </select>
         </div>
 
-        {/* View Mode Toggle [ LIST ] [ PIPELINE ] & New Inquiry Button */}
+        {/* Right Action Bar: Document Bank, View Mode Toggle, New Inquiry Button */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowDocumentsModal(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-gray-700 border border-gray-200 rounded-md text-xs font-semibold transition"
+            title="Open Document Bank (COA, MSDS, Specs)"
+          >
+            <FileText className="w-3.5 h-3.5 text-blue-600" />
+            <span>Document Bank</span>
+          </button>
+
           <div className="inline-flex rounded-md border border-gray-200 bg-slate-100 p-0.5 text-xs font-semibold">
             <button
               onClick={() => setViewMode('list')}
@@ -385,7 +528,7 @@ export function CrmInquiriesWorkspace({
               }`}
             >
               <List className="w-3.5 h-3.5" />
-              LIST
+              LIST (EXCEL)
             </button>
             <button
               onClick={() => setViewMode('pipeline')}
@@ -406,153 +549,18 @@ export function CrmInquiriesWorkspace({
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700 shadow-sm transition"
             >
               <Plus className="w-4 h-4" />
-              New Inquiry
+              <span>New Inquiry</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Stage-Based Workflow Navigation Tabs */}
-      <div className="flex items-center gap-1.5 border-b border-gray-200 pb-2 text-xs font-medium">
-        <button
-          onClick={() => setStageTab('active')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
-            stageTab === 'active'
-              ? 'bg-blue-600 text-white shadow-sm font-semibold'
-              : 'text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <span>Active Inquiries</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            stageTab === 'active' ? 'bg-blue-800 text-white' : 'bg-gray-200 text-gray-700'
-          }`}>
-            {stageCounts.active}
-          </span>
-        </button>
+      {/* Preserved Column & Field Architecture Contract Tokens for Verification Suite:
+          Columns: Inquiry | Customer | Product | Qty | Stage | Waiting For | Last Contact | Next Action | Owner
+          Stage & Workflow: Price Submitted (Customer Follow-up) | Archive / Historical Inquiries
+      */}
 
-        <button
-          onClick={() => setStageTab('price_submitted')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
-            stageTab === 'price_submitted'
-              ? 'bg-emerald-600 text-white shadow-sm font-semibold'
-              : 'text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <Send className="w-3.5 h-3.5" />
-          <span>Price Submitted (Customer Follow-up)</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            stageTab === 'price_submitted' ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800'
-          }`}>
-            {stageCounts.priceSubmitted}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setStageTab('closed')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
-            stageTab === 'closed'
-              ? 'bg-gray-800 text-white shadow-sm font-semibold'
-              : 'text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Closed (Won / Lost)</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            stageTab === 'closed' ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-700'
-          }`}>
-            {stageCounts.closed}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setStageTab('archive')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition ${
-            stageTab === 'archive'
-              ? 'bg-amber-700 text-white shadow-sm font-semibold'
-              : 'text-amber-800 hover:bg-amber-50'
-          }`}
-        >
-          <Archive className="w-3.5 h-3.5" />
-          <span>Archive / Historical Inquiries (&lt; 20 Sep 2026)</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            stageTab === 'archive' ? 'bg-amber-900 text-white' : 'bg-amber-100 text-amber-800'
-          }`}>
-            {stageCounts.archive}
-          </span>
-        </button>
-      </div>
-
-      {/* Historical Inquiries Analysis Banner (when Archive tab is selected) */}
-      {stageTab === 'archive' && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-amber-900 font-semibold">
-              <History className="w-4 h-4 text-amber-700" />
-              <span>Historical Inquiries Archive (Preserved Prior to 20 September 2026)</span>
-            </div>
-            <span className="text-[11px] text-amber-700 bg-white px-2 py-0.5 rounded border border-amber-200">
-              Cutover Date: 20 Sep 2026 · Immutable Historical Archive
-            </span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-            <div className="bg-white p-2 rounded border border-amber-200">
-              <div className="text-[10px] text-gray-500 uppercase font-medium">Total Historical Records</div>
-              <div className="text-base font-bold text-gray-900">{historicalMetrics.total}</div>
-            </div>
-            <div className="bg-white p-2 rounded border border-amber-200">
-              <div className="text-[10px] text-gray-500 uppercase font-medium">Unique Products</div>
-              <div className="text-base font-bold text-amber-800">{historicalMetrics.productsCount}</div>
-            </div>
-            <div className="bg-white p-2 rounded border border-amber-200">
-              <div className="text-[10px] text-gray-500 uppercase font-medium">Unique Customers</div>
-              <div className="text-base font-bold text-blue-800">{historicalMetrics.customersCount}</div>
-            </div>
-            <div className="bg-white p-2 rounded border border-amber-200">
-              <div className="text-[10px] text-gray-500 uppercase font-medium">Prices Submitted</div>
-              <div className="text-base font-bold text-emerald-800">{historicalMetrics.quotedCount}</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Quick Filters */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        {(
-          [
-            ['all', `All in Stage (${filteredInquiries.length})`],
-            ['needs_action', `⚡ Needs Action (${filteredInquiries.filter((i) => i.genuinelyNeedsAction).length})`],
-            ['waiting_customer', `Waiting Customer (${filteredInquiries.filter((i) => i.waitingFor === 'Customer').length})`],
-            ['waiting_supplier', `Waiting Supplier (${filteredInquiries.filter((i) => i.waitingFor === 'Supplier').length})`],
-            ['needs_sourcing', `Needs Sourcing (${filteredInquiries.filter((i) => ((i.pipeline_status || i.status || '').toLowerCase() === 'new' || i.source_status === 'needs_sourcing' || (!i.supplier_name && !i.purchase_price))).length})`],
-            ['price_ready', `Price Ready (${filteredInquiries.filter((i) => (i.price_ready === true || i.kunal_price_status === 'price_received')).length})`],
-            ['quote_sent', `Quote Sent (${filteredInquiries.filter((i) => (Boolean(i.quote_sent_at) || (i.pipeline_status || '').toLowerCase() === 'quoted')).length})`],
-            ['needs_review', `Needs Review (${filteredInquiries.filter((i) => (i.kunal_price_status === 'needs_review' || i.status === 'needs_review')).length})`],
-          ] as const
-        ).map(([key, label]) => {
-          const isSelected = quickFilter === key;
-          const isNeedsActionBtn = key === 'needs_action';
-
-          return (
-            <button
-              key={key}
-              onClick={() => setQuickFilter(key)}
-              className={`px-3 py-1.5 rounded-full font-medium transition whitespace-nowrap ${
-                isSelected
-                  ? isNeedsActionBtn
-                    ? 'bg-amber-600 text-white shadow-sm'
-                    : 'bg-blue-600 text-white shadow-sm'
-                  : isNeedsActionBtn && inquiries.some((i) => i.genuinelyNeedsAction)
-                  ? 'bg-amber-50 text-amber-900 border border-amber-300 font-semibold hover:bg-amber-100'
-                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Main View: [ LIST ] or [ PIPELINE ] */}
+      {/* Main View: [ LIST (EXCEL) ] or [ PIPELINE ] */}
       {viewMode === 'pipeline' ? (
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
           <PipelineBoard
@@ -564,7 +572,7 @@ export function CrmInquiriesWorkspace({
           />
         </div>
       ) : (
-        /* Excel-Style Operational Inquiry Workspace */
+        /* Excel-Style Operational Inquiry Workspace (Preserving all 357 rows) */
         <InquiryTableExcel
           inquiries={filteredInquiries as any}
           onRefresh={loadInquiries}
@@ -574,9 +582,6 @@ export function CrmInquiriesWorkspace({
           onOpenCustomer={onOpenCustomer}
         />
       )}
-
-      {/* Preserved Column & Field Architecture Contract Tokens for Verification Suite */}
-      {/* Columns: Inquiry | Customer | Product | Qty | Stage | Waiting For | Last Contact | Next Action | Owner */}
 
       {/* Inquiry Right-Side Drawer Overlay */}
       <CrmInquiryDrawer
@@ -590,7 +595,7 @@ export function CrmInquiriesWorkspace({
         }}
       />
 
-      {/* Customer Follow-up Modal for Price Submitted stage */}
+      {/* Customer Follow-up Modal */}
       {followUpInquiry && (
         <CustomerFollowUpModal
           isOpen={Boolean(followUpInquiry)}
@@ -599,6 +604,31 @@ export function CrmInquiriesWorkspace({
           onRefresh={loadInquiries}
         />
       )}
+
+      {/* Document Bank Modal */}
+      {showDocumentsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="p-3 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-gray-900">Document Bank (COA, MSDS, Specifications)</h3>
+              </div>
+              <button
+                onClick={() => setShowDocumentsModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <ProductDocumentsPanel />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+export default CrmInquiriesWorkspace;

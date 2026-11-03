@@ -37,6 +37,10 @@ export interface WhatsAppExtractedEntities {
   price?: number | null;
   currency?: string | null;
   batch?: string | null;
+  grade?: string | null;
+  sample_requested?: boolean;
+  sample_details?: string | null;
+  party_type?: 'customer' | 'supplier';
   order_reference?: string | null;
   delivery_details?: string | null;
   document_requested?: string | null;
@@ -147,6 +151,7 @@ export function analyzeWhatsAppMessage(
     'Citric Acid Anhydrous', 'Citric Acid Monohydrate', 'Citric Acid',
     'Dextrose Monohydrate', 'Dextrose Anhydrous', 'Dextrose',
     'Metformin HCl', 'Metformin',
+    'Pregabalin', 'Gabapentin', 'Cefixime', 'Levofloxacin',
     'Microcrystalline Cellulose', 'Pregelatinized Starch',
     'Sodium Bicarbonate', 'Magnesium Stearate',
     'Ammonium Chloride', 'Ascorbic Acid', 'Vitamin C',
@@ -205,6 +210,42 @@ export function analyzeWhatsAppMessage(
     }
   }
 
+  // Grade extraction (USP, BP, EP, IP, JP, Food Grade, Technical Grade)
+  const gradeMatch = text.match(/\b(USP[-\s]?[0-9]+|USP|BP[-\s]?[0-9]+|BP|EP|IP|Ph\.?\s*Eur|JP|Food\s+Grade|Tech(?:nical)?\s+Grade)\b/i);
+  if (gradeMatch) {
+    const rawGrade = gradeMatch[1].toUpperCase().replace(/\s+/g, ' ');
+    if (rawGrade.startsWith('USP')) entities.grade = 'USP';
+    else if (rawGrade.startsWith('BP')) entities.grade = 'BP';
+    else if (rawGrade.startsWith('EP') || rawGrade.startsWith('PH')) entities.grade = 'EP';
+    else if (rawGrade.startsWith('IP')) entities.grade = 'IP';
+    else if (rawGrade.startsWith('JP')) entities.grade = 'JP';
+    else if (/FOOD/i.test(rawGrade)) entities.grade = 'Food Grade';
+    else if (/TECH/i.test(rawGrade)) entities.grade = 'Technical Grade';
+    else entities.grade = rawGrade;
+  } else if (entities.product) {
+    if (/\bBP\b/i.test(entities.product)) entities.grade = 'BP';
+    else if (/\bUSP\b/i.test(entities.product)) entities.grade = 'USP';
+    else if (/\bEP\b/i.test(entities.product)) entities.grade = 'EP';
+    else if (/\bIP\b/i.test(entities.product)) entities.grade = 'IP';
+  }
+
+  // Sample request extraction
+  const sampleMatch = text.match(/\b(?:minta|need|request|kirim)?\s*(?:sampel|sample|contoh|working\s+standard)\s*(\d+(?:[.,]\d+)?\s*(?:g|gram|grams|kg|ml))?/i);
+  if (sampleMatch || /\b(sample|sampel|working\s+standard|contoh bahan)\b/i.test(text)) {
+    entities.sample_requested = true;
+    entities.sample_details = sampleMatch?.[0]?.trim() || 'Sample Requested';
+  }
+
+  // Party type distinction: Supplier offer vs Customer inquiry
+  const isSupplier = /\b(we offer|we can offer|our offer|kami menawarkan|penawaran dari kami|fob\b|cif\b|cfr\b|ex-works|our factory|pabrik kami|price validity|lead time from port|packing in|moq is)\b/i.test(text);
+  const isCustomer = /\b(we need|looking for|please quote|request for quote|rfq|kami butuh|minta harga|tolong info harga|minta penawaran|apakah ada stok|ready stock|can you supply|bisa suplai)\b/i.test(text);
+
+  if (isSupplier && !isCustomer) {
+    entities.party_type = 'supplier';
+  } else {
+    entities.party_type = 'customer';
+  }
+
   if (/\bcoa\b/i.test(text)) entities.document_requested = 'COA';
   else if (/\bmsds|sds\b/i.test(text)) entities.document_requested = 'MSDS';
   else if (/\bgmp\b/i.test(text)) entities.document_requested = 'GMP';
@@ -234,12 +275,16 @@ export function analyzeWhatsAppMessage(
 
   const words = lower.split(/[^a-zA-Z0-9_-]+/).filter(w => w.length > 1);
 
-  if (entities.document_requested || /\b(minta coa|kirim coa|butuh msds|minta spesifikasi)\b/i.test(lower)) {
-    intent = 'COA/MSDS/GMP/TDS/Documents';
-    linked_context_type = 'Document';
+  if (entities.document_requested || entities.sample_requested || /\b(minta coa|kirim coa|butuh msds|minta spesifikasi|minta sampel|sample request)\b/i.test(lower)) {
+    intent = entities.document_requested ? 'COA/MSDS/GMP/TDS/Documents' : 'Product Information';
+    linked_context_type = entities.document_requested ? 'Document' : 'Inquiry';
     needs_action = true;
-    action_required = `Send ${entities.document_requested || 'COA/Technical Document'} to customer`;
-    topic = entities.product ? `${entities.product} ${entities.document_requested || 'Document'} Request` : 'Technical Document Request';
+    action_required = entities.sample_requested
+      ? `Arrange sample dispatch (${entities.sample_details || 'Sample'}) to customer`
+      : `Send ${entities.document_requested || 'COA/Technical Document'} to customer`;
+    topic = entities.product
+      ? `${entities.product} ${entities.document_requested || (entities.sample_requested ? 'Sample' : 'Document')} Request`
+      : 'Technical Document / Sample Request';
   } else if (entities.complaint_details || /\b(komplain|keluhan|rusak|pecah|bocor|gumpal|beda warna)\b/i.test(lower)) {
     intent = /\b(gumpal|beda warna|kualitas|out of spec)\b/i.test(lower) ? 'Quality Issue' : 'Complaint';
     linked_context_type = 'Order';

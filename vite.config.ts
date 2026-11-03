@@ -1,27 +1,48 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
-export default defineConfig({
-  // Build stamp for the Settings → About page — generated from the current
-  // build, never hand-edited. YYYY.MM.DD of the moment the bundle was built.
-  define: {
-    __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10).replace(/-/g, '.')),
-  },
-  plugins: [react()],
-  publicDir: 'public',
-  resolve: {
-    alias: {
-      'react-quill': path.resolve(__dirname, './node_modules/react-quill'),
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const adapterKey = env.WHATSAPP_ADAPTER_KEY || '';
+  const adapterTarget = env.WHATSAPP_ADAPTER_URL || 'http://127.0.0.1:3100';
+
+  return {
+    // Build stamp for the Settings → About page — generated from the current
+    // build, never hand-edited. YYYY.MM.DD of the moment the bundle was built.
+    define: {
+      __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10).replace(/-/g, '.')),
     },
-  },
-  optimizeDeps: {
-    exclude: ['lucide-react'],
-  },
-  server: {
-    host: '0.0.0.0',
-    port: 5000,
-    strictPort: true,
-    allowedHosts: true,
-  },
+    plugins: [react()],
+    publicDir: 'public',
+    resolve: {
+      alias: {
+        'react-quill': path.resolve(__dirname, './node_modules/react-quill'),
+      },
+    },
+    optimizeDeps: {
+      exclude: ['lucide-react'],
+    },
+    server: {
+      host: '0.0.0.0',
+      port: 5000,
+      strictPort: false,
+      allowedHosts: true,
+      proxy: {
+        '/api/whatsapp': {
+          target: adapterTarget,
+          changeOrigin: true,
+          rewrite: (pathStr) => pathStr.replace(/^\/api\/whatsapp/, ''),
+          configure: (proxy, _options) => {
+            proxy.on('proxyReq', (proxyReq, _req, _res) => {
+              if (adapterKey) {
+                proxyReq.setHeader('x-api-key', adapterKey);
+                proxyReq.setHeader('Authorization', `Bearer ${adapterKey}`);
+              }
+            });
+          },
+        },
+      },
+    },
+  };
 });

@@ -1724,7 +1724,8 @@ export function ExpenseManager({
         document_urls: allDocumentUrls,
         // Main invoice supplier. NEVER derived from broker_items[i].supplier_id
         // — broker line suppliers are used ONLY for tax invoice / PPN register.
-        supplier_id: (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? null : (formData.supplier_id || null),
+        // PIB import obligations are statutory (Kas Negara) and strictly use supplier_id = null.
+        supplier_id: (rules.supplier === 'hide' || isPib || rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? null : (formData.supplier_id || null),
         // Staff FK (salary / overtime / welfare / advance) — the description
         // prefix stays for ledger traceability, but the FK is authoritative.
         staff_id: rules.staff === 'show' ? (selectedStaffId || null) : null,
@@ -3973,12 +3974,13 @@ export function ExpenseManager({
                         : rules.utility === 'show' ? 'Utility'
                         : (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual'))
                           ? (rules.payeeLabel || 'Payee')
-                          : (isBroker ? 'Broker' : 'Supplier')
+                          : (isPib ? 'Statutory Payee' : isBroker ? 'Broker' : 'Supplier')
                       }
-                      required={rules.staff === 'show' || rules.utility === 'show' || rules.supplier === 'show' || rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')}
+                      required={!isPib && (rules.staff === 'show' || rules.utility === 'show' || rules.supplier === 'show' || rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual'))}
                       span={3}
                       filled={
-                        rules.staff === 'show' ? !!selectedStaffId
+                        isPib ? true
+                        : rules.staff === 'show' ? !!selectedStaffId
                         : rules.utility === 'show' ? !!selectedUtilityId
                         : (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? !!formData.payee_id
                         : !!formData.supplier_id
@@ -4010,14 +4012,22 @@ export function ExpenseManager({
                               Individual
                             </button>
                           </div>
-                        ) : selectedSupplier && rules.staff !== 'show' && rules.utility !== 'show' && rules.payee !== 'show' ? (
+                        ) : selectedSupplier && !isPib && rules.staff !== 'show' && rules.utility !== 'show' && rules.payee !== 'show' ? (
                           <div className="flex gap-1 text-[9px] shrink-0">
                             {selectedSupplier.pkp_status && <span className="px-1 py-0.5 bg-green-100 text-green-700 rounded font-medium">PKP</span>}
                             {selectedSupplier.payment_terms_days ? <span className="px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">N{selectedSupplier.payment_terms_days}</span> : null}
                           </div>
                         ) : null
                       }>
-                      {rules.staff === 'show' ? (
+                      {isPib ? (
+                        <div
+                          className={SAP_INPUT + " !bg-gray-100 !text-gray-800 !font-semibold flex items-center justify-between cursor-default"}
+                          title="Statutory customs payee (Directorate General of Customs and Excise / Kas Negara). Customs liabilities do not inherit or affect commercial supplier ledgers."
+                        >
+                          <span>Kas Negara (Bea Cukai)</span>
+                          <span className="text-[9px] font-normal px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded">Statutory</span>
+                        </div>
+                      ) : rules.staff === 'show' ? (
                         <SearchableSelect
                           value={selectedStaffId}
                           onChange={(val) => {
