@@ -3,6 +3,7 @@
 // Phone number normalization, verification, and WhatsApp eligibility analysis.
 // Distinguishes between Indonesian mobile, landline, international, and invalid numbers.
 // Strictly prevents landline numbers from being marked as WhatsApp eligible.
+// Supports multi-phone records per company and contact person with full department segregation.
 
 export type PhoneNumberType =
   | 'valid_mobile'
@@ -28,7 +29,7 @@ export interface PhoneValidationResult {
 }
 
 // Major Indonesian Landline Area Codes
-const INDONESIA_LANDLINE_AREA_CODES = [
+export const INDONESIA_LANDLINE_AREA_CODES = [
   '21',  // Jakarta, Tangerang, Bekasi, Depok
   '22',  // Bandung, Cimahi
   '23',  // Cirebon, Indramayu, Majalengka, Kuningan
@@ -117,7 +118,7 @@ const INDONESIA_LANDLINE_AREA_CODES = [
 ];
 
 // Valid Indonesian Mobile Prefixes (after +62 or 0)
-const INDONESIA_MOBILE_PREFIXES = [
+export const INDONESIA_MOBILE_PREFIXES = [
   '811', '812', '813', '821', '822', '823', '851', '852', '853', // Telkomsel
   '814', '815', '816', '855', '856', '857', '858',               // Indosat Ooredoo
   '817', '818', '819', '859', '877', '878',                       // XL Axiata
@@ -129,6 +130,12 @@ const INDONESIA_MOBILE_PREFIXES = [
 /**
  * Normalizes and analyzes a phone number for WhatsApp campaign eligibility.
  */
+export function normalizeE164(rawNumber?: string | null): string {
+  if (!rawNumber) return '';
+  const result = validatePhoneNumber(rawNumber);
+  return result.normalized || '';
+}
+
 export function validatePhoneNumber(rawNumber?: string | null): PhoneValidationResult {
   const raw = (rawNumber || '').trim();
 
@@ -278,21 +285,173 @@ export function validatePhoneNumber(rawNumber?: string | null): PhoneValidationR
   };
 }
 
+export interface ParsedPhoneItem {
+  raw: string;
+  cleaned: string;
+  contactPerson?: string | null;
+  department?: string | null;
+  extension?: string;
+  validation: PhoneValidationResult;
+}
+
 /**
- * Analyzes a collection of CRM contacts to detect duplicates, categorize numbers,
- * enforce consent, and determine exact WhatsApp campaign readiness.
+ * Advanced multi-phone parser that extracts individual phone numbers from compound strings.
+ * Safely splits on commas, semicolons, newlines, pipes, or ' / ' between digits.
+ * Preserves area codes in parens e.g. (021), extensions e.g. Ext: 1861,
+ * and person/department annotations e.g. (08564621222 MRS MESSI).
  */
-export interface VerifiedContactItem {
+export function parsePhoneEntries(
+  raw?: string | null,
+  defaultPerson?: string | null,
+  defaultDept?: string | null
+): ParsedPhoneItem[] {
+  if (!raw || typeof raw !== 'string') return [];
+  const text = raw.trim();
+  if (!text) return [];
+
+  // 1. If parens contain a full phone number (>=9 digits) followed by another phone number, separate them
+  let preprocessed = text.replace(/\((\+?0?\d{9,14}[^)]*)\)\s*(?=\+?0?\d{6,})/g, '($1) , ');
+
+  // 2. Normalize area codes in parens: '(021) 1234567' -> '021 1234567', '(+62-22) 1234567' -> '022 1234567'
+  preprocessed = preprocessed.replace(/\((?:\+?62[- ]?)?0?(\d{2,4})\)/g, '0$1 ');
+
+  // 3. Split on comma, semicolon, newline, pipe, or ' / '
+  const rawSegments = preprocessed.split(/[,;\n|]|\s+\/\s+/).map(s => s.trim()).filter(Boolean);
+
+  const results: ParsedPhoneItem[] = [];
+  let lastAreaCode: string | null = null;
+
+  for (let i = 0; i < rawSegments.length; i++) {
+    let seg = rawSegments[i];
+    let detectedPerson = defaultPerson || null;
+    let detectedDept = defaultDept || null;
+
+    // Check if segment is purely an extension belonging to prior number, e.g. 'Ext: 1861'
+    if (/^(?:ext\.?|extension)\s*:?\s*\d+$/i.test(seg) || !/\d{3,}/.test(seg)) {
+      if (results.length > 0 && /ext/i.test(seg)) {
+        results[results.length - 1].extension = seg;
+      }
+      continue;
+    }
+
+    // Detect and extract non-numeric notes inside parens e.g. (MRS MESSI), (Purchasing), (PSTN), (Hunting)
+    seg = seg.replace(/\(([^)]+)\)/g, (_match, inside) => {
+      const trimmedInside = inside.trim();
+      // If it contains a full phone number plus a person name e.g. '08564621222 MRS MESSI'
+      const phoneInParen = trimmedInside.match(/(\+?0?\d{9,14})/);
+      if (phoneInParen) {
+        const namePart = trimmedInside.replace(phoneInParen[0], '').trim();
+        if (namePart) detectedPerson = namePart;
+        return phoneInParen[0];
+      }
+      // If department or label
+      if (/purchas|procure/i.test(trimmedInside)) detectedDept = 'Purchasing';
+      else if (/import/i.test(trimmedInside)) detectedDept = 'Import';
+      else if (/qa|qc|quality/i.test(trimmedInside)) detectedDept = 'QA / QC';
+      else if (/sales|market/i.test(trimmedInside)) detectedDept = 'Sales';
+      else if (/finance|acc/i.test(trimmedInside)) detectedDept = 'Finance';
+      else if (/pstn|hunting|kantor|office|fax/i.test(trimmedInside)) {
+        // label
+      } else if (/[A-Za-z]{2,}/.test(trimmedInside)) {
+        detectedPerson = trimmedInside;
+      }
+      return '';
+    }).trim();
+
+    // Clean Excel export '.0'
+    seg = seg.replace(/\.0+$/, '').trim();
+
+    // Strip inline extension
+    const extMatch = seg.match(/\s*(?:ext\.?|extension)\s*:?\s*(\d+)/i);
+    let extension: string | undefined = undefined;
+    if (extMatch) {
+      extension = extMatch[1];
+      seg = seg.replace(extMatch[0], '').trim();
+    }
+
+    // Strip trailing slash or dash
+    seg = seg.replace(/[\/\-, ]+$/, '').trim();
+
+    // Check if this segment is a local 5-8 digit number following an area code e.g. '724336' after '0271 – 715627'
+    const digitsOnly = seg.replace(/\D/g, '');
+    if (digitsOnly.length >= 5 && digitsOnly.length <= 8 && !seg.startsWith('0') && !seg.startsWith('+') && lastAreaCode) {
+      seg = `${lastAreaCode} ${seg}`;
+    }
+
+    // Extract area code if it looks like an Indonesian landline
+    const areaMatch = seg.match(/^(?:\+?62|0)(21|22|24|31|271|274|251|341|343)\b/);
+    if (areaMatch) {
+      lastAreaCode = '0' + areaMatch[1];
+    }
+
+    const validation = validatePhoneNumber(seg);
+    if (validation.type !== 'missing_number') {
+      results.push({
+        raw: rawSegments[i],
+        cleaned: seg,
+        contactPerson: detectedPerson,
+        department: detectedDept,
+        extension,
+        validation,
+      });
+    }
+  }
+
+  return results;
+}
+
+export interface ContactPhoneRecord {
   id: string;
+  contact_id: string;
   company_name: string;
   contact_person: string | null;
+  department: string;
+  raw_phone: string;
+  normalized_phone: string;
+  country_code: string;
+  country_name: string;
+  country_flag?: string;
+  phone_type: PhoneNumberType;
+  is_whatsapp_eligible: boolean;
+  is_primary: boolean;
+  consent_status: 'opted_in' | 'opted_out' | 'pending';
+  extension?: string | null;
+  notes?: string | null;
+  is_duplicate?: boolean;
+  duplicate_group_type?: 'same_company' | 'cross_company';
+  duplicate_reason?: string;
+}
+
+export interface CompanyPhoneGroup {
+  companyId: string;
+  companyName: string;
+  city: string | null;
+  customerType: string | null;
+  phones: ContactPhoneRecord[];
+  primaryPhone: ContactPhoneRecord | null;
+  contacts: Array<{
+    name: string;
+    department: string;
+    phones: ContactPhoneRecord[];
+  }>;
+}
+
+export interface VerifiedContactItem {
+  id: string;
+  contact_id?: string;
+  company_name: string;
+  contact_person: string | null;
+  department?: string;
   email: string | null;
   raw_phone: string | null;
   city: string | null;
   customer_type: string | null;
   validation: PhoneValidationResult;
-  consent_status: 'opted_in' | 'opted_out' | 'unspecified';
+  consent_status: 'opted_in' | 'opted_out' | 'unspecified' | 'pending';
+  is_primary?: boolean;
+  extension?: string | null;
   is_duplicate: boolean;
+  duplicate_group_type?: 'same_company' | 'cross_company';
   is_eligible: boolean;
   exclusion_reason?: string;
   last_contact_date?: string | null;
@@ -300,6 +459,9 @@ export interface VerifiedContactItem {
 
 export interface PhoneAuditStats {
   total: number;
+  totalCompanies?: number;
+  totalContacts?: number;
+  totalPhones?: number;
   eligible: number;
   landline: number;
   missing: number;
@@ -311,34 +473,47 @@ export interface PhoneAuditStats {
 
 export interface PhoneAuditResult {
   items: VerifiedContactItem[];
+  companyGroups?: CompanyPhoneGroup[];
+  phoneRecords?: ContactPhoneRecord[];
   stats: PhoneAuditStats;
 }
 
 export type PhoneAuditSummary = PhoneAuditResult;
 
+/**
+ * Standard audit that verifies CRM contacts.
+ * By default with multiPhone: false, performs exact single-partition reconciliation on 521 companies.
+ * When multiPhone: true, extracts all compound numbers per company and provides multi-phone breakdowns.
+ */
 export function auditAndVerifyContacts(
   contacts: Array<{
     id: string;
     company_name: string;
     contact_person?: string | null;
+    designation?: string | null;
     email?: string | null;
     phone?: string | null;
     mobile?: string | null;
+    landline?: string | null;
     city?: string | null;
+    country?: string | null;
     customer_type?: string | null;
     notes?: string | null;
     last_contact?: string | null;
-  }>
+  }>,
+  options?: { multiPhone?: boolean }
 ): PhoneAuditResult {
+  if (options?.multiPhone) {
+    return auditContactsMultiPhone(contacts);
+  }
+
+  // Legacy single-string partition: maps 1-to-1 per contact
   const normalizedSeen = new Map<string, number>();
 
-  // Pass 1: Initial validation & frequency counting
   const intermediate = contacts.map(c => {
-    // Prefer mobile over landline/phone if both exist
     const rawNum = c.mobile || c.phone || '';
     const validation = validatePhoneNumber(rawNum);
 
-    // Detect opt-out notes or flags
     const noteText = (c.notes || '').toLowerCase();
     const isOptedOut =
       noteText.includes('opt-out') ||
@@ -371,7 +546,6 @@ export function auditAndVerifyContacts(
     };
   });
 
-  // Pass 2: Mark duplicates and finalize eligibility
   let eligibleCount = 0;
   let landlineCount = 0;
   let missingCount = 0;
@@ -405,7 +579,6 @@ export function auditAndVerifyContacts(
       exclusionReason = 'Customer opted out from WhatsApp broadcasts';
     } else if (isDupe) {
       duplicateCount++;
-      // If duplicate, still allow first or flag for review
       exclusionReason = 'Duplicate telephone number shared across multiple records';
     }
 
@@ -429,11 +602,267 @@ export function auditAndVerifyContacts(
     items,
     stats: {
       total: contacts.length,
+      totalCompanies: contacts.length,
+      totalContacts: new Set(contacts.map(c => c.contact_person).filter(Boolean)).size,
+      totalPhones: contacts.filter(c => c.mobile || c.phone).length,
       eligible: eligibleCount,
       landline: landlineCount,
       missing: missingCount,
       invalid: invalidCount,
       duplicates: duplicateCount,
+      international: internationalCount,
+      optedOut: optedOutCount,
+    },
+  };
+}
+
+/**
+ * Enhanced multi-phone audit that evaluates individual phone numbers across all companies.
+ * Unlocks multiple mobile numbers per company and preserves all landlines.
+ */
+export function auditContactsMultiPhone(
+  contacts: Array<{
+    id: string;
+    company_name: string;
+    contact_person?: string | null;
+    designation?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    mobile?: string | null;
+    landline?: string | null;
+    city?: string | null;
+    country?: string | null;
+    customer_type?: string | null;
+    notes?: string | null;
+    last_contact?: string | null;
+  }>,
+  existingPhonesTable?: ContactPhoneRecord[]
+): PhoneAuditResult {
+  const items: VerifiedContactItem[] = [];
+  const phoneRecords: ContactPhoneRecord[] = [];
+  const companyGroups: CompanyPhoneGroup[] = [];
+
+  // Pass 1: Parse and collect all individual phones
+  const phoneInstancesMap = new Map<string, Array<{ companyId: string; companyName: string }>>();
+
+  for (const c of contacts) {
+    const rawSources = [
+      { raw: c.mobile, defaultDept: 'Purchasing' },
+      { raw: c.phone, defaultDept: 'General Office' },
+      { raw: c.landline, defaultDept: 'General Office' }
+    ].filter(s => s.raw && s.raw.trim());
+
+    const noteText = (c.notes || '').toLowerCase();
+    const consentStatus: 'opted_in' | 'opted_out' | 'pending' =
+      noteText.includes('opt-out') || noteText.includes('stop wa') || noteText.includes('unsubscribe')
+        ? 'opted_out'
+        : noteText.includes('opt-in') || noteText.includes('verified wa')
+        ? 'opted_in'
+        : 'pending';
+
+    const seenCleaned = new Set<string>();
+    const parsedList: ParsedPhoneItem[] = [];
+
+    // If pre-seeded records exist for this contact, use them
+    const preSeeded = existingPhonesTable?.filter(p => p.contact_id === c.id);
+    if (preSeeded && preSeeded.length > 0) {
+      for (const p of preSeeded) {
+        parsedList.push({
+          raw: p.raw_phone,
+          cleaned: p.normalized_phone || p.raw_phone,
+          contactPerson: p.contact_person,
+          department: p.department,
+          extension: p.extension || undefined,
+          validation: {
+            raw: p.raw_phone,
+            normalized: p.normalized_phone || p.raw_phone,
+            type: p.phone_type,
+            countryCode: p.country_code,
+            isWhatsAppEligible: p.is_whatsapp_eligible,
+            reason: p.notes || (p.is_whatsapp_eligible ? 'WhatsApp Eligible' : 'Excluded'),
+            whatsappStatus: p.is_whatsapp_eligible ? 'whatsapp_unknown' : 'not_whatsapp',
+          }
+        });
+      }
+    } else {
+      for (const src of rawSources) {
+        const parsed = parsePhoneEntries(src.raw, c.contact_person, c.designation || src.defaultDept);
+        for (const p of parsed) {
+          const key = p.validation.normalized || p.cleaned;
+          if (!seenCleaned.has(key)) {
+            seenCleaned.add(key);
+            parsedList.push(p);
+          }
+        }
+      }
+    }
+
+    if (parsedList.length === 0) {
+      // Company has no numbers recorded
+      const missingItem: VerifiedContactItem = {
+        id: `${c.id}_missing`,
+        contact_id: c.id,
+        company_name: c.company_name || '(Unnamed Company)',
+        contact_person: c.contact_person || null,
+        department: c.designation || 'General Office',
+        email: c.email || null,
+        raw_phone: null,
+        city: c.city || null,
+        customer_type: c.customer_type || 'Prospect',
+        validation: {
+          raw: '',
+          normalized: '',
+          type: 'missing_number',
+          countryCode: '',
+          isWhatsAppEligible: false,
+          reason: 'No phone or mobile number provided',
+          whatsappStatus: 'not_whatsapp',
+        },
+        consent_status: consentStatus,
+        is_primary: true,
+        is_duplicate: false,
+        is_eligible: false,
+        exclusion_reason: 'Missing telephone number',
+        last_contact_date: c.last_contact || null,
+      };
+      items.push(missingItem);
+
+      companyGroups.push({
+        companyId: c.id,
+        companyName: c.company_name,
+        city: c.city || null,
+        customerType: c.customer_type || null,
+        phones: [],
+        primaryPhone: null,
+        contacts: c.contact_person ? [{ name: c.contact_person, department: c.designation || 'General Office', phones: [] }] : [],
+      });
+    } else {
+      const companyPhones: ContactPhoneRecord[] = [];
+      const firstMobileIdx = parsedList.findIndex(p => p.validation.isWhatsAppEligible);
+      const primaryIdx = firstMobileIdx >= 0 ? firstMobileIdx : 0;
+
+      for (let i = 0; i < parsedList.length; i++) {
+        const p = parsedList[i];
+        const key = p.validation.normalized || p.cleaned;
+        if (!phoneInstancesMap.has(key)) {
+          phoneInstancesMap.set(key, []);
+        }
+        phoneInstancesMap.get(key)!.push({ companyId: c.id, companyName: c.company_name });
+
+        const country = detectCountryInfo(key, c.country, c.city);
+        const record: ContactPhoneRecord = {
+          id: `${c.id}_${i}`,
+          contact_id: c.id,
+          company_name: c.company_name,
+          contact_person: p.contactPerson || c.contact_person || null,
+          department: p.department || (p.validation.isWhatsAppEligible ? 'Purchasing' : 'General Office'),
+          raw_phone: p.raw,
+          normalized_phone: p.validation.normalized || p.cleaned,
+          country_code: country.code || '+62',
+          country_name: country.name || 'Indonesia',
+          country_flag: country.flag,
+          phone_type: p.validation.type,
+          is_whatsapp_eligible: p.validation.isWhatsAppEligible,
+          is_primary: i === primaryIdx,
+          consent_status: consentStatus,
+          extension: p.extension || null,
+          notes: p.validation.reason,
+        };
+
+        companyPhones.push(record);
+        phoneRecords.push(record);
+
+        const vItem: VerifiedContactItem = {
+          id: record.id,
+          contact_id: c.id,
+          company_name: c.company_name,
+          contact_person: record.contact_person,
+          department: record.department,
+          email: c.email || null,
+          raw_phone: record.raw_phone,
+          city: c.city || null,
+          customer_type: c.customer_type || 'Prospect',
+          validation: p.validation,
+          consent_status: consentStatus,
+          is_primary: record.is_primary,
+          extension: record.extension,
+          is_duplicate: false, // will update in pass 2
+          is_eligible: record.is_whatsapp_eligible && consentStatus !== 'opted_out',
+          exclusion_reason: record.is_whatsapp_eligible ? undefined : p.validation.reason,
+          last_contact_date: c.last_contact || null,
+        };
+        items.push(vItem);
+      }
+
+      companyGroups.push({
+        companyId: c.id,
+        companyName: c.company_name,
+        city: c.city || null,
+        customerType: c.customer_type || null,
+        phones: companyPhones,
+        primaryPhone: companyPhones.find(p => p.is_primary) || companyPhones[0] || null,
+        contacts: [
+          {
+            name: c.contact_person || 'General Contact',
+            department: c.designation || 'General Office',
+            phones: companyPhones,
+          }
+        ],
+      });
+    }
+  }
+
+  // Pass 2: Mark duplicates across individual numbers
+  let duplicateInstancesCount = 0;
+  for (const item of items) {
+    const key = item.validation.normalized || item.raw_phone;
+    if (key && phoneInstancesMap.has(key)) {
+      const instances = phoneInstancesMap.get(key)!;
+      if (instances.length > 1) {
+        duplicateInstancesCount++;
+        item.is_duplicate = true;
+
+        // Classify whether same-company/sister group or cross-company
+        const comps = Array.from(new Set(instances.map(x => x.companyName)));
+        const cleanNames = comps.map(cn =>
+          cn.toUpperCase()
+            .replace(/\b(PT|PT\.|CV|CV\.|UD|UD\.|INC|LTD|TBK|PERSERO|LABORATORIES|INDUSTRI|INDUSTRY|PHARMACEUTICAL|PHARMA|FARMA|MEDICA|SKINCARE|HOLDING|GROUP)\b/g, '')
+            .replace(/[()[\]-]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+        );
+        const firstWordSet = new Set(cleanNames.map(n => n.split(' ').filter(w => w.length > 2)[0]));
+        const isSameCompanyGroup = comps.length === 1 || firstWordSet.size === 1;
+
+        item.duplicate_group_type = isSameCompanyGroup ? 'same_company' : 'cross_company';
+        item.exclusion_reason = item.exclusion_reason || `Duplicate phone number shared across ${comps.length} company records`;
+      }
+    }
+  }
+
+  // Compute accurate multi-phone stats
+  const eligibleCount = items.filter(i => i.is_eligible).length;
+  const landlineCount = items.filter(i => i.validation.type === 'landline').length;
+  const missingCount = items.filter(i => i.validation.type === 'missing_number').length;
+  const invalidCount = items.filter(i => i.validation.type === 'invalid_number').length;
+  const internationalCount = items.filter(i => i.validation.type === 'international_number').length;
+  const optedOutCount = items.filter(i => i.consent_status === 'opted_out').length;
+  const uniqueContactsCount = new Set(contacts.map(c => c.contact_person).filter(Boolean)).size;
+
+  return {
+    items,
+    companyGroups,
+    phoneRecords,
+    stats: {
+      total: contacts.length, // 521 companies
+      totalCompanies: contacts.length,
+      totalContacts: uniqueContactsCount,
+      totalPhones: phoneRecords.length,
+      eligible: eligibleCount,
+      landline: landlineCount,
+      missing: missingCount,
+      invalid: invalidCount,
+      duplicates: duplicateInstancesCount,
       international: internationalCount,
       optedOut: optedOutCount,
     },
@@ -516,12 +945,11 @@ export function suggestCleanMobileNumber(raw: string): string {
   const trimmed = raw.trim();
 
   // Handle multiple numbers separated by comma, slash, semicolon, or newline
-  const parts = trimmed.split(/[,;\/\n]+/).map(p => p.trim()).filter(Boolean);
+  const parts = parsePhoneEntries(trimmed);
   if (parts.length > 1) {
     for (const part of parts) {
-      const v = validatePhoneNumber(part);
-      if (v.type === 'valid_mobile' || v.type === 'international_number') {
-        return v.normalized;
+      if (part.validation.type === 'valid_mobile' || part.validation.type === 'international_number') {
+        return part.validation.normalized;
       }
     }
   }
@@ -660,7 +1088,7 @@ export function getBulkNormalizationCandidates(items: VerifiedContactItem[]): Bu
     if (newValidation.type === 'valid_mobile' || newValidation.type === 'international_number') {
       if (suggested !== raw) {
         candidates.push({
-          contactId: item.id,
+          contactId: item.contact_id || item.id,
           companyName: item.company_name,
           contactPerson: item.contact_person,
           currentRaw: raw,

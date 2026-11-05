@@ -124,6 +124,7 @@ export function CrmInquiriesWorkspace({
   const [staffList, setStaffList] = useState<Array<{ id: string; full_name: string }>>([]);
   const [inquiries, setInquiries] = useState<InquiryRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Drawer state
@@ -159,6 +160,7 @@ export function CrmInquiriesWorkspace({
 
   const loadInquiries = async () => {
     setLoading(true);
+    setError(null);
     try {
       const { data, error } = await supabase
         .from('crm_inquiries')
@@ -246,6 +248,7 @@ export function CrmInquiriesWorkspace({
       setInquiries(mapped);
     } catch (err: any) {
       console.error('Failed to load inquiries workspace:', err);
+      setError(err.message || 'Unable to load inquiries.');
       showToast({ type: 'error', title: 'Inquiries Error', message: err.message || 'Unable to load inquiries.' });
     } finally {
       setLoading(false);
@@ -561,7 +564,24 @@ export function CrmInquiriesWorkspace({
       */}
 
       {/* Main View: [ LIST (EXCEL) ] or [ PIPELINE ] */}
-      {viewMode === 'pipeline' ? (
+      {loading ? (
+        <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+          <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-blue-600" />
+          <p className="text-sm text-gray-600 font-medium">Loading inquiries...</p>
+        </div>
+      ) : error ? (
+        <div className="bg-white rounded-lg border border-red-200 p-8 text-center bg-red-50/30">
+          <AlertTriangle className="w-6 h-6 mx-auto mb-2 text-red-600" />
+          <p className="text-sm font-semibold text-red-800 mb-1">Failed to load inquiries</p>
+          <p className="text-xs text-red-600 mb-3">{error}</p>
+          <button
+            onClick={loadInquiries}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700 transition"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Retry
+          </button>
+        </div>
+      ) : viewMode === 'pipeline' ? (
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
           <PipelineBoard
             canManage={canManage}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
 import {
@@ -12,6 +12,7 @@ import {
   DuplicateGroup,
   getBulkNormalizationCandidates,
   BulkNormalizationCandidate,
+  ContactPhoneRecord,
 } from '../../../utils/phoneValidation';
 import {
   X,
@@ -37,9 +38,25 @@ import {
   Layers,
   FileCheck,
   Loader2,
+  Plus,
+  Trash2,
+  Edit2,
+  Star,
+  Tag,
+  Briefcase,
 } from 'lucide-react';
 
 export type AuditCategory = 'total' | 'eligible' | 'landline' | 'missing' | 'invalid' | 'duplicates';
+
+export const CRM_DEPARTMENTS = [
+  'Purchasing',
+  'Import',
+  'QA / QC',
+  'Sales',
+  'Finance',
+  'Management',
+  'General Office',
+] as const;
 
 interface ContactRecipient {
   id: string;
@@ -76,14 +93,34 @@ export function PhoneAuditCorrectionModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [reasonFilter, setReasonFilter] = useState<string>('all');
   const [countryFilter, setCountryFilter] = useState<string>('all');
-  const [sortField, setSortField] = useState<'company' | 'phone' | 'status'>('company');
+  const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+  const [sortField, setSortField] = useState<'company' | 'phone' | 'status' | 'dept'>('company');
   const [sortAsc, setSortAsc] = useState(true);
   const [duplicateViewMode, setDuplicateViewMode] = useState<'grouped' | 'flat'>('grouped');
 
-  // Inline edit state: contactId -> edited phone string
+  // Relational phone records from database
+  const [dbPhones, setDbPhones] = useState<ContactPhoneRecord[]>([]);
+  const [loadingDbPhones, setLoadingDbPhones] = useState(false);
+
+  // Inline edit state
   const [editedPhones, setEditedPhones] = useState<Record<string, string>>({});
+  const [editedPersons, setEditedPersons] = useState<Record<string, string>>({});
+  const [editedDepts, setEditedDepts] = useState<Record<string, string>>({});
   const [savingRows, setSavingRows] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Add Phone Modal state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newCompanyId, setNewCompanyId] = useState('');
+  const [newContactPerson, setNewContactPerson] = useState('');
+  const [newDepartment, setNewDepartment] = useState('Purchasing');
+  const [newPhoneNumber, setNewPhoneNumber] = useState('');
+  const [newPhoneIsPrimary, setNewPhoneIsPrimary] = useState(false);
+  const [isAddingPhone, setIsAddingPhone] = useState(false);
+
+  // Delete Phone Confirmation state
+  const [deleteCandidate, setDeleteCandidate] = useState<VerifiedContactItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Bulk normalization preview modal state
   const [showBulkPreview, setShowBulkPreview] = useState(false);
@@ -91,9 +128,36 @@ export function PhoneAuditCorrectionModal({
   const [isApplyingBulk, setIsApplyingBulk] = useState(false);
 
   // Sync initial category when opening
-  React.useEffect(() => {
+  useEffect(() => {
     setSelectedCategory(initialCategory);
   }, [initialCategory]);
+
+  // Fetch relational phones from crm_contact_phones
+  const fetchDbPhones = useCallback(async () => {
+    setLoadingDbPhones(true);
+    try {
+      const { data, error } = await supabase
+        .from('crm_contact_phones')
+        .select('*')
+        .order('company_name');
+
+      if (error) {
+        console.warn('Could not fetch crm_contact_phones, falling back to parsed audit items:', error.message);
+      } else if (data && data.length > 0) {
+        setDbPhones(data as ContactPhoneRecord[]);
+      }
+    } catch (err) {
+      console.warn('Error fetching crm_contact_phones:', err);
+    } finally {
+      setLoadingDbPhones(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchDbPhones();
+    }
+  }, [isOpen, fetchDbPhones]);
 
   // Copy phone number helper
   const handleCopyPhone = useCallback((phone: string, id: string) => {
@@ -103,26 +167,133 @@ export function PhoneAuditCorrectionModal({
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
+  // Items source: if relational dbPhones exist, map to VerifiedContactItems; else use phoneAudit.items
+  const allAuditItems: VerifiedContactItem[] = useMemo(() => {
+    if (dbPhones.length > 0) {
+      // Find companies that have no phones to include as missing
+      const companyPhoneIds = new Set(dbPhones.map(p => p.contact_id));
+      const missingCompanyItems: VerifiedContactItem[] = contacts
+        .filter(c => !companyPhoneIds.has(c.id))
+        .map(c => ({
+          id: `${c.id}_missing`,
+          contact_id: c.id,
+          company_name: c.company_name,
+          contact_person: c.contact_person,
+          department: 'General Office',
+          email: c.email,
+          raw_phone: null,
+          city: c.city,
+          customer_type: c.customer_type || 'Prospect',
+          validation: {
+            raw: '',
+            normalized: '',
+            type: 'missing_number',
+            countryCode: '',
+            isWhatsAppEligible: false,
+            reason: 'No phone or mobile number provided',
+            whatsappStatus: 'not_whatsapp',
+          },
+          consent_status: 'pending',
+          is_primary: true,
+          is_duplicate: false,
+          is_eligible: false,
+          exclusion_reason: 'Missing telephone number',
+        }));
+
+      // Count occurrences for duplicates
+      const phoneCounts = new Map<string, number>();
+      dbPhones.forEach(p => {
+        const k = p.normalized_phone || p.raw_phone;
+        if (k) phoneCounts.set(k, (phoneCounts.get(k) || 0) + 1);
+      });
+
+      const mappedFromDb: VerifiedContactItem[] = dbPhones.map(p => {
+        const norm = p.normalized_phone || p.raw_phone;
+        const isDupe = norm ? (phoneCounts.get(norm) || 0) > 1 : false;
+        const matchingContact = contacts.find(c => c.id === p.contact_id);
+
+        return {
+          id: p.id,
+          contact_id: p.contact_id,
+          company_name: p.company_name,
+          contact_person: p.contact_person,
+          department: p.department || (p.is_whatsapp_eligible ? 'Purchasing' : 'General Office'),
+          email: matchingContact?.email || null,
+          raw_phone: p.raw_phone,
+          city: matchingContact?.city || null,
+          customer_type: matchingContact?.customer_type || 'Prospect',
+          validation: {
+            raw: p.raw_phone,
+            normalized: p.normalized_phone,
+            type: p.phone_type,
+            countryCode: p.country_code,
+            isWhatsAppEligible: p.is_whatsapp_eligible,
+            reason: p.notes || (p.is_whatsapp_eligible ? 'Valid WhatsApp Mobile' : 'Landline / Excluded'),
+            whatsappStatus: p.is_whatsapp_eligible ? 'whatsapp_unknown' : 'not_whatsapp',
+          },
+          consent_status: (p.consent_status as any) || 'pending',
+          is_primary: p.is_primary,
+          extension: p.extension || null,
+          is_duplicate: isDupe,
+          duplicate_group_type: isDupe ? 'same_company' : undefined,
+          is_eligible: p.is_whatsapp_eligible && p.consent_status !== 'opted_out',
+          exclusion_reason: p.is_whatsapp_eligible ? undefined : p.notes || 'Excluded from WhatsApp broadcasts',
+        };
+      });
+
+      return [...mappedFromDb, ...missingCompanyItems];
+    }
+
+    return phoneAudit.items;
+  }, [dbPhones, contacts, phoneAudit.items]);
+
+  // Category counts
+  const categoryStats = useMemo(() => {
+    let eligible = 0;
+    let landline = 0;
+    let missing = 0;
+    let invalid = 0;
+    let duplicates = 0;
+
+    allAuditItems.forEach(i => {
+      if (i.is_eligible) eligible++;
+      if (i.validation.type === 'landline') landline++;
+      if (i.validation.type === 'missing_number') missing++;
+      if (i.validation.type === 'invalid_number') invalid++;
+      if (i.is_duplicate) duplicates++;
+    });
+
+    return {
+      total: allAuditItems.length,
+      totalCompanies: contacts.length,
+      eligible,
+      landline,
+      missing,
+      invalid,
+      duplicates,
+    };
+  }, [allAuditItems, contacts.length]);
+
   // Filter items based on selected category
   const categoryItems = useMemo(() => {
     switch (selectedCategory) {
       case 'eligible':
-        return phoneAudit.items.filter(i => i.is_eligible);
+        return allAuditItems.filter(i => i.is_eligible);
       case 'landline':
-        return phoneAudit.items.filter(i => i.validation.type === 'landline');
+        return allAuditItems.filter(i => i.validation.type === 'landline');
       case 'missing':
-        return phoneAudit.items.filter(i => i.validation.type === 'missing_number');
+        return allAuditItems.filter(i => i.validation.type === 'missing_number');
       case 'invalid':
-        return phoneAudit.items.filter(i => i.validation.type === 'invalid_number');
+        return allAuditItems.filter(i => i.validation.type === 'invalid_number');
       case 'duplicates':
-        return phoneAudit.items.filter(i => i.is_duplicate);
+        return allAuditItems.filter(i => i.is_duplicate);
       case 'total':
       default:
-        return phoneAudit.items;
+        return allAuditItems;
     }
-  }, [phoneAudit.items, selectedCategory]);
+  }, [allAuditItems, selectedCategory]);
 
-  // Extract distinct reasons for filter dropdown in current category
+  // Extract distinct reasons
   const distinctReasons = useMemo(() => {
     const reasons = new Set<string>();
     categoryItems.forEach(i => {
@@ -151,9 +322,18 @@ export function PhoneAuditCorrectionModal({
       list = list.filter(item => {
         const comp = (item.company_name || '').toLowerCase();
         const contact = (item.contact_person || '').toLowerCase();
+        const dept = (item.department || '').toLowerCase();
         const raw = (item.raw_phone || '').toLowerCase();
         const norm = (item.validation.normalized || '').toLowerCase();
-        return comp.includes(q) || contact.includes(q) || raw.includes(q) || norm.includes(q);
+        const city = (item.city || '').toLowerCase();
+        return (
+          comp.includes(q) ||
+          contact.includes(q) ||
+          dept.includes(q) ||
+          raw.includes(q) ||
+          norm.includes(q) ||
+          city.includes(q)
+        );
       });
     }
 
@@ -170,6 +350,11 @@ export function PhoneAuditCorrectionModal({
       });
     }
 
+    // Department filter
+    if (departmentFilter !== 'all') {
+      list = list.filter(item => (item.department || 'General Office') === departmentFilter);
+    }
+
     // Sorting
     return [...list].sort((a, b) => {
       let cmp = 0;
@@ -179,17 +364,21 @@ export function PhoneAuditCorrectionModal({
         const pA = a.raw_phone || '';
         const pB = b.raw_phone || '';
         cmp = pA.localeCompare(pB);
+      } else if (sortField === 'dept') {
+        const dA = a.department || '';
+        const dB = b.department || '';
+        cmp = dA.localeCompare(dB);
       } else if (sortField === 'status') {
         cmp = a.validation.type.localeCompare(b.validation.type);
       }
       return sortAsc ? cmp : -cmp;
     });
-  }, [categoryItems, searchQuery, reasonFilter, countryFilter, sortField, sortAsc]);
+  }, [categoryItems, searchQuery, reasonFilter, countryFilter, departmentFilter, sortField, sortAsc]);
 
   // Grouped duplicates structure
   const duplicateGroups = useMemo(() => {
-    return groupDuplicates(phoneAudit.items);
-  }, [phoneAudit.items]);
+    return groupDuplicates(allAuditItems);
+  }, [allAuditItems]);
 
   // Filtered duplicate groups for search
   const filteredDuplicateGroups = useMemo(() => {
@@ -205,26 +394,55 @@ export function PhoneAuditCorrectionModal({
 
   // Bulk normalization candidates across all contacts
   const bulkCandidates = useMemo(() => {
-    return getBulkNormalizationCandidates(phoneAudit.items);
-  }, [phoneAudit.items]);
+    return getBulkNormalizationCandidates(allAuditItems);
+  }, [allAuditItems]);
 
-  // Initialize selected candidates when preview opens
   const handleOpenBulkPreview = useCallback(() => {
     setSelectedBulkCandidateIds(new Set(bulkCandidates.map(c => c.contactId)));
     setShowBulkPreview(true);
   }, [bulkCandidates]);
 
-  // Inline value getter: returns user-typed value or current raw value
-  const getInputValue = useCallback((item: VerifiedContactItem): string => {
-    if (editedPhones[item.id] !== undefined) {
-      return editedPhones[item.id];
-    }
-    return item.raw_phone || '';
-  }, [editedPhones]);
+  // Inline value getters
+  const getInputValue = useCallback(
+    (item: VerifiedContactItem): string => {
+      if (editedPhones[item.id] !== undefined) {
+        return editedPhones[item.id];
+      }
+      return item.raw_phone || '';
+    },
+    [editedPhones]
+  );
 
-  // Handle inline change
-  const handleInputChange = useCallback((contactId: string, value: string) => {
-    setEditedPhones(prev => ({ ...prev, [contactId]: value }));
+  const getPersonValue = useCallback(
+    (item: VerifiedContactItem): string => {
+      if (editedPersons[item.id] !== undefined) {
+        return editedPersons[item.id];
+      }
+      return item.contact_person || '';
+    },
+    [editedPersons]
+  );
+
+  const getDeptValue = useCallback(
+    (item: VerifiedContactItem): string => {
+      if (editedDepts[item.id] !== undefined) {
+        return editedDepts[item.id];
+      }
+      return item.department || 'Purchasing';
+    },
+    [editedDepts]
+  );
+
+  const handlePhoneInputChange = useCallback((id: string, value: string) => {
+    setEditedPhones(prev => ({ ...prev, [id]: value }));
+  }, []);
+
+  const handlePersonInputChange = useCallback((id: string, value: string) => {
+    setEditedPersons(prev => ({ ...prev, [id]: value }));
+  }, []);
+
+  const handleDeptInputChange = useCallback((id: string, value: string) => {
+    setEditedDepts(prev => ({ ...prev, [id]: value }));
   }, []);
 
   // Quick auto-clean button per row
@@ -236,26 +454,133 @@ export function PhoneAuditCorrectionModal({
     }
   }, []);
 
+  // Toggle primary status for an individual phone
+  const handleTogglePrimary = async (item: VerifiedContactItem) => {
+    const parentContactId = item.contact_id || item.id;
+    setSavingRows(prev => ({ ...prev, [item.id]: true }));
+
+    try {
+      // 1. Reset all phones for this company to non-primary in database
+      await supabase
+        .from('crm_contact_phones')
+        .update({ is_primary: false, updated_at: new Date().toISOString() })
+        .eq('contact_id', parentContactId);
+
+      // 2. Set this phone as primary
+      if (item.id && !item.id.includes('_missing')) {
+        await supabase
+          .from('crm_contact_phones')
+          .update({ is_primary: true, updated_at: new Date().toISOString() })
+          .eq('id', item.id);
+      }
+
+      // 3. Keep crm_contacts.mobile / phone in sync
+      const normNumber = item.validation.normalized || item.raw_phone;
+      if (normNumber) {
+        const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+        if (item.validation.isWhatsAppEligible) {
+          patch.mobile = normNumber;
+        } else {
+          patch.phone = normNumber;
+        }
+        await supabase.from('crm_contacts').update(patch).eq('id', parentContactId);
+
+        const targetContact = contacts.find(c => c.id === parentContactId);
+        if (targetContact) {
+          onContactUpdated({ ...targetContact, ...patch });
+        }
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Primary Phone Updated',
+        message: `${item.raw_phone} is now the primary contact phone for ${item.company_name}.`,
+      });
+
+      await fetchDbPhones();
+    } catch (err: any) {
+      console.error('Failed to set primary phone:', err);
+      showToast({ type: 'error', title: 'Error', message: err.message || 'Could not update primary phone' });
+    } finally {
+      setSavingRows(prev => ({ ...prev, [item.id]: false }));
+    }
+  };
+
   // Save single contact phone update to Supabase
   const handleSaveContact = async (item: VerifiedContactItem) => {
     const newNumber = (editedPhones[item.id] !== undefined ? editedPhones[item.id] : item.raw_phone || '').trim();
+    const newPerson = (editedPersons[item.id] !== undefined ? editedPersons[item.id] : item.contact_person || '').trim();
+    const newDept = (editedDepts[item.id] !== undefined ? editedDepts[item.id] : item.department || 'Purchasing').trim();
     const oldRaw = item.raw_phone || '';
 
-    if (newNumber === oldRaw) {
-      showToast({ type: 'info', title: 'No Changes', message: 'Phone number has not been modified.' });
+    const isPhoneChanged = newNumber !== oldRaw;
+    const isPersonChanged = newPerson !== (item.contact_person || '');
+    const isDeptChanged = newDept !== (item.department || 'Purchasing');
+
+    if (!isPhoneChanged && !isPersonChanged && !isDeptChanged) {
+      showToast({ type: 'info', title: 'No Changes', message: 'No modifications to save.' });
       return;
     }
 
     setSavingRows(prev => ({ ...prev, [item.id]: true }));
     try {
-      // Validate the new number
       const newValidation = validatePhoneNumber(newNumber);
+      const parentContactId = item.contact_id || item.id.replace('_missing', '');
+      const country = detectCountryInfo(newValidation.normalized || newNumber, item.city);
 
-      // In crm_contacts, if it is a mobile number, save to mobile column; otherwise update mobile or phone
+      // Check if this record exists in crm_contact_phones or needs insert
+      const isMissingRow = item.id.includes('_missing');
+      let targetPhoneId = item.id;
+
+      if (isMissingRow) {
+        // Insert new record into crm_contact_phones
+        const { data: inserted, error: insertErr } = await supabase
+          .from('crm_contact_phones')
+          .insert({
+            contact_id: parentContactId,
+            company_name: item.company_name,
+            contact_person: newPerson || null,
+            department: newDept,
+            raw_phone: newNumber,
+            normalized_phone: newValidation.normalized || newNumber,
+            country_code: country.code,
+            country_name: country.name,
+            phone_type: newValidation.type,
+            is_whatsapp_eligible: newValidation.isWhatsAppEligible,
+            is_primary: true,
+            consent_status: 'pending',
+            notes: newValidation.reason,
+          })
+          .select()
+          .single();
+
+        if (insertErr) throw insertErr;
+        if (inserted) targetPhoneId = inserted.id;
+      } else {
+        // Update existing record in crm_contact_phones
+        const { error: phoneErr } = await supabase
+          .from('crm_contact_phones')
+          .update({
+            raw_phone: newNumber,
+            normalized_phone: newValidation.normalized || newNumber,
+            contact_person: newPerson || null,
+            department: newDept,
+            country_code: country.code,
+            country_name: country.name,
+            phone_type: newValidation.type,
+            is_whatsapp_eligible: newValidation.isWhatsAppEligible,
+            notes: newValidation.reason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', targetPhoneId);
+
+        if (phoneErr) throw phoneErr;
+      }
+
+      // Also keep crm_contacts in sync if primary or mobile
       const updatePayload: Record<string, any> = {
         updated_at: new Date().toISOString(),
       };
-
       if (newValidation.type === 'valid_mobile' || newValidation.type === 'international_number') {
         updatePayload.mobile = newValidation.normalized;
       } else if (newValidation.type === 'landline') {
@@ -264,22 +589,23 @@ export function PhoneAuditCorrectionModal({
       } else {
         updatePayload.mobile = newNumber || null;
       }
+      if (newPerson) updatePayload.contact_person = newPerson;
+      if (newDept) updatePayload.designation = newDept;
 
-      // 1. Update Supabase crm_contacts
       const { error: updateError } = await supabase
         .from('crm_contacts')
         .update(updatePayload)
-        .eq('id', item.id);
+        .eq('id', parentContactId);
 
       if (updateError) throw updateError;
 
-      // 2. Insert audit note in crm_activities
+      // Insert audit note in crm_activities
       try {
         await supabase.from('crm_activities').insert({
-          customer_id: item.id,
+          customer_id: parentContactId,
           activity_type: 'note',
           subject: 'Phone Number Audit Correction',
-          description: `Phone audit correction: Mobile updated from "${oldRaw || 'None'}" to "${updatePayload.mobile || updatePayload.phone || newNumber}". Classification: ${newValidation.type} (${newValidation.reason}).`,
+          description: `Phone audit correction for ${item.company_name}: Phone updated from "${oldRaw || 'None'}" to "${newValidation.normalized || newNumber}". Department: ${newDept}, Contact Person: ${newPerson || 'Unspecified'}. Classification: ${newValidation.type} (${newValidation.reason}).`,
           is_completed: true,
           completed_at: new Date().toISOString(),
         });
@@ -287,15 +613,15 @@ export function PhoneAuditCorrectionModal({
         console.warn('Activity log note warning:', logErr);
       }
 
-      // 3. Update local state
-      const targetContact = contacts.find(c => c.id === item.id);
+      // Update parent contact state in memory
+      const targetContact = contacts.find(c => c.id === parentContactId);
       if (targetContact) {
-        const updatedContact: ContactRecipient = {
+        onContactUpdated({
           ...targetContact,
           mobile: updatePayload.mobile !== undefined ? updatePayload.mobile : targetContact.mobile,
           phone: updatePayload.phone !== undefined ? updatePayload.phone : targetContact.phone,
-        };
-        onContactUpdated(updatedContact);
+          contact_person: newPerson || targetContact.contact_person,
+        });
       }
 
       // Clear edit cache for this row
@@ -304,12 +630,24 @@ export function PhoneAuditCorrectionModal({
         delete next[item.id];
         return next;
       });
+      setEditedPersons(prev => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      setEditedDepts(prev => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
 
       showToast({
         type: 'success',
         title: 'Phone Saved & Verified',
-        message: `${item.company_name} updated to ${updatePayload.mobile || updatePayload.phone || newNumber} (${newValidation.type === 'valid_mobile' ? 'WhatsApp Eligible' : newValidation.type})`,
+        message: `${item.company_name} updated to ${newValidation.normalized || newNumber} [${newDept}] (${newValidation.type === 'valid_mobile' ? 'WhatsApp Eligible' : newValidation.type})`,
       });
+
+      await fetchDbPhones();
     } catch (err: any) {
       console.error('Failed to update contact phone:', err);
       showToast({
@@ -319,6 +657,190 @@ export function PhoneAuditCorrectionModal({
       });
     } finally {
       setSavingRows(prev => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  // Add a new phone number to an existing company
+  const handleAddNewPhone = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCompanyId) {
+      showToast({ type: 'warning', title: 'Select Company', message: 'Please select a company to attach the phone to.' });
+      return;
+    }
+    if (!newPhoneNumber.trim()) {
+      showToast({ type: 'warning', title: 'Missing Phone', message: 'Please enter a telephone or mobile number.' });
+      return;
+    }
+
+    setIsAddingPhone(true);
+    try {
+      const targetCompany = contacts.find(c => c.id === newCompanyId);
+      if (!targetCompany) throw new Error('Selected company not found.');
+
+      const validation = validatePhoneNumber(newPhoneNumber.trim());
+      const country = detectCountryInfo(validation.normalized || newPhoneNumber.trim(), targetCompany.city);
+
+      // If marked as primary, reset existing primaries for this company
+      if (newPhoneIsPrimary) {
+        await supabase
+          .from('crm_contact_phones')
+          .update({ is_primary: false, updated_at: new Date().toISOString() })
+          .eq('contact_id', newCompanyId);
+      }
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from('crm_contact_phones')
+        .insert({
+          contact_id: newCompanyId,
+          company_name: targetCompany.company_name,
+          contact_person: newContactPerson.trim() || targetCompany.contact_person || null,
+          department: newDepartment,
+          raw_phone: newPhoneNumber.trim(),
+          normalized_phone: validation.normalized || newPhoneNumber.trim(),
+          country_code: country.code,
+          country_name: country.name,
+          phone_type: validation.type,
+          is_whatsapp_eligible: validation.isWhatsAppEligible,
+          is_primary: newPhoneIsPrimary,
+          consent_status: 'pending',
+          notes: validation.reason,
+        })
+        .select()
+        .single();
+
+      if (insertErr) throw insertErr;
+
+      // Keep crm_contacts in sync if primary
+      if (newPhoneIsPrimary) {
+        const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+        if (validation.isWhatsAppEligible) {
+          patch.mobile = validation.normalized;
+        } else {
+          patch.phone = validation.normalized;
+        }
+        await supabase.from('crm_contacts').update(patch).eq('id', newCompanyId);
+        onContactUpdated({ ...targetCompany, ...patch });
+      }
+
+      // Log in crm_activities
+      try {
+        await supabase.from('crm_activities').insert({
+          customer_id: newCompanyId,
+          activity_type: 'note',
+          subject: 'Added Contact Phone Number',
+          description: `Added new ${newDepartment} phone ${validation.normalized || newPhoneNumber.trim()} for ${targetCompany.company_name} (Contact: ${newContactPerson || 'Unspecified'}). Classification: ${validation.type}.`,
+          is_completed: true,
+          completed_at: new Date().toISOString(),
+        });
+      } catch (logErr) {
+        console.warn('Activity log note warning:', logErr);
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Phone Added Successfully',
+        message: `Added ${validation.normalized || newPhoneNumber.trim()} (${newDepartment}) to ${targetCompany.company_name}.`,
+      });
+
+      // Reset form and close modal
+      setNewCompanyId('');
+      setNewContactPerson('');
+      setNewDepartment('Purchasing');
+      setNewPhoneNumber('');
+      setNewPhoneIsPrimary(false);
+      setShowAddModal(false);
+
+      await fetchDbPhones();
+    } catch (err: any) {
+      console.error('Failed to add phone:', err);
+      showToast({ type: 'error', title: 'Add Failed', message: err.message || 'Could not add phone record.' });
+    } finally {
+      setIsAddingPhone(false);
+    }
+  };
+
+  // Delete an individual phone record
+  const handleConfirmDelete = async () => {
+    if (!deleteCandidate) return;
+
+    setIsDeleting(true);
+    try {
+      const parentContactId = deleteCandidate.contact_id || deleteCandidate.id;
+      const targetPhoneId = deleteCandidate.id;
+
+      if (!targetPhoneId.includes('_missing')) {
+        const { error: delErr } = await supabase
+          .from('crm_contact_phones')
+          .delete()
+          .eq('id', targetPhoneId);
+
+        if (delErr) throw delErr;
+      }
+
+      // If the deleted phone was primary in crm_contacts, reassign primary to the next available number
+      const remainingForCompany = dbPhones.filter(
+        p => p.contact_id === parentContactId && p.id !== targetPhoneId
+      );
+
+      if (deleteCandidate.is_primary && remainingForCompany.length > 0) {
+        const nextPrimary = remainingForCompany.find(p => p.is_whatsapp_eligible) || remainingForCompany[0];
+        await supabase
+          .from('crm_contact_phones')
+          .update({ is_primary: true, updated_at: new Date().toISOString() })
+          .eq('id', nextPrimary.id);
+
+        const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+        if (nextPrimary.is_whatsapp_eligible) {
+          patch.mobile = nextPrimary.normalized_phone;
+        } else {
+          patch.phone = nextPrimary.normalized_phone;
+        }
+        await supabase.from('crm_contacts').update(patch).eq('id', parentContactId);
+
+        const targetContact = contacts.find(c => c.id === parentContactId);
+        if (targetContact) {
+          onContactUpdated({ ...targetContact, ...patch });
+        }
+      } else if (remainingForCompany.length === 0) {
+        // No numbers remaining
+        await supabase
+          .from('crm_contacts')
+          .update({ mobile: null, phone: null, updated_at: new Date().toISOString() })
+          .eq('id', parentContactId);
+
+        const targetContact = contacts.find(c => c.id === parentContactId);
+        if (targetContact) {
+          onContactUpdated({ ...targetContact, mobile: null, phone: null });
+        }
+      }
+
+      // Log in crm_activities
+      try {
+        await supabase.from('crm_activities').insert({
+          customer_id: parentContactId,
+          activity_type: 'note',
+          subject: 'Removed Phone Number',
+          description: `Removed phone ${deleteCandidate.raw_phone} (${deleteCandidate.department || 'General Office'}) from ${deleteCandidate.company_name}.`,
+          is_completed: true,
+          completed_at: new Date().toISOString(),
+        });
+      } catch (logErr) {
+        console.warn('Activity log note warning:', logErr);
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Phone Removed',
+        message: `Removed ${deleteCandidate.raw_phone} from ${deleteCandidate.company_name}.`,
+      });
+
+      setDeleteCandidate(null);
+      await fetchDbPhones();
+    } catch (err: any) {
+      console.error('Failed to delete phone:', err);
+      showToast({ type: 'error', title: 'Delete Failed', message: err.message || 'Could not delete phone record.' });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -346,6 +868,18 @@ export function PhoneAuditCorrectionModal({
           .eq('id', cand.contactId);
 
         if (error) throw error;
+
+        // Also update crm_contact_phones if record exists
+        await supabase
+          .from('crm_contact_phones')
+          .update({
+            raw_phone: cand.proposedNormalized,
+            normalized_phone: cand.proposedNormalized,
+            phone_type: 'valid_mobile',
+            is_whatsapp_eligible: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('contact_id', cand.contactId);
 
         // Audit note
         try {
@@ -387,13 +921,15 @@ export function PhoneAuditCorrectionModal({
       title: 'Bulk Normalization Complete',
       message: `Successfully normalized ${successCount} contact mobile numbers${failCount > 0 ? ` (${failCount} failed)` : ''}.`,
     });
+
+    await fetchDbPhones();
   };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-150">
-      <div className="bg-white w-full max-w-7xl max-h-[94vh] rounded-xl shadow-2xl flex flex-col border border-slate-200 overflow-hidden">
+      <div className="bg-white w-full max-w-7xl max-h-[95vh] rounded-xl shadow-2xl flex flex-col border border-slate-200 overflow-hidden">
         
         {/* ==================================================================== */}
         {/* 1. MODAL HEADER & SUMMARY STRIP                                      */}
@@ -409,22 +945,38 @@ export function PhoneAuditCorrectionModal({
                   Contact Phone Audit & Correction Centre
                 </h2>
                 <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
-                  {phoneAudit.stats.total} Records Analyzed
+                  {categoryStats.totalCompanies} Companies &bull; {categoryStats.total} Phone Records
                 </span>
+                {loadingDbPhones && (
+                  <span className="text-[10px] text-gray-500 flex items-center gap-1 font-medium">
+                    <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                    Syncing...
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-gray-500">
-                Inspect, format, correct, and verify customer mobile numbers directly for WhatsApp Business compliance
+                Multi-phone management: assign separate mobile & landline numbers to Purchasing, Import, QA/QC, and General Office contacts
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold transition shadow-xs cursor-pointer"
+              title="Add a new phone number to an existing company contact"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Phone Number
+            </button>
+
             {bulkCandidates.length > 0 && (
               <button
                 type="button"
                 onClick={handleOpenBulkPreview}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-md text-xs font-bold transition shadow-2xs cursor-pointer"
-                title="Preview and bulk-normalize unambiguous 08... and 628... formatting errors"
+                title="Preview and bulk-normalize unambiguous 08... formatting errors"
               >
                 <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                 Bulk Normalization ({bulkCandidates.length})
@@ -461,7 +1013,7 @@ export function PhoneAuditCorrectionModal({
               <span className={`text-[10px] px-1.5 py-0.2 rounded font-extrabold ${
                 selectedCategory === 'total' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-800'
               }`}>
-                {phoneAudit.stats.total}
+                {categoryStats.total}
               </span>
             </button>
 
@@ -480,7 +1032,7 @@ export function PhoneAuditCorrectionModal({
               <span className={`text-[10px] px-1.5 py-0.2 rounded font-extrabold ${
                 selectedCategory === 'eligible' ? 'bg-emerald-700 text-white' : 'bg-emerald-200 text-emerald-900'
               }`}>
-                {phoneAudit.stats.eligible}
+                {categoryStats.eligible}
               </span>
             </button>
 
@@ -499,7 +1051,7 @@ export function PhoneAuditCorrectionModal({
               <span className={`text-[10px] px-1.5 py-0.2 rounded font-extrabold ${
                 selectedCategory === 'landline' ? 'bg-amber-700 text-white' : 'bg-amber-200 text-amber-900'
               }`}>
-                {phoneAudit.stats.landline}
+                {categoryStats.landline}
               </span>
             </button>
 
@@ -518,7 +1070,7 @@ export function PhoneAuditCorrectionModal({
               <span className={`text-[10px] px-1.5 py-0.2 rounded font-extrabold ${
                 selectedCategory === 'missing' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-800'
               }`}>
-                {phoneAudit.stats.missing}
+                {categoryStats.missing}
               </span>
             </button>
 
@@ -537,11 +1089,11 @@ export function PhoneAuditCorrectionModal({
               <span className={`text-[10px] px-1.5 py-0.2 rounded font-extrabold ${
                 selectedCategory === 'invalid' ? 'bg-rose-700 text-white' : 'bg-rose-200 text-rose-900'
               }`}>
-                {phoneAudit.stats.invalid}
+                {categoryStats.invalid}
               </span>
             </button>
 
-            {/* Duplicates (Overlapping Flag) */}
+            {/* Duplicates */}
             <button
               type="button"
               onClick={() => { setSelectedCategory('duplicates'); setReasonFilter('all'); }}
@@ -557,25 +1109,22 @@ export function PhoneAuditCorrectionModal({
               <span className={`text-[10px] px-1.5 py-0.2 rounded font-extrabold ${
                 selectedCategory === 'duplicates' ? 'bg-orange-700 text-white' : 'bg-orange-200 text-orange-900'
               }`}>
-                {phoneAudit.stats.duplicates}
-              </span>
-              <span className="text-[9px] uppercase px-1 py-0.2 bg-orange-100 text-orange-900 rounded font-bold border border-orange-300">
-                Overlapping
+                {categoryStats.duplicates}
               </span>
             </button>
           </div>
 
-          {/* Reconciliation Explanatory Pill */}
-          <div className="hidden xl:flex items-center gap-1 text-[11px] text-gray-500 bg-gray-50 px-2.5 py-1 rounded border border-gray-200 whitespace-nowrap">
+          {/* Granular Reconciliation Indicator */}
+          <div className="hidden xl:flex items-center gap-1.5 text-[11px] text-gray-500 bg-gray-50 px-2.5 py-1 rounded border border-gray-200 whitespace-nowrap">
             <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
             <span>
-              65 Eligible + 315 Landlines + 110 Missing + 31 Invalid = <strong>521 Total Directory</strong>
+              {categoryStats.totalCompanies} Companies &bull; {categoryStats.eligible} Mobiles &bull; {categoryStats.landline} Landlines &bull; {categoryStats.duplicates} Duplicate Instances
             </span>
           </div>
         </div>
 
         {/* ==================================================================== */}
-        {/* 3. TOOLBAR: SEARCH, FILTERS, DUPLICATE TOGGLE, SORTING               */}
+        {/* 3. TOOLBAR: SEARCH, DEPARTMENT & COUNTRY FILTERS, SORTING            */}
         {/* ==================================================================== */}
         <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5 text-xs shrink-0">
           <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-md">
@@ -583,7 +1132,7 @@ export function PhoneAuditCorrectionModal({
               <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search company, contact person, or phone number..."
+                placeholder="Search company, contact person, department, or phone number..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-gray-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
@@ -601,24 +1150,20 @@ export function PhoneAuditCorrectionModal({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Reason Filter */}
-            {distinctReasons.length > 1 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] text-gray-500 font-medium">Reason:</span>
-                <select
-                  value={reasonFilter}
-                  onChange={e => setReasonFilter(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 max-w-[200px] truncate focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="all">All Reasons ({categoryItems.length})</option>
-                  {distinctReasons.map(r => (
-                    <option key={r} value={r} title={r}>
-                      {r.length > 35 ? r.slice(0, 35) + '…' : r}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {/* Department Filter */}
+            <div className="flex items-center gap-1.5">
+              <Briefcase className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={departmentFilter}
+                onChange={e => setDepartmentFilter(e.target.value)}
+                className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Departments</option>
+                {CRM_DEPARTMENTS.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
 
             {/* Country Filter */}
             {distinctCountries.length > 1 && (
@@ -632,6 +1177,25 @@ export function PhoneAuditCorrectionModal({
                   <option value="all">All Countries</option>
                   {distinctCountries.map(c => (
                     <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Reason Filter */}
+            {distinctReasons.length > 1 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-gray-500 font-medium">Reason:</span>
+                <select
+                  value={reasonFilter}
+                  onChange={e => setReasonFilter(e.target.value)}
+                  className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 max-w-[180px] truncate focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="all">All Reasons</option>
+                  {distinctReasons.map(r => (
+                    <option key={r} value={r} title={r}>
+                      {r.length > 30 ? r.slice(0, 30) + '…' : r}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -669,7 +1233,7 @@ export function PhoneAuditCorrectionModal({
               title={`Sorting ${sortAsc ? 'Ascending' : 'Descending'}`}
             >
               <SlidersHorizontal className="w-3 h-3 text-gray-500" />
-              <span>Sort: {sortField === 'company' ? 'Company' : sortField === 'phone' ? 'Phone' : 'Status'} ({sortAsc ? 'A-Z' : 'Z-A'})</span>
+              <span>Sort: {sortField.toUpperCase()} ({sortAsc ? 'A-Z' : 'Z-A'})</span>
             </button>
           </div>
         </div>
@@ -677,7 +1241,7 @@ export function PhoneAuditCorrectionModal({
         {/* ==================================================================== */}
         {/* 4. MAIN CONTENT AREA (TABLE OR GROUPED DUPLICATES)                   */}
         {/* ==================================================================== */}
-        <div className="flex-1 overflow-y-auto bg-slate-100/50 min-h-[350px] max-h-[calc(94vh-220px)] p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto bg-slate-100/50 min-h-[350px] max-h-[calc(95vh-230px)] p-4 space-y-4">
 
           {/* 4A. DUPLICATES GROUPED VIEW */}
           {selectedCategory === 'duplicates' && duplicateViewMode === 'grouped' ? (
@@ -728,7 +1292,7 @@ export function PhoneAuditCorrectionModal({
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-[10px] uppercase font-bold text-gray-500">
                             <th className="py-2 px-3">Company</th>
-                            <th className="py-2 px-3">Contact Person</th>
+                            <th className="py-2 px-3">Contact Person & Dept</th>
                             <th className="py-2 px-3">Raw Phone</th>
                             <th className="py-2 px-3">Country</th>
                             <th className="py-2 px-3">Classification</th>
@@ -753,10 +1317,8 @@ export function PhoneAuditCorrectionModal({
                                   )}
                                 </td>
                                 <td className="py-2 px-3 text-gray-700">
-                                  {contact.contact_person || '—'}
-                                  {contact.email && (
-                                    <span className="block text-[10px] text-gray-400">{contact.email}</span>
-                                  )}
+                                  <span className="font-semibold">{contact.contact_person || '—'}</span>
+                                  <span className="block text-[10px] text-slate-500">{contact.department || 'General'}</span>
                                 </td>
                                 <td className="py-2 px-3 font-mono text-gray-800">
                                   <div className="flex items-center gap-1.5">
@@ -795,15 +1357,9 @@ export function PhoneAuditCorrectionModal({
                                     <input
                                       type="text"
                                       value={currentVal}
-                                      onChange={e => handleInputChange(contact.id, e.target.value)}
+                                      onChange={e => handlePhoneInputChange(contact.id, e.target.value)}
                                       placeholder="e.g. +6281234567890"
-                                      className={`w-full px-2 py-1 text-xs font-mono rounded border transition focus:outline-hidden ${
-                                        valResult.type === 'valid_mobile' || valResult.type === 'international_number'
-                                          ? 'border-emerald-300 focus:border-emerald-500 bg-emerald-50/30'
-                                          : valResult.type === 'landline'
-                                          ? 'border-amber-300 focus:border-amber-500 bg-amber-50/30'
-                                          : 'border-rose-300 focus:border-rose-500 bg-rose-50/30'
-                                      }`}
+                                      className="w-full px-2 py-1 text-xs font-mono rounded border transition focus:outline-hidden border-orange-300 bg-orange-50/20"
                                     />
                                     {suggestCleanMobileNumber(contact.raw_phone || '') &&
                                       suggestCleanMobileNumber(contact.raw_phone || '') !== currentVal && (
@@ -845,35 +1401,44 @@ export function PhoneAuditCorrectionModal({
             </div>
           ) : (
 
-            /* 4B. STANDARD COMPACT AUDIT TABLE VIEW */
+            /* 4B. STANDARD COMPACT AUDIT TABLE VIEW WITH MULTI-PHONE & DEPARTMENT SUPPORT */
             <div className="bg-white rounded-lg border border-gray-200 shadow-xs overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="sticky top-0 bg-slate-100 border-b border-gray-200 z-10">
                     <tr className="text-[10px] uppercase font-bold text-gray-600">
                       <th className="py-2.5 px-3 w-10">#</th>
-                      <th className="py-2.5 px-3 min-w-[180px]">Company</th>
+                      <th className="py-2.5 px-3 min-w-[170px]">Company</th>
                       <th className="py-2.5 px-3 min-w-[130px]">Contact Person</th>
-                      <th className="py-2.5 px-3 min-w-[160px]">Current Mobile / Phone</th>
-                      <th className="py-2.5 px-3 min-w-[110px]">Country</th>
-                      <th className="py-2.5 px-3 min-w-[130px]">Validation Result</th>
-                      <th className="py-2.5 px-3 min-w-[220px]">Reason & Diagnostics</th>
-                      <th className="py-2.5 px-3 min-w-[240px]">Corrected Mobile</th>
-                      <th className="py-2.5 px-3 text-right min-w-[80px]">Action</th>
+                      <th className="py-2.5 px-3 min-w-[100px]">Department</th>
+                      <th className="py-2.5 px-3 min-w-[150px]">Current Mobile / Phone</th>
+                      <th className="py-2.5 px-3 min-w-[100px]">Country</th>
+                      <th className="py-2.5 px-3 min-w-[120px]">Validation Result</th>
+                      <th className="py-2.5 px-3 min-w-[160px]">Reason & Diagnostics</th>
+                      <th className="py-2.5 px-3 min-w-[200px]">Corrected Mobile</th>
+                      <th className="py-2.5 px-3 text-center min-w-[70px]">Primary</th>
+                      <th className="py-2.5 px-3 text-right min-w-[110px]">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {filteredItems.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="py-10 text-center text-gray-500 text-xs">
+                        <td colSpan={10} className="py-10 text-center text-gray-500 text-xs">
                           No contact records found matching the current category and filters.
                         </td>
                       </tr>
                     ) : (
                       filteredItems.map((item, idx) => {
                         const currentVal = getInputValue(item);
+                        const currentPerson = getPersonValue(item);
+                        const currentDept = getDeptValue(item);
                         const valResult = validatePhoneNumber(currentVal);
-                        const isChanged = currentVal !== (item.raw_phone || '');
+
+                        const isPhoneChanged = currentVal !== (item.raw_phone || '');
+                        const isPersonChanged = currentPerson !== (item.contact_person || '');
+                        const isDeptChanged = currentDept !== (item.department || 'Purchasing');
+                        const isChanged = isPhoneChanged || isPersonChanged || isDeptChanged;
+
                         const isSaving = savingRows[item.id] || false;
                         const countryInfo = detectCountryInfo(item.raw_phone, item.city);
                         const cleanSuggestion = suggestCleanMobileNumber(item.raw_phone || '');
@@ -903,14 +1468,18 @@ export function PhoneAuditCorrectionModal({
                             </td>
 
                             {/* Contact Person */}
-                            <td className="py-2.5 px-3 text-gray-800">
-                              <span className="font-medium block">
-                                {item.contact_person || '—'}
-                              </span>
+                            <td className="py-2.5 px-3">
+                              <input
+                                type="text"
+                                value={currentPerson}
+                                onChange={e => handlePersonInputChange(item.id, e.target.value)}
+                                placeholder="Contact Name"
+                                className="w-full px-2 py-0.5 text-xs bg-transparent border-b border-transparent hover:border-gray-300 focus:border-emerald-500 focus:bg-white focus:outline-hidden font-medium text-gray-900"
+                              />
                               {item.email && (
                                 <a
                                   href={`mailto:${item.email}`}
-                                  className="text-[10px] text-blue-600 hover:underline block truncate max-w-[150px]"
+                                  className="text-[10px] text-blue-600 hover:underline block truncate max-w-[130px]"
                                   title={item.email}
                                 >
                                   {item.email}
@@ -918,10 +1487,35 @@ export function PhoneAuditCorrectionModal({
                               )}
                             </td>
 
-                            {/* Current Mobile / Phone */}
+                            {/* Department Badge & Selector */}
+                            <td className="py-2.5 px-3">
+                              <select
+                                value={currentDept}
+                                onChange={e => handleDeptInputChange(item.id, e.target.value)}
+                                className={`text-[10px] font-bold rounded px-1.5 py-0.5 border cursor-pointer focus:outline-hidden ${
+                                  currentDept === 'Purchasing'
+                                    ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                    : currentDept === 'Import'
+                                    ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                    : currentDept === 'QA / QC'
+                                    ? 'bg-teal-50 text-teal-800 border-teal-200'
+                                    : currentDept === 'Sales'
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                    : currentDept === 'Finance'
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-300'
+                                }`}
+                              >
+                                {CRM_DEPARTMENTS.map(d => (
+                                  <option key={d} value={d}>{d}</option>
+                                ))}
+                              </select>
+                            </td>
+
+                            {/* Current Raw Phone */}
                             <td className="py-2.5 px-3 font-mono text-gray-900">
                               <div className="flex items-center gap-1.5">
-                                <span className={item.raw_phone ? 'font-semibold' : 'text-gray-400 italic'}>
+                                <span className={item.raw_phone ? 'font-semibold text-xs' : 'text-gray-400 italic text-[11px]'}>
                                   {item.raw_phone || '(Missing)'}
                                 </span>
                                 {item.raw_phone && (
@@ -939,6 +1533,11 @@ export function PhoneAuditCorrectionModal({
                                   </button>
                                 )}
                               </div>
+                              {item.extension && (
+                                <span className="text-[10px] text-gray-500 font-sans block">
+                                  Ext: {item.extension}
+                                </span>
+                              )}
                             </td>
 
                             {/* Country */}
@@ -952,7 +1551,7 @@ export function PhoneAuditCorrectionModal({
                               </span>
                             </td>
 
-                            {/* Validation Result */}
+                            {/* Type / Eligibility */}
                             <td className="py-2.5 px-3">
                               <div className="space-y-1">
                                 {item.validation.type === 'valid_mobile' && (
@@ -985,9 +1584,8 @@ export function PhoneAuditCorrectionModal({
                                     Invalid
                                   </span>
                                 )}
-
                                 {item.is_duplicate && (
-                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-orange-100 text-orange-900 border border-orange-300">
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-orange-100 text-orange-900 border border-orange-300 block w-fit">
                                     Duplicate
                                   </span>
                                 )}
@@ -1006,14 +1604,14 @@ export function PhoneAuditCorrectionModal({
                               )}
                             </td>
 
-                            {/* Corrected Mobile (Inline Edit) */}
+                            {/* Corrected Mobile */}
                             <td className="py-2.5 px-3">
                               <div className="space-y-1">
                                 <div className="flex items-center gap-1">
                                   <input
                                     type="text"
                                     value={currentVal}
-                                    onChange={e => handleInputChange(item.id, e.target.value)}
+                                    onChange={e => handlePhoneInputChange(item.id, e.target.value)}
                                     placeholder="e.g. +6281234567890"
                                     className={`w-full px-2.5 py-1 text-xs font-mono rounded-md border transition focus:outline-hidden ${
                                       valResult.type === 'valid_mobile' || valResult.type === 'international_number'
@@ -1038,8 +1636,7 @@ export function PhoneAuditCorrectionModal({
                                   )}
                                 </div>
 
-                                {/* Live Diagnostic Tag for typed value */}
-                                {isChanged && (
+                                {isPhoneChanged && (
                                   <div className="flex items-center gap-1 text-[10px]">
                                     <span className="text-gray-400">Live preview:</span>
                                     {valResult.type === 'valid_mobile' ? (
@@ -1054,26 +1651,55 @@ export function PhoneAuditCorrectionModal({
                               </div>
                             </td>
 
-                            {/* Action */}
-                            <td className="py-2.5 px-3 text-right">
+                            {/* Primary Designation */}
+                            <td className="py-2.5 px-3 text-center">
                               <button
                                 type="button"
-                                onClick={() => handleSaveContact(item)}
-                                disabled={!isChanged || isSaving}
-                                className={`px-3 py-1 rounded-md text-xs font-bold transition inline-flex items-center gap-1 shadow-2xs ${
-                                  isChanged
-                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
-                                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                onClick={() => handleTogglePrimary(item)}
+                                className={`p-1 rounded transition cursor-pointer ${
+                                  item.is_primary
+                                    ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
+                                    : 'text-gray-300 hover:text-gray-500'
                                 }`}
-                                title={isChanged ? 'Save correction to CRM database' : 'Modify number to enable saving'}
+                                title={item.is_primary ? 'Primary phone for this company' : 'Click to make primary phone'}
                               >
-                                {isSaving ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Check className="w-3 h-3" />
-                                )}
-                                <span>Save</span>
+                                <Star className={`w-4 h-4 ${item.is_primary ? 'fill-amber-400 text-amber-500' : ''}`} />
                               </button>
+                            </td>
+
+                            {/* Actions (Save & Delete) */}
+                            <td className="py-2.5 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveContact(item)}
+                                  disabled={!isChanged || isSaving}
+                                  className={`px-2.5 py-1 rounded text-xs font-bold transition inline-flex items-center gap-1 ${
+                                    isChanged
+                                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-xs'
+                                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                  }`}
+                                  title="Save phone number updates"
+                                >
+                                  {isSaving ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Check className="w-3 h-3" />
+                                  )}
+                                  <span>Save</span>
+                                </button>
+
+                                {!item.id.includes('_missing') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeleteCandidate(item)}
+                                    className="p-1 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                                    title="Delete this phone number"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1087,156 +1713,290 @@ export function PhoneAuditCorrectionModal({
         </div>
 
         {/* ==================================================================== */}
-        {/* 5. MODAL FOOTER                                                     */}
+        {/* 5. MODAL FOOTER                                                      */}
         {/* ==================================================================== */}
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shrink-0">
-          <div className="flex items-center gap-3 text-gray-500">
-            <span>Showing <strong>{filteredItems.length}</strong> of {categoryItems.length} records in <strong>{selectedCategory.toUpperCase()}</strong></span>
-            <span>·</span>
-            <span className="text-emerald-700 font-semibold">
-              Eligible WhatsApp Targets: {phoneAudit.stats.eligible}
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shrink-0">
+          <div className="flex items-center gap-2 text-gray-500 text-[11px]">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              Real-time PostgreSQL integration &bull; Multiple numbers per company supported &bull; Audited changes recorded in crm_activities
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => { setSelectedCategory('total'); setReasonFilter('all'); setSearchQuery(''); }}
-              className="px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded-md text-xs font-semibold transition cursor-pointer"
-            >
-              Reset Filters & View Full Directory
-            </button>
-
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-md text-xs font-bold transition cursor-pointer shadow-xs"
-            >
-              Done / Close
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-md font-semibold transition cursor-pointer shadow-xs"
+          >
+            Done / Close (Return to Campaigns)
+          </button>
         </div>
       </div>
 
       {/* ==================================================================== */}
-      {/* 6. SAFE BULK NORMALIZATION PREVIEW MODAL                              */}
+      {/* 6. ADD PHONE NUMBER MODAL                                            */}
+      {/* ==================================================================== */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-60 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-gray-900">Add Company Phone Number</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="text-gray-400 hover:text-gray-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddNewPhone} className="p-4 space-y-3.5 text-xs">
+              <div>
+                <label className="font-bold text-gray-700 uppercase block mb-1">Company *</label>
+                <select
+                  value={newCompanyId}
+                  onChange={e => {
+                    setNewCompanyId(e.target.value);
+                    const comp = contacts.find(c => c.id === e.target.value);
+                    if (comp?.contact_person) setNewContactPerson(comp.contact_person);
+                  }}
+                  className="w-full border border-gray-300 rounded-md p-1.5 bg-white text-xs focus:outline-emerald-500"
+                  required
+                >
+                  <option value="">Select Company ({contacts.length} available)...</option>
+                  {contacts.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.company_name} {c.city ? `(${c.city})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-gray-700 uppercase block mb-1">Contact Person</label>
+                  <input
+                    type="text"
+                    value={newContactPerson}
+                    onChange={e => setNewContactPerson(e.target.value)}
+                    placeholder="e.g. Ibu Dewi / Bpk Rudi"
+                    className="w-full border border-gray-300 rounded-md p-1.5 text-xs focus:outline-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-gray-700 uppercase block mb-1">Department *</label>
+                  <select
+                    value={newDepartment}
+                    onChange={e => setNewDepartment(e.target.value)}
+                    className="w-full border border-gray-300 rounded-md p-1.5 bg-white text-xs focus:outline-emerald-500"
+                  >
+                    {CRM_DEPARTMENTS.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-gray-700 uppercase block mb-1">Phone Number *</label>
+                <input
+                  type="text"
+                  value={newPhoneNumber}
+                  onChange={e => setNewPhoneNumber(e.target.value)}
+                  placeholder="e.g. 081234567890 or 021-55787162"
+                  className="w-full border border-gray-300 rounded-md p-1.5 text-xs font-mono focus:outline-emerald-500"
+                  required
+                />
+                {newPhoneNumber.trim() && (
+                  <div className="mt-1 text-[10px]">
+                    {validatePhoneNumber(newPhoneNumber).type === 'valid_mobile' ? (
+                      <span className="text-emerald-700 font-bold">
+                        ✓ Valid Mobile ({validatePhoneNumber(newPhoneNumber).normalized})
+                      </span>
+                    ) : validatePhoneNumber(newPhoneNumber).type === 'landline' ? (
+                      <span className="text-amber-700 font-bold">
+                        ☎ Landline ({validatePhoneNumber(newPhoneNumber).normalized})
+                      </span>
+                    ) : (
+                      <span className="text-rose-700 font-bold">
+                        ✕ {validatePhoneNumber(newPhoneNumber).reason}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="newPhonePrimaryCheck"
+                  checked={newPhoneIsPrimary}
+                  onChange={e => setNewPhoneIsPrimary(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                />
+                <label htmlFor="newPhonePrimaryCheck" className="text-gray-700 font-medium cursor-pointer">
+                  Designate as Primary Contact Number
+                </label>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-3 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAddingPhone}
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-semibold disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  {isAddingPhone ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                  <span>Save Phone</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* 7. DELETE PHONE CONFIRMATION DIALOG                                  */}
+      {/* ==================================================================== */}
+      {deleteCandidate && (
+        <div className="fixed inset-0 z-60 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm p-4 space-y-3">
+            <div className="flex items-center gap-2 text-rose-600">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="text-sm font-bold text-gray-900">Remove Phone Number</h3>
+            </div>
+
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Are you sure you want to remove <strong className="font-mono text-gray-900">{deleteCandidate.raw_phone}</strong> from <strong>{deleteCandidate.company_name}</strong>?
+              {deleteCandidate.is_primary && (
+                <span className="block mt-1 text-amber-700 font-semibold">
+                  Note: This is currently designated as the primary phone. Another number will be promoted to primary automatically.
+                </span>
+              )}
+            </p>
+
+            <div className="pt-2 flex justify-end gap-2 border-t">
+              <button
+                type="button"
+                onClick={() => setDeleteCandidate(null)}
+                className="px-3 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100 text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-md font-semibold text-xs inline-flex items-center gap-1 disabled:opacity-50"
+              >
+                {isDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                <span>Remove</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* 8. BULK NORMALIZATION PREVIEW MODAL                                  */}
       {/* ==================================================================== */}
       {showBulkPreview && (
-        <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
-          <div className="bg-white w-full max-w-4xl max-h-[85vh] rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
-            
-            <div className="px-5 py-3.5 bg-indigo-50/70 border-b border-indigo-200 flex items-center justify-between">
+        <div className="fixed inset-0 z-60 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="px-5 py-3.5 bg-indigo-50 border-b border-indigo-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-indigo-600" />
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">
-                    Safe Bulk Mobile Normalization Preview
-                  </h3>
-                  <p className="text-[11px] text-gray-600">
-                    Staff approval required. Only unambiguous formatting errors (08... & 628... to +628...) will be updated. Landlines and missing numbers are excluded.
-                  </p>
-                </div>
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-sm font-bold text-indigo-950">
+                  Safe Bulk Mobile Normalization Preview ({bulkCandidates.length} Candidates)
+                </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowBulkPreview(false)}
-                className="text-gray-400 hover:text-gray-600 p-1"
+                className="text-gray-400 hover:text-gray-700"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-200 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="select_all_candidates"
-                  checked={selectedBulkCandidateIds.size === bulkCandidates.length && bulkCandidates.length > 0}
-                  onChange={e => {
-                    if (e.target.checked) {
-                      setSelectedBulkCandidateIds(new Set(bulkCandidates.map(c => c.contactId)));
-                    } else {
-                      setSelectedBulkCandidateIds(new Set());
-                    }
-                  }}
-                  className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                />
-                <label htmlFor="select_all_candidates" className="font-semibold text-gray-700 cursor-pointer">
-                  Select All ({selectedBulkCandidateIds.size} of {bulkCandidates.length} Selected)
-                </label>
+            <div className="p-4 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <strong>Staff approval required:</strong> Only unambiguous Indonesian mobile numbers (08... &bull; 628...) are formatted to E.164 (+628...). Landlines and incomplete numbers are strictly excluded.
               </div>
-
-              <span className="text-[11px] text-gray-500">
-                All proposed changes result in certified <strong>+62 valid_mobile</strong> numbers
-              </span>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 max-h-[calc(85vh-180px)]">
+            <div className="flex-1 overflow-y-auto p-4">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-100 text-[10px] uppercase font-bold text-gray-600 border-b">
-                    <th className="py-2 px-3 w-8"></th>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-[10px] uppercase font-bold text-gray-500">
+                    <th className="py-2 px-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedBulkCandidateIds.size === bulkCandidates.length}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedBulkCandidateIds(new Set(bulkCandidates.map(c => c.contactId)));
+                          } else {
+                            setSelectedBulkCandidateIds(new Set());
+                          }
+                        }}
+                        className="rounded text-indigo-600"
+                      />
+                    </th>
                     <th className="py-2 px-3">Company</th>
                     <th className="py-2 px-3">Contact Person</th>
-                    <th className="py-2 px-3">Current Raw</th>
-                    <th className="py-2 px-3 w-6 text-center">→</th>
-                    <th className="py-2 px-3">Proposed Clean Mobile</th>
-                    <th className="py-2 px-3">Result</th>
+                    <th className="py-2 px-3 font-mono">Current Raw</th>
+                    <th className="py-2 px-3 font-mono text-emerald-700">Proposed Normalized</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {bulkCandidates.map(cand => {
-                    const isChecked = selectedBulkCandidateIds.has(cand.contactId);
-                    return (
-                      <tr key={cand.contactId} className="hover:bg-slate-50 transition">
-                        <td className="py-2 px-3 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={e => {
-                              setSelectedBulkCandidateIds(prev => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(cand.contactId);
-                                else next.delete(cand.contactId);
-                                return next;
-                              });
-                            }}
-                            className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                          />
-                        </td>
-                        <td className="py-2 px-3 font-semibold text-gray-900">{cand.companyName}</td>
-                        <td className="py-2 px-3 text-gray-700">{cand.contactPerson || '—'}</td>
-                        <td className="py-2 px-3 font-mono text-gray-600 line-through decoration-rose-400">
-                          {cand.currentRaw}
-                        </td>
-                        <td className="py-2 px-3 text-center text-gray-400 font-bold">→</td>
-                        <td className="py-2 px-3 font-mono font-bold text-emerald-800 bg-emerald-50/50 rounded">
-                          {cand.proposedNormalized}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-300">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            Valid Mobile
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {bulkCandidates.map(cand => (
+                    <tr key={cand.contactId} className="hover:bg-indigo-50/30">
+                      <td className="py-2 px-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedBulkCandidateIds.has(cand.contactId)}
+                          onChange={e => {
+                            const next = new Set(selectedBulkCandidateIds);
+                            if (e.target.checked) next.add(cand.contactId);
+                            else next.delete(cand.contactId);
+                            setSelectedBulkCandidateIds(next);
+                          }}
+                          className="rounded text-indigo-600"
+                        />
+                      </td>
+                      <td className="py-2 px-3 font-semibold text-gray-900">{cand.companyName}</td>
+                      <td className="py-2 px-3 text-gray-600">{cand.contactPerson || '—'}</td>
+                      <td className="py-2 px-3 font-mono text-gray-700">{cand.currentRaw}</td>
+                      <td className="py-2 px-3 font-mono font-bold text-emerald-700">
+                        {cand.proposedNormalized}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
 
-            <div className="px-5 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
-              <span className="text-xs text-gray-600">
-                Staff Review: <strong>{selectedBulkCandidateIds.size}</strong> records queued for update
+            <div className="px-5 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-xs">
+              <span className="text-gray-500 font-medium">
+                {selectedBulkCandidateIds.size} of {bulkCandidates.length} selected for normalization
               </span>
-
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setShowBulkPreview(false)}
-                  disabled={isApplyingBulk}
-                  className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded text-xs font-semibold hover:bg-gray-100 transition cursor-pointer"
+                  className="px-3 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100"
                 >
                   Cancel
                 </button>
@@ -1244,19 +2004,10 @@ export function PhoneAuditCorrectionModal({
                   type="button"
                   onClick={handleApplyBulkNormalization}
                   disabled={selectedBulkCandidateIds.size === 0 || isApplyingBulk}
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
                 >
-                  {isApplyingBulk ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Applying Corrections...</span>
-                    </>
-                  ) : (
-                    <>
-                      <FileCheck className="w-3.5 h-3.5" />
-                      <span>Confirm & Apply {selectedBulkCandidateIds.size} Corrections</span>
-                    </>
-                  )}
+                  {isApplyingBulk ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  <span>Confirm & Apply ({selectedBulkCandidateIds.size})</span>
                 </button>
               </div>
             </div>
@@ -1266,3 +2017,5 @@ export function PhoneAuditCorrectionModal({
     </div>
   );
 }
+
+export default PhoneAuditCorrectionModal;

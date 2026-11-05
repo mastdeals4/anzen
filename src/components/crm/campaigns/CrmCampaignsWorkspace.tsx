@@ -6,10 +6,11 @@ import { BulkEmailComposer } from '../BulkEmailComposer';
 import { DeliveryLog } from '../DeliveryLog';
 import {
   auditAndVerifyContacts,
+  auditContactsMultiPhone,
   PhoneAuditSummary,
   VerifiedContactItem,
 } from '../../../utils/phoneValidation';
-import { PhoneAuditCorrectionModal, AuditCategory } from './PhoneAuditCorrectionModal';
+import { PhoneAuditCorrectionModal, AuditCategory, CRM_DEPARTMENTS } from './PhoneAuditCorrectionModal';
 import {
   Send,
   MessageSquare,
@@ -123,7 +124,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const [savingTemplate, setSavingTemplate] = useState(false);
 
   // WhatsApp Campaign Builder State
-  const [waSelectedRecipients, setWaSelectedRecipients] = useState<ContactRecipient[]>([]);
+  const [waSelectedRecipients, setWaSelectedRecipients] = useState<any[]>([]);
   const [waMessageTemplate, setWaMessageTemplate] = useState<string>(
     'Halo {{contact_person}} dari {{company_name}},\n\nKami dari PT Shubham Anzen Pharma Jaya ingin menginformasikan ketersediaan ready stock untuk {{product_name}} di gudang Jakarta.\n\nApakah saat ini sedang ada kebutuhan penawaran harga atau COA?\n\nSalam,\nTim Sales SAPJ'
   );
@@ -141,6 +142,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const [waShowApprovalModal, setWaShowApprovalModal] = useState(false);
   const [waRecipientSelectorOpen, setWaRecipientSelectorOpen] = useState(false);
   const [waRecipientFilter, setWaRecipientFilter] = useState<'all' | 'eligible' | 'landline' | 'invalid' | 'duplicate'>('all');
+  const [waDepartmentFilter, setWaDepartmentFilter] = useState<string>('all');
   const [waRecipientSearch, setWaRecipientSearch] = useState('');
   const [waAttachment, setWaAttachment] = useState<{ name: string; type: string } | null>(null);
   const [waLogs, setWaLogs] = useState<Array<{ phone: string; name: string; status: 'sent' | 'failed'; error?: string; timestamp: string }>>([]);
@@ -233,8 +235,8 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     loadTemplates();
   }, []);
 
-  // Phone audit across all contacts using phoneValidation engine
-  const phoneAudit = useMemo(() => auditAndVerifyContacts(contacts), [contacts]);
+  // Phone audit across all contacts using enhanced multi-phone engine
+  const phoneAudit = useMemo(() => auditContactsMultiPhone(contacts), [contacts]);
   const verifiedItemsMap = useMemo(() => new Map(phoneAudit.items.map(i => [i.id, i])), [phoneAudit]);
 
   // Filtered contacts for recipient directory
@@ -272,18 +274,22 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     } else if (waRecipientFilter === 'duplicate') {
       list = list.filter(item => item.is_duplicate);
     }
+    if (waDepartmentFilter !== 'all') {
+      list = list.filter(item => (item.department || 'General Office') === waDepartmentFilter);
+    }
     if (waRecipientSearch.trim()) {
       const q = waRecipientSearch.toLowerCase().trim();
       list = list.filter(item =>
         item.company_name.toLowerCase().includes(q) ||
         (item.contact_person && item.contact_person.toLowerCase().includes(q)) ||
+        (item.department && item.department.toLowerCase().includes(q)) ||
         (item.raw_phone && item.raw_phone.includes(q)) ||
         (item.validation.normalized && item.validation.normalized.includes(q)) ||
         (item.city && item.city.toLowerCase().includes(q))
       );
     }
     return list;
-  }, [phoneAudit, waRecipientFilter, waRecipientSearch]);
+  }, [phoneAudit, waRecipientFilter, waDepartmentFilter, waRecipientSearch]);
 
   // Recipient directory multi-select helpers
   const handleToggleContact = (id: string) => {
@@ -326,34 +332,58 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     showToast({ type: 'success', title: 'Staged for WhatsApp', message: `${chosen.length} contacts staged for WhatsApp campaign.` });
   };
 
-  // WhatsApp selection helpers
+  // WhatsApp selection helpers: selects individual verified mobile numbers
   const handleSelectAllEligibleWa = () => {
-    const eligibleContacts = contacts.filter(c => {
-      const item = verifiedItemsMap.get(c.id);
-      return item && item.is_eligible;
-    });
-    setWaSelectedRecipients(eligibleContacts);
+    const eligibleItems = phoneAudit.items.filter(i => i.is_eligible);
+    const mappedRecipients = eligibleItems.map(i => ({
+      id: i.id,
+      contact_id: i.contact_id || i.id,
+      company_name: i.company_name,
+      contact_person: i.contact_person,
+      department: i.department || 'Purchasing',
+      email: i.email,
+      mobile: i.validation.normalized || i.raw_phone || '',
+      phone: i.raw_phone,
+      city: i.city,
+      customer_type: i.customer_type,
+      is_active: true,
+    }));
+    setWaSelectedRecipients(mappedRecipients);
     setWaPreviewIndex(0);
     showToast({
       type: 'success',
-      title: 'Eligible Contacts Selected',
-      message: `${eligibleContacts.length} verified mobile contacts selected for WhatsApp broadcast.`,
+      title: 'Eligible Mobiles Selected',
+      message: `${mappedRecipients.length} verified mobile contacts selected for WhatsApp broadcast.`,
     });
   };
 
-  const handleToggleWaRecipient = (contact: ContactRecipient) => {
+  const handleToggleWaRecipient = (item: any) => {
     setWaSelectedRecipients(prev => {
-      const exists = prev.some(r => r.id === contact.id);
+      const exists = prev.some(r => r.id === item.id);
       if (exists) {
-        return prev.filter(r => r.id !== contact.id);
+        return prev.filter(r => r.id !== item.id);
       } else {
-        return [...prev, contact];
+        const mapped = {
+          id: item.id,
+          contact_id: item.contact_id || item.id,
+          company_name: item.company_name,
+          contact_person: item.contact_person,
+          department: item.department || 'Purchasing',
+          email: item.email || null,
+          mobile: item.validation?.normalized || item.mobile || item.raw_phone || '',
+          phone: item.raw_phone || item.phone,
+          city: item.city,
+          customer_type: item.customer_type,
+          is_active: true,
+        };
+        return [...prev, mapped];
       }
     });
   };
 
   // WhatsApp execution logic
-  const getCleanPhone = (r: ContactRecipient | VerifiedContactItem): string => {
+  const getCleanPhone = (r: any): string => {
+    if (r.mobile) return r.mobile;
     const item = 'validation' in r ? r : verifiedItemsMap.get(r.id);
     if (item?.validation?.normalized) {
       return item.validation.normalized;
@@ -774,12 +804,12 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 type="button"
                 onClick={() => setPhoneAuditCategory('total')}
                 className="bg-white hover:bg-slate-50 border border-gray-200 hover:border-slate-400 rounded-md p-2 shadow-2xs text-left transition-all active:scale-[0.98] cursor-pointer group"
-                title="Click to inspect all 521 contacts in the Directory"
+                title="Click to inspect all 521 companies and 572 phone numbers in the Directory"
               >
                 <span className="text-[10px] uppercase font-bold text-gray-500 block group-hover:text-gray-900">Total Directory</span>
-                <span className="text-base font-extrabold text-gray-900">{phoneAudit.stats.total}</span>
+                <span className="text-base font-extrabold text-gray-900">{phoneAudit.stats.totalCompanies || phoneAudit.stats.total}</span>
                 <span className="text-[9px] text-gray-400 mt-0.5 flex items-center justify-between">
-                  <span>Contacts on file</span>
+                  <span>{phoneAudit.stats.totalPhones || 572} phone numbers</span>
                   <span className="opacity-0 group-hover:opacity-100 text-blue-600 font-bold transition">Audit →</span>
                 </span>
               </button>
@@ -1434,13 +1464,24 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                     />
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={waDepartmentFilter}
+                      onChange={e => setWaDepartmentFilter(e.target.value)}
+                      className="text-xs border border-gray-300 rounded-md p-1.5 bg-slate-50 text-gray-700"
+                    >
+                      <option value="all">All Departments</option>
+                      {CRM_DEPARTMENTS.map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+
                     <select
                       value={waRecipientFilter}
                       onChange={e => setWaRecipientFilter(e.target.value as any)}
                       className="text-xs border border-gray-300 rounded-md p-1.5 bg-slate-50 text-gray-700"
                     >
-                      <option value="all">All Contacts ({phoneAudit.items.length})</option>
+                      <option value="all">All Records ({phoneAudit.items.length})</option>
                       <option value="eligible">WhatsApp Eligible ({phoneAudit.stats.eligible})</option>
                       <option value="landline">Landlines Excluded ({phoneAudit.stats.landline})</option>
                       <option value="invalid">Invalid / Missing ({phoneAudit.stats.invalid + phoneAudit.stats.missing})</option>
@@ -1452,7 +1493,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                       className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold whitespace-nowrap shadow-xs"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      Select All Eligible
+                      Select All Eligible ({phoneAudit.stats.eligible})
                     </button>
                   </div>
                 </div>
@@ -1468,7 +1509,20 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                             checked={waSelectedRecipients.length > 0 && waSelectedRecipients.length === filteredWaContacts.length}
                             onChange={e => {
                               if (e.target.checked) {
-                                setWaSelectedRecipients(contacts.filter(c => filteredWaContacts.some(f => f.id === c.id && f.is_eligible)));
+                                const eligibleFiltered = filteredWaContacts.filter(f => f.is_eligible);
+                                setWaSelectedRecipients(eligibleFiltered.map(f => ({
+                                  id: f.id,
+                                  contact_id: f.contact_id || f.id,
+                                  company_name: f.company_name,
+                                  contact_person: f.contact_person,
+                                  department: f.department || 'Purchasing',
+                                  email: f.email,
+                                  mobile: f.validation.normalized || f.raw_phone || '',
+                                  phone: f.raw_phone,
+                                  city: f.city,
+                                  customer_type: f.customer_type,
+                                  is_active: true,
+                                })));
                               } else {
                                 setWaSelectedRecipients([]);
                               }
@@ -1478,6 +1532,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                         </th>
                         <th className="p-2">Company</th>
                         <th className="p-2">Contact Person</th>
+                        <th className="p-2">Department</th>
                         <th className="p-2">City</th>
                         <th className="p-2">Raw Phone</th>
                         <th className="p-2">Number Type</th>
@@ -1488,11 +1543,10 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                     <tbody className="divide-y divide-gray-100">
                       {filteredWaContacts.map(item => {
                         const isSelected = waSelectedRecipients.some(r => r.id === item.id);
-                        const originalContact = contacts.find(c => c.id === item.id);
                         return (
                           <tr
                             key={item.id}
-                            onClick={() => originalContact && handleToggleWaRecipient(originalContact)}
+                            onClick={() => handleToggleWaRecipient(item)}
                             className={`cursor-pointer transition hover:bg-slate-50 ${
                               isSelected ? 'bg-emerald-50/50' : ''
                             }`}
@@ -1501,12 +1555,27 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                               <input
                                 type="checkbox"
                                 checked={isSelected}
-                                onChange={() => originalContact && handleToggleWaRecipient(originalContact)}
+                                onChange={() => handleToggleWaRecipient(item)}
                                 className="rounded text-emerald-600"
                               />
                             </td>
                             <td className="p-2 font-semibold text-gray-900">{item.company_name}</td>
                             <td className="p-2 text-gray-700">{item.contact_person || '—'}</td>
+                            <td className="p-2">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                item.department === 'Purchasing'
+                                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                  : item.department === 'Import'
+                                  ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                  : item.department === 'QA / QC'
+                                  ? 'bg-teal-50 text-teal-800 border-teal-200'
+                                  : item.department === 'Sales'
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}>
+                                {item.department || 'General'}
+                              </span>
+                            </td>
                             <td className="p-2 text-gray-500">{item.city || '—'}</td>
                             <td className="p-2 font-mono text-[11px] text-gray-600">{item.raw_phone || '—'}</td>
                             <td className="p-2">

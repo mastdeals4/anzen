@@ -1,0 +1,267 @@
+{
+  "report": {
+    "totalObjects": 2040,
+    "totalBytes": 1290547407,
+    "categories": {
+      "directlyReferenced": {
+        "count": 1835,
+        "bytes": 1166445617
+      },
+      "confirmedDuplicates": {
+        "count": 2,
+        "bytes": 4638890
+      },
+      "confirmedTemporary": {
+        "count": 0,
+        "bytes": 0
+      },
+      "confirmedTest": {
+        "count": 1,
+        "bytes": 130
+      },
+      "orphanedFiles": {
+        "count": 4,
+        "bytes": 0
+      },
+      "unreferencedUseful": {
+        "count": 183,
+        "bytes": 118522499
+      },
+      "unknownFiles": {
+        "count": 15,
+        "bytes": 940271
+      }
+    }
+  },
+  "confirmedDuplicates": [
+    {
+      "duplicate": {
+        "id": "c553100a-4be1-41c7-b3a0-45b371b00474",
+        "bucket_id": "crm-documents",
+        "name": "bulk-email/9f1335a1-f94b-47b1-a3f2-ecbd96e7f3e5/1782186920247-0.17715079437315895-Stoclist.jpeg",
+        "size": "214209",
+        "mimetype": "image/jpeg",
+        "created_at": "2026-06-23T03:57:53.096Z",
+        "updated_at": "2026-06-23T03:57:53.096Z"
+      },
+      "original": {
+        "id": "81bdb60c-1acd-4872-aced-005ebfcdb374",
+        "bucket_id": "crm-documents",
+        "name": "bulk-email/9e06abd2-b951-402b-8694-075a4721eb1d/1782186920247-0.17715079437315895-Stoclist.jpeg",
+        "size": "214209",
+        "mimetype": "image/jpeg",
+        "created_at": "2026-06-23T03:56:58.722Z",
+        "updated_at": "2026-06-23T03:56:58.722Z"
+      },
+      "reason": "Identical path and size"
+    },
+    {
+      "duplicate": {
+        "id": "f83faca4-8582-4bb5-8bdc-7392da1b405f",
+        "bucket_id": "crm-documents",
+        "name": "bulk-email/9f1335a1-f94b-47b1-a3f2-ecbd96e7f3e5/1782186906114-0.23821755306140457-ourcatalog__1_.pdf",
+        "size": "4424681",
+        "mimetype": "application/pdf",
+        "created_at": "2026-06-23T03:57:53.820Z",
+        "updated_at": "2026-06-23T03:57:53.820Z"
+      },
+      "original": {
+        "id": "48b268a6-9fe4-46e1-b8cf-c7a6e47e5d77",
+        "bucket_id": "crm-documents",
+        "name": "bulk-email/9e06abd2-b951-402b-8694-075a4721eb1d/1782186906114-0.23821755306140457-ourcatalog__1_.pdf",
+        "size": "4424681",
+        "mimetype": "application/pdf",
+        "created_at": "2026-06-23T03:56:59.481Z",
+        "updated_at": "2026-06-23T03:56:59.481Z"
+      },
+      "reason": "Identical path and size"
+    }
+  ],
+  "confirmedTemporary": [],
+  "confirmedTest": [
+    {
+      "id": "6dde20e9-3e70-4092-979f-f9b2b1e0f106",
+      "bucket_id": "crm-documents",
+      "name": "whatsapp/628119999999@c.us/wa_test_media_002_PO-SAPJ-2026-11.pdf",
+      "size": "130",
+      "mimetype": "application/pdf",
+      "created_at": "2026-11-03T00:07:32.824Z",
+      "updated_at": "2026-11-03T00:07:32.824Z"
+    }
+  ],
+  "orphanedFiles": [
+    {
+      "id": "1aa5d757-d3d4-408a-a350-bde5d0b957bc",
+      "bucket_id": "bank-statements",
+      "name": "bfe79829-07d1-48ed-8965-ff9d367d758e/.emptyFolderPlaceholder",
+      "size": "0",
+      "mimetype": "application/octet-stream",
+      "created_at": "2026-07-03T05:50:02.720Z",
+      "updated_at": "2026-07-03T05:50:02.720Z"
+    },
+    {
+      "id": "32be1778-4cac-4a8e-90a3-09d739fb74ab",
+      "bucket_id": "documents",
+      "name": "purchase-invoices/1st_FCL_invoice_ammonium.pdf",
+      "size": "0",
+      "mimetype": "application/pdf",
+      "created_at": "2026-02-22T19:44:50.065Z",
+      "updated_at": "2026-02-22T19:44:50.065Z"
+    },
+    {
+      "id": "ced25252-793d-4d24-92ae-cc1e4859238f",
+      "bucket_id": "documents",
+      "name": "purchase-invoices/1st_FCL_invoice.pdf",
+      "size": "0",
+      "mimetype": "application/pdf",
+      "created_at": "2026-02-22T19:44:50.065Z",
+      "updated_at": "2026-02-22T19:44:50.065Z"
+    },
+    {
+      "id": "2abecb37-1395-4904-b13d-e6778b3d29f4",
+      "bucket_id": "documents",
+      "name": "purchase-invoices/2nd_FCL_INVOICE_10_ITEM.pdf",
+      "size": "0",
+      "mimetype": "application/pdf",
+      "created_at": "2026-02-22T20:16:56.107Z",
+      "updated_at": "2026-02-22T20:16:56.107Z"
+    }
+  ],
+  "unknownFiles": [
+    {
+      "id": "af11c611-d171-413e-85b8-defd2cfb789f",
+      "bucket_id": "company-assets",
+      "name": "logo/36092fe3-b79f-413b-9b34-237f9bb82313.svg",
+      "size": "2031",
+      "mimetype": "image/svg+xml",
+      "created_at": "2026-07-14T05:43:38.256Z",
+      "updated_at": "2026-07-14T05:43:38.256Z"
+    },
+    {
+      "id": "cb25f8bd-76b2-400f-aa0f-3b0ae3eab7c7",
+      "bucket_id": "company-assets",
+      "name": "logo/7dffb724-86fa-454c-9f0c-62f8615955ab.png",
+      "size": "12081",
+      "mimetype": "image/png",
+      "created_at": "2026-08-24T08:29:17.848Z",
+      "updated_at": "2026-08-24T08:29:17.848Z"
+    },
+    {
+      "id": "607b6d10-68cb-4c17-980f-dcb530e90acf",
+      "bucket_id": "company-assets",
+      "name": "logo/d1a55c96-73e3-49aa-855f-34517f7008d3.png",
+      "size": "12081",
+      "mimetype": "image/png",
+      "created_at": "2026-07-14T03:21:20.862Z",
+      "updated_at": "2026-07-14T03:21:20.862Z"
+    },
+    {
+      "id": "8364f746-2562-4f5b-a0fb-aafe46bff5e0",
+      "bucket_id": "crm-documents",
+      "name": "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0ec83533f8caae/1790679608683_cfecd89c.png",
+      "size": "12980",
+      "mimetype": "image/png",
+      "created_at": "2026-09-29T11:00:09.008Z",
+      "updated_at": "2026-09-29T11:00:09.008Z"
+    },
+    {
+      "id": "d5ef2aa8-a79f-486a-8219-f2a19eea4f64",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789439134853-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T02:25:36.498Z",
+      "updated_at": "2026-09-15T02:25:36.498Z"
+    },
+    {
+      "id": "7fc00bb9-271e-4521-bd06-f92ce1bbca8e",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789441981365-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T03:13:01.889Z",
+      "updated_at": "2026-09-15T03:13:01.889Z"
+    },
+    {
+      "id": "12523271-1e8a-4eea-867a-03bedc807189",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789442577526-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T03:22:58.105Z",
+      "updated_at": "2026-09-15T03:22:58.105Z"
+    },
+    {
+      "id": "3b675c77-26ff-4468-9821-10ad5c329149",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789444845749-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T04:00:46.284Z",
+      "updated_at": "2026-09-15T04:00:46.284Z"
+    },
+    {
+      "id": "919561d1-293f-42d1-9c88-719b36fc30f2",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789446050728-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T04:20:51.388Z",
+      "updated_at": "2026-09-15T04:20:51.388Z"
+    },
+    {
+      "id": "c172181a-15c6-4d22-8b04-e5bebd130b41",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789454266352-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T06:37:46.949Z",
+      "updated_at": "2026-09-15T06:37:46.949Z"
+    },
+    {
+      "id": "c5f73d0e-5da1-4dee-9c49-fc4772624819",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789455045849-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T06:50:46.998Z",
+      "updated_at": "2026-09-15T06:50:46.998Z"
+    },
+    {
+      "id": "dc51878f-8220-436e-83ab-0ed9b757e51d",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789458215691-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T07:43:36.287Z",
+      "updated_at": "2026-09-15T07:43:36.287Z"
+    },
+    {
+      "id": "18fcf8bd-ad6a-489a-b785-8436f7c2b3cd",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789459423295-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T08:03:44.140Z",
+      "updated_at": "2026-09-15T08:03:44.140Z"
+    },
+    {
+      "id": "1d7e4644-883e-4902-9c17-452b2e2c3e93",
+      "bucket_id": "documents",
+      "name": "tax_payments/7043e424-0d1b-470f-acf5-1cc7904b6b22/1789463096939-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T09:04:58.019Z",
+      "updated_at": "2026-09-15T09:04:58.019Z"
+    },
+    {
+      "id": "b9408db0-b13e-4097-8edb-0d88840c056c",
+      "bucket_id": "documents",
+      "name": "tax_payments/a4898d8d-fb75-4e3d-b081-c17aa7e668ba/1789446620905-BILLING_CODE_AVIRA__PPh_21_-_AGUSTUS_.pdf",
+      "size": "81918",
+      "mimetype": "application/pdf",
+      "created_at": "2026-09-15T04:30:21.520Z",
+      "updated_at": "2026-09-15T04:30:21.520Z"
+    }
+  ]
+}

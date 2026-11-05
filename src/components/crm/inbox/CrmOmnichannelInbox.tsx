@@ -110,7 +110,7 @@ interface Props {
   onOpenCustomer?: (customerId: string) => void;
   onCreateInquiryFromMessage?: (
     msg: { subject: string; body: string; fromEmail: string; fromName: string; id?: string },
-    parsed?: any,
+    parsed?: any
   ) => void;
 }
 
@@ -121,38 +121,46 @@ export function CrmOmnichannelInbox({
 }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlChannel = searchParams.get('channel')?.toLowerCase();
-  const initialChannel: ChannelFilter = (urlChannel && ['all', 'email', 'whatsapp', 'unlinked'].includes(urlChannel))
-    ? (urlChannel as ChannelFilter)
-    : 'all';
+  const initialChannel: ChannelFilter =
+    urlChannel && ['all', 'email', 'whatsapp', 'unlinked'].includes(urlChannel)
+      ? (urlChannel as ChannelFilter)
+      : 'all';
   const urlConversationId = searchParams.get('conversationId');
 
   const [activeMailbox, setActiveMailbox] = useState<ActiveMailbox>('sales@avira.co.id');
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('inbox');
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>(initialChannel);
+  const [showTestThreads, setShowTestThreads] = useState(false);
   const [conversations, setConversations] = useState<InboxConversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(urlConversationId);
 
-  const handleSelectConversation = useCallback((id: string | null) => {
-    setSelectedId(id);
-    const newParams = new URLSearchParams(searchParams);
-    if (id) {
-      newParams.set('conversationId', id);
-    } else {
-      newParams.delete('conversationId');
-    }
-    setSearchParams(newParams, { replace: true });
-  }, [searchParams, setSearchParams]);
+  const handleSelectConversation = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      const newParams = new URLSearchParams(searchParams);
+      if (id) {
+        newParams.set('conversationId', id);
+      } else {
+        newParams.delete('conversationId');
+      }
+      setSearchParams(newParams, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
 
-  const handleChannelFilterChange = useCallback((filter: ChannelFilter) => {
-    setChannelFilter(filter);
-    const newParams = new URLSearchParams(searchParams);
-    if (filter !== 'all') {
-      newParams.set('channel', filter);
-    } else {
-      newParams.delete('channel');
-    }
-    setSearchParams(newParams, { replace: true });
-  }, [searchParams, setSearchParams]);
+  const handleChannelFilterChange = useCallback(
+    (filter: ChannelFilter) => {
+      setChannelFilter(filter);
+      const newParams = new URLSearchParams(searchParams);
+      if (filter !== 'all') {
+        newParams.set('channel', filter);
+      } else {
+        newParams.delete('channel');
+      }
+      setSearchParams(newParams, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingList, setLoadingList] = useState(true);
@@ -179,7 +187,15 @@ export function CrmOmnichannelInbox({
   // Link dialog states
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [linkTargetType, setLinkTargetType] = useState<'inquiry' | 'customer'>('inquiry');
-  const [allInquiries, setAllInquiries] = useState<Array<{ id: string; inquiry_number: string; company_name: string; product_name: string; customer_id?: string }>>([]);
+  const [allInquiries, setAllInquiries] = useState<
+    Array<{
+      id: string;
+      inquiry_number: string;
+      company_name: string;
+      product_name: string;
+      customer_id?: string;
+    }>
+  >([]);
   const [allCustomers, setAllCustomers] = useState<Array<{ id: string; company_name: string }>>([]);
   const [selectedInquiryToLink, setSelectedInquiryToLink] = useState('');
   const [selectedCustomerToLink, setSelectedCustomerToLink] = useState('');
@@ -221,7 +237,7 @@ export function CrmOmnichannelInbox({
             fromName,
             id: conv.id,
           },
-          parsedResult,
+          parsedResult
         );
       }
     } catch (err: any) {
@@ -245,20 +261,25 @@ export function CrmOmnichannelInbox({
       // 1. Fetch Email conversations from Gmail API via edge function based on activeMailbox & folder
       try {
         const gmailQuery = folderFilter === 'sent' ? 'in:sent' : 'in:inbox';
-        const { data: gmailData, error: gmailError } = await supabase.functions.invoke('gmail-inbox-list', {
-          body: {
-            account: activeMailbox === 'kunal@avira.co.id' ? 'pricing' : 'crm',
-            emailAddress: activeMailbox,
-            query: gmailQuery,
-            maxResults: 40,
-          },
-        });
+        const { data: gmailData, error: gmailError } = await supabase.functions.invoke(
+          'gmail-inbox-list',
+          {
+            body: {
+              account: activeMailbox === 'kunal@avira.co.id' ? 'pricing' : 'crm',
+              emailAddress: activeMailbox,
+              query: gmailQuery,
+              maxResults: 40,
+            },
+          }
+        );
 
         if (!gmailError && gmailData?.success && Array.isArray(gmailData.messages)) {
           const messageIds = gmailData.messages.map((m: any) => m.messageId).filter(Boolean);
           const { data: linkedReviews } = await supabase
             .from('kunal_ai_email_reviews')
-            .select('gmail_message_id, inquiry_id, crm_inquiries(inquiry_number, product_name, company_name, customer_id)')
+            .select(
+              'gmail_message_id, matched_inquiry_id, crm_inquiries:matched_inquiry_id(id, inquiry_number, product_name, company_name, customer_id)'
+            )
             .in('gmail_message_id', messageIds);
 
           const linkMap = new Map();
@@ -301,7 +322,8 @@ export function CrmOmnichannelInbox({
       try {
         const { data: dbConversations, error: convError } = await supabase
           .from('enquiry_conversations')
-          .select(`
+          .select(
+            `
             id,
             channel,
             title,
@@ -336,24 +358,31 @@ export function CrmOmnichannelInbox({
               direction,
               received_or_sent_at,
               external_message_id,
-              metadata,
+              raw_payload,
               ai_proposal,
               ai_summary
             )
-          `)
+          `
+          )
           .order('last_message_at', { ascending: false })
           .limit(60);
 
         if (!convError && dbConversations) {
           for (const c of dbConversations) {
             const msgs = (c.enquiry_conversation_messages || []).sort(
-              (a: any, b: any) => new Date(a.received_or_sent_at).getTime() - new Date(b.received_or_sent_at).getTime()
+              (a: any, b: any) =>
+                new Date(a.received_or_sent_at).getTime() -
+                new Date(b.received_or_sent_at).getTime()
             );
             const lastMsg = msgs[msgs.length - 1];
 
-            const activeLinks = (c.enquiry_conversation_links || []).filter((l: any) => l.is_active);
+            const activeLinks = (c.enquiry_conversation_links || []).filter(
+              (l: any) => l.is_active
+            );
             const link = activeLinks[0];
-            const inq: any = Array.isArray(link?.crm_inquiries) ? link?.crm_inquiries[0] : link?.crm_inquiries;
+            const inq: any = Array.isArray(link?.crm_inquiries)
+              ? link?.crm_inquiries[0]
+              : link?.crm_inquiries;
             const cust: any = Array.isArray(c.customers) ? c.customers[0] : c.customers;
 
             const meta = c.metadata || {};
@@ -364,21 +393,40 @@ export function CrmOmnichannelInbox({
             const topic = meta.topic || intel?.topic || c.title || 'WhatsApp Conversation';
             const needsAction = meta.needs_action ?? intel?.needs_action ?? false;
             const actionRequired = meta.action_required || intel?.action_required || null;
-            const latestSummary = meta.latest_summary || intel?.running_summary || lastMsg?.ai_summary || null;
-            const englishTranslation = meta.english_translation || intel?.english_translation || null;
-            const linkedContextType = inq ? 'Inquiry' : (cust ? 'Customer' : (meta.linked_context_type || intel?.linked_context_type || 'Unlinked'));
+            const latestSummary =
+              meta.latest_summary || intel?.running_summary || lastMsg?.ai_summary || null;
+            const englishTranslation =
+              meta.english_translation || intel?.english_translation || null;
+            const linkedContextType = inq
+              ? 'Inquiry'
+              : cust
+                ? 'Customer'
+                : meta.linked_context_type || intel?.linked_context_type || 'Unlinked';
             const customerName = inq?.company_name || cust?.company_name || null;
             const suggestedReply = meta.suggested_reply || intel?.suggested_reply || null;
 
-            const isOutbound = lastMsg?.direction === 'outbound' || ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
-              (lastMsg?.sender_address || '').toLowerCase().includes(internal)
-            );
-            const recipAddr = Array.isArray(lastMsg?.recipient_addresses) ? lastMsg.recipient_addresses[0] : (lastMsg?.recipient_addresses || '');
-            const extMsgId = lastMsg?.external_message_id || meta.gmail_message_id || meta.message_id || null;
+            const isOutbound =
+              lastMsg?.direction === 'outbound' ||
+              ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(
+                (internal) => (lastMsg?.sender_address || '').toLowerCase().includes(internal)
+              );
+            const recipAddr = Array.isArray(lastMsg?.recipient_addresses)
+              ? lastMsg.recipient_addresses[0]
+              : lastMsg?.recipient_addresses || '';
+            const extMsgId =
+              lastMsg?.external_message_id || meta.gmail_message_id || meta.message_id || null;
             const extThreadId = meta.gmail_thread_id || meta.thread_id || extMsgId || null;
 
-            const allParticipants = [lastMsg?.sender_address, recipAddr, ...(c.participant_identifiers || [])].filter(Boolean).map((s: string) => s.toLowerCase());
-            const canonicalMailbox = allParticipants.some((p: string) => p.includes('kunal@avira.co.id'))
+            const allParticipants = [
+              lastMsg?.sender_address,
+              recipAddr,
+              ...(c.participant_identifiers || []),
+            ]
+              .filter(Boolean)
+              .map((s: string) => s.toLowerCase());
+            const canonicalMailbox = allParticipants.some((p: string) =>
+              p.includes('kunal@avira.co.id')
+            )
               ? 'kunal@avira.co.id'
               : 'sales@avira.co.id';
 
@@ -387,12 +435,15 @@ export function CrmOmnichannelInbox({
               channel: c.channel === 'whatsapp' ? 'whatsapp' : 'email',
               direction: isOutbound ? 'outbound' : 'inbound',
               mailboxAccount: canonicalMailbox,
-              senderName: isOutbound ? (recipAddr || customerName || c.title || 'Contact') : (customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer'),
+              senderName: isOutbound
+                ? recipAddr || customerName || c.title || 'Contact'
+                : customerName || lastMsg?.sender_name || c.title || 'WhatsApp Customer',
               senderAddress: lastMsg?.sender_address || '',
               recipientAddress: recipAddr,
               subject: topic,
               snippet: latestSummary || lastMsg?.body_text || '(No messages)',
-              timestamp: c.last_message_at || lastMsg?.received_or_sent_at || new Date().toISOString(),
+              timestamp:
+                c.last_message_at || lastMsg?.received_or_sent_at || new Date().toISOString(),
               unread: false,
               needsAction,
               actionReason: actionRequired || undefined,
@@ -405,7 +456,8 @@ export function CrmOmnichannelInbox({
               gmailMessageId: extMsgId,
               gmailThreadId: extThreadId,
               language,
-              languageLabel: language === 'id' ? 'Indonesian' : (language === 'en' ? 'English' : 'Mixed ID/EN'),
+              languageLabel:
+                language === 'id' ? 'Indonesian' : language === 'en' ? 'English' : 'Mixed ID/EN',
               intent,
               topic,
               latestSummary,
@@ -425,7 +477,7 @@ export function CrmOmnichannelInbox({
       setConversations(items);
 
       if (items.length > 0) {
-        if (urlConversationId && items.some(i => i.id === urlConversationId)) {
+        if (urlConversationId && items.some((i) => i.id === urlConversationId)) {
           setSelectedId(urlConversationId);
         } else if (!selectedId) {
           handleSelectConversation(items[0].id);
@@ -465,8 +517,28 @@ export function CrmOmnichannelInbox({
   }, []);
 
   // Filter conversations
+  const isTestConversation = (c: InboxConversation) => {
+    const sub = (c.subject || '').toLowerCase();
+    const snd = (c.senderName || '').toLowerCase();
+    const snp = (c.snippet || '').toLowerCase();
+    return (
+      sub.includes('test') ||
+      snd.includes('test') ||
+      snp.includes('test auto analysis') ||
+      snp.includes('draft test')
+    );
+  };
+
+  const testThreadsCount = useMemo(() => {
+    return conversations.filter(isTestConversation).length;
+  }, [conversations]);
+
   const filteredConversations = useMemo(() => {
-    return conversations.filter(c => {
+    return conversations.filter((c) => {
+      if (!showTestThreads && isTestConversation(c)) {
+        return false;
+      }
+
       if (c.mailboxAccount && c.mailboxAccount.toLowerCase() !== activeMailbox.toLowerCase()) {
         return false;
       }
@@ -495,10 +567,10 @@ export function CrmOmnichannelInbox({
 
       return true;
     });
-  }, [conversations, activeMailbox, folderFilter, channelFilter, searchQuery]);
+  }, [conversations, activeMailbox, folderFilter, channelFilter, searchQuery, showTestThreads]);
 
   const selectedConversation = useMemo(() => {
-    return conversations.find(c => c.id === selectedId) || null;
+    return conversations.find((c) => c.id === selectedId) || null;
   }, [conversations, selectedId]);
 
   // Load contextual details for Column 3 (Customer 360 & Linked Inquiry)
@@ -518,12 +590,14 @@ export function CrmOmnichannelInbox({
         if (selectedConversation.inquiryId) {
           const { data: inq } = await supabase
             .from('crm_inquiries')
-            .select(`
+            .select(
+              `
               *,
               user_profiles:assigned_to (
                 full_name
               )
-            `)
+            `
+            )
             .eq('id', selectedConversation.inquiryId)
             .maybeSingle();
 
@@ -581,7 +655,11 @@ export function CrmOmnichannelInbox({
 
       if (error) throw error;
       setLinkedInquiryDetail((prev: any) => ({ ...prev, next_follow_up: iso }));
-      showToast({ type: 'success', title: 'Follow-up Scheduled', message: `Rescheduled to ${iso}` });
+      showToast({
+        type: 'success',
+        title: 'Follow-up Scheduled',
+        message: `Rescheduled to ${iso}`,
+      });
     } catch (err: any) {
       showToast({ type: 'error', title: 'Update Failed', message: err.message });
     } finally {
@@ -599,7 +677,11 @@ export function CrmOmnichannelInbox({
     setLoadingDetail(true);
     setDetailError(null);
     setReplyText('');
-    setReplySubject(selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+    setReplySubject(
+      selectedConversation.subject.startsWith('Re:')
+        ? selectedConversation.subject
+        : `Re: ${selectedConversation.subject}`
+    );
 
     try {
       if (selectedConversation.channel === 'email') {
@@ -625,7 +707,9 @@ export function CrmOmnichannelInbox({
                 try {
                   const errBody = await (error.context as Response).clone().json();
                   errMsg = errBody?.error || errBody?.code || errMsg;
-                } catch { /* ignore */ }
+                } catch {
+                  /* ignore */
+                }
               }
               fetchError = errMsg;
             } else if (!data?.success) {
@@ -642,9 +726,13 @@ export function CrmOmnichannelInbox({
                 bodyHtml: m.bodyHtml,
                 snippet: m.snippet,
                 attachments: m.attachments || [],
-                direction: ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
-                  (m.from || '').toLowerCase().includes(internal)
-                ) ? 'outbound' : 'inbound',
+                direction: [
+                  'sales@avira.co.id',
+                  'sales@sapharmajaya.co.id',
+                  'kunal@avira.co.id',
+                ].some((internal) => (m.from || '').toLowerCase().includes(internal))
+                  ? 'outbound'
+                  : 'inbound',
               }));
             }
           } catch (invokeErr: any) {
@@ -664,7 +752,9 @@ export function CrmOmnichannelInbox({
               fetchedMsgs = convMsgs.map((m: any) => ({
                 id: m.id,
                 from: m.sender_name ? `${m.sender_name} <${m.sender_address}>` : m.sender_address,
-                to: Array.isArray(m.recipient_addresses) ? m.recipient_addresses.join(', ') : m.recipient_addresses,
+                to: Array.isArray(m.recipient_addresses)
+                  ? m.recipient_addresses.join(', ')
+                  : m.recipient_addresses,
                 date: m.received_or_sent_at,
                 subject: m.subject || selectedConversation.subject,
                 body: m.body_text || m.body_html || '(No body text)',
@@ -675,7 +765,10 @@ export function CrmOmnichannelInbox({
             }
           }
 
-          if (fetchedMsgs.length === 0 && (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId)) {
+          if (
+            fetchedMsgs.length === 0 &&
+            (selectedConversation.gmailThreadId || selectedConversation.gmailMessageId)
+          ) {
             let q = supabase.from('crm_email_inbox').select('*');
             if (selectedConversation.gmailThreadId) {
               q = q.eq('thread_id', selectedConversation.gmailThreadId);
@@ -692,9 +785,13 @@ export function CrmOmnichannelInbox({
                 subject: r.subject,
                 body: r.body || r.body_html || '(No body text)',
                 bodyHtml: r.body_html,
-                direction: ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
-                  (r.from_email || '').toLowerCase().includes(internal)
-                ) ? 'outbound' : 'inbound',
+                direction: [
+                  'sales@avira.co.id',
+                  'sales@sapharmajaya.co.id',
+                  'kunal@avira.co.id',
+                ].some((internal) => (r.from_email || '').toLowerCase().includes(internal))
+                  ? 'outbound'
+                  : 'inbound',
                 attachments: [],
               }));
             }
@@ -708,7 +805,10 @@ export function CrmOmnichannelInbox({
           setExpandedMsgIds(exp);
         } else {
           setThreadMessages([]);
-          setDetailError(fetchError || 'Conversation messages could not be retrieved from Gmail or local records.');
+          setDetailError(
+            fetchError ||
+              'Conversation messages could not be retrieved from Gmail or local records.'
+          );
         }
       } else {
         // WhatsApp messages
@@ -770,8 +870,9 @@ export function CrmOmnichannelInbox({
 
   const getReplyRecipient = () => {
     if (!selectedConversation) return '';
-    const isOutbound = selectedConversation.direction === 'outbound' ||
-      ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some(internal =>
+    const isOutbound =
+      selectedConversation.direction === 'outbound' ||
+      ['sales@avira.co.id', 'sales@sapharmajaya.co.id', 'kunal@avira.co.id'].some((internal) =>
         (selectedConversation.senderAddress || '').toLowerCase().includes(internal)
       );
     if (isOutbound && selectedConversation.recipientAddress) {
@@ -800,7 +901,11 @@ export function CrmOmnichannelInbox({
         if (!replyRecipient) {
           throw new Error('No recipient email address found for this conversation');
         }
-        const replySubj = replySubject || (selectedConversation.subject.startsWith('Re:') ? selectedConversation.subject : `Re: ${selectedConversation.subject}`);
+        const replySubj =
+          replySubject ||
+          (selectedConversation.subject.startsWith('Re:')
+            ? selectedConversation.subject
+            : `Re: ${selectedConversation.subject}`);
         const replySender = (selectedConversation.mailboxAccount || activeMailbox).toLowerCase();
         const isPricingReply = replySender.includes('kunal@avira.co.id');
         const resolvedSender = isPricingReply ? 'kunal@avira.co.id' : 'sales@avira.co.id';
@@ -818,7 +923,10 @@ export function CrmOmnichannelInbox({
             subject: replySubj,
             body: replyText.trim().replace(/\n/g, '<br/>'),
             isHtml: true,
-            threadId: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId || undefined,
+            threadId:
+              selectedConversation.gmailThreadId ||
+              selectedConversation.gmailMessageId ||
+              undefined,
             inReplyTo: selectedConversation.gmailMessageId || undefined,
             references: selectedConversation.gmailMessageId || undefined,
             inquiryId: selectedConversation.inquiryId || undefined,
@@ -829,12 +937,20 @@ export function CrmOmnichannelInbox({
           throw new Error(fnData?.error || fnErr?.message || 'Failed to dispatch email reply');
         }
 
-        showToast({ type: 'success', title: 'Email Sent', message: `Reply sent from ${resolvedSender} to ${replyRecipient}` });
+        showToast({
+          type: 'success',
+          title: 'Email Sent',
+          message: `Reply sent from ${resolvedSender} to ${replyRecipient}`,
+        });
         setReplyText('');
         loadThread();
       }
     } catch (err: any) {
-      showToast({ type: 'error', title: 'Send Failed', message: err.message || 'Could not send message' });
+      showToast({
+        type: 'error',
+        title: 'Send Failed',
+        message: err.message || 'Could not send message',
+      });
     } finally {
       setSendingReply(false);
     }
@@ -847,22 +963,25 @@ export function CrmOmnichannelInbox({
     try {
       if (linkTargetType === 'inquiry') {
         if (!selectedInquiryToLink) throw new Error('Please select an inquiry to link');
-        const inq = allInquiries.find(i => i.id === selectedInquiryToLink);
+        const inq = allInquiries.find((i) => i.id === selectedInquiryToLink);
         if (!inq) throw new Error('Selected inquiry not found');
 
         if (selectedConversation.gmailMessageId) {
-          await supabase.from('crm_email_inbox').upsert({
-            message_id: selectedConversation.gmailMessageId,
-            thread_id: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId,
-            from_email: selectedConversation.senderAddress,
-            from_name: selectedConversation.senderName,
-            to_email: selectedConversation.recipientAddress || '',
-            subject: selectedConversation.subject,
-            body: selectedConversation.snippet,
-            received_date: selectedConversation.timestamp,
-            is_processed: true,
-            converted_to_inquiry: inq.id,
-          }, { onConflict: 'message_id' });
+          await supabase.from('crm_email_inbox').upsert(
+            {
+              message_id: selectedConversation.gmailMessageId,
+              thread_id: selectedConversation.gmailThreadId || selectedConversation.gmailMessageId,
+              from_email: selectedConversation.senderAddress,
+              from_name: selectedConversation.senderName,
+              to_email: selectedConversation.recipientAddress || '',
+              subject: selectedConversation.subject,
+              body: selectedConversation.snippet,
+              received_date: selectedConversation.timestamp,
+              is_processed: true,
+              converted_to_inquiry: inq.id,
+            },
+            { onConflict: 'message_id' }
+          );
         }
 
         if (selectedConversation.whatsAppConversationId) {
@@ -879,19 +998,17 @@ export function CrmOmnichannelInbox({
               .update({ is_active: true, link_type: 'primary' })
               .eq('id', existingLink.id);
           } else {
-            await supabase
-              .from('enquiry_conversation_links')
-              .insert({
-                conversation_id: selectedConversation.whatsAppConversationId,
-                inquiry_id: inq.id,
-                link_type: 'primary',
-                is_active: true,
-              });
+            await supabase.from('enquiry_conversation_links').insert({
+              conversation_id: selectedConversation.whatsAppConversationId,
+              inquiry_id: inq.id,
+              link_type: 'primary',
+              is_active: true,
+            });
           }
         }
 
-        setConversations(prev =>
-          prev.map(c =>
+        setConversations((prev) =>
+          prev.map((c) =>
             c.id === selectedConversation.id
               ? {
                   ...c,
@@ -907,10 +1024,14 @@ export function CrmOmnichannelInbox({
         );
 
         setShowLinkDialog(false);
-        showToast({ type: 'success', title: 'Inquiry Linked', message: `Linked to ${inq.inquiry_number}` });
+        showToast({
+          type: 'success',
+          title: 'Inquiry Linked',
+          message: `Linked to ${inq.inquiry_number}`,
+        });
       } else {
         if (!selectedCustomerToLink) throw new Error('Please select a customer to link');
-        const cust = allCustomers.find(c => c.id === selectedCustomerToLink);
+        const cust = allCustomers.find((c) => c.id === selectedCustomerToLink);
         if (!cust) throw new Error('Selected customer not found');
 
         if (selectedConversation.whatsAppConversationId) {
@@ -920,8 +1041,8 @@ export function CrmOmnichannelInbox({
             .eq('id', selectedConversation.whatsAppConversationId);
         }
 
-        setConversations(prev =>
-          prev.map(c =>
+        setConversations((prev) =>
+          prev.map((c) =>
             c.id === selectedConversation.id
               ? {
                   ...c,
@@ -934,7 +1055,11 @@ export function CrmOmnichannelInbox({
         );
 
         setShowLinkDialog(false);
-        showToast({ type: 'success', title: 'Customer Linked', message: `Linked to ${cust.company_name}` });
+        showToast({
+          type: 'success',
+          title: 'Customer Linked',
+          message: `Linked to ${cust.company_name}`,
+        });
       }
     } catch (err: any) {
       showToast({ type: 'error', title: 'Link Failed', message: err.message || 'Could not link' });
@@ -954,8 +1079,8 @@ export function CrmOmnichannelInbox({
           .eq('conversation_id', selectedConversation.whatsAppConversationId);
       }
 
-      setConversations(prev =>
-        prev.map(c =>
+      setConversations((prev) =>
+        prev.map((c) =>
           c.id === selectedConversation.id
             ? {
                 ...c,
@@ -983,7 +1108,11 @@ export function CrmOmnichannelInbox({
 
   const handleOpenDoc = async (storagePath?: string | null) => {
     if (!storagePath) {
-      showToast({ type: 'warning', title: 'File Missing', message: 'Attachment file path not recorded in storage.' });
+      showToast({
+        type: 'warning',
+        title: 'File Missing',
+        message: 'Attachment file path not recorded in storage.',
+      });
       return;
     }
     const url = await getSignedUrlCached('crm-documents', storagePath, 600);
@@ -1004,7 +1133,7 @@ export function CrmOmnichannelInbox({
             <select
               aria-label="Active Mailbox"
               value={activeMailbox}
-              onChange={e => setActiveMailbox(e.target.value as ActiveMailbox)}
+              onChange={(e) => setActiveMailbox(e.target.value as ActiveMailbox)}
               className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500"
             >
               <option value="sales@avira.co.id">sales@avira.co.id (Commercial Sales)</option>
@@ -1061,6 +1190,19 @@ export function CrmOmnichannelInbox({
                 </button>
               );
             })}
+
+            {/* Diagnostic Test Threads Toggle */}
+            <button
+              onClick={() => setShowTestThreads(!showTestThreads)}
+              className={`px-2.5 py-1 text-xs font-semibold rounded transition flex items-center gap-1 ml-2 ${
+                showTestThreads
+                  ? 'bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs'
+                  : 'text-gray-500 hover:bg-gray-100 border border-dashed border-gray-300'
+              }`}
+              title={showTestThreads ? 'Hide Diagnostic Test Threads' : 'Show Diagnostic Test Threads'}
+            >
+              <span>🧪 Test Threads ({testThreadsCount})</span>
+            </button>
           </div>
         </div>
 
@@ -1087,7 +1229,7 @@ export function CrmOmnichannelInbox({
               <input
                 type="text"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search sender, subject, product..."
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-gray-200 rounded-md focus:outline-blue-500"
               />
@@ -1103,13 +1245,27 @@ export function CrmOmnichannelInbox({
               </div>
             )}
 
-            {!loadingList && filteredConversations.length === 0 && (
+            {!loadingList && listError && (
+              <div className="p-6 text-center text-xs bg-red-50/50 m-2 rounded-lg border border-red-200">
+                <AlertTriangle className="w-5 h-5 text-red-500 mx-auto mb-2" />
+                <p className="font-semibold text-red-800 mb-1">Failed to load communications</p>
+                <p className="text-red-600 mb-3">{listError}</p>
+                <button
+                  onClick={loadConversations}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700 transition"
+                >
+                  <RefreshCw className="w-3 h-3" /> Retry
+                </button>
+              </div>
+            )}
+
+            {!loadingList && !listError && filteredConversations.length === 0 && (
               <div className="p-8 text-center text-xs text-gray-500">
                 No conversations found in this filter.
               </div>
             )}
 
-            {filteredConversations.map(conv => {
+            {filteredConversations.map((conv) => {
               const isSelected = conv.id === selectedId;
               const isEmail = conv.channel === 'email';
 
@@ -1131,9 +1287,15 @@ export function CrmOmnichannelInbox({
                         }`}
                         title={isEmail ? 'Gmail' : 'WhatsApp'}
                       >
-                        {isEmail ? <Mail className="w-3 h-3" /> : <MessageSquare className="w-3 h-3" />}
+                        {isEmail ? (
+                          <Mail className="w-3 h-3" />
+                        ) : (
+                          <MessageSquare className="w-3 h-3" />
+                        )}
                       </span>
-                      <span className={`font-semibold truncate ${isSelected ? 'text-blue-950 font-bold' : 'text-gray-900'}`}>
+                      <span
+                        className={`font-semibold truncate ${isSelected ? 'text-blue-950 font-bold' : 'text-gray-900'}`}
+                      >
                         {conv.senderName}
                       </span>
                     </div>
@@ -1145,12 +1307,17 @@ export function CrmOmnichannelInbox({
                         </span>
                       )}
                       <span className="text-[10px] text-gray-400 whitespace-nowrap">
-                        {new Date(conv.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                        {new Date(conv.timestamp).toLocaleDateString([], {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
                       </span>
                     </div>
                   </div>
 
-                  <div className={`truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                  <div
+                    className={`truncate text-[11px] ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}
+                  >
                     {conv.subject}
                   </div>
 
@@ -1188,7 +1355,10 @@ export function CrmOmnichannelInbox({
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8 text-center">
               <Inbox className="w-12 h-12 text-gray-200 mb-3" />
               <div className="font-semibold text-gray-600 text-sm">Select a Conversation</div>
-              <p className="text-xs max-w-sm mt-1">Choose an email or WhatsApp thread from the left panel to review message history, attachments, and reply.</p>
+              <p className="text-xs max-w-sm mt-1">
+                Choose an email or WhatsApp thread from the left panel to review message history,
+                attachments, and reply.
+              </p>
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -1210,15 +1380,28 @@ export function CrmOmnichannelInbox({
                     </span>
                   </div>
                   <div className="text-[11px] text-gray-600 flex items-center gap-2 mt-0.5">
-                    <span>From: <strong className="text-gray-900">{selectedConversation.senderName}</strong> ({selectedConversation.senderAddress})</span>
-                    {selectedConversation.customerName && <span>• Customer: <strong className="text-gray-900">{selectedConversation.customerName}</strong></span>}
+                    <span>
+                      From:{' '}
+                      <strong className="text-gray-900">{selectedConversation.senderName}</strong> (
+                      {selectedConversation.senderAddress})
+                    </span>
+                    {selectedConversation.customerName && (
+                      <span>
+                        • Customer:{' '}
+                        <strong className="text-gray-900">
+                          {selectedConversation.customerName}
+                        </strong>
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
                   {selectedConversation.inquiryId ? (
                     <button
-                      onClick={() => onOpenInquiry && onOpenInquiry(selectedConversation.inquiryId!)}
+                      onClick={() =>
+                        onOpenInquiry && onOpenInquiry(selectedConversation.inquiryId!)
+                      }
                       className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
                     >
                       <ExternalLink className="w-3 h-3" />
@@ -1232,7 +1415,9 @@ export function CrmOmnichannelInbox({
                         className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                         title="Extract products, quantities, specifications using AI"
                       >
-                        <Sparkles className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin' : ''}`} />
+                        <Sparkles
+                          className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin' : ''}`}
+                        />
                         <span>AI Extract & Create</span>
                       </button>
                       <button
@@ -1259,8 +1444,18 @@ export function CrmOmnichannelInbox({
                         className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition cursor-pointer"
                       >
                         <Bot className="w-3 h-3 text-emerald-600" />
-                        <span>AI Intelligence ({selectedConversation.languageLabel || selectedConversation.language?.toUpperCase() || 'ID'})</span>
-                        {showAiDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        <span>
+                          AI Intelligence (
+                          {selectedConversation.languageLabel ||
+                            selectedConversation.language?.toUpperCase() ||
+                            'ID'}
+                          )
+                        </span>
+                        {showAiDetails ? (
+                          <ChevronUp className="w-3 h-3" />
+                        ) : (
+                          <ChevronDown className="w-3 h-3" />
+                        )}
                       </button>
                       {selectedConversation.intent && (
                         <span className="text-[10px] font-semibold text-emerald-900 bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-300">
@@ -1280,7 +1475,9 @@ export function CrmOmnichannelInbox({
                     <div className="pt-2 border-t border-emerald-200/60 space-y-2">
                       {selectedConversation.englishTranslation && (
                         <div className="bg-white p-2 rounded border border-emerald-200 text-xs text-slate-800">
-                          <strong className="text-[10px] text-emerald-800 uppercase block mb-0.5">English Translation:</strong>
+                          <strong className="text-[10px] text-emerald-800 uppercase block mb-0.5">
+                            English Translation:
+                          </strong>
                           <p>{selectedConversation.englishTranslation}</p>
                         </div>
                       )}
@@ -1288,7 +1485,10 @@ export function CrmOmnichannelInbox({
                       {selectedConversation.entities && (
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {Object.entries(selectedConversation.entities).map(([k, v]) => (
-                            <span key={k} className="text-[10px] bg-white border border-emerald-200 text-emerald-900 px-2 py-0.5 rounded font-medium">
+                            <span
+                              key={k}
+                              className="text-[10px] bg-white border border-emerald-200 text-emerald-900 px-2 py-0.5 rounded font-medium"
+                            >
                               <strong>{k}:</strong> {String(v)}
                             </span>
                           ))}
@@ -1350,7 +1550,7 @@ export function CrmOmnichannelInbox({
                           }`}
                         >
                           <div className="font-semibold text-[10px] text-gray-500 mb-1">
-                            {isOutbound ? 'You (Sales)' : msg.from}
+                            {isOutbound ? 'SAPJ (+6285888600999)' : msg.from}
                           </div>
 
                           <div className="whitespace-pre-wrap selection:bg-emerald-100">
@@ -1359,13 +1559,20 @@ export function CrmOmnichannelInbox({
 
                           {msg.englishTranslation && !isOutbound && (
                             <div className="mt-2 pt-1.5 border-t border-gray-200 text-[11px] text-slate-700 bg-slate-50 p-1.5 rounded">
-                              <span className="text-[9px] uppercase font-bold text-slate-500 block">English Translation:</span>
+                              <span className="text-[9px] uppercase font-bold text-slate-500 block">
+                                English Translation:
+                              </span>
                               {msg.englishTranslation}
                             </div>
                           )}
 
                           <div className="text-[9px] text-gray-400 text-right mt-1.5">
-                            {msg.date ? new Date(msg.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            {msg.date
+                              ? new Date(msg.date).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : ''}
                             {isOutbound && ' ✓✓'}
                           </div>
                         </div>
@@ -1380,7 +1587,9 @@ export function CrmOmnichannelInbox({
                       className="border border-gray-200 rounded-lg bg-white shadow-2xs overflow-hidden"
                     >
                       <div
-                        onClick={() => setExpandedMsgIds(prev => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                        onClick={() =>
+                          setExpandedMsgIds((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
+                        }
                         className="p-3 bg-gray-50/60 hover:bg-gray-50 flex items-center justify-between gap-3 cursor-pointer select-none"
                       >
                         <div className="flex items-center gap-2 min-w-0">
@@ -1401,9 +1610,20 @@ export function CrmOmnichannelInbox({
 
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <span className="text-[10px] text-gray-400">
-                            {msg.date ? new Date(msg.date).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                            {msg.date
+                              ? new Date(msg.date).toLocaleString([], {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : 'N/A'}
                           </span>
-                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                          {isExpanded ? (
+                            <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                          )}
                         </div>
                       </div>
 
@@ -1440,7 +1660,10 @@ export function CrmOmnichannelInbox({
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0">
                                       <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
-                                      <span className="text-xs font-medium text-gray-800 truncate" title={att.filename}>
+                                      <span
+                                        className="text-xs font-medium text-gray-800 truncate"
+                                        title={att.filename}
+                                      >
                                         {att.filename}
                                       </span>
                                     </div>
@@ -1484,24 +1707,25 @@ export function CrmOmnichannelInbox({
                     )}
                   </span>
 
-                  {selectedConversation.channel === 'whatsapp' && selectedConversation.suggestedReply && (
-                    <button
-                      type="button"
-                      onClick={() => setReplyText(selectedConversation.suggestedReply || '')}
-                      title="Draft Reply in Customer Language"
-                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1 transition cursor-pointer"
-                    >
-                      <Sparkles className="w-3 h-3 text-emerald-600" />
-                      <span>Draft AI Reply</span>
-                    </button>
-                  )}
+                  {selectedConversation.channel === 'whatsapp' &&
+                    selectedConversation.suggestedReply && (
+                      <button
+                        type="button"
+                        onClick={() => setReplyText(selectedConversation.suggestedReply || '')}
+                        title="Draft Reply in Customer Language"
+                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
+                        <span>Draft AI Reply</span>
+                      </button>
+                    )}
                 </div>
 
                 <textarea
                   rows={2}
                   value={replyText}
-                  onChange={e => setReplyText(e.target.value)}
-                  onKeyDown={e => {
+                  onChange={(e) => setReplyText(e.target.value)}
+                  onKeyDown={(e) => {
                     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                       e.preventDefault();
                       handleSendReply();
@@ -1558,7 +1782,9 @@ export function CrmOmnichannelInbox({
 
                 <div className="space-y-1 text-xs">
                   <div className="font-bold text-gray-900">
-                    {customerDetail?.company_name || selectedConversation.customerName || selectedConversation.senderName}
+                    {customerDetail?.company_name ||
+                      selectedConversation.customerName ||
+                      selectedConversation.senderName}
                   </div>
                   {customerDetail?.contact_person && (
                     <div className="text-gray-600 flex items-center gap-1">
@@ -1600,7 +1826,9 @@ export function CrmOmnichannelInbox({
                 {linkedInquiryDetail ? (
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between items-center">
-                      <span className="font-bold text-blue-900">{linkedInquiryDetail.inquiry_number}</span>
+                      <span className="font-bold text-blue-900">
+                        {linkedInquiryDetail.inquiry_number}
+                      </span>
                       <span className="text-[10px] bg-blue-50 text-blue-800 px-1.5 py-0.2 rounded font-semibold border border-blue-200">
                         {linkedInquiryDetail.pipeline_status || linkedInquiryDetail.status || 'New'}
                       </span>
@@ -1618,7 +1846,11 @@ export function CrmOmnichannelInbox({
 
                     {linkedInquiryDetail.offered_price && (
                       <div className="text-gray-600 text-[11px]">
-                        Offered: <strong>{linkedInquiryDetail.offered_price_currency || 'IDR'} {Number(linkedInquiryDetail.offered_price).toLocaleString()}</strong>
+                        Offered:{' '}
+                        <strong>
+                          {linkedInquiryDetail.offered_price_currency || 'IDR'}{' '}
+                          {Number(linkedInquiryDetail.offered_price).toLocaleString()}
+                        </strong>
                       </div>
                     )}
 
@@ -1697,28 +1929,38 @@ export function CrmOmnichannelInbox({
                   <div className="space-y-1.5 text-xs">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-700">Price Quoted:</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.price_quoted || linkedInquiryDetail.quote_sent_at ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
-                        {linkedInquiryDetail.price_quoted || linkedInquiryDetail.quote_sent_at ? '✓ Sent' : 'Pending'}
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.price_quoted || linkedInquiryDetail.quote_sent_at ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}
+                      >
+                        {linkedInquiryDetail.price_quoted || linkedInquiryDetail.quote_sent_at
+                          ? '✓ Sent'
+                          : 'Pending'}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between">
                       <span className="text-gray-700">COA Document:</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.coa_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.coa_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}
+                      >
                         {linkedInquiryDetail.coa_sent ? '✓ Sent' : 'Pending'}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between">
                       <span className="text-gray-700">MSDS Document:</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.msds_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.msds_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}
+                      >
                         {linkedInquiryDetail.msds_sent ? '✓ Sent' : 'Pending'}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between">
                       <span className="text-gray-700">Sample:</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.sample_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${linkedInquiryDetail.sample_sent ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}
+                      >
                         {linkedInquiryDetail.sample_sent ? '✓ Sent' : 'Pending'}
                       </span>
                     </div>
@@ -1736,7 +1978,10 @@ export function CrmOmnichannelInbox({
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-4 space-y-3">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-sm font-bold text-gray-900">Link Communication</h3>
-              <button onClick={() => setShowLinkDialog(false)} className="text-gray-400 hover:text-gray-600">
+              <button
+                onClick={() => setShowLinkDialog(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1769,15 +2014,16 @@ export function CrmOmnichannelInbox({
             {linkTargetType === 'inquiry' ? (
               <div className="space-y-2">
                 <p className="text-xs text-gray-600">
-                  Select an inquiry to link with <strong>{selectedConversation?.senderName}</strong>:
+                  Select an inquiry to link with <strong>{selectedConversation?.senderName}</strong>
+                  :
                 </p>
                 <select
                   value={selectedInquiryToLink}
-                  onChange={e => setSelectedInquiryToLink(e.target.value)}
+                  onChange={(e) => setSelectedInquiryToLink(e.target.value)}
                   className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
                 >
                   <option value="">Select an Inquiry ▼</option>
-                  {allInquiries.map(i => (
+                  {allInquiries.map((i) => (
                     <option key={i.id} value={i.id}>
                       {i.inquiry_number} — {i.company_name} ({i.product_name})
                     </option>
@@ -1787,15 +2033,16 @@ export function CrmOmnichannelInbox({
             ) : (
               <div className="space-y-2">
                 <p className="text-xs text-gray-600">
-                  Select a customer to associate with <strong>{selectedConversation?.senderName}</strong>:
+                  Select a customer to associate with{' '}
+                  <strong>{selectedConversation?.senderName}</strong>:
                 </p>
                 <select
                   value={selectedCustomerToLink}
-                  onChange={e => setSelectedCustomerToLink(e.target.value)}
+                  onChange={(e) => setSelectedCustomerToLink(e.target.value)}
                   className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
                 >
                   <option value="">Select a Customer ▼</option>
-                  {allCustomers.map(c => (
+                  {allCustomers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.company_name}
                     </option>
@@ -1821,7 +2068,11 @@ export function CrmOmnichannelInbox({
                 </button>
                 <button
                   onClick={handleConfirmLink}
-                  disabled={(linkTargetType === 'inquiry' ? !selectedInquiryToLink : !selectedCustomerToLink) || isLinking}
+                  disabled={
+                    (linkTargetType === 'inquiry'
+                      ? !selectedInquiryToLink
+                      : !selectedCustomerToLink) || isLinking
+                  }
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold disabled:opacity-50"
                 >
                   {isLinking ? 'Linking...' : 'Confirm Link'}

@@ -122,7 +122,7 @@ const fmtDate = (iso: string | null | undefined) => (iso ? new Date(iso).toLocal
 
 export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDashboard }: FXReportProps) {
   const { dateRange } = useFinance();
-  const [activeTab, setActiveTab] = useState<'summary' | 'supplier' | 'customer' | 'exposure' | 'monthly' | 'by_supplier' | 'posted_gl'>('summary');
+  const [activeTab, setActiveTab] = useState<'summary' | 'supplier' | 'customer' | 'exposure' | 'monthly' | 'by_supplier' | 'posted_gl' | 'revaluations'>('summary');
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentMarketRate, setCurrentMarketRate] = useState<number>(17800);
@@ -131,6 +131,13 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
   const [customerLines, setCustomerLines] = useState<CustomerFxLine[]>([]);
   const [openExposures, setOpenExposures] = useState<OpenExposureLine[]>([]);
   const [postedGlLines, setPostedGlLines] = useState<PostedGlFxLine[]>([]);
+  const [revaluationsList, setRevaluationsList] = useState<any[]>([]);
+  const [showRevalModal, setShowRevalModal] = useState(false);
+  const [revalDate, setRevalDate] = useState('2026-11-30');
+  const [revalRate, setRevalRate] = useState('18200');
+  const [revalSource, setRevalSource] = useState('Bank Indonesia JISDOR');
+  const [revalRunning, setRevalRunning] = useState(false);
+  const [revalFeedback, setRevalFeedback] = useState<any>(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -405,10 +412,57 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
       });
       setCustomerLines(cLines);
 
+      // 5. Fetch Revaluations Audit Trail
+      try {
+        const { data: revData } = await supabase
+          .from('fx_revaluations')
+          .select(`
+            id, revaluation_number, revaluation_date, period_name, currency, closing_rate,
+            rate_source, total_gain_loss, status, journal_entry_id, created_at,
+            journal_entries(entry_number, description),
+            fx_revaluation_lines(
+              id, line_type, foreign_amount, carrying_rate, carrying_amount_idr,
+              revalued_rate, revalued_amount_idr, fx_difference, gain_loss_type,
+              purchase_invoices(invoice_number),
+              bank_accounts(account_name)
+            )
+          `)
+          .order('revaluation_date', { ascending: false });
+
+        if (revData) setRevaluationsList(revData);
+      } catch (revErr) {
+        console.warn('Could not fetch fx_revaluations:', revErr);
+      }
+
     } catch (err) {
       console.error('Error loading FX Report data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRunRevaluation = async () => {
+    setRevalRunning(true);
+    setRevalFeedback(null);
+    try {
+      const rateNum = parseFloat(revalRate.replace(/,/g, ''));
+      if (isNaN(rateNum) || rateNum <= 0) {
+        throw new Error('Please enter a valid positive exchange rate');
+      }
+
+      const { data, error } = await supabase.rpc('run_fx_month_end_revaluation', {
+        p_period_date: revalDate,
+        p_closing_rate: rateNum,
+        p_rate_source: revalSource,
+      });
+
+      if (error) throw error;
+      setRevalFeedback(data);
+      await loadData();
+    } catch (err: any) {
+      alert(`❌ Revaluation failed: ${err.message}`);
+    } finally {
+      setRevalRunning(false);
     }
   };
 
@@ -649,6 +703,15 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
           )}
           <button
             type="button"
+            onClick={() => setShowRevalModal(true)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
+            title="Run Month-End Foreign Currency Monetary Revaluation"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Revaluation
+          </button>
+          <button
+            type="button"
             className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
           >
             <Layers className="w-3.5 h-3.5" />
@@ -719,6 +782,7 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
           { key: 'exposure', label: `5. Open Exposure (${openExposures.length})` },
           { key: 'monthly', label: `6. By Month (${monthlyData.length})` },
           { key: 'by_supplier', label: `7. By Supplier (${bySupplierData.length})` },
+          { key: 'revaluations', label: `8. Revaluations (${revaluationsList.length})` },
         ].map(t => (
           <button
             key={t.key}
@@ -1147,6 +1211,222 @@ export function FXReport({ onViewInvoice, onViewJournal, onSwitchToCommercialDas
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 8: Revaluations Audit Trail */}
+      {activeTab === 'revaluations' && (
+        <div className="bg-white rounded-b-2xl border border-slate-200 border-t-0 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Monetary FX Revaluations Audit Trail</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Authoritative month-end foreign currency valuations and journal entries</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRevalModal(true)}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              New Revaluation
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {revaluationsList.length === 0 ? (
+              <div className="text-center py-10 text-slate-500 text-xs">
+                No recorded month-end revaluations found. Click "New Revaluation" to run.
+              </div>
+            ) : (
+              revaluationsList.map((rev) => (
+                <div key={rev.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900 text-sm">{rev.revaluation_number}</span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">
+                        Period: {rev.period_name}
+                      </span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium uppercase">
+                        {rev.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-slate-500">
+                        Date: <strong className="text-slate-700">{fmtDate(rev.revaluation_date)}</strong>
+                      </span>
+                      <span className="text-slate-500">
+                        Rate: <strong className="text-slate-700">Rp {fmt(rev.closing_rate)}/USD</strong> ({rev.rate_source})
+                      </span>
+                      {rev.journal_entries?.entry_number && (
+                        <button
+                          type="button"
+                          onClick={() => onViewJournal?.(rev.journal_entry_id)}
+                          className="text-indigo-600 hover:underline font-semibold flex items-center gap-1"
+                        >
+                          {rev.journal_entries.entry_number}
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {rev.fx_revaluation_lines && rev.fx_revaluation_lines.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left bg-white rounded-lg border border-slate-200">
+                        <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                          <tr>
+                            <th className="py-2 px-2.5">Type</th>
+                            <th className="py-2 px-2.5">Document / Asset</th>
+                            <th className="py-2 px-2.5 text-right">USD Amount</th>
+                            <th className="py-2 px-2.5 text-right">Carrying Rate</th>
+                            <th className="py-2 px-2.5 text-right">Carrying IDR</th>
+                            <th className="py-2 px-2.5 text-right">Revalued IDR</th>
+                            <th className="py-2 px-2.5 text-right">Impact</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-mono">
+                          {rev.fx_revaluation_lines.map((ln: any) => (
+                            <tr key={ln.id} className="hover:bg-slate-50">
+                              <td className="py-2 px-2.5 font-sans capitalize text-slate-700">
+                                {ln.line_type === 'bank_asset' ? 'USD Bank Asset' : 'Accounts Payable'}
+                              </td>
+                              <td className="py-2 px-2.5 font-sans font-medium text-slate-900">
+                                {ln.purchase_invoices?.invoice_number || ln.bank_accounts?.account_name || 'Asset/Payable'}
+                              </td>
+                              <td className="py-2 px-2.5 text-right">${fmt2(ln.foreign_amount)}</td>
+                              <td className="py-2 px-2.5 text-right">Rp {fmt(ln.carrying_rate)}</td>
+                              <td className="py-2 px-2.5 text-right">Rp {fmt(ln.carrying_amount_idr)}</td>
+                              <td className="py-2 px-2.5 text-right">Rp {fmt(ln.revalued_amount_idr)}</td>
+                              <td className={`py-2 px-2.5 text-right font-bold ${ln.gain_loss_type === 'unrealized_gain' ? 'text-emerald-700' : 'text-red-700'}`}>
+                                {ln.gain_loss_type === 'unrealized_gain' ? `+Rp ${fmt(ln.fx_difference)}` : `-Rp ${fmt(ln.fx_difference)}`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Run Month-End Revaluation */}
+      {showRevalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5 space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Run Month-End FX Revaluation</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Calculate monetary revaluations and generate balanced GL journal</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowRevalModal(false); setRevalFeedback(null); }}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {revalFeedback ? (
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-700 font-bold text-xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  {revalFeedback.message}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                  <div className="bg-white p-2 rounded border border-slate-200">
+                    <span className="text-[10px] text-slate-500 block">Reval Number</span>
+                    <strong>{revalFeedback.revaluation_number}</strong>
+                  </div>
+                  <div className="bg-white p-2 rounded border border-slate-200">
+                    <span className="text-[10px] text-slate-500 block">Closing Rate</span>
+                    <strong>Rp {fmt(revalFeedback.closing_rate)}/USD</strong>
+                  </div>
+                  {revalFeedback.unrealized_gain !== undefined && (
+                    <div className="bg-white p-2 rounded border border-slate-200 text-emerald-700">
+                      <span className="text-[10px] text-slate-500 block">Unrealized Gain</span>
+                      <strong>Rp {fmt(revalFeedback.unrealized_gain)}</strong>
+                    </div>
+                  )}
+                  {revalFeedback.unrealized_loss !== undefined && (
+                    <div className="bg-white p-2 rounded border border-slate-200 text-red-700">
+                      <span className="text-[10px] text-slate-500 block">Unrealized Loss</span>
+                      <strong>Rp {fmt(revalFeedback.unrealized_loss)}</strong>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowRevalModal(false); setRevalFeedback(null); setActiveTab('revaluations'); }}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold"
+                >
+                  View in Revaluations List
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Period End Date</label>
+                  <input
+                    type="date"
+                    value={revalDate}
+                    onChange={(e) => setRevalDate(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">
+                    e.g. 2026-11-30. October 2026 is protected and will return authoritative JE2611-0314.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Closing Exchange Rate (IDR/USD)</label>
+                  <input
+                    type="text"
+                    value={revalRate}
+                    onChange={(e) => setRevalRate(e.target.value)}
+                    placeholder="18200"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-1 focus:ring-blue-500"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">
+                    Official JISDOR or central bank reference rate
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Rate Source Reference</label>
+                  <input
+                    type="text"
+                    value={revalSource}
+                    onChange={(e) => setRevalSource(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowRevalModal(false)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={revalRunning}
+                    onClick={handleRunRevaluation}
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-semibold flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${revalRunning ? 'animate-spin' : ''}`} />
+                    {revalRunning ? 'Executing...' : 'Run Revaluation'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -1,0 +1,1080 @@
+{
+  "timestamp": "2026-11-03T18:55:23.786Z",
+  "db_size": {
+    "db_bytes": "360434835",
+    "db_size_pretty": "344 MB"
+  },
+  "buckets": [
+    {
+      "id": "bank-statements",
+      "name": "bank-statements",
+      "public": false,
+      "created_at": "2025-12-30T04:40:48.396Z",
+      "file_size_limit": "52428800",
+      "allowed_mime_types": [
+        "application/pdf"
+      ]
+    },
+    {
+      "id": "batch-documents",
+      "name": "batch-documents",
+      "public": false,
+      "created_at": "2025-10-31T15:32:19.095Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "company-assets",
+      "name": "company-assets",
+      "public": false,
+      "created_at": "2026-07-13T17:50:14.542Z",
+      "file_size_limit": null,
+      "allowed_mime_types": null
+    },
+    {
+      "id": "crm-documents",
+      "name": "crm-documents",
+      "public": false,
+      "created_at": "2025-11-24T11:18:55.071Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "documents",
+      "name": "documents",
+      "public": false,
+      "created_at": "2026-02-22T19:43:31.751Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "expense-documents",
+      "name": "expense-documents",
+      "public": false,
+      "created_at": "2025-12-25T03:56:18.587Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "inventory_photos",
+      "name": "inventory_photos",
+      "public": false,
+      "created_at": "2025-12-11T06:10:32.656Z",
+      "file_size_limit": "10485760",
+      "allowed_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/jpg",
+        "image/webp"
+      ]
+    },
+    {
+      "id": "petty-cash-receipts",
+      "name": "petty-cash-receipts",
+      "public": false,
+      "created_at": "2026-01-09T05:14:53.248Z",
+      "file_size_limit": "10485760",
+      "allowed_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ]
+    },
+    {
+      "id": "product-documents",
+      "name": "product-documents",
+      "public": false,
+      "created_at": "2025-12-25T03:50:28.730Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "product-source-documents",
+      "name": "product-source-documents",
+      "public": false,
+      "created_at": "2026-01-21T07:18:52.510Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "purchase-invoices",
+      "name": "purchase-invoices",
+      "public": false,
+      "created_at": "2026-02-22T19:40:02.502Z",
+      "file_size_limit": null,
+      "allowed_mime_types": null
+    },
+    {
+      "id": "rejection_photos",
+      "name": "rejection_photos",
+      "public": false,
+      "created_at": "2025-12-11T06:10:32.656Z",
+      "file_size_limit": "10485760",
+      "allowed_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/jpg",
+        "image/webp"
+      ]
+    },
+    {
+      "id": "sales-order-documents",
+      "name": "sales-order-documents",
+      "public": false,
+      "created_at": "2025-11-28T14:13:32.988Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    },
+    {
+      "id": "task-attachments",
+      "name": "task-attachments",
+      "public": false,
+      "created_at": "2025-11-24T11:30:18.130Z",
+      "file_size_limit": "26214400",
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    }
+  ],
+  "objects_summary": [
+    {
+      "bucket_id": "batch-documents",
+      "object_count": "350",
+      "total_bytes": "300765071",
+      "avg_bytes": "859328.774285714286",
+      "oldest_created": "2025-11-01T05:10:17.233Z",
+      "newest_created": "2026-10-26T05:31:25.966Z"
+    },
+    {
+      "bucket_id": "expense-documents",
+      "object_count": "517",
+      "total_bytes": "270018701",
+      "avg_bytes": "522279.885880077369",
+      "oldest_created": "2026-01-11T16:48:45.147Z",
+      "newest_created": "2026-11-03T10:17:58.482Z"
+    },
+    {
+      "bucket_id": "petty-cash-receipts",
+      "object_count": "462",
+      "total_bytes": "268402205",
+      "avg_bytes": "580957.153679653680",
+      "oldest_created": "2026-01-15T04:30:14.295Z",
+      "newest_created": "2026-11-03T05:00:49.944Z"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "object_count": "272",
+      "total_bytes": "246325989",
+      "avg_bytes": "905610.253676470588",
+      "oldest_created": "2026-04-28T16:42:03.676Z",
+      "newest_created": "2026-11-03T11:00:27.418Z"
+    },
+    {
+      "bucket_id": "product-documents",
+      "object_count": "92",
+      "total_bytes": "82434017",
+      "avg_bytes": "896021.923913043478",
+      "oldest_created": "2025-12-30T09:21:08.906Z",
+      "newest_created": "2026-01-21T06:27:17.870Z"
+    },
+    {
+      "bucket_id": "documents",
+      "object_count": "176",
+      "total_bytes": "49908889",
+      "avg_bytes": "293581.700000000000",
+      "oldest_created": "2026-02-22T19:44:50.065Z",
+      "newest_created": "2026-11-02T13:51:30.350Z"
+    },
+    {
+      "bucket_id": "product-source-documents",
+      "object_count": "61",
+      "total_bytes": "44410625",
+      "avg_bytes": "728043.032786885246",
+      "oldest_created": "2026-02-13T02:14:28.407Z",
+      "newest_created": "2026-09-24T04:34:29.899Z"
+    },
+    {
+      "bucket_id": "sales-order-documents",
+      "object_count": "105",
+      "total_bytes": "28248494",
+      "avg_bytes": "269033.276190476190",
+      "oldest_created": "2025-11-28T14:30:56.463Z",
+      "newest_created": "2026-10-29T06:41:36.213Z"
+    },
+    {
+      "bucket_id": "company-assets",
+      "object_count": "4",
+      "total_bytes": "33416",
+      "avg_bytes": "8354.0000000000000000",
+      "oldest_created": "2026-07-14T03:21:20.862Z",
+      "newest_created": "2026-08-26T04:42:24.059Z"
+    },
+    {
+      "bucket_id": "bank-statements",
+      "object_count": "1",
+      "total_bytes": "0",
+      "avg_bytes": "0.00000000000000000000",
+      "oldest_created": "2026-07-03T05:50:02.720Z",
+      "newest_created": "2026-07-03T05:50:02.720Z"
+    }
+  ],
+  "top_files": [
+    {
+      "id": "3e13131d-a14f-4ac6-b16d-03eba94031f4",
+      "bucket_id": "crm-documents",
+      "name": "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a186a430d9e64fd/1793271621315_capsule.mp4",
+      "size_bytes": "16176405",
+      "mime_type": "application/pdf",
+      "created_at": "2026-10-29T11:00:22.509Z"
+    },
+    {
+      "id": "17eeb0f6-140e-424b-8e1a-d6d49a3d6114",
+      "bucket_id": "crm-documents",
+      "name": "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a1860c9992bcb7f/1793253613102_capsule.mp4",
+      "size_bytes": "16176405",
+      "mime_type": "application/pdf",
+      "created_at": "2026-10-29T06:00:14.100Z"
+    },
+    {
+      "id": "74904020-4dfa-4452-b28b-5e7cdbafced9",
+      "bucket_id": "expense-documents",
+      "name": "expenses/vehicle_maintenance/1793183151808_8ae0cfce-b827-4280-9401-a39d88bd2381_image.png",
+      "size_bytes": "16094421",
+      "mime_type": "image/png",
+      "created_at": "2026-10-28T10:25:55.288Z"
+    },
+    {
+      "id": "ad4bdc64-a147-483d-b3c3-27ca28994798",
+      "bucket_id": "expense-documents",
+      "name": "import_broker/1785565621982_TX_Cargo_PT._TRANS_EXIS_JAYA_INV_001ORSAPJII2026.pdf",
+      "size_bytes": "15695825",
+      "mime_type": "application/pdf",
+      "created_at": "2026-08-01T06:27:06.283Z"
+    },
+    {
+      "id": "eaf4d628-3349-4739-a2b6-0bf1858b236c",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/ab033d4b-7247-4c03-a69c-e9855d90a960/1782113267219-0.25679081115288604-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-22T07:28:05.175Z"
+    },
+    {
+      "id": "8b200aa8-b185-4365-a61b-34692bb53b94",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/8e6d195c-2e59-4f61-bd80-0172768058fa/1782098766486-0.011548525956134537-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-22T03:26:17.654Z"
+    },
+    {
+      "id": "942f9e7f-8399-4820-946d-5afd5e3c35f6",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/a2e1ad4c-8d6f-4b3d-8725-fbe5fc32d1c1/1781842637438-0.9148383304429083-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-19T04:21:01.070Z"
+    },
+    {
+      "id": "3ed25728-1a33-42ed-b7eb-da4752625d91",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/5882d092-a7c6-496a-959d-d5a67e236d6f/1782097524689-0.7693653059430471-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-22T03:05:35.274Z"
+    },
+    {
+      "id": "8f84bc6c-35b5-4365-80f7-d809351f2df7",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/84cda73a-4022-4ff4-9753-0dc08709f259/1782112759624-0.9544067726375255-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-22T07:24:26.627Z"
+    },
+    {
+      "id": "1ccb6ee6-71c1-4ce6-b043-0815b0f56fd4",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/8113eeaf-f0ef-4aed-b527-464709dd22b6/1782097287454-0.1170522006386091-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-22T03:01:44.251Z"
+    },
+    {
+      "id": "d5a4f417-3a14-46a0-b5e3-88c95b3bdb47",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/1b9e4eb2-7d6d-4ccd-8885-7a007a76e423/1781843187647-0.3024903593819681-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-19T04:27:01.398Z"
+    },
+    {
+      "id": "2543778b-19b7-4845-84c3-eca1261a543b",
+      "bucket_id": "crm-documents",
+      "name": "bulk-email/db163e4e-ea05-4d57-94c3-28f5d5c78e78/1782121644677-0.5498774059361751-ourcatalog.pdf",
+      "size_bytes": "13779558",
+      "mime_type": "application/pdf",
+      "created_at": "2026-06-22T09:47:46.452Z"
+    },
+    {
+      "id": "fa6700c4-e18b-430e-8438-56d1a090d358",
+      "bucket_id": "expense-documents",
+      "name": "expenses/new_warehouse_renovation/1792989355971_f3a5a904-a894-4f44-b4d2-6e22215cfe69_image.png",
+      "size_bytes": "12997065",
+      "mime_type": "image/png",
+      "created_at": "2026-10-26T04:35:58.703Z"
+    },
+    {
+      "id": "e4057fd2-9c53-478a-ab05-d32c5ffc9272",
+      "bucket_id": "crm-documents",
+      "name": "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0d74b050545754/1790422990561_all_products_specs.pdf",
+      "size_bytes": "12810195",
+      "mime_type": "application/pdf",
+      "created_at": "2026-09-26T11:43:11.536Z"
+    },
+    {
+      "id": "216dfaa9-dbf6-4dd0-b31b-7d621efac75e",
+      "bucket_id": "expense-documents",
+      "name": "expenses/import_broker/1786437009714_cc90285e-d67f-4838-8700-20b1c9e70bd0_OSline.pdf",
+      "size_bytes": "12379189",
+      "mime_type": "application/pdf",
+      "created_at": "2026-08-11T08:30:13.348Z"
+    },
+    {
+      "id": "b65fe95e-7e04-4b1a-8ac2-260fd057fd30",
+      "bucket_id": "expense-documents",
+      "name": "expenses/new_warehouse_renovation/1793510066192_12890027-5744-4a18-bb0a-faa2d6b182e8_image.png",
+      "size_bytes": "12065543",
+      "mime_type": "image/png",
+      "created_at": "2026-11-01T05:14:41.323Z"
+    },
+    {
+      "id": "a40ae08f-304a-4fef-92ad-152d7dfa8eb8",
+      "bucket_id": "expense-documents",
+      "name": "expenses/new_warehouse_renovation/1792749270390_ed60cca5-82eb-40cb-82c9-aa2edfe23161_image.png",
+      "size_bytes": "10706575",
+      "mime_type": "image/png",
+      "created_at": "2026-10-23T09:54:33.390Z"
+    },
+    {
+      "id": "02e13f37-69c5-4f0d-aab3-6c8e1ba27fd1",
+      "bucket_id": "expense-documents",
+      "name": "expenses/new_warehouse_renovation/1792846163140_e1fb113b-351b-4480-822c-7d06f0ea1dd6_image.png",
+      "size_bytes": "10616095",
+      "mime_type": "image/png",
+      "created_at": "2026-10-24T12:49:26.054Z"
+    },
+    {
+      "id": "1ab88105-e724-4d96-ae72-1038438388e7",
+      "bucket_id": "batch-documents",
+      "name": "e804fe62-7e12-4332-90ef-689138dd7240/1789964014815_FORM A1 (3).pdf",
+      "size_bytes": "10460274",
+      "mime_type": "application/pdf",
+      "created_at": "2026-09-21T04:13:36.569Z"
+    },
+    {
+      "id": "b01032a9-1052-44c0-88ed-ba7a5a4da03b",
+      "bucket_id": "expense-documents",
+      "name": "expenses/import_broker/1785752728883_f34cd627-64cd-44ef-a0bf-c63a8f57e253_TX_Cargo-0020RSAPJIV2026__1_.pdf",
+      "size_bytes": "10390992",
+      "mime_type": "application/pdf",
+      "created_at": "2026-08-03T10:25:31.373Z"
+    }
+  ],
+  "mime_types": [
+    {
+      "bucket_id": "bank-statements",
+      "mime_type": "application/octet-stream",
+      "count": "1",
+      "total_bytes": "0"
+    },
+    {
+      "bucket_id": "batch-documents",
+      "mime_type": "application/pdf",
+      "count": "344",
+      "total_bytes": "300203237"
+    },
+    {
+      "bucket_id": "batch-documents",
+      "mime_type": "image/jpeg",
+      "count": "5",
+      "total_bytes": "554234"
+    },
+    {
+      "bucket_id": "batch-documents",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "count": "1",
+      "total_bytes": "7600"
+    },
+    {
+      "bucket_id": "company-assets",
+      "mime_type": "image/png",
+      "count": "3",
+      "total_bytes": "31385"
+    },
+    {
+      "bucket_id": "company-assets",
+      "mime_type": "image/svg+xml",
+      "count": "1",
+      "total_bytes": "2031"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "application/pdf",
+      "count": "83",
+      "total_bytes": "229596611"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "image/png",
+      "count": "56",
+      "total_bytes": "6804248"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "image/jpeg",
+      "count": "117",
+      "total_bytes": "6068933"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "count": "7",
+      "total_bytes": "2471750"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "text/html",
+      "count": "1",
+      "total_bytes": "895061"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "application/vnd.ms-excel",
+      "count": "1",
+      "total_bytes": "352256"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "count": "6",
+      "total_bytes": "137012"
+    },
+    {
+      "bucket_id": "crm-documents",
+      "mime_type": "image/gif",
+      "count": "1",
+      "total_bytes": "118"
+    },
+    {
+      "bucket_id": "documents",
+      "mime_type": "application/pdf",
+      "count": "154",
+      "total_bytes": "47697338"
+    },
+    {
+      "bucket_id": "documents",
+      "mime_type": "image/jpeg",
+      "count": "22",
+      "total_bytes": "2211551"
+    },
+    {
+      "bucket_id": "expense-documents",
+      "mime_type": "application/pdf",
+      "count": "104",
+      "total_bytes": "118953747"
+    },
+    {
+      "bucket_id": "expense-documents",
+      "mime_type": "image/png",
+      "count": "49",
+      "total_bytes": "107018054"
+    },
+    {
+      "bucket_id": "expense-documents",
+      "mime_type": "image/jpeg",
+      "count": "358",
+      "total_bytes": "43979106"
+    },
+    {
+      "bucket_id": "expense-documents",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "count": "6",
+      "total_bytes": "67794"
+    },
+    {
+      "bucket_id": "petty-cash-receipts",
+      "mime_type": "image/jpeg",
+      "count": "444",
+      "total_bytes": "256332198"
+    },
+    {
+      "bucket_id": "petty-cash-receipts",
+      "mime_type": "image/png",
+      "count": "6",
+      "total_bytes": "9610659"
+    },
+    {
+      "bucket_id": "petty-cash-receipts",
+      "mime_type": "application/pdf",
+      "count": "11",
+      "total_bytes": "2289196"
+    },
+    {
+      "bucket_id": "petty-cash-receipts",
+      "mime_type": "image/webp",
+      "count": "1",
+      "total_bytes": "170152"
+    },
+    {
+      "bucket_id": "product-documents",
+      "mime_type": "application/pdf",
+      "count": "92",
+      "total_bytes": "82434017"
+    },
+    {
+      "bucket_id": "product-source-documents",
+      "mime_type": "application/pdf",
+      "count": "60",
+      "total_bytes": "44224184"
+    },
+    {
+      "bucket_id": "product-source-documents",
+      "mime_type": "image/jpeg",
+      "count": "1",
+      "total_bytes": "186441"
+    },
+    {
+      "bucket_id": "sales-order-documents",
+      "mime_type": "application/pdf",
+      "count": "98",
+      "total_bytes": "26449781"
+    },
+    {
+      "bucket_id": "sales-order-documents",
+      "mime_type": "image/jpeg",
+      "count": "7",
+      "total_bytes": "1798713"
+    }
+  ],
+  "top_tables": [
+    {
+      "table_name": "notifications",
+      "approx_row_count": "1512",
+      "total_bytes": "149045248",
+      "table_bytes": "90218496",
+      "index_bytes": "58769408",
+      "toast_bytes": "57344",
+      "total_size_pretty": "142 MB",
+      "table_size_pretty": "86 MB",
+      "index_size_pretty": "56 MB",
+      "toast_size_pretty": "56 kB"
+    },
+    {
+      "table_name": "audit_logs",
+      "approx_row_count": "18278",
+      "total_bytes": "49512448",
+      "table_bytes": "31318016",
+      "index_bytes": "3203072",
+      "toast_bytes": "14991360",
+      "total_size_pretty": "47 MB",
+      "table_size_pretty": "30 MB",
+      "index_size_pretty": "3128 kB",
+      "toast_size_pretty": "14 MB"
+    },
+    {
+      "table_name": "import_data",
+      "approx_row_count": "61438",
+      "total_bytes": "32530432",
+      "table_bytes": "20611072",
+      "index_bytes": "11878400",
+      "toast_bytes": "40960",
+      "total_size_pretty": "31 MB",
+      "table_size_pretty": "20 MB",
+      "index_size_pretty": "11 MB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "crm_email_activities",
+      "approx_row_count": "2740",
+      "total_bytes": "6602752",
+      "table_bytes": "3194880",
+      "index_bytes": "393216",
+      "toast_bytes": "3014656",
+      "total_size_pretty": "6448 kB",
+      "table_size_pretty": "3120 kB",
+      "index_size_pretty": "384 kB",
+      "toast_size_pretty": "2944 kB"
+    },
+    {
+      "table_name": "crm_email_inbox",
+      "approx_row_count": "862",
+      "total_bytes": "6266880",
+      "table_bytes": "1540096",
+      "index_bytes": "221184",
+      "toast_bytes": "4505600",
+      "total_size_pretty": "6120 kB",
+      "table_size_pretty": "1504 kB",
+      "index_size_pretty": "216 kB",
+      "toast_size_pretty": "4400 kB"
+    },
+    {
+      "table_name": "kunal_ai_email_reviews",
+      "approx_row_count": "1055",
+      "total_bytes": "4317184",
+      "table_bytes": "843776",
+      "index_bytes": "319488",
+      "toast_bytes": "3153920",
+      "total_size_pretty": "4216 kB",
+      "table_size_pretty": "824 kB",
+      "index_size_pretty": "312 kB",
+      "toast_size_pretty": "3080 kB"
+    },
+    {
+      "table_name": "enquiry_conversation_messages",
+      "approx_row_count": "1417",
+      "total_bytes": "3547136",
+      "table_bytes": "1163264",
+      "index_bytes": "278528",
+      "toast_bytes": "2105344",
+      "total_size_pretty": "3464 kB",
+      "table_size_pretty": "1136 kB",
+      "index_size_pretty": "272 kB",
+      "toast_size_pretty": "2056 kB"
+    },
+    {
+      "table_name": "journal_entries",
+      "approx_row_count": "2595",
+      "total_bytes": "3252224",
+      "table_bytes": "1048576",
+      "index_bytes": "2162688",
+      "toast_bytes": "40960",
+      "total_size_pretty": "3176 kB",
+      "table_size_pretty": "1024 kB",
+      "index_size_pretty": "2112 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "import_data_type_backup_20260604",
+      "approx_row_count": "0",
+      "total_bytes": "2662400",
+      "table_bytes": "2621440",
+      "index_bytes": "0",
+      "toast_bytes": "40960",
+      "total_size_pretty": "2600 kB",
+      "table_size_pretty": "2560 kB",
+      "index_size_pretty": "0 bytes",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "bulk_email_recipients",
+      "approx_row_count": "4311",
+      "total_bytes": "2400256",
+      "table_bytes": "1736704",
+      "index_bytes": "622592",
+      "toast_bytes": "40960",
+      "total_size_pretty": "2344 kB",
+      "table_size_pretty": "1696 kB",
+      "index_size_pretty": "608 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "journal_entry_lines",
+      "approx_row_count": "5711",
+      "total_bytes": "2334720",
+      "table_bytes": "1179648",
+      "index_bytes": "1114112",
+      "toast_bytes": "40960",
+      "total_size_pretty": "2280 kB",
+      "table_size_pretty": "1152 kB",
+      "index_size_pretty": "1088 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "crm_inquiries",
+      "approx_row_count": "357",
+      "total_bytes": "1941504",
+      "table_bytes": "385024",
+      "index_bytes": "335872",
+      "toast_bytes": "1220608",
+      "total_size_pretty": "1896 kB",
+      "table_size_pretty": "376 kB",
+      "index_size_pretty": "328 kB",
+      "toast_size_pretty": "1192 kB"
+    },
+    {
+      "table_name": "tax_periods",
+      "approx_row_count": "97",
+      "total_bytes": "1908736",
+      "table_bytes": "1556480",
+      "index_bytes": "311296",
+      "toast_bytes": "40960",
+      "total_size_pretty": "1864 kB",
+      "table_size_pretty": "1520 kB",
+      "index_size_pretty": "304 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "bank_statement_lines",
+      "approx_row_count": "936",
+      "total_bytes": "1548288",
+      "table_bytes": "565248",
+      "index_bytes": "942080",
+      "toast_bytes": "40960",
+      "total_size_pretty": "1512 kB",
+      "table_size_pretty": "552 kB",
+      "index_size_pretty": "920 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "finance_historical_repair_items",
+      "approx_row_count": "1381",
+      "total_bytes": "1384448",
+      "table_bytes": "1277952",
+      "index_bytes": "65536",
+      "toast_bytes": "40960",
+      "total_size_pretty": "1352 kB",
+      "table_size_pretty": "1248 kB",
+      "index_size_pretty": "64 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "finance_expenses",
+      "approx_row_count": "722",
+      "total_bytes": "1187840",
+      "table_bytes": "540672",
+      "index_bytes": "606208",
+      "toast_bytes": "40960",
+      "total_size_pretty": "1160 kB",
+      "table_size_pretty": "528 kB",
+      "index_size_pretty": "592 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "finance_historical_repair_exceptions",
+      "approx_row_count": "0",
+      "total_bytes": "876544",
+      "table_bytes": "753664",
+      "index_bytes": "81920",
+      "toast_bytes": "40960",
+      "total_size_pretty": "856 kB",
+      "table_size_pretty": "736 kB",
+      "index_size_pretty": "80 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "gmail_processed_messages",
+      "approx_row_count": "0",
+      "total_bytes": "614400",
+      "table_bytes": "0",
+      "index_bytes": "589824",
+      "toast_bytes": "24576",
+      "total_size_pretty": "600 kB",
+      "table_size_pretty": "0 bytes",
+      "index_size_pretty": "576 kB",
+      "toast_size_pretty": "24 kB"
+    },
+    {
+      "table_name": "petty_cash_transactions",
+      "approx_row_count": "433",
+      "total_bytes": "614400",
+      "table_bytes": "253952",
+      "index_bytes": "319488",
+      "toast_bytes": "40960",
+      "total_size_pretty": "600 kB",
+      "table_size_pretty": "248 kB",
+      "index_size_pretty": "312 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "bank_statement_allocations",
+      "approx_row_count": "940",
+      "total_bytes": "532480",
+      "table_bytes": "139264",
+      "index_bytes": "352256",
+      "toast_bytes": "40960",
+      "total_size_pretty": "520 kB",
+      "table_size_pretty": "136 kB",
+      "index_size_pretty": "344 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "crm_contacts",
+      "approx_row_count": "521",
+      "total_bytes": "516096",
+      "table_bytes": "303104",
+      "index_bytes": "172032",
+      "toast_bytes": "40960",
+      "total_size_pretty": "504 kB",
+      "table_size_pretty": "296 kB",
+      "index_size_pretty": "168 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "enquiry_conversations",
+      "approx_row_count": "781",
+      "total_bytes": "516096",
+      "table_bytes": "278528",
+      "index_bytes": "196608",
+      "toast_bytes": "40960",
+      "total_size_pretty": "504 kB",
+      "table_size_pretty": "272 kB",
+      "index_size_pretty": "192 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "sales_orders",
+      "approx_row_count": "103",
+      "total_bytes": "516096",
+      "table_bytes": "294912",
+      "index_bytes": "180224",
+      "toast_bytes": "40960",
+      "total_size_pretty": "504 kB",
+      "table_size_pretty": "288 kB",
+      "index_size_pretty": "176 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "sales_invoices",
+      "approx_row_count": "82",
+      "total_bytes": "458752",
+      "table_bytes": "237568",
+      "index_bytes": "180224",
+      "toast_bytes": "40960",
+      "total_size_pretty": "448 kB",
+      "table_size_pretty": "232 kB",
+      "index_size_pretty": "176 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "delivery_challans",
+      "approx_row_count": "85",
+      "total_bytes": "360448",
+      "table_bytes": "188416",
+      "index_bytes": "131072",
+      "toast_bytes": "40960",
+      "total_size_pretty": "352 kB",
+      "table_size_pretty": "184 kB",
+      "index_size_pretty": "128 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "sales_invoice_items",
+      "approx_row_count": "103",
+      "total_bytes": "352256",
+      "table_bytes": "155648",
+      "index_bytes": "155648",
+      "toast_bytes": "40960",
+      "total_size_pretty": "344 kB",
+      "table_size_pretty": "152 kB",
+      "index_size_pretty": "152 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "crm_product_documents",
+      "approx_row_count": "231",
+      "total_bytes": "335872",
+      "table_bytes": "172032",
+      "index_bytes": "122880",
+      "toast_bytes": "40960",
+      "total_size_pretty": "328 kB",
+      "table_size_pretty": "168 kB",
+      "index_size_pretty": "120 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "crm_contact_phones",
+      "approx_row_count": "572",
+      "total_bytes": "335872",
+      "table_bytes": "147456",
+      "index_bytes": "155648",
+      "toast_bytes": "32768",
+      "total_size_pretty": "328 kB",
+      "table_size_pretty": "144 kB",
+      "index_size_pretty": "152 kB",
+      "toast_size_pretty": "32 kB"
+    },
+    {
+      "table_name": "receipt_vouchers",
+      "approx_row_count": "73",
+      "total_bytes": "335872",
+      "table_bytes": "139264",
+      "index_bytes": "155648",
+      "toast_bytes": "40960",
+      "total_size_pretty": "328 kB",
+      "table_size_pretty": "136 kB",
+      "index_size_pretty": "152 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "payment_vouchers",
+      "approx_row_count": "31",
+      "total_bytes": "327680",
+      "table_bytes": "81920",
+      "index_bytes": "204800",
+      "toast_bytes": "40960",
+      "total_size_pretty": "320 kB",
+      "table_size_pretty": "80 kB",
+      "index_size_pretty": "200 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "petty_cash_documents",
+      "approx_row_count": "467",
+      "total_bytes": "311296",
+      "table_bytes": "180224",
+      "index_bytes": "98304",
+      "toast_bytes": "32768",
+      "total_size_pretty": "304 kB",
+      "table_size_pretty": "176 kB",
+      "index_size_pretty": "96 kB",
+      "toast_size_pretty": "32 kB"
+    },
+    {
+      "table_name": "batches",
+      "approx_row_count": "65",
+      "total_bytes": "294912",
+      "table_bytes": "106496",
+      "index_bytes": "147456",
+      "toast_bytes": "40960",
+      "total_size_pretty": "288 kB",
+      "table_size_pretty": "104 kB",
+      "index_size_pretty": "144 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "inventory_transactions",
+      "approx_row_count": "81",
+      "total_bytes": "294912",
+      "table_bytes": "114688",
+      "index_bytes": "139264",
+      "toast_bytes": "40960",
+      "total_size_pretty": "288 kB",
+      "table_size_pretty": "112 kB",
+      "index_size_pretty": "136 kB",
+      "toast_size_pretty": "40 kB"
+    },
+    {
+      "table_name": "finance_historical_repair_commands",
+      "approx_row_count": "105",
+      "total_bytes": "278528",
+      "table_bytes": "139264",
+      "index_bytes": "49152",
+      "toast_bytes": "90112",
+      "total_size_pretty": "272 kB",
+      "table_size_pretty": "136 kB",
+      "index_size_pretty": "48 kB",
+      "toast_size_pretty": "88 kB"
+    },
+    {
+      "table_name": "tasks",
+      "approx_row_count": "4",
+      "total_bytes": "270336",
+      "table_bytes": "8192",
+      "index_bytes": "253952",
+      "toast_bytes": "8192",
+      "total_size_pretty": "264 kB",
+      "table_size_pretty": "8192 bytes",
+      "index_size_pretty": "248 kB",
+      "toast_size_pretty": "8192 bytes"
+    }
+  ],
+  "potential_test_records": {
+    "contacts_count": 0,
+    "tasks_count": 0,
+    "activities_count": 1,
+    "inquiries_count": 2,
+    "conversations_count": 4
+  }
+}

@@ -27,6 +27,23 @@ interface MergedTBRow extends TrialBalanceRow {
   closingCr: number;
 }
 
+export interface DetailedPnLSummary {
+  gross_commercial_sales: number;
+  sales_discounts: number;
+  sales_returns: number;
+  net_commercial_sales: number;
+  other_income: number;
+  fx_gain: number;
+  cogs: number;
+  operating_expenses: number;
+  other_expenses: number;
+  bank_charges: number;
+  fx_loss: number;
+  total_expenses: number;
+  total_income: number;
+  net_income: number;
+}
+
 type ReportType = 'trial_balance' | 'pnl' | 'balance_sheet';
 
 interface FinancialReportsProps {
@@ -103,6 +120,7 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
   const [openingTB, setOpeningTB]         = useState<TrialBalanceRow[]>([]);
   const [periodTB, setPeriodTB]           = useState<TrialBalanceRow[]>([]);
   const [balanceSheetData, setBalanceSheetData] = useState<TrialBalanceRow[]>([]);
+  const [detailedPnL, setDetailedPnL]     = useState<DetailedPnLSummary | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
   // Fetch the system's latest USD→IDR rate on mount
@@ -148,6 +166,33 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
           p_usd_rate:   usdRate,
         });
         setBalanceSheetData((bsData || []) as TrialBalanceRow[]);
+      }
+
+      if (reportType === 'pnl') {
+        const { data: pnlData } = await supabase.rpc('get_pnl_summary_detailed', {
+          p_start_date: dateRange.startDate,
+          p_end_date:   dateRange.endDate,
+          p_usd_rate:   usdRate,
+        });
+        if (pnlData && Array.isArray(pnlData) && pnlData.length > 0) {
+          const row = pnlData[0] as any;
+          setDetailedPnL({
+            gross_commercial_sales: Number(row.gross_commercial_sales || 0),
+            sales_discounts: Number(row.sales_discounts || 0),
+            sales_returns: Number(row.sales_returns || 0),
+            net_commercial_sales: Number(row.net_commercial_sales || 0),
+            other_income: Number(row.other_income || 0),
+            fx_gain: Number(row.fx_gain || 0),
+            cogs: Number(row.cogs || 0),
+            operating_expenses: Number(row.operating_expenses || 0),
+            other_expenses: Number(row.other_expenses || 0),
+            bank_charges: Number(row.bank_charges || 0),
+            fx_loss: Number(row.fx_loss || 0),
+            total_expenses: Number(row.total_expenses || 0),
+            total_income: Number(row.total_income || 0),
+            net_income: Number(row.net_income || 0),
+          });
+        }
       }
     } catch (err) {
       console.error('Error loading financial report:', err);
@@ -626,6 +671,71 @@ export function FinancialReports({ initialReport = 'trial_balance', onDrillDown 
               </div>
             </div>
           </div>
+
+          {detailedPnL && (
+            <div className="p-4 bg-slate-50 border-b border-gray-200 print:bg-white print:border-b">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Canonical Financial Summary (RPC get_pnl_summary_detailed)</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-medium">Canonical Source of Truth</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 text-xs mb-2">
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">1. Gross Commercial Sales</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.gross_commercial_sales)}</p>
+                </div>
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">2. Sales Discounts</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.sales_discounts)}</p>
+                </div>
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">3. Sales Returns</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.sales_returns)}</p>
+                </div>
+                <div className="p-2 bg-emerald-50/50 rounded border border-emerald-200 shadow-xs">
+                  <p className="text-[9px] text-emerald-800 uppercase font-semibold">4. Net Commercial Sales</p>
+                  <p className="font-bold text-emerald-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.net_commercial_sales)}</p>
+                </div>
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">5. Other Income</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.other_income)}</p>
+                </div>
+                <div className="p-2 bg-amber-50/50 rounded border border-amber-200 shadow-xs">
+                  <p className="text-[9px] text-amber-800 uppercase font-semibold">6. Foreign Exchange Gain</p>
+                  <p className="font-bold text-amber-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.fx_gain)}</p>
+                </div>
+                <div className="p-2 bg-orange-50/50 rounded border border-orange-200 shadow-xs">
+                  <p className="text-[9px] text-orange-800 uppercase font-semibold">7. COGS</p>
+                  <p className="font-bold text-orange-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.cogs)}</p>
+                </div>
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">8. Operating Expenses</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.operating_expenses)}</p>
+                </div>
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">9. Other Expenses</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.other_expenses)}</p>
+                </div>
+                <div className="p-2 bg-white rounded border border-gray-200 shadow-xs">
+                  <p className="text-[9px] text-gray-500 uppercase font-medium">10. Bank Charges</p>
+                  <p className="font-bold text-gray-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.bank_charges)}</p>
+                </div>
+                <div className="p-2 bg-red-50/50 rounded border border-red-200 shadow-xs">
+                  <p className="text-[9px] text-red-800 uppercase font-semibold">11. Foreign Exchange Loss</p>
+                  <p className="font-bold text-red-900 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.fx_loss)}</p>
+                </div>
+                <div className="p-2 bg-red-100/50 rounded border border-red-300 shadow-xs">
+                  <p className="text-[9px] text-red-900 uppercase font-bold">12. Total Expenses</p>
+                  <p className="font-bold text-red-950 mt-0.5 tabular-nums">Rp {fmt(detailedPnL.total_expenses)}</p>
+                </div>
+              </div>
+              <div className={`px-3 py-2 rounded border flex items-center justify-between ${detailedPnL.net_income >= 0 ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-rose-50 border-rose-300 text-rose-900'}`}>
+                <span className="font-bold uppercase tracking-wider text-xs">13. Canonical Net Income / (Loss)</span>
+                <span className="text-sm font-bold tabular-nums">
+                  {detailedPnL.net_income >= 0 ? `Rp ${fmt(detailedPnL.net_income)}` : `(Rp ${fmt(Math.abs(detailedPnL.net_income))})`}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs">

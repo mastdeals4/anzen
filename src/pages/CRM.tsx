@@ -17,8 +17,12 @@ import {
   RefreshCw,
   FileText,
   Sparkles,
+  LayoutDashboard,
+  CheckSquare,
 } from 'lucide-react';
 
+import { CrmActivityDashboard } from '../components/crm/dashboard/CrmActivityDashboard';
+import { CrmFollowupsWorkspace } from '../components/crm/followups/CrmFollowupsWorkspace';
 import { CrmOmnichannelInbox } from '../components/crm/inbox/CrmOmnichannelInbox';
 import { CrmInquiriesWorkspace } from '../components/crm/inquiries/CrmInquiriesWorkspace';
 import { CrmInquiryDrawer } from '../components/crm/inquiries/CrmInquiryDrawer';
@@ -41,7 +45,7 @@ import {
 } from '../utils/customerValidation';
 import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
 
-export type CrmPrimaryTab = 'inbox' | 'inquiries' | 'bulk_email' | 'customers' | 'documents';
+export type CrmPrimaryTab = 'dashboard' | 'inbox' | 'followups' | 'inquiries' | 'campaigns' | 'customers' | 'documents';
 
 export interface Inquiry {
   id: string;
@@ -124,21 +128,25 @@ export function CRM() {
     const pathParts = location.pathname.split('/').filter(Boolean);
     if (pathParts[0] === 'crm' && pathParts[1]) {
       const sub = pathParts[1].toLowerCase();
+      if (sub === 'dashboard') return 'dashboard';
+      if (sub === 'followups' || sub === 'follow-ups' || sub === 'todo' || sub === 'meetings') return 'followups';
       if (sub === 'customers') return 'customers';
       if (sub === 'documents' || sub === 'document-bank') return 'documents';
       if (sub === 'inquiries' || sub === 'control-center') return 'inquiries';
-      if (sub === 'campaigns' || sub === 'bulk-email' || sub === 'bulk_email') return 'bulk_email';
+      if (sub === 'campaigns' || sub === 'bulk-email' || sub === 'bulk_email') return 'campaigns';
       if (sub === 'inbox') return 'inbox';
     }
     const tabParam = searchParams.get('tab')?.toLowerCase();
     if (tabParam) {
+      if (tabParam === 'dashboard') return 'dashboard';
+      if (tabParam === 'followups' || tabParam === 'follow-ups' || tabParam === 'todo' || tabParam === 'meetings') return 'followups';
       if (tabParam === 'customers') return 'customers';
       if (tabParam === 'documents' || tabParam === 'document-bank') return 'documents';
       if (tabParam === 'inquiries' || tabParam === 'control-center') return 'inquiries';
-      if (tabParam === 'campaigns' || tabParam === 'bulk-email' || tabParam === 'bulk_email') return 'bulk_email';
+      if (tabParam === 'campaigns' || tabParam === 'bulk-email' || tabParam === 'bulk_email') return 'campaigns';
       if (tabParam === 'inbox') return 'inbox';
     }
-    return 'inbox';
+    return 'dashboard';
   }, [location.pathname, searchParams]);
 
   // Primary CRM destination initialized from URL
@@ -152,8 +160,7 @@ export function CRM() {
     newParams.delete('customerId');
     newParams.delete('id');
     const paramStr = newParams.toString() ? `?${newParams.toString()}` : '';
-    const tabRoute = newTab === 'bulk_email' ? 'campaigns' : newTab;
-    navigate(`/crm/${tabRoute}${paramStr}`);
+    navigate(`/crm/${newTab}${paramStr}`);
   }, [navigate, searchParams]);
 
   // Synchronize activeTab with URL when navigating back/forward or externally
@@ -679,16 +686,18 @@ export function CRM() {
   return (
     <Layout>
       <div className="space-y-2.5">
-        {/* Top Consolidated CRM Bar: 5 Primary Destinations + Quick Actions */}
+        {/* Top Consolidated CRM Bar: 7 Primary Destinations + Quick Actions */}
         <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs px-3 py-2 flex flex-wrap items-center justify-between gap-3">
           
-          {/* PRIMARY CRM DESTINATIONS (CONSOLIDATED INTO 5) */}
-          <div className="flex items-center gap-1 bg-slate-100/80 p-0.5 rounded-lg border border-slate-200/60">
+          {/* PRIMARY CRM DESTINATIONS (CONSOLIDATED INTO EXACTLY 7) */}
+          <div className="flex items-center gap-1 bg-slate-100/80 p-0.5 rounded-lg border border-slate-200/60 overflow-x-auto">
             {(
               [
+                ['dashboard', LayoutDashboard, 'DASHBOARD'],
                 ['inbox', Inbox, 'INBOX'],
+                ['followups', CheckSquare, 'FOLLOW-UPS'],
                 ['inquiries', Table, 'INQUIRIES'],
-                ['bulk_email', Send, 'BULK EMAIL'],
+                ['campaigns', Send, 'CAMPAIGNS'],
                 ['customers', Users, 'CUSTOMERS'],
                 ['documents', FileText, 'DOCUMENT BANK'],
               ] as const
@@ -697,15 +706,15 @@ export function CRM() {
               return (
                 <button
                   key={tabKey}
-                  onClick={() => handleTabChange(tabKey)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                  onClick={() => handleTabChange(tabKey as CrmPrimaryTab)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition whitespace-nowrap ${
                     isActive
                       ? 'bg-white text-slate-900 shadow-2xs font-bold border border-slate-200/70'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                   }`}
                 >
                   <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
-                  {label === 'BULK EMAIL' ? 'CAMPAIGNS' : label}
+                  {label}
                 </button>
               );
             })}
@@ -763,7 +772,28 @@ export function CRM() {
           </div>
         )}
 
-        {/* 1. INBOX DESTINATION (DEFAULT) */}
+        {/* 1. DASHBOARD DESTINATION */}
+        {activeTab === 'dashboard' && (
+          <CrmActivityDashboard
+            onOpenInquiry={handleOpenInquiry}
+            onOpenCustomer={handleOpenCustomer}
+            onNavigateTab={(tab, params) => {
+              if (params?.view) {
+                const newParams = new URLSearchParams(searchParams);
+                newParams.set('view', params.view);
+                navigate(`/crm/${tab}?${newParams.toString()}`);
+                setActiveTab(tab as any);
+                return;
+              }
+              if (tab === 'followups') handleTabChange('followups');
+              else if (tab === 'inbox') handleTabChange('inbox');
+              else if (tab === 'inquiries') handleTabChange('inquiries');
+              else if (tab === 'customers') handleTabChange('customers');
+            }}
+          />
+        )}
+
+        {/* 2. INBOX DESTINATION */}
         {activeTab === 'inbox' && (
           <CrmOmnichannelInbox
             onOpenInquiry={handleOpenInquiry}
@@ -772,7 +802,25 @@ export function CRM() {
           />
         )}
 
-        {/* 2. INQUIRIES DESTINATION (OPERATIONAL CENTER) */}
+        {/* 3. FOLLOW-UPS DESTINATION */}
+        {activeTab === 'followups' && (
+          <CrmFollowupsWorkspace
+            initialTab={
+              location.pathname.includes('meetings') || searchParams.get('view') === 'meetings'
+                ? 'meetings'
+                : 'todo'
+            }
+            onOpenInquiry={handleOpenInquiry}
+            onOpenCustomer={handleOpenCustomer}
+            onNavigateTab={(tab) => {
+              if (tab === 'inbox') handleTabChange('inbox');
+              else if (tab === 'inquiries') handleTabChange('inquiries');
+              else if (tab === 'customers') handleTabChange('customers');
+            }}
+          />
+        )}
+
+        {/* 4. INQUIRIES DESTINATION (OPERATIONAL CENTER) */}
         {activeTab === 'inquiries' && (
           <CrmInquiriesWorkspace
             canManage={canManage}
@@ -786,23 +834,23 @@ export function CRM() {
           />
         )}
 
-        {/* 3. CAMPAIGNS & BULK EMAIL DESTINATION (OMNICHANNEL BULK EMAIL & WHATSAPP) */}
-        {activeTab === 'bulk_email' && (
+        {/* 5. CAMPAIGNS & BULK OUTREACH DESTINATION */}
+        {activeTab === 'campaigns' && (
           <CrmCampaignsWorkspace initialRecipients={stagedBulkRecipients} />
         )}
 
-        {/* 4. CUSTOMERS DESTINATION (CUSTOMER 360) */}
+        {/* 6. CUSTOMERS DESTINATION (CUSTOMER 360) */}
         {activeTab === 'customers' && (
           <CrmCustomersWorkspace
             onOpenInquiry={handleOpenInquiry}
             onNavigateBulkEmail={(recipients) => {
               setStagedBulkRecipients(recipients);
-              handleTabChange('bulk_email');
+              handleTabChange('campaigns');
             }}
           />
         )}
 
-        {/* 5. DOCUMENT BANK DESTINATION (STANDALONE PRIMARY DESTINATION) */}
+        {/* 7. DOCUMENT BANK DESTINATION (STANDALONE PRIMARY DESTINATION) */}
         {activeTab === 'documents' && (
           <ProductDocumentsPanel />
         )}

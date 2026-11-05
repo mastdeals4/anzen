@@ -99,15 +99,15 @@ export function CrmGlobalSearchModal({
           // Communications (Email / WhatsApp)
           supabase
             .from('enquiry_conversation_messages')
-            .select('id, channel, sender, subject, body_text, conversation_id')
-            .or(`subject.ilike.${pattern},body_text.ilike.${pattern},sender.ilike.${pattern}`)
+            .select('id, channel, sender_name, sender_address, subject, body_text, conversation_id')
+            .or(`subject.ilike.${pattern},body_text.ilike.${pattern},sender_name.ilike.${pattern},sender_address.ilike.${pattern}`)
             .limit(5),
 
           // Documents
           supabase
             .from('crm_product_documents')
-            .select('id, file_name, document_type, inquiry_id, storage_path')
-            .or(`file_name.ilike.${pattern},document_type.ilike.${pattern}`)
+            .select('id, display_file_name, original_file_name, document_type, inquiry_id, storage_path')
+            .or(`display_file_name.ilike.${pattern},original_file_name.ilike.${pattern},document_type.ilike.${pattern}`)
             .limit(5),
 
           // Sales Orders
@@ -147,7 +147,7 @@ export function CrmGlobalSearchModal({
             id: m.id,
             type: m.channel === 'whatsapp' ? 'whatsapp' : 'email',
             title: m.subject || (m.channel === 'whatsapp' ? 'WhatsApp Message' : 'Email Message'),
-            subtitle: `${m.sender}: ${(m.body_text || '').slice(0, 70)}...`,
+            subtitle: `${m.sender_name || m.sender_address || 'Sender'}: ${(m.body_text || '').slice(0, 70)}...`,
             badge: m.channel?.toUpperCase(),
           });
         });
@@ -157,7 +157,7 @@ export function CrmGlobalSearchModal({
           found.push({
             id: d.id,
             type: 'document',
-            title: d.file_name,
+            title: d.display_file_name || d.original_file_name || 'Document',
             subtitle: `Type: ${d.document_type || 'Document'}`,
             badge: d.document_type,
             inquiryId: d.inquiry_id,

@@ -213,16 +213,17 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
       const { data: rev } = await supabase
         .from('kunal_ai_email_reviews')
         .select('*')
-        .eq('inquiry_id', inquiryId)
-        .order('created_at', { ascending: false })
+        .eq('matched_inquiry_id', inquiryId)
+        .order('scanned_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
       setAiPricingReview(rev);
-      if (rev?.detected_data?.source_price) {
+      const rawPrice = rev?.source_price ?? rev?.raw_result?.detected_data?.source_price ?? rev?.raw_result?.sourcePrice;
+      if (rawPrice != null && !isNaN(Number(rawPrice))) {
         // Quick landed cost formula
-        const sp = Number(rev.detected_data.source_price);
-        const curr = rev.detected_data.source_currency || 'INR';
+        const sp = Number(rawPrice);
+        const curr = rev?.source_currency || rev?.raw_result?.detected_data?.source_currency || rev?.raw_result?.sourceCurrency || 'INR';
         const rate = curr === 'USD' ? 16200 : 185;
         setLandedCost(Math.round(sp * rate * 1.075));
       } else {

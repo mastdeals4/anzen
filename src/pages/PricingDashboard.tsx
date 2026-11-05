@@ -92,75 +92,83 @@ export function PricingDashboard() {
     const over7 = isoAgo(OVER_7_DAYS);
     const over15 = isoAgo(OVER_15_DAYS);
 
-    const queries = await Promise.allSettled([
-      // 0 New not sent
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('source_status', 'not_sent'),
-      // 1 Reminder due (sent/waiting_reply, stale >3d)
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .in('source_status', ['sent', 'waiting_reply', 'partial_received'])
-        .or(`last_sourcing_sent_at.lt.${reminderThreshold},last_reminder_sent_at.lt.${reminderThreshold}`),
-      // 2 Waiting reply
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .in('source_status', ['sent', 'waiting_reply']),
-      // 3 Partial received
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('source_status', 'partial_received'),
-      // 4 Docs pending
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('document_status', 'pending'),
-      // 5 Need Kunal price
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .in('source_status', ['received', 'partial_received'])
-        .eq('kunal_price_status', 'pending'),
-      // 6 Price ready but quote not sent
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('price_ready', true)
-        .in('quote_status', ['not_sent']),
-      // 7 India pending over 7d
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('source_type', 'india')
-        .in('source_status', ['sent', 'waiting_reply', 'partial_received'])
-        .lt('last_sourcing_sent_at', over7),
-      // 8 India pending over 15d
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('source_type', 'india')
-        .in('source_status', ['sent', 'waiting_reply', 'partial_received'])
-        .lt('last_sourcing_sent_at', over15),
-      // 9 Follow up due (quote sent, awaiting decision)
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .in('quote_status', ['sent', 'follow_up_due']),
-      // 10 Won
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('quote_status', 'won'),
-      // 11 Lost
-      supabase.from('crm_inquiries').select('id', { count: 'exact', head: true })
-        .eq('quote_status', 'lost'),
-      // 12 Parser review (legacy)
-      supabase.from('sourcing_parser_results').select('id', { count: 'exact', head: true })
+    // Optimized single query to avoid 12 concurrent connection-saturating COUNT queries
+    const [inqRes, parserRes] = await Promise.all([
+      supabase
+        .from('crm_inquiries')
+        .select('id, source_status, last_sourcing_sent_at, last_reminder_sent_at, document_status, kunal_price_status, price_ready, quote_status, source_type'),
+      supabase
+        .from('sourcing_parser_results')
+        .select('id', { count: 'exact', head: true })
         .eq('review_status', 'pending_review'),
     ]);
 
-    const c = (idx: number) => {
-      const q = queries[idx];
-      return q.status === 'fulfilled' && !q.value.error ? (q.value.count || 0) : 0;
-    };
+    const inqs = inqRes.data || [];
+    let newNotSent = 0;
+    let reminderDue = 0;
+    let waitingReply = 0;
+    let partialReceived = 0;
+    let docsPending = 0;
+    let needKunal = 0;
+    let priceReadyNotSent = 0;
+    let indaOver7d = 0;
+    let indaOver15d = 0;
+    let followUpDue = 0;
+    let wonCount = 0;
+    let lostCount = 0;
+
+    for (const row of inqs) {
+      const srcStatus = row.source_status || '';
+      const qStatus = row.quote_status || '';
+      const srcType = row.source_type || '';
+
+      if (srcStatus === 'not_sent') newNotSent++;
+
+      if (['sent', 'waiting_reply', 'partial_received'].includes(srcStatus)) {
+        if (
+          (row.last_sourcing_sent_at && row.last_sourcing_sent_at < reminderThreshold) ||
+          (row.last_reminder_sent_at && row.last_reminder_sent_at < reminderThreshold)
+        ) {
+          reminderDue++;
+        }
+      }
+
+      if (['sent', 'waiting_reply'].includes(srcStatus)) waitingReply++;
+      if (srcStatus === 'partial_received') partialReceived++;
+      if (row.document_status === 'pending') docsPending++;
+
+      if (['received', 'partial_received'].includes(srcStatus) && row.kunal_price_status === 'pending') {
+        needKunal++;
+      }
+
+      if (row.price_ready === true && qStatus === 'not_sent') priceReadyNotSent++;
+
+      if (srcType === 'india' && ['sent', 'waiting_reply', 'partial_received'].includes(srcStatus)) {
+        if (row.last_sourcing_sent_at && row.last_sourcing_sent_at < over7) indaOver7d++;
+        if (row.last_sourcing_sent_at && row.last_sourcing_sent_at < over15) indaOver15d++;
+      }
+
+      if (['sent', 'follow_up_due'].includes(qStatus)) followUpDue++;
+      if (qStatus === 'won') wonCount++;
+      if (qStatus === 'lost') lostCount++;
+    }
 
     setCrm({
-      newNotSent: c(0),
-      reminderDue: c(1),
-      waitingReply: c(2),
-      partialReceived: c(3),
-      docsPending: c(4),
-      needKunal: c(5),
-      priceReadyNotSent: c(6),
-      indaOver7d: c(7),
-      indaOver15d: c(8),
-      followUpDue: c(9),
-      wonCount: c(10),
-      lostCount: c(11),
+      newNotSent,
+      reminderDue,
+      waitingReply,
+      partialReceived,
+      docsPending,
+      needKunal,
+      priceReadyNotSent,
+      indaOver7d,
+      indaOver15d,
+      followUpDue,
+      wonCount,
+      lostCount,
     });
-    setLegacy({ parserReviewPending: c(12) });
+    setLegacy({ parserReviewPending: (!parserRes.error && parserRes.count) || 0 });
+    setLoading(false);
     setLoading(false);
   }, []);
 

@@ -577,7 +577,7 @@ export function PricingWorksheet() {
       await supabase
         .from('kunal_ai_email_reviews')
         .update({
-          action_status: 'reviewed',
+          action_status: 'price_saved',
           updated_at: new Date().toISOString(),
         })
         .eq('id', targetRow.aiReviewId);
@@ -702,7 +702,7 @@ export function PricingWorksheet() {
           offered_make: patch.offeredMake,
           source_price: patch.sourcePrice,
           source_currency: patch.sourceCurrency,
-          action_status: isQuoteReady ? 'price_saved' : 'reviewed',
+          action_status: isQuoteReady ? 'price_saved' : 'pending_review',
           updated_at: now,
         })
         .eq('id', targetRow.aiReviewId);

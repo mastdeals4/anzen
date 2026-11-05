@@ -50,17 +50,77 @@ export class EnquiryWhatsAppService {
         },
       });
 
-      if (error) {
-        return {
-          success: false,
-          error: error.message || 'Failed to dispatch WhatsApp reply',
-        };
-      }
+      if (error || !data?.success) {
+        console.warn('[EnquiryWhatsAppService] Edge function outbound unavailable, attempting adapter proxy fallback:', error?.message || data?.error);
 
-      if (!data?.success) {
+        // Fallback: Dispatch via local adapter proxy and record outbound message
+        const { data: conv } = await supabase
+          .from('enquiry_conversations')
+          .select('id, participant_identifiers, external_thread_id')
+          .eq('id', params.conversationId)
+          .maybeSingle();
+
+        let recipientPhone = '';
+        if (conv?.participant_identifiers?.length) {
+          recipientPhone = conv.participant_identifiers[0];
+        } else if (conv?.external_thread_id) {
+          recipientPhone = conv.external_thread_id.split(':')[0].replace('@c.us', '').replace('@lid', '');
+        }
+
+        if (recipientPhone) {
+          const sendRes = await fetch(`${this.getBaseUrl()}/api/messages/send`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+              to: recipientPhone,
+              text: params.text,
+            }),
+          });
+
+          const sendData = await sendRes.json().catch(() => ({}));
+          if (sendRes.ok && sendData.success) {
+            const externalMsgId = sendData.messageId || `wa_out_${Date.now()}`;
+            const { data: userAuth } = await supabase.auth.getUser();
+
+            const { data: insertedMsg, error: insErr } = await supabase
+              .from('enquiry_conversation_messages')
+              .insert({
+                conversation_id: params.conversationId,
+                channel: 'whatsapp',
+                direction: 'outbound',
+                external_message_id: externalMsgId,
+                sender_address: '+6285888600999',
+                sender_name: 'SAPJ Sales',
+                recipient_addresses: [recipientPhone],
+                subject: 'WhatsApp Outbound Reply',
+                body_text: params.text,
+                received_or_sent_at: new Date().toISOString(),
+                actor_type: 'user',
+                actor_id: userAuth?.user?.id || null,
+              })
+              .select('id')
+              .maybeSingle();
+
+            if (insErr) {
+              console.error('[EnquiryWhatsAppService] Error recording outbound message:', insErr);
+            }
+
+            return {
+              success: true,
+              messageId: insertedMsg?.id || externalMsgId,
+              externalMessageId: externalMsgId,
+            };
+          } else {
+            return {
+              success: false,
+              error: sendData.error || `HTTP ${sendRes.status}: Failed to send WhatsApp reply`,
+            };
+          }
+        }
+
         return {
           success: false,
-          error: data?.error || 'WhatsApp provider rejected send request',
+          error: error?.message || data?.error || 'Failed to dispatch WhatsApp reply',
         };
       }
 

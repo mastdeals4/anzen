@@ -446,16 +446,17 @@ Deno.serve(async (req: Request) => {
     if (allMsgIds.length > 0) {
       const { data: storedDocs } = await supabase
         .from("crm_product_documents")
-        .select("id, file_name, storage_path, storage_bucket, document_type, gmail_message_id")
-        .in("gmail_message_id", allMsgIds);
+        .select("id, original_file_name, display_file_name, storage_path, storage_bucket, document_type, source_gmail_message_id")
+        .in("source_gmail_message_id", allMsgIds);
 
       for (const msg of thread_messages) {
         for (const att of msg.attachments) {
           const fname = (att.filename || "").toLowerCase();
           const matched = storedDocs?.find(
             (d: any) =>
-              (d.gmail_message_id === msg.messageId && d.file_name.toLowerCase() === fname) ||
-              d.file_name.toLowerCase() === fname
+              (d.source_gmail_message_id === msg.messageId &&
+                ((d.display_file_name || d.original_file_name || "").toLowerCase() === fname)) ||
+              (d.display_file_name || d.original_file_name || "").toLowerCase() === fname
           );
           if (matched?.storage_path) {
             (att as any).storagePath = matched.storage_path;

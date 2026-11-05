@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useRef, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, ChevronLeft, Clock, Info, X, Sparkles, Link2, Search, RotateCcw } from 'lucide-react';
+import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Layers, ExternalLink, Pencil as Edit, ChevronDown, ChevronRight, ChevronLeft, Clock, Info, X, Sparkles, Link2, Search, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
@@ -444,6 +444,29 @@ export function BankReconciliationEnhanced({
   }
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
   const [autoMatching, setAutoMatching] = useState(false);
+  const [showIntegrityAuditModal, setShowIntegrityAuditModal] = useState(false);
+  const [statementUploads, setStatementUploads] = useState<any[]>([]);
+  const [loadingUploadsAudit, setLoadingUploadsAudit] = useState(false);
+  const [showUnmatchedDrawer, setShowUnmatchedDrawer] = useState(false);
+
+  const loadUploadsAudit = async () => {
+    if (!selectedBank) return;
+    setLoadingUploadsAudit(true);
+    try {
+      const { data, error } = await supabase
+        .from('bank_statement_uploads')
+        .select('*')
+        .eq('bank_account_id', selectedBank)
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setStatementUploads(data);
+      }
+    } catch (err) {
+      console.error('Failed to load statement uploads audit:', err);
+    } finally {
+      setLoadingUploadsAudit(false);
+    }
+  };
 
   // Guard against duplicate / self-triggered reloads
   const selfActionTimestampRef = useRef(0);
@@ -4079,6 +4102,30 @@ export function BankReconciliationEnhanced({
               <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
               {autoMatching ? 'Matching…' : 'Auto-Match'}
             </button>
+
+            {/* Import Integrity Audit Button */}
+            <button
+              type="button"
+              onClick={() => { void loadUploadsAudit(); setShowIntegrityAuditModal(true); }}
+              disabled={!selectedBank}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs bg-slate-700 text-white rounded-md hover:bg-slate-800 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap ml-1"
+              title="View statement upload integrity audit, opening/closing equation, and transaction extraction status"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Import Audit
+            </button>
+
+            {/* Unmatched Review Drawer Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowUnmatchedDrawer(true)}
+              disabled={!selectedBank}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap ml-1"
+              title="Review and resolve unmatched/conflict transactions"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Unmatched Drawer ({stats.unmatched + stats.suggested})
+            </button>
           </div>
 
           {searchTerm && (
@@ -7205,6 +7252,259 @@ export function BankReconciliationEnhanced({
             notifyFinanceReconciliationRefresh();
           }}
         />
+      )}
+
+      {/* Statement Import Integrity Audit Modal */}
+      {showIntegrityAuditModal && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowIntegrityAuditModal(false)}
+          title="Bank Statement Import Integrity Audit"
+        >
+          <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1 text-xs">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+              <div>
+                <span className="font-bold text-slate-900 block">{selectedAccount?.bank_name} - {selectedAccount?.account_name}</span>
+                <span className="text-slate-500 font-mono text-[11px]">{selectedAccount?.account_number} ({selectedAccount?.currency})</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => { void loadUploadsAudit(); }}
+                className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-slate-50 flex items-center gap-1 text-slate-700 font-medium"
+              >
+                <RefreshCw className={`w-3 h-3 ${loadingUploadsAudit ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+
+            {loadingUploadsAudit ? (
+              <div className="text-center py-8">
+                <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-600 mb-2" />
+                <p className="text-slate-500">Loading statement uploads audit history...</p>
+              </div>
+            ) : statementUploads.length === 0 ? (
+              <div className="text-center py-8 text-slate-500">
+                No statement upload records found for this bank account.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {statementUploads.map((up) => {
+                  const open = Number(up.opening_balance || 0);
+                  const cr = Number(up.total_credits || 0);
+                  const dr = Number(up.total_debits || 0);
+                  const close = Number(up.closing_balance || 0);
+                  const computedClose = Math.round((open + cr - dr) * 100) / 100;
+                  const diff = Math.abs(computedClose - close);
+                  const isBalanced = diff <= 0.05;
+
+                  return (
+                    <div key={up.id} className="border border-slate-200 rounded-xl p-3 bg-white space-y-2.5 shadow-xs">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900">{up.statement_period || 'Period N/A'}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            up.status === 'completed' ? 'bg-emerald-100 text-emerald-800' :
+                            up.status === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {up.status}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-mono">
+                          {new Date(up.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[11px]">
+                        <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                          <span className="text-[10px] text-slate-500 font-sans block">Opening Balance</span>
+                          <span className="font-semibold">{formatCurrency(open, up.currency)}</span>
+                        </div>
+                        <div className="bg-emerald-50/50 p-2 rounded border border-emerald-100 text-emerald-800">
+                          <span className="text-[10px] font-sans block">Total Credits (+)</span>
+                          <span className="font-semibold">+{formatCurrency(cr, up.currency)}</span>
+                        </div>
+                        <div className="bg-rose-50/50 p-2 rounded border border-rose-100 text-rose-800">
+                          <span className="text-[10px] font-sans block">Total Debits (-)</span>
+                          <span className="font-semibold">-{formatCurrency(dr, up.currency)}</span>
+                        </div>
+                        <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                          <span className="text-[10px] text-slate-500 font-sans block">Closing Balance</span>
+                          <span className="font-semibold">{formatCurrency(close, up.currency)}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 text-[11px]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600">Transactions: <strong>{up.transaction_count ?? '—'}</strong></span>
+                          {up.file_url && (
+                            <a href={up.file_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-0.5">
+                              View File <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {isBalanced ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Equation Verified: $Opening + Cr - Dr = Close$
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-rose-700 font-semibold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                              <AlertCircle className="w-3 h-3 text-rose-600" /> Equation Discrepancy: {diff.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {up.error_message && (
+                        <div className="p-2 bg-red-50 border border-red-200 rounded text-red-800 text-[11px]">
+                          <strong>Failure Details:</strong> {up.error_message}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowIntegrityAuditModal(false)}
+                className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium"
+              >
+                Close Audit View
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Unmatched / Review Drawer */}
+      {showUnmatchedDrawer && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs flex justify-end">
+          <div className="w-full max-w-xl bg-white shadow-2xl h-full flex flex-col border-l border-slate-200">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Unmatched Transactions Drawer</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Actionable view for unlinked and suggested transactions ({stats.unmatched + stats.suggested} items)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUnmatchedDrawer(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
+              {statementLines.filter(l => l.status === 'unmatched' || l.status === 'suggested').length === 0 ? (
+                <div className="text-center py-16 text-slate-500">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2 opacity-80" />
+                  <p className="font-semibold text-slate-700">All transactions reconciled!</p>
+                  <p className="text-[11px] text-slate-400 mt-1">There are no pending unmatched or conflict transactions in the current range.</p>
+                </div>
+              ) : (
+                statementLines
+                  .filter(l => l.status === 'unmatched' || l.status === 'suggested')
+                  .map((line) => {
+                    const isDebit = line.debit > 0;
+                    const amt = isDebit ? line.debit : line.credit;
+                    return (
+                      <div key={line.id} className="border border-slate-200 rounded-xl p-3 bg-white space-y-2 hover:border-slate-300 shadow-2xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-mono text-slate-500 text-[11px] block">{formatDate(line.date)}</span>
+                            <span className="font-semibold text-slate-900 text-xs">{line.description}</span>
+                          </div>
+                          <span className={`font-bold tabular-nums text-xs whitespace-nowrap px-2 py-0.5 rounded ${isDebit ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                            {isDebit ? '-' : '+'}{formatCurrency(amt, line.currency)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            line.status === 'suggested' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {line.status}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            {isDebit ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowUnmatchedDrawer(false);
+                                  setEmbeddedExpensePrefill({
+                                    bankAccountId: selectedBank,
+                                    statementLineId: line.id,
+                                    amount: line.debit,
+                                    date: line.date,
+                                    description: line.description,
+                                    currency: (line.currency || 'IDR') as 'IDR' | 'USD',
+                                    reference: line.reference || '',
+                                  });
+                                }}
+                                className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded font-semibold text-[11px]"
+                              >
+                                Record Expense
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowUnmatchedDrawer(false);
+                                  setEmbeddedReceiptPrefill({
+                                    bankAccountId: selectedBank,
+                                    statementLineId: line.id,
+                                    amount: line.credit,
+                                    date: line.date,
+                                    description: line.description,
+                                    currency: (line.currency || 'IDR') as 'IDR' | 'USD',
+                                    reference: line.reference || '',
+                                  });
+                                }}
+                                className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded font-semibold text-[11px]"
+                              >
+                                Record Receipt
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {(line as any).notes && (
+                          <div className="text-[10px] text-slate-500 italic bg-slate-50 px-2 py-1 rounded">
+                            {(line as any).notes}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => { void autoMatchTransactions(); }}
+                disabled={autoMatching}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-semibold text-xs flex items-center gap-1.5"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
+                Run Auto-Match Again
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowUnmatchedDrawer(false)}
+                className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                Close Drawer
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

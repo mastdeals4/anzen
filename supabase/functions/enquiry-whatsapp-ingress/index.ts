@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { timingSafeEqual } from "node:crypto";
 import { mirrorInboundWhatsApp, InboundAttachmentDescriptor } from "../_shared/enquiryIngestion.ts";
 
 const corsHeaders = {
@@ -38,7 +39,7 @@ async function timingSafeEqualString(a: string, b: string): Promise<boolean> {
     crypto.subtle.digest("SHA-256", enc.encode(a)),
     crypto.subtle.digest("SHA-256", enc.encode(b)),
   ]);
-  return crypto.subtle.timingSafeEqual(new Uint8Array(hashA), new Uint8Array(hashB));
+  return timingSafeEqual(new Uint8Array(hashA), new Uint8Array(hashB));
 }
 
 Deno.serve(async (req: Request) => {
