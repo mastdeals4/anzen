@@ -736,7 +736,18 @@ BEGIN
     IF v_pv.payment_purpose = 'salary_advance' THEN
       SELECT id INTO v_debit_coa FROM public.chart_of_accounts WHERE code = '1160' AND is_active = true AND is_header = false LIMIT 1;
     ELSE
-      SELECT id INTO v_debit_coa FROM public.chart_of_accounts WHERE code = '5101' AND is_active = true AND is_header = false LIMIT 1;
+      IF v_pv.coa_account_id IS NOT NULL THEN
+        SELECT id INTO v_debit_coa FROM public.chart_of_accounts WHERE id = v_pv.coa_account_id AND is_active = true AND is_header = false;
+      END IF;
+      IF v_debit_coa IS NULL AND v_pv.staff_id IS NOT NULL THEN
+        SELECT default_gl_account_id INTO v_debit_coa FROM public.finance_staff_master WHERE id = v_pv.staff_id;
+      END IF;
+      IF v_debit_coa IS NULL THEN
+        SELECT id INTO v_debit_coa FROM public.chart_of_accounts WHERE code = '6100' AND is_active = true AND is_header = false LIMIT 1;
+      END IF;
+      IF v_debit_coa IS NULL THEN
+        SELECT id INTO v_debit_coa FROM public.chart_of_accounts WHERE code = '5101' AND is_active = true AND is_header = false LIMIT 1;
+      END IF;
     END IF;
     v_ap_relief_idr := (v_gross + v_settle_diff) * v_rate;
     v_bank_credit_idr := (v_actual + v_settle_diff) * v_rate;
@@ -820,20 +831,24 @@ BEGIN
   INSERT INTO public.journal_entry_lines(
     journal_entry_id, line_number, account_id, description, debit, credit,
     transaction_currency, transaction_debit, transaction_credit, exchange_rate,
-    supplier_id, customer_id, payee_id
+    supplier_id, customer_id, staff_id, payee_id
   ) VALUES (
     v_je, v_line, v_debit_coa,
     CASE 
       WHEN v_party_type = 'supplier' AND (v_pv.payment_purpose = 'supplier_advance' OR v_pv.settlement_against = 'advance') THEN 'Supplier Advance - '
       WHEN v_party_type = 'supplier' THEN 'Supplier Payment - '
       WHEN v_party_type = 'customer' THEN 'Customer Refund - '
+      WHEN v_party_type = 'employee' AND v_pv.payment_purpose = 'salary_advance' THEN 'Staff Salary Advance - '
       WHEN v_party_type = 'employee' THEN 'Staff Payment - '
       WHEN v_party_type = 'director' THEN 'Director Loan Repayment - '
       ELSE 'Payment - '
     END || v_pv.voucher_number,
     v_ap_relief_idr, 0,
     v_invoice_currency, (v_gross + v_settle_diff), 0, v_rate,
-    v_pv.supplier_id, v_pv.customer_id, v_pv.staff_id
+    CASE WHEN v_party_type = 'supplier' THEN v_pv.supplier_id ELSE NULL END,
+    CASE WHEN v_party_type = 'customer' THEN v_pv.customer_id ELSE NULL END,
+    CASE WHEN v_party_type = 'employee' THEN v_pv.staff_id ELSE NULL END,
+    NULL
   );
   v_line := v_line + 1;
 
@@ -842,11 +857,11 @@ BEGIN
     INSERT INTO public.journal_entry_lines(
       journal_entry_id, line_number, account_id, description, debit, credit,
       transaction_currency, transaction_debit, transaction_credit, exchange_rate,
-      supplier_id, customer_id, payee_id
+      supplier_id, customer_id, staff_id, payee_id
     ) VALUES (
       v_je, v_line, v_fx_loss_coa, 'Realized Foreign Exchange Loss - ' || v_pv.voucher_number,
       v_fx_loss_amt, 0, 'IDR', v_fx_loss_amt, 0, 1,
-      v_pv.supplier_id, v_pv.customer_id, v_pv.staff_id
+      NULL, NULL, NULL, NULL
     );
     v_line := v_line + 1;
   END IF;
@@ -856,12 +871,12 @@ BEGIN
     INSERT INTO public.journal_entry_lines(
       journal_entry_id, line_number, account_id, description, debit, credit,
       transaction_currency, transaction_debit, transaction_credit, exchange_rate,
-      supplier_id, customer_id, payee_id
+      supplier_id, customer_id, staff_id, payee_id
     ) VALUES (
       v_je, v_line, v_charge_coa, 'Bank Charge - ' || v_pv.voucher_number,
       v_charge_amt * (CASE WHEN v_bank_currency = 'USD' THEN v_usd_bank_carrying_rate ELSE 1 END), 0,
       v_bank_currency, v_charge_amt, 0, 1,
-      v_pv.supplier_id, v_pv.customer_id, v_pv.staff_id
+      NULL, NULL, NULL, NULL
     );
     v_line := v_line + 1;
   END IF;
@@ -871,11 +886,11 @@ BEGIN
     INSERT INTO public.journal_entry_lines(
       journal_entry_id, line_number, account_id, description, debit, credit,
       transaction_currency, transaction_debit, transaction_credit, exchange_rate,
-      supplier_id, customer_id, payee_id
+      supplier_id, customer_id, staff_id, payee_id
     ) VALUES (
       v_je, v_line, v_fx_gain_coa, 'Realized Foreign Exchange Gain - ' || v_pv.voucher_number,
       0, v_fx_gain_amt, 'IDR', 0, v_fx_gain_amt, 1,
-      v_pv.supplier_id, v_pv.customer_id, v_pv.staff_id
+      NULL, NULL, NULL, NULL
     );
     v_line := v_line + 1;
   END IF;
@@ -885,11 +900,11 @@ BEGIN
     INSERT INTO public.journal_entry_lines(
       journal_entry_id, line_number, account_id, description, debit, credit,
       transaction_currency, transaction_debit, transaction_credit, exchange_rate,
-      supplier_id, customer_id, payee_id
+      supplier_id, customer_id, staff_id, payee_id
     ) VALUES (
       v_je, v_line, v_diff_coa, 'Settlement Discount / Difference - ' || v_pv.voucher_number,
       0, v_settle_diff * v_rate, v_bank_currency, 0, v_settle_diff, 1,
-      v_pv.supplier_id, v_pv.customer_id, v_pv.staff_id
+      NULL, NULL, NULL, NULL
     );
     v_line := v_line + 1;
   END IF;
@@ -898,12 +913,12 @@ BEGIN
   INSERT INTO public.journal_entry_lines(
     journal_entry_id, line_number, account_id, description, debit, credit,
     transaction_currency, transaction_debit, transaction_credit, exchange_rate,
-    supplier_id, customer_id, payee_id
+    supplier_id, customer_id, staff_id, payee_id
   ) VALUES (
     v_je, v_line, v_bank_coa, 'Bank Payment - ' || v_pv.voucher_number,
     0, v_bank_credit_idr,
     v_bank_currency, 0, v_actual, 1,
-    v_pv.supplier_id, v_pv.customer_id, v_pv.staff_id
+    NULL, NULL, NULL, NULL
   );
 
   UPDATE public.payment_vouchers SET is_posted = true, journal_entry_id = v_je WHERE id = p_pv_id;

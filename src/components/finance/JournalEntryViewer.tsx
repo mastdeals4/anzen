@@ -31,6 +31,7 @@ interface JournalEntryLine {
   customers?: { company_name: string } | null;
   suppliers?: { company_name: string } | null;
   payees?: { full_name: string } | null;
+  staff?: { full_name: string } | null;
 }
 
 interface JournalEntryViewerProps {
@@ -89,7 +90,7 @@ export function JournalEntryViewer({ canManage }: JournalEntryViewerProps) {
     try {
       const { data, error } = await supabase
         .from('journal_entry_lines')
-        .select('*, chart_of_accounts(code, name), customers(company_name), suppliers(company_name), payees:payee_id(full_name)')
+        .select('*, chart_of_accounts(code, name), customers(company_name), suppliers(company_name), payees:payee_id(full_name), staff:staff_id(full_name)')
         .eq('journal_entry_id', entryId)
         .order('line_number');
 
@@ -261,6 +262,7 @@ export function JournalEntryViewer({ canManage }: JournalEntryViewerProps) {
                         {line.customers && <div className="text-xs text-blue-600">{line.customers.company_name}</div>}
                         {line.suppliers && <div className="text-xs text-purple-600">{line.suppliers.company_name}</div>}
                         {line.payees && <div className="text-xs text-amber-700 font-medium">Payee: {line.payees.full_name}</div>}
+                        {line.staff && <div className="text-xs text-emerald-700 font-medium">Employee: {line.staff.full_name}</div>}
                       </td>
                       <td className="px-1.5 py-1 text-gray-600">{line.description || '-'}</td>
                       <td className="px-1.5 py-1 text-right text-blue-600">
