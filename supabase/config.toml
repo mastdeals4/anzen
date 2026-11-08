@@ -374,6 +374,51 @@ allow_dynamic_registration = false
 [functions.process-bulk-email-campaign]
 verify_jwt = false
 
+[functions.enquiry-brain-analyze]
+verify_jwt = true
+
+[functions.enquiry-brain-document]
+verify_jwt = true
+
+[functions.enquiry-brain-draft]
+verify_jwt = true
+
+[functions.enquiry-whatsapp-ingress]
+verify_jwt = true
+
+[functions.enquiry-whatsapp-outbound]
+verify_jwt = true
+
+[functions.extract-gmail-contacts]
+verify_jwt = false
+
+[functions.fix-stock-reservations]
+verify_jwt = true
+
+[functions.gmail-attachment-save]
+verify_jwt = true
+
+[functions.gmail-attachment-view]
+verify_jwt = false
+
+[functions.gmail-inbox-list]
+verify_jwt = true
+
+[functions.gmail-inbox-message]
+verify_jwt = false
+
+[functions.parse-pharma-email]
+verify_jwt = true
+
+[functions.send-app-notifications]
+verify_jwt = true
+
+[functions.send-bulk-email]
+verify_jwt = true
+
+[functions.sync-gmail-emails]
+verify_jwt = true
+
 [functions.sapj-gmail-agent]
 verify_jwt = false
 

@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { Buffer } from "node:buffer";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getGmailConnectionSecret, listGmailConnectionSecrets, type GmailConnectionSecret } from "../_shared/gmailSecrets.ts";
-import { evaluateEmailAttachment } from "../_shared/emailAttachmentFilter.ts";
+import { evaluateEmailAttachment, type EmailAttachmentMeta } from "../_shared/emailAttachmentFilter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -261,16 +261,20 @@ function getHeader(headers: Array<{ name: string; value: string }> = [], name: s
 function extractPayload(payload: any) {
   let text = "";
   let html = "";
-  const attachments: Array<{ filename: string; mimeType: string; size: number; attachmentId: string }> = [];
+  const attachments: EmailAttachmentMeta[] = [];
 
   const visit = (part: any) => {
     if (!part) return;
     if (part.filename && part.body?.attachmentId) {
+      const contentId = getHeader(part.headers, "content-id").replace(/^<|>$/g, "") || null;
+      const disposition = getHeader(part.headers, "content-disposition").split(";")[0].trim().toLowerCase() || null;
       attachments.push({
         filename: String(part.filename),
         mimeType: String(part.mimeType || "application/octet-stream"),
         size: Number(part.body?.size || 0),
         attachmentId: String(part.body.attachmentId),
+        contentId,
+        disposition,
       });
     }
     if (part.body?.data) {
@@ -624,7 +628,7 @@ async function runAiExtraction(
     from: string;
     date: string;
     body: string;
-    attachments: Array<{ filename: string; mimeType: string; size: number; attachmentId: string }>;
+    attachments: EmailAttachmentMeta[];
   },
   openaiApiKey: string
 ): Promise<{
@@ -807,16 +811,18 @@ Analyze and return JSON.`;
   // Detected documents: match attachments with strict pharma filter, LLM guesses and filename rules
   const detectedDocuments: DetectedDocument[] = [];
   for (const att of email.attachments) {
-    const evalRes = evaluateEmailAttachment({
-      filename: att.filename,
-      mimeType: att.mimeType,
-      size: att.size,
-      emailSubject: email.subject,
-      emailSender: email.from,
-      emailBody: email.snippet,
-      hasMatchedInquiry: !!parsed.extracted_inquiry_num || !!parsed.extracted_product,
-      matchedProductName: parsed.extracted_product || null,
-    });
+      const evalRes = evaluateEmailAttachment({
+        filename: att.filename,
+        mimeType: att.mimeType,
+        size: att.size,
+        contentId: att.contentId,
+        disposition: att.disposition,
+        emailSubject: email.subject,
+        emailSender: email.from,
+        emailBody: email.body,
+        hasMatchedInquiry: !!parsed.extracted_inquiry_num || !!parsed.extracted_product,
+        matchedProductName: parsed.extracted_product || null,
+      });
 
     if (evalRes.disposition === 'EXCLUDE') {
       // Excluded: bounce, signature, tracking pixel, telecom bill, video, etc.
@@ -1636,6 +1642,22 @@ Deno.serve(async (req: Request) => {
             continue;
           }
 
+          // 6b. Metadata-only attachment filter: rejected files are never sent to AI or downloaded
+          const relevantAttachments = attachments.filter(a =>
+            evaluateEmailAttachment({
+              filename: a.filename,
+              mimeType: a.mimeType,
+              size: a.size,
+              contentId: a.contentId,
+              disposition: a.disposition,
+              emailSubject: subject,
+              emailSender: fromEmail,
+              emailBody: bodyText,
+              hasMatchedInquiry: false,
+              matchedProductName: null,
+            }).disposition !== "EXCLUDE"
+          );
+
           // 7. AI Extraction & Classification via OpenAI
           let aiExtracted;
           if (openaiApiKey) {
@@ -1647,7 +1669,7 @@ Deno.serve(async (req: Request) => {
                 from,
                 date: dateStr,
                 body: bodyText,
-                attachments,
+                attachments: relevantAttachments,
               }, openaiApiKey);
             } catch (aiErr: any) {
               const aiMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
@@ -1658,7 +1680,7 @@ Deno.serve(async (req: Request) => {
 
           // Fallback if OpenAI not configured or failed
           if (!aiExtracted) {
-            const hasDoc = attachments.length > 0;
+            const hasDoc = relevantAttachments.length > 0;
             aiExtracted = {
               direction: "SOURCE -> SAPJ" as AgentDirection,
               category: (hasDoc ? "DOCUMENT RECEIVED" : "NEEDS REVIEW") as AgentCategory,
@@ -1672,7 +1694,7 @@ Deno.serve(async (req: Request) => {
               extractedAceErp: extractAceErpReference(`${subject} ${bodyText}`),
               extractedInquiryNum: extractInquiryNumber(`${subject} ${bodyText}`),
               pricingRows: [],
-              detectedDocuments: attachments.flatMap(a => {
+              detectedDocuments: relevantAttachments.flatMap(a => {
                 const evalRes = evaluateEmailAttachment({
                   filename: a.filename,
                   mimeType: a.mimeType,
@@ -1755,16 +1777,16 @@ Deno.serve(async (req: Request) => {
           }
 
           // 9. Document Real Storage Upload: Fetch attachment bytes from Gmail & store in Supabase crm-documents bucket
-          if (aiExtracted.detectedDocuments.length > 0 && attachments.length > 0) {
+          if (aiExtracted.detectedDocuments.length > 0 && relevantAttachments.length > 0) {
             for (const doc of aiExtracted.detectedDocuments) {
               // Exclude attachments queued for review before import or flagged as unavailable
               if (doc.matchStatus === "FILE UNAVAILABLE / NEEDS REVIEW") {
                 continue;
               }
 
-              const matchingAtt = attachments.find(a =>
+              const matchingAtt = relevantAttachments.find(a =>
                 (doc as any).attachmentId ? a.attachmentId === (doc as any).attachmentId : a.filename.toLowerCase() === doc.filename.toLowerCase()
-              ) || attachments[0];
+              );
 
               if (matchingAtt && matchingAtt.attachmentId) {
                 try {
@@ -1823,6 +1845,7 @@ Deno.serve(async (req: Request) => {
                           if (matchingPRow.offered_make) docMake = matchingPRow.offered_make;
                         }
 
+                        let docDbSuccess = false;
                         if (existingDocRow) {
                           const { error: pDocErr } = await adminClient
                             .from("crm_product_documents")

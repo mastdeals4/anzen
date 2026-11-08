@@ -1,0 +1,121 @@
+{
+  "projectId": "66287588",
+  "functions": {
+    "admin-delete-user": {
+      "hasChanged": false,
+      "hash": "0c2bbcfb67f7a65d341a04c64c59bc9fa3bd3ffb786da13ee25ba707839e613c"
+    },
+    "admin-update-password": {
+      "hasChanged": false,
+      "hash": "da96678ec710daad3f40510b38712393ee81ad9c4e6d4155638200ac8bb7dd44"
+    },
+    "admin-update-user": {
+      "hasChanged": false,
+      "hash": "f05075feab59dba75215c1832b5a0797fef7d3a51d0f436d6e343f87d54655d0"
+    },
+    "ai-email-assistant": {
+      "hasChanged": false,
+      "hash": "b1e3750d5dbf1a2c2e6c6636686b6669edb5b8349569329715ac0e3e8662575d"
+    },
+    "backup-export": {
+      "hasChanged": false,
+      "hash": "4637bba19e67698e245230ef3c41143fd727fdb2df298c87a89cc075fb4161cf"
+    },
+    "backup-import": {
+      "hasChanged": false,
+      "hash": "391da9b1b710785b53b6fe6538f345eeafc0071cbc3c05912f993c2b7f7e26b8"
+    },
+    "classify-sourcing-email": {
+      "hasChanged": false,
+      "hash": "f89f60c4aaa8ad7ca70bc477f88d408e2d5f0bbca4843eab24382c795601f7c8"
+    },
+    "daily-sourcing-reminder": {
+      "hasChanged": false,
+      "hash": "cf73127a2a2bd6c5ccfaa3adde5c0db1f626857e607155aa0c5cef4ed484fe03"
+    },
+    "enquiry-brain-analyze": {
+      "hasChanged": false,
+      "hash": "426208c5cafcd74e4490389d9675d6fc3db7d26094a9be578ea4804afa1a4492d743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "enquiry-brain-document": {
+      "hasChanged": false,
+      "hash": "87ebf3d42dcde74c668435d87a27ee791c93f2f92dff8e5a86d888428685236dd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "enquiry-brain-draft": {
+      "hasChanged": false,
+      "hash": "214aec03a5d751509ec90bf3c34a5196fd9979c282311199151a5620e6e2f3e4d743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "enquiry-whatsapp-ingress": {
+      "hasChanged": false,
+      "hash": "d06bc5dd0e6bc0f47bd7b9d6bc03acc07fb8cc3aa0c44eb9019578a857dbf53cd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "enquiry-whatsapp-outbound": {
+      "hasChanged": false,
+      "hash": "c97ee7aa19483e29f1120ad7e41b275f605505acd9eb074d9ca6f5e85169d923d743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "extract-gmail-contacts": {
+      "hasChanged": false,
+      "hash": "f0536aea95f0fd9be74bd57e66f3e757fd133d5afe3d289bb195d0891a36de8fd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "fix-stock-reservations": {
+      "hasChanged": false,
+      "hash": "a8aa8f4434ba76d7cbb9ff1526fae858fef26f868f67bc09b66ecf0aa6c6ae1fd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "gmail-attachment-save": {
+      "hasChanged": false,
+      "hash": "ae774cbfe190314acf7f518d146d8672a5602b36d7b9a6a0e1b6b68e1d71ce33d743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "gmail-attachment-view": {
+      "hasChanged": false,
+      "hash": "9bc1ffef03fa7acc328ccf126f1b86640f0705bf86e4105d780ea9493b2b17bdd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "gmail-inbox-list": {
+      "hasChanged": false,
+      "hash": "5926413a6d62238f0ae4b374acc426273ac266e2e22f69bbe7985955e21db4acd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "gmail-inbox-message": {
+      "hasChanged": false,
+      "hash": "3a9a25691e9163dd95dc77eaad7e1423103a0fba7bb9e64863848326a13e510dd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "gmail-oauth-callback": {
+      "hasChanged": false,
+      "hash": "0727d4c0bd007338096be53e57945f14c1f61614ff5607d17e80549610d68c42"
+    },
+    "kunal-relevance-classifier": {
+      "hasChanged": false,
+      "hash": "0c413bd01e6562dedfe89b90269ab0a716ca148a921ed310f97ac371e1a89cb1"
+    },
+    "parse-bca-statement": {
+      "hasChanged": false,
+      "hash": "fc7ae3d3dc22b83c8fd8b979134fa9af52747b221391f3c27680f3ea778f8313"
+    },
+    "parse-pharma-email": {
+      "hasChanged": false,
+      "hash": "fbbfb706fdd39e71c6c27356426702c0e1dd01b5eae9daadca4bad61017c79d9d743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "parse-source-reply-email": {
+      "hasChanged": false,
+      "hash": "e2016485580fe8f6638e25c2c318be9d2613d3f7726dd22730e6ee0a34dc5d94"
+    },
+    "process-bulk-email-campaign": {
+      "hasChanged": false,
+      "hash": "9b2dcd36cadc162f27752304c713f565207e4526da34dc7556a1b3ddbcfbc921"
+    },
+    "sapj-gmail-agent": {
+      "hasChanged": false,
+      "hash": "ce03dee36ed0dcd129161933199457363695e3dc17b6df5c6491168d245f94ffd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "send-app-notifications": {
+      "hasChanged": false,
+      "hash": "d6bc270fc8721a802f005f9628dd8fa4acdec8454803329ac19bbe650f0a7e1bd743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "send-bulk-email": {
+      "hasChanged": false,
+      "hash": "2b8804e253ef68fe8b35383fa975049ac7bef385a1e344053a92c29e5a5f2648d743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    },
+    "sync-gmail-emails": {
+      "hasChanged": false,
+      "hash": "05767558e55ecf310a2edcff02f0455acc92048ec11c3afa241ebd1d4c24688ad743d04844cdfceacdf1f465df63b8ecc85b94a9f8421a0c8fc04abe34b676ef"
+    }
+  }
+}

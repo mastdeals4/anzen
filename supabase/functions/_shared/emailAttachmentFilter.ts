@@ -19,6 +19,15 @@ export interface AttachmentEvaluationInput {
   disposition?: string | null;
 }
 
+export interface EmailAttachmentMeta {
+  filename: string;
+  mimeType: string;
+  size: number;
+  attachmentId: string;
+  contentId: string | null;
+  disposition: string | null;
+}
+
 export type AttachmentFilterDisposition = 'EXCLUDE' | 'STORE_AUTOMATICALLY' | 'REVIEW_BEFORE_IMPORT';
 
 export type RecognizedDocType =
@@ -125,9 +134,11 @@ export function evaluateEmailAttachment(input: AttachmentEvaluationInput): Attac
 
   const hasCertKeywords = CERT_FILENAME_REGEX.test(lowerFilename);
 
+  const isInlineEmbedded = !!input.contentId && input.disposition === 'inline';
+
   if (isImage) {
-    // If it has explicit signature naming and NO cert keywords in filename, exclude it
-    if (isSignatureName && !hasCertKeywords) {
+    // Inline CID images are embedded in the email body; exclude them unless the filename names a certificate
+    if ((isSignatureName || isInlineEmbedded) && !hasCertKeywords) {
       return {
         disposition: 'EXCLUDE',
         documentType: 'OTHER',
