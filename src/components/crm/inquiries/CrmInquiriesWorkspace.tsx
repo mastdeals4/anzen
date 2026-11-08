@@ -7,6 +7,7 @@ import { PipelineBoard } from '../PipelineBoard';
 import { InquiryTableExcel } from '../InquiryTableExcel';
 import { ProductDocumentsPanel } from '../ProductDocumentsPanel';
 import { CustomerFollowUpModal } from '../CustomerFollowUpModal';
+import { useCrmInquiries } from './useCrmInquiries';
 import {
   Search,
   List,
@@ -121,11 +122,18 @@ export function CrmInquiriesWorkspace({
   const [viewMode, setViewMode] = useState<'list' | 'pipeline'>('list');
   const [quickFilter, setQuickFilter] = useState<InquiryFilter>(initialFilter);
   const [assignedStaffFilter, setAssignedStaffFilter] = useState<string>('all');
-  const [staffList, setStaffList] = useState<Array<{ id: string; full_name: string }>>([]);
-  const [inquiries, setInquiries] = useState<InquiryRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Authoritative shared inquiry & staff loading (single network query with in-flight deduplication)
+  const {
+    inquiries: rawInquiries,
+    staffList,
+    loading,
+    error,
+    refresh: refreshInquiries,
+  } = useCrmInquiries();
+
+  const loadInquiries = () => refreshInquiries({ force: true });
 
   // Drawer state
   const [selectedInquiry, setSelectedInquiry] = useState<InquiryRow | null>(null);
@@ -133,20 +141,78 @@ export function CrmInquiriesWorkspace({
   const [followUpInquiry, setFollowUpInquiry] = useState<InquiryRow | null>(null);
   const [showDocumentsModal, setShowDocumentsModal] = useState(false);
 
-  useEffect(() => {
-    loadInquiries();
-    supabase
-      .from('user_profiles')
-      .select('id, full_name')
-      .order('full_name', { ascending: true })
-      .then(({ data }) => {
-        if (Array.isArray(data)) {
-          setStaffList(data);
-        } else if (data && typeof data === 'object') {
-          setStaffList([data as any]);
-        }
-      });
-  }, []);
+  const inquiries: InquiryRow[] = useMemo(() => {
+    const now = Date.now();
+
+    return (rawInquiries || []).map((row: any) => {
+      const stage = (row.pipeline_status || row.status || 'new').toLowerCase();
+      const hasQuoteSent = Boolean(row.quote_sent_at) || row.price_quoted === true || stage === 'quoted' || stage === 'quote_sent';
+      const hasSupplierSent = Boolean(row.last_sourcing_sent_at) || row.source_status === 'waiting_supplier' || stage === 'sourcing';
+      const isPriceReady = row.price_ready === true || row.kunal_price_status === 'price_received';
+      const isNeedsReview = row.kunal_price_status === 'needs_review' || row.status === 'needs_review';
+      const isClosed = ['won', 'lost', 'closed'].includes(stage);
+
+      // 1. Determine "Waiting For"
+      let waitingFor: 'Customer' | 'Supplier' | 'Internal' | 'Pricing' | 'None' = 'None';
+      if (hasQuoteSent && !isClosed) {
+        waitingFor = 'Customer';
+      } else if (isPriceReady && !hasQuoteSent) {
+        waitingFor = 'Pricing';
+      } else if (hasSupplierSent && !isPriceReady) {
+        waitingFor = 'Supplier';
+      } else if (['new', 'needs_sourcing'].includes(stage)) {
+        waitingFor = 'Internal';
+      }
+
+      // 2. Determine "Last Contact"
+      const lastContactDate = row.last_reminder_sent_at || row.quote_sent_at || row.last_sourcing_sent_at || row.inquiry_date || row.created_at;
+      let lastContact = 'None';
+      if (lastContactDate) {
+        const days = Math.max(0, Math.floor((now - new Date(lastContactDate).getTime()) / 86400000));
+        lastContact = days === 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days}d ago`;
+      }
+
+      // 3. Determine "Next Action"
+      let nextAction = 'Follow-up pending';
+      if (isPriceReady && !hasQuoteSent) {
+        nextAction = 'Send Quote (Price Ready)';
+      } else if (stage === 'new' || (!row.supplier_name && !row.purchase_price)) {
+        nextAction = 'Source from India/Supplier';
+      } else if (hasQuoteSent) {
+        nextAction = 'Customer Follow-up';
+      } else if (waitingFor === 'Supplier') {
+        nextAction = 'Supplier Price Follow-up';
+      }
+
+      if (row.next_follow_up) {
+        const fuDate = new Date(row.next_follow_up);
+        const isOverdue = fuDate.getTime() < now;
+        nextAction = `${isOverdue ? '⚠️ Overdue: ' : 'Due: '}${fuDate.toLocaleDateString()}`;
+      }
+
+      // 4. CRITICAL RULE FOR "NEEDS ATTENTION":
+      // Ordinary Waiting Supplier without follow-up must NOT be in Needs Action
+      const isOrdinaryWaitingSupplier = waitingFor === 'Supplier' && !row.next_follow_up;
+      const hasOverdueFollowUp = Boolean(row.next_follow_up && new Date(row.next_follow_up).getTime() < now);
+      const needsImmediateQuote = isPriceReady && !hasQuoteSent;
+      const needsImmediateSourcing = (stage === 'new' || row.source_status === 'needs_sourcing') && !row.supplier_name;
+      const isUrgent = (row.priority || '').toLowerCase() === 'urgent';
+
+      const genuinelyNeedsAction =
+        !isClosed &&
+        !isOrdinaryWaitingSupplier &&
+        (hasOverdueFollowUp || needsImmediateQuote || needsImmediateSourcing || isNeedsReview || isUrgent || stage === 'needs_action');
+
+      return {
+        ...row,
+        waitingFor,
+        lastContact,
+        nextAction,
+        genuinelyNeedsAction,
+        is_archived: false,
+      };
+    });
+  }, [rawInquiries]);
 
   useEffect(() => {
     if (initialInquiryId && inquiries.length > 0) {
@@ -157,103 +223,6 @@ export function CrmInquiriesWorkspace({
       }
     }
   }, [initialInquiryId, inquiries]);
-
-  const loadInquiries = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data, error } = await supabase
-        .from('crm_inquiries')
-        .select(`
-          *,
-          user_profiles:assigned_to (
-            full_name
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      const now = Date.now();
-
-      const mapped: InquiryRow[] = (data || []).map((row: any) => {
-        const stage = (row.pipeline_status || row.status || 'new').toLowerCase();
-        const hasQuoteSent = Boolean(row.quote_sent_at) || row.price_quoted === true || stage === 'quoted' || stage === 'quote_sent';
-        const hasSupplierSent = Boolean(row.last_sourcing_sent_at) || row.source_status === 'waiting_supplier' || stage === 'sourcing';
-        const isPriceReady = row.price_ready === true || row.kunal_price_status === 'price_received';
-        const isNeedsReview = row.kunal_price_status === 'needs_review' || row.status === 'needs_review';
-        const isClosed = ['won', 'lost', 'closed'].includes(stage);
-
-        // 1. Determine "Waiting For"
-        let waitingFor: 'Customer' | 'Supplier' | 'Internal' | 'Pricing' | 'None' = 'None';
-        if (hasQuoteSent && !isClosed) {
-          waitingFor = 'Customer';
-        } else if (isPriceReady && !hasQuoteSent) {
-          waitingFor = 'Pricing';
-        } else if (hasSupplierSent && !isPriceReady) {
-          waitingFor = 'Supplier';
-        } else if (['new', 'needs_sourcing'].includes(stage)) {
-          waitingFor = 'Internal';
-        }
-
-        // 2. Determine "Last Contact"
-        const lastContactDate = row.last_reminder_sent_at || row.quote_sent_at || row.last_sourcing_sent_at || row.inquiry_date || row.created_at;
-        let lastContact = 'None';
-        if (lastContactDate) {
-          const days = Math.max(0, Math.floor((now - new Date(lastContactDate).getTime()) / 86400000));
-          lastContact = days === 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days}d ago`;
-        }
-
-        // 3. Determine "Next Action"
-        let nextAction = 'Follow-up pending';
-        if (isPriceReady && !hasQuoteSent) {
-          nextAction = 'Send Quote (Price Ready)';
-        } else if (stage === 'new' || (!row.supplier_name && !row.purchase_price)) {
-          nextAction = 'Source from India/Supplier';
-        } else if (hasQuoteSent) {
-          nextAction = 'Customer Follow-up';
-        } else if (waitingFor === 'Supplier') {
-          nextAction = 'Supplier Price Follow-up';
-        }
-
-        if (row.next_follow_up) {
-          const fuDate = new Date(row.next_follow_up);
-          const isOverdue = fuDate.getTime() < now;
-          nextAction = `${isOverdue ? '⚠️ Overdue: ' : 'Due: '}${fuDate.toLocaleDateString()}`;
-        }
-
-        // 4. CRITICAL RULE FOR "NEEDS ATTENTION":
-        // Ordinary Waiting Supplier without follow-up must NOT be in Needs Action
-        const isOrdinaryWaitingSupplier = waitingFor === 'Supplier' && !row.next_follow_up;
-        const hasOverdueFollowUp = Boolean(row.next_follow_up && new Date(row.next_follow_up).getTime() < now);
-        const needsImmediateQuote = isPriceReady && !hasQuoteSent;
-        const needsImmediateSourcing = (stage === 'new' || row.source_status === 'needs_sourcing') && !row.supplier_name;
-        const isUrgent = (row.priority || '').toLowerCase() === 'urgent';
-
-        const genuinelyNeedsAction =
-          !isClosed &&
-          !isOrdinaryWaitingSupplier &&
-          (hasOverdueFollowUp || needsImmediateQuote || needsImmediateSourcing || isNeedsReview || isUrgent || stage === 'needs_action');
-
-        return {
-          ...row,
-          waitingFor,
-          lastContact,
-          nextAction,
-          genuinelyNeedsAction,
-          is_archived: false,
-        };
-      });
-
-      setInquiries(mapped);
-    } catch (err: any) {
-      console.error('Failed to load inquiries workspace:', err);
-      setError(err.message || 'Unable to load inquiries.');
-      showToast({ type: 'error', title: 'Inquiries Error', message: err.message || 'Unable to load inquiries.' });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Dataset-wide KPI Counters across all 357 inquiries
   const kpis = useMemo(() => {
@@ -585,6 +554,9 @@ export function CrmInquiriesWorkspace({
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
           <PipelineBoard
             canManage={canManage}
+            inquiries={inquiries}
+            loading={loading}
+            onRefresh={loadInquiries}
             onInquiryClick={(inq: any) => {
               const fullInq = inquiries.find((i) => i.id === inq.id) || inq;
               handleOpenInquiryDrawer(fullInq);

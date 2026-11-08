@@ -279,8 +279,12 @@ export class OpenWAProvider implements WhatsAppProvider {
           console.log('[OpenWAProvider] Diagnostic DOM status:', JSON.stringify(diag));
         }
       } catch (err: any) {
-        // Suppress benign context destroyed errors during navigation
-        if (!err.message?.includes('Execution context was destroyed')) {
+        // Suppress benign context destroyed or detached frame errors during navigation
+        if (
+          !err.message?.includes('Execution context was destroyed') &&
+          !err.message?.includes('detached Frame') &&
+          !err.message?.includes('Target closed')
+        ) {
           this.lastError = err.message;
         }
       }
@@ -485,13 +489,11 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   public async connect(): Promise<WhatsAppConnectionStatus> {
+    this.lastError = undefined;
     if (this.status === 'connected') {
       return this.getStatus();
     }
     this.status = 'unpaired';
-    if (!this.qrCode) {
-      await this.generateMockQr();
-    }
     if (!this.browser || !this.page || this.page.isClosed()) {
       this.initialize().catch((err) => {
         console.error('[OpenWAProvider] initialize error during connect():', err.message);
@@ -501,6 +503,7 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   public async disconnect(): Promise<WhatsAppConnectionStatus> {
+    this.lastError = undefined;
     try {
       if (this.monitorInterval) {
         clearInterval(this.monitorInterval);
@@ -576,7 +579,7 @@ export class OpenWAProvider implements WhatsAppProvider {
   public async sendMessage(
     to: string,
     text: string,
-    _options?: Record<string, unknown>
+    options?: Record<string, unknown>
   ): Promise<WhatsAppSendResult> {
     const timestamp = new Date().toISOString();
 
@@ -603,21 +606,59 @@ export class OpenWAProvider implements WhatsAppProvider {
           .catch(() => false)
       : false;
 
-    if (this.config.mockMode || !this.page || !isAuth) {
-      const mockMessageId = `wa_mock_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      console.log(`[OpenWAProvider] Sent message to ${cleanDigits}: "${text.substring(0, 40)}..."`);
+    if (this.config.mockMode) {
       this.lastSeen = timestamp;
       return {
-        success: true,
-        messageId: mockMessageId,
+        success: false,
+        messageId: '',
         timestamp,
+        error: 'Simulation mode active: outbound live WhatsApp sending disabled. Use connected WhatsApp Business session.',
+      };
+    }
+
+    if (!this.page || !isAuth) {
+      return {
+        success: false,
+        messageId: '',
+        timestamp,
+        error: 'WhatsApp Business session is not authenticated in browser. Scan QR code to connect.',
       };
     }
 
     try {
-      const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}&text=${encodeURIComponent(text)}`;
+      let messageText = text;
+      const docUrl = (options?.documentUrl as string) || '';
+      const fn = (options?.filename as string) || '';
+      if (docUrl && !messageText.includes(docUrl)) {
+        const docHeader = fn ? `📄 Attachment: ${fn}\n` : '📄 Attachment:\n';
+        messageText = messageText ? `${messageText}\n\n${docHeader}${docUrl}` : `${docHeader}${docUrl}`;
+      }
+
+      const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}&text=${encodeURIComponent(messageText)}`;
       console.log(`[OpenWAProvider] Dispatching message to ${cleanDigits}...`);
       await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+      // Check for invalid phone popup modal
+      const invalidPopupText = await this.page.evaluate(() => {
+        const modal = document.querySelector('[data-animate-modal-popup="true"], [data-testid="confirm-popup"], div[role="dialog"]');
+        if (modal) {
+          const body = (modal.textContent || '').trim();
+          if (
+            body.includes('phone number shared via url is invalid') ||
+            body.includes("isn't on WhatsApp") ||
+            body.includes('tidak terdaftar')
+          ) {
+            const okBtn = modal.querySelector('button, div[role="button"]');
+            if (okBtn) (okBtn as HTMLElement).click();
+            return body;
+          }
+        }
+        return null;
+      });
+
+      if (invalidPopupText) {
+        throw new Error(`Recipient +${cleanDigits} is not registered on WhatsApp: ${invalidPopupText}`);
+      }
 
       // Wait for send button and click
       const sendButton = await this.page.waitForSelector('span[data-icon="send"], button[aria-label="Send"]', {
@@ -626,13 +667,28 @@ export class OpenWAProvider implements WhatsAppProvider {
 
       if (sendButton) {
         await sendButton.click();
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 2000));
       }
 
+      // Extract real WhatsApp message ID from DOM if available
+      const realMessageId = await this.page.evaluate(() => {
+        const rows = document.querySelectorAll('[data-id]');
+        if (rows.length > 0) {
+          for (let i = rows.length - 1; i >= 0; i--) {
+            const id = rows[i].getAttribute('data-id');
+            if (id && id.startsWith('true_')) {
+              return id;
+            }
+          }
+        }
+        return null;
+      });
+
+      const messageId = realMessageId || `wa_sent_${Date.now()}`;
       this.lastSeen = timestamp;
       return {
         success: true,
-        messageId: `wa_sent_${Date.now()}`,
+        messageId,
         timestamp,
       };
     } catch (err: any) {

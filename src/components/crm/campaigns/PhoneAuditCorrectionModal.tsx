@@ -94,6 +94,11 @@ export function PhoneAuditCorrectionModal({
   const [reasonFilter, setReasonFilter] = useState<string>('all');
   const [countryFilter, setCountryFilter] = useState<string>('all');
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+  const [cityFilter, setCityFilter] = useState<string>('all');
+  const [phoneTypeFilter, setPhoneTypeFilter] = useState<string>('all');
+  const [duplicateFilter, setDuplicateFilter] = useState<string>('all');
+  const [consentFilter, setConsentFilter] = useState<string>('all');
+  const [candidateFilter, setCandidateFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<'company' | 'phone' | 'status' | 'dept'>('company');
   const [sortAsc, setSortAsc] = useState(true);
   const [duplicateViewMode, setDuplicateViewMode] = useState<'grouped' | 'flat'>('grouped');
@@ -127,10 +132,24 @@ export function PhoneAuditCorrectionModal({
   const [selectedBulkCandidateIds, setSelectedBulkCandidateIds] = useState<Set<string>>(new Set());
   const [isApplyingBulk, setIsApplyingBulk] = useState(false);
 
-  // Sync initial category when opening
+  // Reset all filters when switching category
+  const handleSelectCategoryTab = useCallback((cat: AuditCategory) => {
+    setSelectedCategory(cat);
+    setReasonFilter('all');
+    setCountryFilter('all');
+    setCityFilter('all');
+    setPhoneTypeFilter('all');
+    setDuplicateFilter('all');
+    setConsentFilter('all');
+    setCandidateFilter('all');
+    setDepartmentFilter('all');
+    setSearchQuery('');
+  }, []);
+
+  // Sync initial category when opening and reset filters
   useEffect(() => {
-    setSelectedCategory(initialCategory);
-  }, [initialCategory]);
+    handleSelectCategoryTab(initialCategory);
+  }, [initialCategory, handleSelectCategoryTab]);
 
   // Fetch relational phones from crm_contact_phones
   const fetchDbPhones = useCallback(async () => {
@@ -142,7 +161,7 @@ export function PhoneAuditCorrectionModal({
         .order('company_name');
 
       if (error) {
-        console.warn('Could not fetch crm_contact_phones, falling back to parsed audit items:', error.message);
+        console.warn('Could not fetch crm_contact_phones:', error.message);
       } else if (data && data.length > 0) {
         setDbPhones(data as ContactPhoneRecord[]);
       }
@@ -167,118 +186,30 @@ export function PhoneAuditCorrectionModal({
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
-  // Items source: if relational dbPhones exist, map to VerifiedContactItems; else use phoneAudit.items
+  // Canonical Single Source of Truth: consume authoritative phoneAudit.items
   const allAuditItems: VerifiedContactItem[] = useMemo(() => {
-    if (dbPhones.length > 0) {
-      // Find companies that have no phones to include as missing
-      const companyPhoneIds = new Set(dbPhones.map(p => p.contact_id));
-      const missingCompanyItems: VerifiedContactItem[] = contacts
-        .filter(c => !companyPhoneIds.has(c.id))
-        .map(c => ({
-          id: `${c.id}_missing`,
-          contact_id: c.id,
-          company_name: c.company_name,
-          contact_person: c.contact_person,
-          department: 'General Office',
-          email: c.email,
-          raw_phone: null,
-          city: c.city,
-          customer_type: c.customer_type || 'Prospect',
-          validation: {
-            raw: '',
-            normalized: '',
-            type: 'missing_number',
-            countryCode: '',
-            isWhatsAppEligible: false,
-            reason: 'No phone or mobile number provided',
-            whatsappStatus: 'not_whatsapp',
-          },
-          consent_status: 'pending',
-          is_primary: true,
-          is_duplicate: false,
-          is_eligible: false,
-          exclusion_reason: 'Missing telephone number',
-        }));
-
-      // Count occurrences for duplicates
-      const phoneCounts = new Map<string, number>();
-      dbPhones.forEach(p => {
-        const k = p.normalized_phone || p.raw_phone;
-        if (k) phoneCounts.set(k, (phoneCounts.get(k) || 0) + 1);
-      });
-
-      const mappedFromDb: VerifiedContactItem[] = dbPhones.map(p => {
-        const norm = p.normalized_phone || p.raw_phone;
-        const isDupe = norm ? (phoneCounts.get(norm) || 0) > 1 : false;
-        const matchingContact = contacts.find(c => c.id === p.contact_id);
-
-        return {
-          id: p.id,
-          contact_id: p.contact_id,
-          company_name: p.company_name,
-          contact_person: p.contact_person,
-          department: p.department || (p.is_whatsapp_eligible ? 'Purchasing' : 'General Office'),
-          email: matchingContact?.email || null,
-          raw_phone: p.raw_phone,
-          city: matchingContact?.city || null,
-          customer_type: matchingContact?.customer_type || 'Prospect',
-          validation: {
-            raw: p.raw_phone,
-            normalized: p.normalized_phone,
-            type: p.phone_type,
-            countryCode: p.country_code,
-            isWhatsAppEligible: p.is_whatsapp_eligible,
-            reason: p.notes || (p.is_whatsapp_eligible ? 'Valid WhatsApp Mobile' : 'Landline / Excluded'),
-            whatsappStatus: p.is_whatsapp_eligible ? 'whatsapp_unknown' : 'not_whatsapp',
-          },
-          consent_status: (p.consent_status as any) || 'pending',
-          is_primary: p.is_primary,
-          extension: p.extension || null,
-          is_duplicate: isDupe,
-          duplicate_group_type: isDupe ? 'same_company' : undefined,
-          is_eligible: p.is_whatsapp_eligible && p.consent_status !== 'opted_out',
-          exclusion_reason: p.is_whatsapp_eligible ? undefined : p.notes || 'Excluded from WhatsApp broadcasts',
-        };
-      });
-
-      return [...mappedFromDb, ...missingCompanyItems];
-    }
-
     return phoneAudit.items;
-  }, [dbPhones, contacts, phoneAudit.items]);
+  }, [phoneAudit.items]);
 
-  // Category counts
+  // Category counts strictly consuming canonical phoneAudit stats
   const categoryStats = useMemo(() => {
-    let eligible = 0;
-    let landline = 0;
-    let missing = 0;
-    let invalid = 0;
-    let duplicates = 0;
-
-    allAuditItems.forEach(i => {
-      if (i.is_eligible) eligible++;
-      if (i.validation.type === 'landline') landline++;
-      if (i.validation.type === 'missing_number') missing++;
-      if (i.validation.type === 'invalid_number') invalid++;
-      if (i.is_duplicate) duplicates++;
-    });
-
     return {
-      total: allAuditItems.length,
-      totalCompanies: contacts.length,
-      eligible,
-      landline,
-      missing,
-      invalid,
-      duplicates,
+      total: phoneAudit.stats.total,
+      totalCompanies: phoneAudit.stats.totalCompanies || contacts.length,
+      totalPhones: phoneAudit.stats.totalPhones || phoneAudit.stats.total,
+      eligible: phoneAudit.stats.eligible,
+      landline: phoneAudit.stats.landline,
+      missing: phoneAudit.stats.missing,
+      invalid: phoneAudit.stats.invalid,
+      duplicates: phoneAudit.stats.duplicates,
     };
-  }, [allAuditItems, contacts.length]);
+  }, [phoneAudit.stats, contacts.length]);
 
   // Filter items based on selected category
   const categoryItems = useMemo(() => {
     switch (selectedCategory) {
       case 'eligible':
-        return allAuditItems.filter(i => i.is_eligible);
+        return allAuditItems.filter(i => i.is_eligible || i.validation.isWhatsAppEligible);
       case 'landline':
         return allAuditItems.filter(i => i.validation.type === 'landline');
       case 'missing':
@@ -302,14 +233,25 @@ export function PhoneAuditCorrectionModal({
     return Array.from(reasons).sort();
   }, [categoryItems]);
 
-  // Extract distinct countries
+  // Extract distinct countries strictly from parsed phone numbers
   const distinctCountries = useMemo(() => {
     const countries = new Set<string>();
     categoryItems.forEach(i => {
-      const info = detectCountryInfo(i.raw_phone, i.city);
-      countries.add(info.name);
+      const info = detectCountryInfo(i.raw_phone);
+      if (info.name && info.name !== 'Missing' && info.name !== 'Invalid / Unrecognized') {
+        countries.add(info.name);
+      }
     });
     return Array.from(countries).sort();
+  }, [categoryItems]);
+
+  // Extract distinct company cities/regions strictly from stored CRM addresses
+  const distinctCities = useMemo(() => {
+    const cities = new Set<string>();
+    categoryItems.forEach(i => {
+      if (i.city && i.city.trim()) cities.add(i.city.trim());
+    });
+    return Array.from(cities).sort();
   }, [categoryItems]);
 
   // Filter and sort items for the table
@@ -342,12 +284,45 @@ export function PhoneAuditCorrectionModal({
       list = list.filter(item => item.validation.reason === reasonFilter);
     }
 
-    // Country filter
+    // Phone Country filter (strictly derived from parsed phone number)
     if (countryFilter !== 'all') {
       list = list.filter(item => {
-        const info = detectCountryInfo(item.raw_phone, item.city);
+        const info = detectCountryInfo(item.raw_phone);
         return info.name === countryFilter;
       });
+    }
+
+    // Company City / Region filter (strictly derived from stored CRM address)
+    if (cityFilter !== 'all') {
+      list = list.filter(item => (item.city || '').toLowerCase() === cityFilter.toLowerCase());
+    }
+
+    // Phone Type filter
+    if (phoneTypeFilter !== 'all') {
+      list = list.filter(item => {
+        const pType = item.validation.canonical?.phoneType ||
+          (item.validation.type === 'valid_mobile' ? 'mobile' : item.validation.type === 'landline' ? 'fixed_line' : 'invalid');
+        return pType === phoneTypeFilter;
+      });
+    }
+
+    // Duplicate filter
+    if (duplicateFilter === 'duplicates') {
+      list = list.filter(item => item.is_duplicate);
+    } else if (duplicateFilter === 'unique') {
+      list = list.filter(item => !item.is_duplicate);
+    }
+
+    // Consent filter
+    if (consentFilter !== 'all') {
+      list = list.filter(item => item.consent_status === consentFilter);
+    }
+
+    // Candidate filter
+    if (candidateFilter === 'eligible') {
+      list = list.filter(item => item.is_eligible);
+    } else if (candidateFilter === 'excluded') {
+      list = list.filter(item => !item.is_eligible);
     }
 
     // Department filter
@@ -373,7 +348,7 @@ export function PhoneAuditCorrectionModal({
       }
       return sortAsc ? cmp : -cmp;
     });
-  }, [categoryItems, searchQuery, reasonFilter, countryFilter, departmentFilter, sortField, sortAsc]);
+  }, [categoryItems, searchQuery, reasonFilter, countryFilter, cityFilter, phoneTypeFilter, duplicateFilter, consentFilter, candidateFilter, departmentFilter, sortField, sortAsc]);
 
   // Grouped duplicates structure
   const duplicateGroups = useMemo(() => {
@@ -1002,7 +977,7 @@ export function PhoneAuditCorrectionModal({
             {/* Total Directory */}
             <button
               type="button"
-              onClick={() => { setSelectedCategory('total'); setReasonFilter('all'); }}
+              onClick={() => handleSelectCategoryTab('total')}
               className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                 selectedCategory === 'total'
                   ? 'bg-slate-800 text-white border-slate-900 shadow-xs'
@@ -1020,7 +995,7 @@ export function PhoneAuditCorrectionModal({
             {/* WA Eligible */}
             <button
               type="button"
-              onClick={() => { setSelectedCategory('eligible'); setReasonFilter('all'); }}
+              onClick={() => handleSelectCategoryTab('eligible')}
               className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                 selectedCategory === 'eligible'
                   ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
@@ -1039,7 +1014,7 @@ export function PhoneAuditCorrectionModal({
             {/* Landlines */}
             <button
               type="button"
-              onClick={() => { setSelectedCategory('landline'); setReasonFilter('all'); }}
+              onClick={() => handleSelectCategoryTab('landline')}
               className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                 selectedCategory === 'landline'
                   ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
@@ -1058,7 +1033,7 @@ export function PhoneAuditCorrectionModal({
             {/* Missing Number */}
             <button
               type="button"
-              onClick={() => { setSelectedCategory('missing'); setReasonFilter('all'); }}
+              onClick={() => handleSelectCategoryTab('missing')}
               className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                 selectedCategory === 'missing'
                   ? 'bg-slate-600 text-white border-slate-700 shadow-xs'
@@ -1077,7 +1052,7 @@ export function PhoneAuditCorrectionModal({
             {/* Invalid Formats */}
             <button
               type="button"
-              onClick={() => { setSelectedCategory('invalid'); setReasonFilter('all'); }}
+              onClick={() => handleSelectCategoryTab('invalid')}
               className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                 selectedCategory === 'invalid'
                   ? 'bg-rose-600 text-white border-rose-700 shadow-xs'
@@ -1096,7 +1071,7 @@ export function PhoneAuditCorrectionModal({
             {/* Duplicates */}
             <button
               type="button"
-              onClick={() => { setSelectedCategory('duplicates'); setReasonFilter('all'); }}
+              onClick={() => handleSelectCategoryTab('duplicates')}
               className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                 selectedCategory === 'duplicates'
                   ? 'bg-orange-600 text-white border-orange-700 shadow-xs'
@@ -1165,22 +1140,81 @@ export function PhoneAuditCorrectionModal({
               </select>
             </div>
 
-            {/* Country Filter */}
-            {distinctCountries.length > 1 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] text-gray-500 font-medium">Country:</span>
-                <select
-                  value={countryFilter}
-                  onChange={e => setCountryFilter(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="all">All Countries</option>
-                  {distinctCountries.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {/* Phone Country Filter (strictly derived from parsed number) */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-gray-500 font-medium">Country:</span>
+              <select
+                value={countryFilter}
+                onChange={e => setCountryFilter(e.target.value)}
+                className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Countries ({distinctCountries.length})</option>
+                {distinctCountries.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Company City / Region Filter (strictly derived from CRM address) */}
+            <div className="flex items-center gap-1.5">
+              <Building className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={cityFilter}
+                onChange={e => setCityFilter(e.target.value)}
+                className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Cities ({distinctCities.length})</option>
+                {distinctCities.map(city => (
+                  <option key={city} value={city}>{city}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Phone Type Filter */}
+            <div className="flex items-center gap-1.5">
+              <Smartphone className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={phoneTypeFilter}
+                onChange={e => setPhoneTypeFilter(e.target.value)}
+                className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Phone Types</option>
+                <option value="mobile">Mobile</option>
+                <option value="fixed_line">Fixed Line / Landline</option>
+                <option value="service_special">Service / Special / UAN</option>
+                <option value="missing">Missing</option>
+                <option value="invalid">Invalid</option>
+                <option value="needs_review">Needs Manual Review</option>
+              </select>
+            </div>
+
+            {/* Candidate Status Filter */}
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={candidateFilter}
+                onChange={e => setCandidateFilter(e.target.value)}
+                className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Candidates</option>
+                <option value="eligible">WhatsApp Candidate</option>
+                <option value="excluded">Excluded</option>
+              </select>
+            </div>
+
+            {/* Duplicate Status Filter */}
+            <div className="flex items-center gap-1.5">
+              <Copy className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={duplicateFilter}
+                onChange={e => setDuplicateFilter(e.target.value)}
+                className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="all">All Records</option>
+                <option value="unique">Unique Numbers Only</option>
+                <option value="duplicates">Duplicates Only</option>
+              </select>
+            </div>
 
             {/* Reason Filter */}
             {distinctReasons.length > 1 && (

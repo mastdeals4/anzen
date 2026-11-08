@@ -19,6 +19,7 @@ import { resolveStorageUrlCached } from '../utils/signedUrlCache';
 import { formatUnit, abbreviateUnit, formatPackagingDetails } from '../utils/unitDisplay';
 import { PACKAGING_TYPES, normalizePackagingType } from '../constants/masterData';
 import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 
 interface Batch {
   id: string;
@@ -616,9 +617,12 @@ export function Batches() {
         const fileName = `${Date.now()}_${fileData.file.name}`;
         const filePath = `${batchId}/${fileName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('batch-documents')
-          .upload(filePath, fileData.file);
+        const { error: uploadError, optimization } = await uploadOptimizedFile(
+          supabase,
+          'batch-documents',
+          filePath,
+          fileData.file
+        );
 
         if (uploadError) throw uploadError;
 
@@ -633,7 +637,7 @@ export function Batches() {
             file_url: publicUrl,
             file_name: fileData.file.name,
             file_type: fileData.file_type,
-            file_size: fileData.file_size,
+            file_size: optimization.optimizedSize,
           }]);
 
         if (dbError) throw dbError;
@@ -1133,7 +1137,7 @@ export function Batches() {
 
             return (
               <div>
-                <table className="w-full text-sm">
+                <table className="hidden md:table w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="pl-3 pr-2 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-8"></th>
@@ -1163,7 +1167,8 @@ export function Batches() {
                         onClick={() => toggleProduct(group.productId)}
                         className="w-full hover:bg-gray-50 transition text-left"
                       >
-                        <table className="w-full text-sm">
+                        {/* Desktop Product Group Row */}
+                        <table className="hidden md:table w-full text-sm">
                           <tbody>
                             <tr>
                               <td className="pl-3 pr-2 py-2 w-8">
@@ -1194,10 +1199,37 @@ export function Batches() {
                             </tr>
                           </tbody>
                         </table>
+
+                        {/* Mobile Product Group Header Card */}
+                        <div className="block md:hidden p-3 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />}
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-900 text-sm truncate">{group.productName}</p>
+                              <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                                <span className="font-mono text-[11px] text-gray-400">{group.productCode}</span>
+                                <span>•</span>
+                                <span className="text-blue-700 font-medium">{activeBatches.length} batches</span>
+                                {zeroStockActive > 0 && (
+                                  <span className="text-[10px] text-orange-500 font-medium">({zeroStockActive} out)</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className={`text-sm font-bold ${totalStock > 0 ? 'text-gray-900' : 'text-red-500'}`}>
+                              {totalStock.toLocaleString()} <span className="text-xs font-normal text-gray-500">{formatUnit(group.unit)}</span>
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              {totalSold.toLocaleString()} sold {totalReserved > 0 ? `/ ${totalReserved.toLocaleString()} res` : ''}
+                            </p>
+                          </div>
+                        </div>
                       </button>
 
                       {isExpanded && (
-                        <div className="overflow-x-auto">
+                        <div>
+                          <div className="hidden md:block overflow-x-auto">
                           <table className="w-full text-xs">
                             <thead className="bg-gray-50">
                               <tr>
@@ -1338,7 +1370,126 @@ export function Batches() {
                             </tbody>
                           </table>
                         </div>
-                      )}
+
+                        {/* Mobile Native Card View */}
+                        <div className="block md:hidden divide-y divide-gray-100 p-2 space-y-2 bg-slate-50/70">
+                          {group.batches
+                            .sort((a, b) => new Date(b.import_date).getTime() - new Date(a.import_date).getTime())
+                            .map(batch => {
+                              const batchAllocated = batch.reserved_stock || 0;
+                              const freeStock = Math.max(0, Math.min(batch.current_stock - batchAllocated, productATP));
+                              const landedCostPerUnit = batch.landed_cost_per_unit || batch.import_price;
+                              const fullLandedIDR = landedCostPerUnit;
+                              const isArchived = !batch.is_active;
+                              const isSoldOut = batch.current_stock <= 0 && batch.is_active;
+
+                              return (
+                                <div key={batch.id} className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-2.5 space-y-1.5 hover:border-slate-300 transition">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <button
+                                        onClick={() => showTransactionHistory(batch.product_id, batch.products?.product_name || '', batch.products?.product_code || '', batch.id, batch.batch_number, batch.products?.unit || '')}
+                                        className="font-mono text-xs font-bold text-blue-600 hover:text-blue-800 underline"
+                                      >
+                                        {batch.batch_number}
+                                      </button>
+                                      {isArchived && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">Archived</span>}
+                                      {isSoldOut && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium">Sold Out</span>}
+                                      {isExpired(batch) ? (
+                                        <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">Expired</span>
+                                      ) : isNearExpiry(batch) ? (
+                                        <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">Near Expiry</span>
+                                      ) : null}
+                                    </div>
+                                    {canEdit && (
+                                      <div className="flex items-center gap-1">
+                                        <button onClick={() => handleEdit(batch)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Edit">
+                                          <Edit className="w-3.5 h-3.5" />
+                                        </button>
+                                        {isSoldOut && (
+                                          <button onClick={() => handleArchiveBatch(batch.id)} className="p-1.5 text-gray-500 hover:bg-gray-100 rounded" title="Archive">
+                                            <Archive className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                        {isArchived && (
+                                          <button onClick={() => handleUnarchiveBatch(batch.id)} className="p-1.5 text-green-600 hover:bg-green-50 rounded" title="Restore">
+                                            <Eye className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                        <button onClick={() => handleDelete(batch.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Delete">
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* 3-Column Stock Metric Grid */}
+                                  <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100 text-center">
+                                    <div>
+                                      <p className="text-[10px] text-gray-500 font-medium uppercase">Current</p>
+                                      <p className={`text-xs font-bold ${batch.current_stock <= 0 ? 'text-red-500' : isLowStock(batch) ? 'text-orange-600' : 'text-gray-900'}`}>
+                                        {batch.current_stock.toLocaleString()}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] text-gray-500 font-medium uppercase">Reserved</p>
+                                      <p className="text-xs font-semibold text-amber-600">
+                                        {batchAllocated > 0 ? batchAllocated.toLocaleString() : '-'}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] text-gray-500 font-medium uppercase">Available</p>
+                                      <p className={`text-xs font-bold ${freeStock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                        {freeStock.toLocaleString()}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {/* Details Grid */}
+                                  <div className="grid grid-cols-2 gap-1.5 text-[11px] text-gray-600 pt-1 border-t border-slate-100">
+                                    <div>
+                                      <span className="text-gray-400">Maker: </span>
+                                      <span className="font-medium truncate">{batch.product_sources?.supplier_name || '—'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Import: </span>
+                                      <span>{formatDate(batch.import_date)}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Expiry: </span>
+                                      <span className={isExpired(batch) ? 'text-red-600 font-semibold' : ''}>{batch.expiry_date ? formatDate(batch.expiry_date) : '—'}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                      <div className="truncate">
+                                        <span className="text-gray-400">Ctr: </span>
+                                        <span className="truncate">{batch.import_containers?.container_ref || (batch.import_container_id ? containerMap.get(batch.import_container_id) : '') || '—'}</span>
+                                      </div>
+                                      <button onClick={() => loadBatchDocuments(batch.id)} className="text-blue-600 hover:text-blue-800 flex items-center gap-0.5 ml-1" title="Documents">
+                                        <FileText className="w-3 h-3 inline" />
+                                        <span className="text-[10px] font-medium">{batch.document_count || 0}</span>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Costing Section */}
+                                  {canViewCosting && (
+                                    <div className="bg-blue-50/60 p-2 rounded-lg border border-blue-100/70 text-[11px] flex items-center justify-between">
+                                      <div>
+                                        <span className="text-gray-500">Price/u: </span>
+                                        <span className="font-semibold text-gray-900">{formatCurrency(batch.import_price)}</span>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-500">Landed/u: </span>
+                                        <span className="font-semibold text-blue-700">{formatCurrency(fullLandedIDR)}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
                     </div>
                   );
                 })}

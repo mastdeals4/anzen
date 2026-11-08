@@ -39,6 +39,18 @@ import {
   CornerDownLeft,
 } from 'lucide-react';
 import { analyzeWhatsAppMessage } from '../../../services/crm/whatsappIntelligenceService';
+import { WhatsAppConversationList } from './WhatsAppConversationList';
+import { WhatsAppChatArea } from './WhatsAppChatArea';
+import { WhatsAppCustomerContextPanel } from './WhatsAppCustomerContextPanel';
+import {
+  SendQuotationModal,
+  SendDocumentModal,
+  StockCheckModal,
+  CreateFollowUpModal,
+  CustomerDisambiguationDialog,
+} from './QuickActionModals';
+import { PhoneMatchingService, PhoneMatchCandidate } from '../../../services/crm/phoneMatchingService';
+import { ProductDocumentItem } from '../../../services/crm/erpCommunicationsService';
 
 export type ChannelFilter = 'all' | 'email' | 'whatsapp' | 'unlinked';
 export type ActiveMailbox = 'sales@avira.co.id' | 'kunal@avira.co.id';
@@ -201,6 +213,24 @@ export function CrmOmnichannelInbox({
   const [selectedCustomerToLink, setSelectedCustomerToLink] = useState('');
   const [isLinking, setIsLinking] = useState(false);
   const [isExtractingAi, setIsExtractingAi] = useState(false);
+
+  // WhatsApp Smart CRM & Communications state
+  const [phoneMatch, setPhoneMatch] = useState<{
+    matchType: 'exact_single' | 'ambiguous_multiple' | 'none';
+    candidate: PhoneMatchCandidate | null;
+    candidates: PhoneMatchCandidate[];
+  }>({ matchType: 'none', candidate: null, candidates: [] });
+  const [matchingPhone, setMatchingPhone] = useState(false);
+  const [mobileContextDrawerOpen, setMobileContextDrawerOpen] = useState(false);
+  const [companyInquiries, setCompanyInquiries] = useState<any[]>([]);
+  const [waFilter, setWaFilter] = useState<'all' | 'unread' | 'assigned_me' | 'priority' | 'unassigned'>('all');
+
+  // WhatsApp Quick Action Modals
+  const [quotationModalOpen, setQuotationModalOpen] = useState(false);
+  const [documentModalOpen, setDocumentModalOpen] = useState(false);
+  const [stockModalOpen, setStockModalOpen] = useState(false);
+  const [followUpModalOpen, setFollowUpModalOpen] = useState(false);
+  const [disambiguationModalOpen, setDisambiguationModalOpen] = useState(false);
 
   const handleExtractAndCreate = async (conv: InboxConversation) => {
     setIsExtractingAi(true);
@@ -477,10 +507,22 @@ export function CrmOmnichannelInbox({
       setConversations(items);
 
       if (items.length > 0) {
-        if (urlConversationId && items.some((i) => i.id === urlConversationId)) {
-          setSelectedId(urlConversationId);
-        } else if (!selectedId) {
-          handleSelectConversation(items[0].id);
+        const found = urlConversationId
+          ? items.find(
+              (i) =>
+                i.id === urlConversationId ||
+                i.id === `wa-${urlConversationId}` ||
+                i.whatsAppConversationId === urlConversationId
+            )
+          : null;
+
+        if (found) {
+          setSelectedId(found.id);
+        } else if (!selectedId || !items.some((i) => i.id === selectedId)) {
+          const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+          if (!isMobile) {
+            handleSelectConversation(items[0].id);
+          }
         }
       }
     } catch (err: any) {
@@ -637,6 +679,54 @@ export function CrmOmnichannelInbox({
     fetchContextData();
     return () => {
       isCancelled = true;
+    };
+  }, [selectedConversation]);
+
+  // Match phone number across ERP tables when WhatsApp conversation is selected
+  useEffect(() => {
+    if (!selectedConversation || selectedConversation.channel !== 'whatsapp') {
+      setPhoneMatch({ matchType: 'none', candidate: null, candidates: [] });
+      setCompanyInquiries([]);
+      return;
+    }
+
+    const phone =
+      selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
+    if (!phone) {
+      setPhoneMatch({ matchType: 'none', candidate: null, candidates: [] });
+      setCompanyInquiries([]);
+      return;
+    }
+
+    let isCurrent = true;
+    setMatchingPhone(true);
+    PhoneMatchingService.matchPhoneNumber(phone)
+      .then(async (res) => {
+        if (!isCurrent) return;
+        const matchedCand =
+          res.matchType === 'exact_single' ? res.candidates[0] || null : null;
+        setPhoneMatch({
+          matchType: res.matchType,
+          candidate: matchedCand,
+          candidates: res.candidates,
+        });
+
+        if (matchedCand?.companyName) {
+          const inqs = await PhoneMatchingService.getCompanyInquiries(
+            matchedCand.companyName,
+            matchedCand.customerId || undefined
+          );
+          if (isCurrent) setCompanyInquiries(inqs);
+        } else {
+          if (isCurrent) setCompanyInquiries([]);
+        }
+      })
+      .finally(() => {
+        if (isCurrent) setMatchingPhone(false);
+      });
+
+    return () => {
+      isCurrent = false;
     };
   }, [selectedConversation]);
 
@@ -881,23 +971,56 @@ export function CrmOmnichannelInbox({
     return selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
   };
 
-  const handleSendReply = async () => {
-    if (!selectedConversation || !replyText.trim()) return;
+  const handleSendWhatsApp = async (
+    text: string,
+    documentUrl?: string,
+    filename?: string,
+    imageUrl?: string
+  ) => {
+    if (!selectedConversation) return;
     setSendingReply(true);
     try {
-      if (selectedConversation.channel === 'whatsapp') {
-        const res = await EnquiryWhatsAppService.sendWhatsAppMessage({
-          conversationId: selectedConversation.whatsAppConversationId || '',
-          text: replyText.trim(),
-        });
+      const res = await EnquiryWhatsAppService.sendWhatsAppMessage({
+        conversationId: selectedConversation.whatsAppConversationId || '',
+        text: text.trim(),
+        documentUrl,
+        filename,
+        imageUrl,
+      });
 
-        if (!res.success) throw new Error(res.error || 'Failed to dispatch WhatsApp reply');
+      if (!res.success) {
+        throw new Error(res.error || 'Failed to dispatch WhatsApp message');
+      }
 
-        showToast({ type: 'success', title: 'WhatsApp Sent', message: 'Reply sent successfully.' });
-        setReplyText('');
-        loadThread();
-      } else {
-        const replyRecipient = getReplyRecipient();
+      showToast({
+        type: 'success',
+        title: 'WhatsApp Dispatched',
+        message: res.isSimulation
+          ? 'Simulated send in development mode'
+          : 'Message sent successfully.',
+      });
+      setReplyText('');
+      await loadThread();
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'WhatsApp Error',
+        message: err.message || 'Failed to send WhatsApp message',
+      });
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  const handleSendReply = async () => {
+    if (!selectedConversation || !replyText.trim()) return;
+    if (selectedConversation.channel === 'whatsapp') {
+      await handleSendWhatsApp(replyText.trim());
+      return;
+    }
+    setSendingReply(true);
+    try {
+      const replyRecipient = getReplyRecipient();
         if (!replyRecipient) {
           throw new Error('No recipient email address found for this conversation');
         }
@@ -944,7 +1067,6 @@ export function CrmOmnichannelInbox({
         });
         setReplyText('');
         loadThread();
-      }
     } catch (err: any) {
       showToast({
         type: 'error',
@@ -1134,7 +1256,7 @@ export function CrmOmnichannelInbox({
               aria-label="Active Mailbox"
               value={activeMailbox}
               onChange={(e) => setActiveMailbox(e.target.value as ActiveMailbox)}
-              className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500"
+              className="text-xs font-semibold bg-white border border-gray-300 rounded px-2 py-1 text-gray-800 focus:outline-blue-500 max-w-[190px] sm:max-w-none truncate"
             >
               <option value="sales@avira.co.id">sales@avira.co.id (Commercial Sales)</option>
               <option value="kunal@avira.co.id">kunal@avira.co.id (Pricing & Sourcing)</option>
@@ -1166,7 +1288,7 @@ export function CrmOmnichannelInbox({
           </div>
 
           {/* Channel Filter */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             {(
               [
                 ['all', 'All Channels'],
@@ -1220,13 +1342,29 @@ export function CrmOmnichannelInbox({
 
       {/* 3-COLUMN MASTER-DETAIL WORKSPACE */}
       <div className="flex-1 flex overflow-hidden">
-        {/* COLUMN 1: Conversation List (~340px) */}
-        <div className="w-full md:w-[340px] border-r border-gray-200 flex flex-col bg-white flex-shrink-0">
-          {/* Search Box */}
-          <div className="p-2 border-b border-gray-200 bg-gray-50/50">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
-              <input
+        {/* COLUMN 1: Conversation List */}
+        <div
+          className={`${
+            selectedId ? 'hidden md:flex' : 'flex'
+          } w-full md:w-[340px] shrink-0 border-r border-gray-200 flex-col bg-white overflow-hidden`}
+        >
+          {channelFilter === 'whatsapp' ? (
+            <WhatsAppConversationList
+              conversations={conversations}
+              selectedId={selectedId}
+              onSelect={(id: string) => handleSelectConversation(id)}
+              activeFilter={waFilter}
+              onFilterChange={setWaFilter}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+            />
+          ) : (
+            <div className="w-full flex flex-col bg-white flex-1 overflow-hidden">
+            {/* Search Box */}
+            <div className="p-2 border-b border-gray-200 bg-gray-50/50">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
+                <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -1346,11 +1484,17 @@ export function CrmOmnichannelInbox({
                 </div>
               );
             })}
+            </div>
           </div>
-        </div>
+        )}
+      </div>
 
         {/* COLUMN 2: Conversation Thread & Quick Reply (flex-1) */}
-        <div className="flex-1 flex flex-col bg-white overflow-hidden min-w-0 border-r border-gray-200">
+        <div
+          className={`${
+            !selectedId ? 'hidden md:flex' : 'flex'
+          } flex-1 flex-col bg-white overflow-hidden min-w-0 border-r border-gray-200`}
+        >
           {!selectedConversation ? (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8 text-center">
               <Inbox className="w-12 h-12 text-gray-200 mb-3" />
@@ -1360,6 +1504,31 @@ export function CrmOmnichannelInbox({
                 attachments, and reply.
               </p>
             </div>
+          ) : selectedConversation.channel === 'whatsapp' ? (
+            <WhatsAppChatArea
+              conversationTitle={
+                phoneMatch.candidate?.companyName ||
+                selectedConversation.customerName ||
+                selectedConversation.senderName ||
+                'WhatsApp Contact'
+              }
+              recipientPhone={
+                selectedConversation.senderAddress || selectedConversation.recipientAddress || ''
+              }
+              isWhatsApp={true}
+              messages={threadMessages}
+              loading={loadingDetail}
+              error={detailError}
+              onSendMessage={(text, docUrl, fn) => handleSendWhatsApp(text, docUrl, fn)}
+              onOpenQuotationModal={() => setQuotationModalOpen(true)}
+              onOpenDocumentModal={() => setDocumentModalOpen(true)}
+              onOpenStockModal={() => setStockModalOpen(true)}
+              onOpenFollowUpModal={() => setFollowUpModalOpen(true)}
+              onToggleContextPanel={() => setMobileContextDrawerOpen(!mobileContextDrawerOpen)}
+              onBack={() => handleSelectConversation(null)}
+              suggestedReply={selectedConversation.suggestedReply}
+              detectedIntent={selectedConversation.intent}
+            />
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
               {/* Header Action Bar */}
@@ -1433,7 +1602,7 @@ export function CrmOmnichannelInbox({
               </div>
 
               {/* Compact Collapsible AI Intelligence Pill */}
-              {selectedConversation.channel === 'whatsapp' && (
+              {Boolean(selectedConversation.latestSummary || selectedConversation.intent) && (
                 <div className="bg-emerald-50/70 border-b border-emerald-200 px-4 py-2 flex flex-col gap-1.5 transition">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2">
@@ -1691,34 +1860,12 @@ export function CrmOmnichannelInbox({
               <div className="p-3 border-t border-gray-200 bg-white space-y-2">
                 <div className="flex items-center justify-between text-xs text-gray-600">
                   <span className="font-semibold flex items-center gap-1.5 flex-wrap">
-                    {selectedConversation.channel === 'whatsapp' ? (
-                      <>
-                        <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                        Reply via WhatsApp to {selectedConversation.senderAddress}
-                      </>
-                    ) : (
-                      <>
-                        <Mail className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Reply via Email to {getReplyRecipient()}</span>
-                        <span className="text-[10px] text-gray-500 font-mono bg-gray-50 px-1 py-0.2 rounded border border-gray-200">
-                          Sending from: sales@avira.co.id
-                        </span>
-                      </>
-                    )}
+                    <Mail className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Reply via Email to {getReplyRecipient()}</span>
+                    <span className="text-[10px] text-gray-500 font-mono bg-gray-50 px-1 py-0.2 rounded border border-gray-200">
+                      Sending from: sales@avira.co.id
+                    </span>
                   </span>
-
-                  {selectedConversation.channel === 'whatsapp' &&
-                    selectedConversation.suggestedReply && (
-                      <button
-                        type="button"
-                        onClick={() => setReplyText(selectedConversation.suggestedReply || '')}
-                        title="Draft Reply in Customer Language"
-                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1 transition cursor-pointer"
-                      >
-                        <Sparkles className="w-3 h-3 text-emerald-600" />
-                        <span>Draft AI Reply</span>
-                      </button>
-                    )}
                 </div>
 
                 <textarea
@@ -1739,11 +1886,7 @@ export function CrmOmnichannelInbox({
                   <button
                     onClick={handleSendReply}
                     disabled={sendingReply || !replyText.trim()}
-                    className={`px-3.5 py-1.5 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
-                      selectedConversation.channel === 'whatsapp'
-                        ? 'bg-emerald-600 hover:bg-emerald-700'
-                        : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
+                    className="px-3.5 py-1.5 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 bg-blue-600 hover:bg-blue-700"
                   >
                     <Send className="w-3 h-3" />
                     <span>{sendingReply ? 'Sending...' : 'Send Reply'}</span>
@@ -1760,6 +1903,75 @@ export function CrmOmnichannelInbox({
             <div className="text-center text-gray-400 py-12 text-xs">
               Context & Customer 360 will appear here.
             </div>
+          ) : selectedConversation.channel === 'whatsapp' ? (
+            <WhatsAppCustomerContextPanel
+              companyName={
+                phoneMatch.candidate?.companyName ||
+                customerDetail?.company_name ||
+                selectedConversation.customerName
+              }
+              contactPerson={
+                phoneMatch.candidate?.contactPerson ||
+                customerDetail?.contact_person
+              }
+              phone={
+                selectedConversation.senderAddress ||
+                selectedConversation.recipientAddress ||
+                ''
+              }
+              email={
+                phoneMatch.candidate?.email ||
+                customerDetail?.email
+              }
+              designation={phoneMatch.candidate?.designation}
+              customerId={
+                phoneMatch.candidate?.customerId ||
+                customerDetail?.id ||
+                selectedConversation.customerId
+              }
+              crmContactId={phoneMatch.candidate?.crmContactId}
+              matchType={phoneMatch.matchType}
+              candidates={phoneMatch.candidates}
+              loadingMatch={matchingPhone}
+              onDisambiguate={() => setDisambiguationModalOpen(true)}
+              inquiries={companyInquiries}
+              onOpenInquiry={(inqId: string) => onOpenInquiry?.(inqId)}
+              onCreateInquiryPrefilled={() => {
+                const phone =
+                  selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
+                const prefill = PhoneMatchingService.buildInquiryPrefill(
+                  phone,
+                  phoneMatch.candidate
+                    ? {
+                        id: phoneMatch.candidate.customerId,
+                        crmContactId: phoneMatch.candidate.crmContactId,
+                        companyName: phoneMatch.candidate.companyName,
+                        contactPerson: phoneMatch.candidate.contactPerson,
+                        email: phoneMatch.candidate.email,
+                      }
+                    : null,
+                  selectedConversation.snippet
+                );
+                if (onCreateInquiryFromMessage) {
+                  onCreateInquiryFromMessage(
+                    {
+                      subject: prefill.product_name
+                        ? `Inquiry for ${prefill.product_name}`
+                        : 'WhatsApp Inquiry',
+                      body: prefill.remarks || selectedConversation.snippet,
+                      fromEmail: prefill.contact_email || '',
+                      fromName: prefill.contact_person || selectedConversation.senderName,
+                    },
+                    prefill
+                  );
+                }
+              }}
+              onOpenQuotationModal={() => setQuotationModalOpen(true)}
+              onOpenDocumentModal={() => setDocumentModalOpen(true)}
+              onOpenStockModal={() => setStockModalOpen(true)}
+              onOpenFollowUpModal={() => setFollowUpModalOpen(true)}
+              ownerName={selectedConversation.ownerName}
+            />
           ) : (
             <>
               {/* Customer 360 Profile Box */}
@@ -2081,6 +2293,192 @@ export function CrmOmnichannelInbox({
             </div>
           </div>
         </div>
+      )}
+
+      {/* WhatsApp Quick Action Modals */}
+      {selectedConversation && selectedConversation.channel === 'whatsapp' && (
+        <>
+          <SendQuotationModal
+            isOpen={quotationModalOpen}
+            onClose={() => setQuotationModalOpen(false)}
+            onSend={async (text, docUrl, fn) => {
+              await handleSendWhatsApp(text, docUrl, fn);
+            }}
+            companyName={
+              phoneMatch.candidate?.companyName ||
+              customerDetail?.company_name ||
+              selectedConversation.customerName ||
+              'Customer'
+            }
+            contactPerson={
+              phoneMatch.candidate?.contactPerson || customerDetail?.contact_person
+            }
+            inquiries={companyInquiries}
+          />
+
+          <SendDocumentModal
+            isOpen={documentModalOpen}
+            onClose={() => setDocumentModalOpen(false)}
+            onSend={async (text, docUrl, fn) => {
+              await handleSendWhatsApp(text, docUrl, fn);
+            }}
+            productName={
+              companyInquiries[0]?.product_name || selectedConversation.productName || ''
+            }
+            inquiryId={companyInquiries[0]?.id || selectedConversation.inquiryId}
+          />
+
+          <StockCheckModal
+            isOpen={stockModalOpen}
+            onClose={() => setStockModalOpen(false)}
+            onInsertMessage={(text: string) => {
+              handleSendWhatsApp(text);
+            }}
+            initialProduct={
+              companyInquiries[0]?.product_name || selectedConversation.productName || ''
+            }
+          />
+
+          <CreateFollowUpModal
+            isOpen={followUpModalOpen}
+            onClose={() => setFollowUpModalOpen(false)}
+            conversationId={
+              selectedConversation.whatsAppConversationId || selectedConversation.id
+            }
+            inquiryId={companyInquiries[0]?.id || selectedConversation.inquiryId}
+            customerId={
+              phoneMatch.candidate?.customerId ||
+              customerDetail?.id ||
+              selectedConversation.customerId
+            }
+            companyName={
+              phoneMatch.candidate?.companyName ||
+              customerDetail?.company_name ||
+              selectedConversation.customerName ||
+              'Customer'
+            }
+          />
+
+          <CustomerDisambiguationDialog
+            isOpen={disambiguationModalOpen}
+            onClose={() => setDisambiguationModalOpen(false)}
+            phone={
+              selectedConversation.senderAddress || selectedConversation.recipientAddress || ''
+            }
+            candidates={phoneMatch.candidates}
+            onSelectCandidate={(cand) => {
+              setPhoneMatch({
+                matchType: 'exact_single',
+                candidate: cand,
+                candidates: [cand],
+              });
+              if (cand.companyName) {
+                PhoneMatchingService.getCompanyInquiries(
+                  cand.companyName,
+                  cand.customerId || undefined
+                ).then(setCompanyInquiries);
+              }
+              setDisambiguationModalOpen(false);
+            }}
+          />
+
+          {/* Mobile & Tablet Slide-Over Customer Context Drawer */}
+          {mobileContextDrawerOpen && selectedConversation && (
+            <div className="fixed inset-0 z-50 lg:hidden flex justify-end animate-in fade-in duration-150">
+              <div
+                className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs"
+                onClick={() => setMobileContextDrawerOpen(false)}
+              />
+              <div className="relative w-full max-w-sm sm:max-w-md bg-white h-full shadow-2xl z-10 flex flex-col">
+                <WhatsAppCustomerContextPanel
+                  companyName={
+                    phoneMatch.candidate?.companyName ||
+                    customerDetail?.company_name ||
+                    selectedConversation.customerName
+                  }
+                  contactPerson={
+                    phoneMatch.candidate?.contactPerson ||
+                    customerDetail?.contact_person
+                  }
+                  phone={
+                    selectedConversation.senderAddress ||
+                    selectedConversation.recipientAddress ||
+                    ''
+                  }
+                  email={phoneMatch.candidate?.email || customerDetail?.email}
+                  designation={phoneMatch.candidate?.designation}
+                  customerId={
+                    phoneMatch.candidate?.customerId ||
+                    customerDetail?.id ||
+                    selectedConversation.customerId
+                  }
+                  crmContactId={phoneMatch.candidate?.crmContactId}
+                  matchType={phoneMatch.matchType}
+                  candidates={phoneMatch.candidates}
+                  loadingMatch={matchingPhone}
+                  onDisambiguate={() => {
+                    setMobileContextDrawerOpen(false);
+                    setDisambiguationModalOpen(true);
+                  }}
+                  inquiries={companyInquiries}
+                  onOpenInquiry={(inqId: string) => {
+                    setMobileContextDrawerOpen(false);
+                    onOpenInquiry?.(inqId);
+                  }}
+                  onCreateInquiryPrefilled={() => {
+                    setMobileContextDrawerOpen(false);
+                    const phone =
+                      selectedConversation.senderAddress || selectedConversation.recipientAddress || '';
+                    const prefill = PhoneMatchingService.buildInquiryPrefill(
+                      phone,
+                      phoneMatch.candidate
+                        ? {
+                            id: phoneMatch.candidate.customerId,
+                            crmContactId: phoneMatch.candidate.crmContactId,
+                            companyName: phoneMatch.candidate.companyName,
+                            contactPerson: phoneMatch.candidate.contactPerson,
+                            email: phoneMatch.candidate.email,
+                          }
+                        : null,
+                      selectedConversation.snippet
+                    );
+                    if (onCreateInquiryFromMessage) {
+                      onCreateInquiryFromMessage(
+                        {
+                          subject: prefill.product_name
+                            ? `Inquiry for ${prefill.product_name}`
+                            : 'WhatsApp Inquiry',
+                          body: prefill.remarks || selectedConversation.snippet,
+                          fromEmail: prefill.contact_email || '',
+                          fromName: prefill.contact_person || selectedConversation.senderName,
+                        },
+                        prefill
+                      );
+                    }
+                  }}
+                  onOpenQuotationModal={() => {
+                    setMobileContextDrawerOpen(false);
+                    setQuotationModalOpen(true);
+                  }}
+                  onOpenDocumentModal={() => {
+                    setMobileContextDrawerOpen(false);
+                    setDocumentModalOpen(true);
+                  }}
+                  onOpenStockModal={() => {
+                    setMobileContextDrawerOpen(false);
+                    setStockModalOpen(true);
+                  }}
+                  onOpenFollowUpModal={() => {
+                    setMobileContextDrawerOpen(false);
+                    setFollowUpModalOpen(true);
+                  }}
+                  ownerName={selectedConversation.ownerName}
+                  onCloseMobile={() => setMobileContextDrawerOpen(false)}
+                />
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

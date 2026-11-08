@@ -12,6 +12,7 @@ import { parseIndonesianNumber } from '../utils/currency';
 import { CustomerPriceHistoryCard } from './pricing/CustomerPriceHistoryCard';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from './finance/FloatingField';
 import { SapRow } from './finance/SapLayout';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 
 interface Customer {
   id: string;
@@ -444,12 +445,13 @@ export default function SalesOrderForm({ existingOrder, prefill, onSuccess, onCa
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
       const filePath = `customer-po/${fileName}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('sales-order-documents')
-        .upload(filePath, poFile, {
-          cacheControl: '3600',
-          upsert: false
-        });
+      const { data: uploadData, error: uploadError } = await uploadOptimizedFile(
+        supabase,
+        'sales-order-documents',
+        filePath,
+        poFile,
+        { upsert: false }
+      );
 
       if (uploadError) {
         console.error('Upload error:', uploadError);

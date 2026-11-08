@@ -470,11 +470,11 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 24 Tests)
     const rvRes = await pool.query(`
       INSERT INTO public.receipt_vouchers (
         voucher_number, voucher_date, party_type, supplier_id, payment_method,
-        bank_account_id, amount, settlement_amount, payment_purpose, created_by,
+        bank_account_id, amount, payment_purpose, created_by,
         transaction_currency, payment_currency, exchange_rate
       ) VALUES (
         'RV-TEST-005', CURRENT_DATE, 'supplier', $1, 'bank_transfer',
-        $2, 500, 8000000, 'supplier_refund', $3, 'USD', 'USD', 16000
+        $2, 500, 'supplier_refund', $3, 'USD', 'USD', 16000
       ) RETURNING id;
     `, [testSupplierId, bankIdBcaUsd, adminUserId]);
     const rvId = rvRes.rows[0].id;
@@ -540,12 +540,12 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 24 Tests)
     const rvRes = await pool.query(`
       INSERT INTO public.receipt_vouchers (
         voucher_number, voucher_date, party_type, supplier_id, payment_method,
-        bank_account_id, amount, settlement_amount, settlement_discount,
+        bank_account_id, amount, settlement_discount,
         adjustment_reason, adjustment_account_id, adjustment_notes,
         payment_purpose, created_by
       ) VALUES (
         'RV2610-TEST-EXIS', '2026-10-30', 'supplier', $1, 'bank_transfer',
-        $2, 1666000, 1666000, 3000,
+        $2, 1666000, 3000,
         'rounding_difference', $3, 'Approved settlement difference of 3000 against 1669000',
         'supplier_refund', $4
       ) RETURNING id;
@@ -592,10 +592,10 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 24 Tests)
     const rvRes = await pool.query(`
       INSERT INTO public.receipt_vouchers (
         voucher_number, voucher_date, party_type, supplier_id, payment_method,
-        bank_account_id, amount, settlement_amount, payment_purpose, created_by
+        bank_account_id, amount, payment_purpose, created_by
       ) VALUES (
         'RV-EXCEED-008', CURRENT_DATE, 'supplier', $1, 'bank_transfer',
-        $2, 99999999, 99999999, 'supplier_refund', $3
+        $2, 99999999, 'supplier_refund', $3
       ) RETURNING id;
     `, [testSupplierId, bankIdBcaIdr, adminUserId]);
     const rvId = rvRes.rows[0].id;
@@ -1036,10 +1036,10 @@ test.describe('SAPJ ERP: Receipt Voucher Posting & GL Integration (All 24 Tests)
     const rvRes = await pool.query(`
       INSERT INTO public.receipt_vouchers (
         voucher_number, voucher_date, party_type, customer_id, payment_method,
-        bank_account_id, amount, settlement_amount, payment_purpose, created_by
+        bank_account_id, amount, payment_purpose, created_by
       ) VALUES (
         'RV-CUST-023', CURRENT_DATE, 'customer', $1, 'bank_transfer',
-        $2, 750000, 750000, 'customer_payment', $3
+        $2, 750000, 'customer_payment', $3
       ) RETURNING id;
     `, [testCustomerId, bankIdBcaIdr, adminUserId]);
     const rvId = rvRes.rows[0].id;

@@ -2744,20 +2744,26 @@ export function BankReconciliationEnhanced({
         if (!customerId) throw new Error('Please select a customer');
         if (line.currency === 'USD' && recordExchangeRate <= 1) throw new Error('Enter a valid USD-to-IDR exchange rate');
 
+        const validAllocations = Object.entries(receiptAllocations)
+          .filter(([, amount]) => amount > 0)
+          .map(([invoiceId, amount]) => ({ sales_invoice_id: invoiceId, amount }));
+
         const receiptId = await saveReceiptVoucher(null, {
           voucher_date: line.date,
+          party_type: 'customer',
           customer_id: customerId,
           payment_method: 'bank_transfer',
           bank_account_id: selectedBank,
           reference_number: line.reference || null,
           amount: line.credit,
           description: description || line.description,
+          currency_code: line.currency as 'IDR' | 'USD',
           transaction_currency: line.currency as 'IDR' | 'USD',
           exchange_rate: line.currency === 'IDR' ? 1 : recordExchangeRate,
+          payment_purpose: 'invoice_payment',
+          settlement_against: validAllocations.length > 0 ? 'specific_document' : 'advance',
           created_by: user.id,
-        }, Object.entries(receiptAllocations)
-          .filter(([, amount]) => amount > 0)
-          .map(([invoiceId, amount]) => ({ sales_invoice_id: invoiceId, amount })));
+        }, validAllocations);
 
         const { error: postError } = await supabase.rpc('post_receipt_voucher', {
           p_rv_id: receiptId,

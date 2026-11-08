@@ -292,15 +292,15 @@ export function SalesDashboard() {
   return (
     <div className="space-y-4">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold text-gray-900">
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-3 sm:p-4 border border-blue-100">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-lg sm:text-2xl font-bold text-gray-900 truncate">
               Welcome, {profile?.full_name || profile?.username || 'Sales'}!
             </h1>
-            <div className="flex items-start gap-2 mt-1">
-              <Sparkles className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-gray-600 italic">
+            <div className="flex items-start gap-1.5 mt-1">
+              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs sm:text-sm text-gray-600 italic line-clamp-2">
                 "{quote.content}"
                 {quote.author && <span className="text-gray-500"> — {quote.author}</span>}
               </p>
@@ -309,7 +309,7 @@ export function SalesDashboard() {
           <button
             onClick={() => load(false)}
             disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition flex-shrink-0"
+            className="flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-white border border-gray-200 rounded-lg text-[11px] sm:text-xs text-gray-600 hover:bg-gray-50 transition self-start sm:self-auto flex-shrink-0 shadow-xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             <span>Refresh</span>

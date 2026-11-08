@@ -36,7 +36,21 @@
     @apply mb-2.5;
   }
 
-  /* Dense, consistent transaction grid for the Sales Orders list. */
+  /* Mobile Safe Area & App-Style Interaction Enhancements */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+}
+.safe-top {
+  padding-top: max(env(safe-area-inset-top, 0px), 12px);
+}
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+@media (max-width: 767px) {
+  html, body {
+    overscroll-behavior-y: none;
+  }
+}
   .sales-transaction-table th {
     padding: 0.5rem 0.75rem !important;
   }

@@ -21,6 +21,7 @@ import { MoneyInput } from '../MoneyInput';
 import { showConfirm } from '../ConfirmDialog';
 import { loadAllRouteRecipients, recipientConfigurationError } from '../../services/sourcingRecipients';
 import { deriveSourcingRoute, getOperationalStatus, calculateSourcingAging } from '../../utils/sourcingWorkflowStatus';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface InquiryItem {
   id: string;
@@ -1386,7 +1387,7 @@ export function InquiryTableExcel({
       for (const file of requirementUploadFiles) {
         const sanitizedFileName = file.name.replace(/\s+/g, '_');
         const filePath = `requirement-documents/${inquiryForRequirementDocument.id}/${requirementDocumentType}/${user.id}/${Date.now()}_${sanitizedFileName}`;
-        const { error: uploadError } = await supabase.storage.from('crm-documents').upload(filePath, file);
+        const { error: uploadError } = await uploadOptimizedFile(supabase, 'crm-documents', filePath, file);
         if (uploadError) throw uploadError;
         uploadedPaths.push(filePath);
       }
@@ -3169,19 +3170,19 @@ export function InquiryTableExcel({
                 </div>
               </div>
             )}
-            {!documentPreviewLoading && documentPreviewBlobUrl && (
+            {!documentPreviewLoading && (documentPreviewBlobUrl || documentPreviewUrl) && (
               <iframe
-                src={documentPreviewBlobUrl}
-                className="flex-1 w-full rounded-lg border border-gray-200"
+                src={documentPreviewBlobUrl || documentPreviewUrl || ''}
+                className="flex-1 w-full rounded-lg border border-gray-200 bg-white"
                 title="Inquiry document preview"
               />
             )}
-            {!documentPreviewLoading && !documentPreviewBlobUrl && (
+            {!documentPreviewLoading && !documentPreviewBlobUrl && !documentPreviewUrl && (
               <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200">
                 <div className="text-center text-gray-500 px-6">
                   <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
                   <p className="text-sm font-medium mb-2">Document cannot be previewed</p>
-                  <p className="text-xs text-gray-400 mb-5">Please download or open the file in a new tab.</p>
+                  <p className="text-xs text-gray-400 mb-5">Please check file storage or try downloading again.</p>
                 </div>
               </div>
             )}

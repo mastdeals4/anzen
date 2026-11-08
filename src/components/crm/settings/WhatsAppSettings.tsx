@@ -62,6 +62,7 @@ export function WhatsAppSettings() {
       }
     } catch (e: any) {
       setStatus({
+        provider: 'meta_cloud',
         status: 'error',
         session: 'sapj-business-whatsapp',
         error: e.message || 'Failed to fetch status',

@@ -55,7 +55,7 @@ function ToastItem({ toast, onClose }: ToastNotificationProps) {
 
   return (
     <div
-      className={`${getBgColor()} border rounded-lg shadow-lg p-4 mb-3 min-w-80 max-w-md animate-slide-in`}
+      className={`${getBgColor()} border rounded-lg shadow-lg p-3 sm:p-4 mb-2 sm:mb-3 w-full sm:w-auto sm:min-w-80 sm:max-w-md animate-slide-in`}
       style={{
         animation: 'slideIn 0.3s ease-out'
       }}
@@ -100,7 +100,7 @@ export function ToastContainer() {
   };
 
   return (
-    <div className="fixed top-4 right-4 z-[9999] pointer-events-none">
+    <div className="fixed top-3 right-3 left-3 sm:left-auto sm:right-4 sm:top-4 z-[9999] pointer-events-none">
       <div className="pointer-events-auto">
         {toasts.map(toast => (
           <ToastItem key={toast.id} toast={toast} onClose={handleClose} />

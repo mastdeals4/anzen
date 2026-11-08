@@ -1,0 +1,19 @@
+{
+  "short_name": "SAPJ ERP",
+  "name": "Anzen SAPJ ERP",
+  "description": "Enterprise Resource Planning & Omnichannel CRM",
+  "icons": [
+    {
+      "src": "/src/assets/Untitled-1.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/dashboard",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "display": "standalone",
+  "orientation": "portrait-primary"
+}
+

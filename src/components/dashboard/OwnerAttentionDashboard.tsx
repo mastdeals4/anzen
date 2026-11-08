@@ -279,35 +279,35 @@ export const OwnerAttentionDashboard: React.FC<OwnerAttentionDashboardProps> = (
       </div>
 
       {/* Primary KPI Grid: 4 Core Financial & Asset Pillars */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3.5 mb-3 sm:mb-5">
         {/* 1. Cash & Bank Balances */}
         <div
           onClick={() => setCurrentPage('finance')}
-          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-emerald-50/40 p-4 rounded-xl border border-emerald-100/80 hover:border-emerald-300 hover:shadow-md transition"
+          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-emerald-50/40 p-2.5 sm:p-4 rounded-xl border border-emerald-100/80 hover:border-emerald-300 hover:shadow-md transition"
         >
-          <div className="flex items-center justify-between text-xs font-semibold text-emerald-900 mb-2">
-            <span className="flex items-center gap-1.5">
-              <Wallet className="w-4 h-4 text-emerald-600" />
-              Cash & Bank Liquidity
+          <div className="flex items-center justify-between text-[11px] sm:text-xs font-semibold text-emerald-900 mb-1.5 sm:mb-2">
+            <span className="flex items-center gap-1 sm:gap-1.5 truncate">
+              <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
+              <span className="truncate">Cash & Bank</span>
             </span>
-            <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-700 transition group-hover:translate-x-0.5" />
+            <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 group-hover:text-emerald-700 transition group-hover:translate-x-0.5 shrink-0" />
           </div>
-          <div className="space-y-1">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[11px] text-slate-500">BCA IDR:</span>
-              <span className="font-mono font-bold text-sm text-slate-900">
+          <div className="space-y-0.5 sm:space-y-1">
+            <div className="flex items-baseline justify-between gap-1">
+              <span className="text-[10px] sm:text-[11px] text-slate-500 truncate">BCA IDR:</span>
+              <span className="font-mono font-bold text-xs sm:text-sm text-slate-900 truncate">
                 {formatCurrency(data.bcaIdrBalance, 'IDR')}
               </span>
             </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-[11px] text-slate-500">BCA USD:</span>
-              <span className="font-mono font-bold text-xs text-blue-800">
+            <div className="flex items-baseline justify-between gap-1">
+              <span className="text-[10px] sm:text-[11px] text-slate-500 truncate">BCA USD:</span>
+              <span className="font-mono font-bold text-[11px] sm:text-xs text-blue-800 truncate">
                 ${data.bcaUsdBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
             </div>
-            <div className="flex items-baseline justify-between pt-1 border-t border-emerald-100/60 text-[10px]">
-              <span className="text-slate-500">Petty Cash:</span>
-              <span className="font-mono font-medium text-slate-700">
+            <div className="flex items-baseline justify-between pt-1 border-t border-emerald-100/60 text-[9px] sm:text-[10px]">
+              <span className="text-slate-500 truncate">Petty Cash:</span>
+              <span className="font-mono font-medium text-slate-700 truncate">
                 {formatCurrency(data.pettyCashBalance, 'IDR')}
               </span>
             </div>
@@ -317,32 +317,32 @@ export const OwnerAttentionDashboard: React.FC<OwnerAttentionDashboardProps> = (
         {/* 2. AR Overdue (Receivables) */}
         <div
           onClick={() => setCurrentPage('finance')}
-          className={`cursor-pointer group relative p-4 rounded-xl border transition ${
+          className={`cursor-pointer group relative p-2.5 sm:p-4 rounded-xl border transition ${
             data.arOverdueCount > 0
               ? 'bg-gradient-to-br from-rose-50/50 to-amber-50/40 border-rose-200 hover:border-rose-400 hover:shadow-md'
               : 'bg-slate-50 border-slate-200 hover:border-slate-300'
           }`}
         >
-          <div className="flex items-center justify-between text-xs font-semibold mb-2">
-            <span className={`flex items-center gap-1.5 ${data.arOverdueCount > 0 ? 'text-rose-900' : 'text-slate-700'}`}>
-              <AlertTriangle className={`w-4 h-4 ${data.arOverdueCount > 0 ? 'text-rose-600' : 'text-slate-400'}`} />
-              A/R Overdue
+          <div className="flex items-center justify-between text-[11px] sm:text-xs font-semibold mb-1.5 sm:mb-2">
+            <span className={`flex items-center gap-1 sm:gap-1.5 truncate ${data.arOverdueCount > 0 ? 'text-rose-900' : 'text-slate-700'}`}>
+              <AlertTriangle className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${data.arOverdueCount > 0 ? 'text-rose-600' : 'text-slate-400'}`} />
+              <span className="truncate">A/R Overdue</span>
             </span>
             <span
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              className={`text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full shrink-0 ${
                 data.arOverdueCount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-600'
               }`}
             >
-              {data.arOverdueCount} invoice{data.arOverdueCount === 1 ? '' : 's'}
+              {data.arOverdueCount} inv
             </span>
           </div>
-          <div className="mt-2">
-            <div className="text-lg font-bold font-mono text-slate-900">
+          <div className="mt-1 sm:mt-2">
+            <div className="text-sm sm:text-lg font-bold font-mono text-slate-900 truncate">
               {formatCurrency(data.arOverdueAmount, 'IDR')}
             </div>
-            <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
-              <span>Past payment due date</span>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-600 transition group-hover:translate-x-0.5" />
+            <div className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 sm:mt-1 flex items-center justify-between">
+              <span className="truncate">Past due</span>
+              <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 group-hover:text-rose-600 transition group-hover:translate-x-0.5 shrink-0" />
             </div>
           </div>
         </div>
@@ -350,24 +350,24 @@ export const OwnerAttentionDashboard: React.FC<OwnerAttentionDashboardProps> = (
         {/* 3. A/P Outstanding (Payables) */}
         <div
           onClick={() => setCurrentPage('finance')}
-          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-blue-50/40 p-4 rounded-xl border border-blue-100 hover:border-blue-300 hover:shadow-md transition"
+          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-blue-50/40 p-2.5 sm:p-4 rounded-xl border border-blue-100 hover:border-blue-300 hover:shadow-md transition"
         >
-          <div className="flex items-center justify-between text-xs font-semibold text-blue-900 mb-2">
-            <span className="flex items-center gap-1.5">
-              <CreditCard className="w-4 h-4 text-blue-600" />
-              A/P Due (Suppliers)
+          <div className="flex items-center justify-between text-[11px] sm:text-xs font-semibold text-blue-900 mb-1.5 sm:mb-2">
+            <span className="flex items-center gap-1 sm:gap-1.5 truncate">
+              <CreditCard className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600 shrink-0" />
+              <span className="truncate">A/P Due</span>
             </span>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+            <span className="text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 shrink-0">
               {data.apDueCount} bills
             </span>
           </div>
-          <div className="mt-2">
-            <div className="text-lg font-bold font-mono text-slate-900">
+          <div className="mt-1 sm:mt-2">
+            <div className="text-sm sm:text-lg font-bold font-mono text-slate-900 truncate">
               {formatCurrency(data.apDueAmount, 'IDR')}
             </div>
-            <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
-              <span>Unpaid purchase invoices</span>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition group-hover:translate-x-0.5" />
+            <div className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 sm:mt-1 flex items-center justify-between">
+              <span className="truncate">Unpaid bills</span>
+              <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 group-hover:text-blue-600 transition group-hover:translate-x-0.5 shrink-0" />
             </div>
           </div>
         </div>
@@ -375,23 +375,23 @@ export const OwnerAttentionDashboard: React.FC<OwnerAttentionDashboardProps> = (
         {/* 4. Total Inventory Value */}
         <div
           onClick={() => setCurrentPage('batches')}
-          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-indigo-50/40 p-4 rounded-xl border border-indigo-100 hover:border-indigo-300 hover:shadow-md transition"
+          className="cursor-pointer group relative bg-gradient-to-br from-slate-50 to-indigo-50/40 p-2.5 sm:p-4 rounded-xl border border-indigo-100 hover:border-indigo-300 hover:shadow-md transition"
         >
-          <div className="flex items-center justify-between text-xs font-semibold text-indigo-900 mb-2">
-            <span className="flex items-center gap-1.5">
-              <Boxes className="w-4 h-4 text-indigo-600" />
-              Authoritative Stock Valuation
+          <div className="flex items-center justify-between text-[11px] sm:text-xs font-semibold text-indigo-900 mb-1.5 sm:mb-2">
+            <span className="flex items-center gap-1 sm:gap-1.5 truncate">
+              <Boxes className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 shrink-0" />
+              <span className="truncate">Stock Value</span>
             </span>
-            <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 transition group-hover:translate-x-0.5" />
+            <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 group-hover:text-indigo-600 transition group-hover:translate-x-0.5 shrink-0" />
           </div>
-          <div className="mt-2">
-            <div className="text-lg font-bold font-mono text-slate-900">
+          <div className="mt-1 sm:mt-2">
+            <div className="text-sm sm:text-lg font-bold font-mono text-slate-900 truncate">
               {formatCurrency(data.inventoryValuation, 'IDR')}
             </div>
-            <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
-              <span>Active inventory batches</span>
-              <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                Landed Cost
+            <div className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 sm:mt-1 flex items-center justify-between">
+              <span className="truncate">Landed Cost</span>
+              <span className="text-[9px] sm:text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded shrink-0">
+                Active
               </span>
             </div>
           </div>
@@ -399,7 +399,7 @@ export const OwnerAttentionDashboard: React.FC<OwnerAttentionDashboardProps> = (
       </div>
 
       {/* Secondary Operational Bottlenecks: 4 Operational Alert Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-3 sm:mb-5">
         {/* Expiring Stock < 90 Days */}
         <div
           onClick={() => setCurrentPage('batches')}

@@ -1663,7 +1663,12 @@ export function DeliveryChallan() {
         return (
           <div className="flex items-center justify-center gap-2">
             <span className={`px-1.5 py-0.5 rounded-full text-[11px] leading-tight font-medium ${statusColors[challan.approval_status]}`}>
-              {statusLabels[challan.approval_status]}
+              <span className="inline md:hidden">
+                {challan.approval_status === 'approved' ? 'Approved' : challan.approval_status === 'pending_approval' ? 'Draft' : 'Cancelled'}
+              </span>
+              <span className="hidden md:inline">
+                {statusLabels[challan.approval_status]}
+              </span>
             </span>
             {challan.approval_status === 'pending_approval' && profile?.role === 'admin' && (
               <div className="flex items-center gap-1 ml-2">
@@ -1691,12 +1696,12 @@ export function DeliveryChallan() {
               </div>
             )}
             {challan.approval_status === 'approved' && (
-              <span title="Approved">
+              <span title="Approved" className="hidden md:inline">
                 <CheckCircle className="w-4 h-4 text-green-600 ml-1" />
               </span>
             )}
             {challan.approval_status === 'rejected' && (
-              <span title="Rejected">
+              <span title="Rejected" className="hidden md:inline">
                 <XCircle className="w-4 h-4 text-red-600 ml-1" />
               </span>
             )}
@@ -1856,7 +1861,7 @@ export function DeliveryChallan() {
                   ) : (
                     <div className="flex items-center gap-1">
                       <span
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded cursor-help"
+                        className="hidden sm:inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded cursor-help"
                         title="Approved DC has posted physical stock and is immutable."
                       >
                         <Lock className="w-3 h-3 text-emerald-600" />

@@ -5,7 +5,7 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { Layout } from '../components/Layout';
-import { FileText, Plus, Search, Eye, Pencil as Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download, AlertTriangle, Clock, ExternalLink, Truck, DollarSign, RefreshCw, Check } from 'lucide-react';
+import { FileText, Plus, Search, Eye, Pencil as Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download, AlertTriangle, Clock, ExternalLink, Truck, DollarSign, RefreshCw, Check, ChevronDown } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
 import { ProformaInvoiceView } from '../components/ProformaInvoiceView';
@@ -112,6 +112,15 @@ export default function SalesOrders() {
   const { t } = useLanguage();
   const { dateRange } = useFinance();
   const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'fx_backfill'>('active');
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
+  const toggleExpandOrder = (id: string) => {
+    setExpandedOrderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<SalesOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -984,13 +993,14 @@ export default function SalesOrders() {
       <div className="bg-white rounded-lg shadow mb-4 sales-transaction-table">
         <div className="p-2 border-b flex flex-col md:flex-row gap-2">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
             <input name="search_term" aria-label="Search by SO number, PO number, customer, or product..."
               type="text"
               placeholder="Search by SO number, PO number, customer, or product..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg"
+              style={{ paddingLeft: '2.5rem' }}
+              className="w-full pr-3 py-1.5 text-sm border rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500"
             />
           </div>
           {activeTab === 'fx_backfill' ? (
@@ -1238,8 +1248,9 @@ export default function SalesOrders() {
             </table>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px]">
+          <>
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-[1200px]">
               <thead className="bg-gray-50">
                 <tr>
                   {sortableHeader('so_number', 'SO Number')}
@@ -1458,7 +1469,130 @@ export default function SalesOrders() {
                 )}
               </tbody>
             </table>
-          </div>
+            </div>
+
+            {/* Mobile Card View (< 768px) - High Density 3-Line Format */}
+            <div className="block md:hidden p-2 space-y-1.5">
+              {loading ? (
+                <div className="py-8 text-center text-xs text-gray-500">Loading...</div>
+              ) : filteredOrders.length === 0 ? (
+                <div className="py-8 text-center text-xs text-gray-500">No sales orders found</div>
+              ) : (
+                filteredOrders.map((order) => {
+                  const isExpanded = expandedOrderIds.has(order.id);
+
+                  return (
+                    <div
+                      key={order.id}
+                      onClick={() => toggleExpandOrder(order.id)}
+                      className="bg-white rounded-xl border border-slate-200/90 p-2.5 space-y-1 shadow-2xs hover:border-slate-300 transition active:scale-[0.99] cursor-pointer"
+                    >
+                      {/* Line 1: SO Number + Status Badge + Actions */}
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                            {order.so_number}
+                          </span>
+                          <div className="shrink-0 scale-90 origin-left">
+                            {getOrderStatusBadge(order)}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleViewOrder(order)}
+                            className="p-1 text-slate-500 hover:text-slate-800 rounded active:bg-slate-100"
+                            title="View Order"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          {((profile?.role === 'admin' && !['closed', 'cancelled'].includes(order.status)) ||
+                            (!['delivered', 'closed', 'cancelled', 'partially_delivered', 'pending_delivery', 'approved', 'stock_reserved', 'shortage'].includes(order.status))) && (
+                            <button
+                              onClick={() => handleEditOrder(order)}
+                              className="p-1 text-blue-600 hover:text-blue-800 rounded active:bg-blue-50"
+                              title="Edit"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandOrder(order.id)}
+                            className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100"
+                            title={isExpanded ? 'Collapse' : 'Expand'}
+                          >
+                            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Line 2: Customer Name + SO Date */}
+                      <div className="flex items-center justify-between text-xs text-gray-600 gap-2">
+                        <span className="font-medium text-gray-800 truncate min-w-0 flex-1">
+                          {order.customers?.company_name || '—'}
+                        </span>
+                        <span className="text-[11px] text-gray-400 font-normal shrink-0">
+                          {formatDate(order.so_date)}
+                        </span>
+                      </div>
+
+                      {/* Line 3: Total Amount + PO/Delivery Due */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs gap-2">
+                        <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                          {formatCurrency(order.total_amount, order.currency || 'IDR')}
+                        </span>
+                        <span className="text-[11px] text-gray-500 truncate text-right">
+                          {order.customer_po_number ? `PO: ${order.customer_po_number}` : (order.expected_delivery_date ? `Due: ${formatDate(order.expected_delivery_date)}` : '')}
+                        </span>
+                      </div>
+
+                      {/* Expandable Drawer: Linked Documents, Rates, Actions */}
+                      {isExpanded && (
+                        <div
+                          className="mt-2 pt-2 border-t border-dashed border-slate-200 bg-slate-50/70 p-2 rounded-lg text-xs space-y-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div>
+                            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider block mb-1">Linked Documents</span>
+                            <LinkedDocsCell
+                              sos={[]}
+                              dcs={(soLinkedChallans.get(order.id) || []).map((dc) => ({ id: dc.id, number: dc.challan_number, type: 'dc' as const }))}
+                              invs={(soLinkedInvoices.get(order.id) || []).map((inv) => ({ id: inv.id, number: inv.invoice_number, type: 'inv' as const, isCancelled: inv.is_cancelled }))}
+                              show={{ so: false }}
+                              onClick={(doc: LinkedDocRef) => { if (doc.type === 'dc') openLinkedChallanView(doc.id); if (doc.type === 'inv') openLinkedInvoiceView(doc.id); }}
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-1.5 pt-1.5 border-t border-slate-200/80">
+                            <button
+                              onClick={() => setEditingFxRateOrder(order)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-xs font-semibold"
+                            >
+                              <DollarSign className="w-3.5 h-3.5" />
+                              <span>FX Rate</span>
+                            </button>
+                            {['approved', 'stock_reserved', 'pending_delivery', 'partially_delivered'].includes(order.status)
+                              && !approvedDeliverySoIds.has(order.id) && (
+                              <button
+                                onClick={() => {
+                                  setNavigationData({ createDeliveryChallanFromSO: order.id });
+                                  setCurrentPage('delivery-challan');
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700"
+                              >
+                                <Truck className="w-3.5 h-3.5" />
+                                <span>Create DC</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
         )}
       </div>
 

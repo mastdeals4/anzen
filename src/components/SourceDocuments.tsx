@@ -4,6 +4,7 @@ import { FileText, Upload, X, ExternalLink, Trash2, Download } from 'lucide-reac
 import { Modal } from './Modal';
 import { buildNormalizedBaseKey, buildUniqueDocumentNames } from '../utils/documentNaming';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 
 interface SourceDocument {
   id: string;
@@ -173,9 +174,12 @@ export function SourceDocuments({
 
         const filePath = `${sourceId}/${fileNaming.fileName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('product-source-documents')
-          .upload(filePath, item.file);
+        const { error: uploadError, optimization } = await uploadOptimizedFile(
+          supabase,
+          'product-source-documents',
+          filePath,
+          item.file
+        );
 
         if (uploadError) throw uploadError;
 
@@ -192,7 +196,7 @@ export function SourceDocuments({
             original_filename: item.file.name,
             display_name: fileNaming.displayName,
             storage_path: filePath,
-            file_size: item.file.size,
+            file_size: optimization.optimizedSize,
             uploaded_by: user.id,
           }]);
 

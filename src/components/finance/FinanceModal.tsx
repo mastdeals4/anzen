@@ -70,13 +70,13 @@ export function FinanceModal({
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="flex min-h-screen items-center justify-center p-1.5 sm:p-4">
         <div className="fixed inset-0 bg-gray-900/50" onClick={onClose} />
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          className={`relative bg-white rounded-lg shadow-xl border border-gray-300 w-full ${widthClass} max-h-[92vh] flex flex-col`}
+          className={`relative bg-white rounded-lg shadow-xl border border-gray-300 w-full ${widthClass} max-h-[96vh] sm:max-h-[92vh] flex flex-col`}
         >
           <div className="flex min-h-10 items-center justify-between gap-4 px-3.5 py-2 border-b border-gray-200 bg-gray-50 flex-shrink-0">
             <div className="flex items-baseline gap-2 min-w-0">

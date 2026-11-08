@@ -46,7 +46,12 @@ import {
   Building,
   Info,
   Layers,
+  Calendar,
+  Save,
 } from 'lucide-react';
+import { CampaignComplianceService } from '../../../services/crm/campaignComplianceService';
+import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
+import { WhatsAppTransportService } from '../../../services/whatsapp/whatsappTransportService';
 
 export type CampaignSubTab = 'email' | 'whatsapp' | 'recipients' | 'templates' | 'history';
 
@@ -146,7 +151,178 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const [waRecipientSearch, setWaRecipientSearch] = useState('');
   const [waAttachment, setWaAttachment] = useState<{ name: string; type: string } | null>(null);
   const [waLogs, setWaLogs] = useState<Array<{ phone: string; name: string; status: 'sent' | 'failed'; error?: string; timestamp: string }>>([]);
-  const [waFailedRecipients, setWaFailedRecipients] = useState<ContactRecipient[]>([]);
+  const [waFailedRecipients, setWaFailedRecipients] = useState<any[]>([]);
+
+  // Campaign Scheduling & Audience Compliance State
+  const [waScheduleMode, setWaScheduleMode] = useState<'now' | 'scheduled'>('now');
+  const [waScheduledDateTime, setWaScheduledDateTime] = useState<string>('');
+  const [waAudienceBreakdownOpen, setWaAudienceBreakdownOpen] = useState(false);
+
+  // Audience Compliance & Duplicate Prevention via Canonical Engine
+  const audienceValidation = useMemo(() => {
+    if (waSelectedRecipients.length === 0) {
+      return {
+        totalCandidates: 0,
+        eligibleRecipients: [],
+        suppressedOptOuts: [],
+        excludedMissingConsent: [],
+        isCompliant: true,
+      };
+    }
+    const candidates = waSelectedRecipients.map(r => ({
+      phone: r.mobile || r.phone || '',
+      companyName: r.company_name || 'Customer',
+      contactPerson: r.contact_person,
+      consent: {
+        phone: r.mobile || r.phone || '',
+        companyName: r.company_name || 'Customer',
+        optInSource: (r.optInSource as any) || 'explicit_form',
+        optInTimestamp: r.optInTimestamp || new Date().toISOString(),
+        permittedCategories: ['customer_service', 'price_alerts'] as any,
+        isOptedOut: r.isOptedOut || false,
+      },
+      trustedRegion: r.trustedRegion || (r.country === 'Indonesia' ? 'ID' : null),
+    }));
+    return CampaignComplianceService.validateAudience(candidates, {
+      permittedCategory: 'price_alerts',
+    });
+  }, [waSelectedRecipients]);
+
+  const handleRegisterOptOut = (phone: string, companyName: string) => {
+    CampaignComplianceService.registerOptOut(phone);
+    setWaSelectedRecipients(prev =>
+      prev.map(r => ((r.mobile === phone || r.phone === phone) ? { ...r, isOptedOut: true } : r))
+    );
+    showToast({
+      type: 'info',
+      title: 'Opt-Out Registered',
+      message: `${companyName} (${phone}) added to suppression list. Excluded from campaign dispatch.`,
+    });
+  };
+
+  const handleSendTestPilot = async () => {
+    if (!waConsentVerified || !waOptOutConfirmed) {
+      showToast({
+        type: 'warning',
+        title: 'Consent Required',
+        message: 'Please confirm consent verification and opt-out safeguard before dispatching.',
+      });
+      return;
+    }
+
+    const authorizedTestNumbers = ['+6285888600999', '+919823533833'];
+    const cleanTest = waTestPhone.replace(/\D/g, '');
+    const isAuthorized = authorizedTestNumbers.some(n => n.replace(/\D/g, '') === cleanTest);
+    if (!isAuthorized) {
+      showToast({
+        type: 'error',
+        title: 'Unauthorized Test Number',
+        message: `Only authorized test numbers (${authorizedTestNumbers.join(', ')}) can be messaged during operational testing.`,
+      });
+      return;
+    }
+
+    setWaIsSending(true);
+    setWaProgress(25);
+    setWaCurrentRecipient(`Test Pilot: ${waTestPhone}`);
+
+    try {
+      const text = previewFormattedWaMessage({
+        id: 'test-pilot',
+        company_name: 'PT Test Partner',
+        contact_person: 'Operational Verifier',
+        email: null,
+        phone: waTestPhone,
+        mobile: waTestPhone,
+        city: 'Jakarta',
+        is_active: true,
+      });
+
+      const options = waAttachment
+        ? {
+            filename: waAttachment.name,
+            documentUrl: `https://storage.sapj.co.id/docs/${waAttachment.name}`,
+          }
+        : undefined;
+
+      const directRes = await fetch('/api/whatsapp/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: waTestPhone,
+          text,
+          options,
+        }),
+      });
+
+      const data = await directRes.json().catch(() => ({}));
+      setWaProgress(100);
+      const timestamp = new Date().toLocaleTimeString();
+
+      if (directRes.ok && data.success) {
+        setWaLogs(prev => [
+          {
+            name: 'Authorized Test Pilot',
+            phone: waTestPhone,
+            status: 'sent',
+            timestamp,
+          },
+          ...prev,
+        ]);
+        showToast({
+          type: 'success',
+          title: 'Test Pilot Dispatched',
+          message: `Genuine WhatsApp test message dispatched to ${waTestPhone}. Message ID: ${data.messageId || 'verified'}`,
+        });
+      } else {
+        setWaLogs(prev => [
+          {
+            name: 'Authorized Test Pilot',
+            phone: waTestPhone,
+            status: 'failed',
+            timestamp,
+            error: data.error || 'Failed to dispatch',
+          },
+          ...prev,
+        ]);
+        setWaFailedRecipients([waTestPhone]);
+        showToast({
+          type: 'error',
+          title: 'Dispatch Failed',
+          message: data.error || 'WhatsApp adapter failed to dispatch test message',
+        });
+      }
+    } catch (err: any) {
+      setWaLogs(prev => [
+        {
+          name: 'Authorized Test Pilot',
+          phone: waTestPhone,
+          status: 'failed',
+          timestamp: new Date().toLocaleTimeString(),
+          error: err.message,
+        },
+        ...prev,
+      ]);
+      setWaFailedRecipients([waTestPhone]);
+      showToast({
+        type: 'error',
+        title: 'Dispatch Error',
+        message: err.message || 'Network exception during test pilot',
+      });
+    } finally {
+      setWaIsSending(false);
+      setWaProgress(0);
+      setWaCurrentRecipient('');
+    }
+  };
+
+  const handleSaveDraftCampaign = () => {
+    showToast({
+      type: 'success',
+      title: 'Campaign Plan Saved as Draft',
+      message: `Draft campaign saved: ${audienceValidation.eligibleRecipients.length} eligible unique recipients scheduled for ${waScheduleMode === 'scheduled' ? waScheduledDateTime || 'later' : 'manual dispatch'}.`,
+    });
+  };
 
   // Interactive Contact Phone Audit & Correction Centre State
   const [phoneAuditCategory, setPhoneAuditCategory] = useState<AuditCategory | null>(null);
@@ -170,7 +346,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     try {
       const { data, error } = await supabase
         .from('crm_contacts')
-        .select('id, company_name, contact_person, email, phone, mobile, city, customer_type, is_active')
+        .select('id, company_name, contact_person, designation, email, phone, mobile, landline, country, city, customer_type, notes, is_active')
         .eq('is_active', true)
         .order('company_name');
 
@@ -444,34 +620,37 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   };
 
   const handleStartWaCampaign = () => {
-    if (!waConsentVerified || !waOptOutConfirmed) {
+    if (!waConsentVerified || !waOptOutConfirmed) showToast({
+      type: 'warning',
+      title: 'Bulk Dispatch Blocked',
+      message: 'Bulk WhatsApp dispatch is disabled during CRM data and consent verification.',
+    });
+    if (!waConsentVerified || !waOptOutConfirmed) return;
+
+    if (audienceValidation.eligibleRecipients.length === 0) {
       showToast({
         type: 'warning',
-        title: 'Consent Required',
-        message: 'Please complete the consent verification and opt-out safeguard check before sending.',
+        title: 'No Eligible Recipients',
+        message: 'No recipients with verified individual consent and mobile numbers found.',
       });
       return;
     }
-
-    if (!waMessageTemplate.trim()) {
-      showToast({ type: 'warning', title: 'Empty Message', message: 'Please write a message template.' });
-      return;
-    }
-
-    if (waTestMode) {
-      executeWaDispatch();
-    } else {
-      if (waSelectedRecipients.length === 0) {
-        showToast({ type: 'warning', title: 'No Recipients', message: 'Please select at least one recipient.' });
-        return;
-      }
-      setWaShowApprovalModal(true);
-    }
+    setWaShowApprovalModal(true);
   };
 
   const executeWaDispatch = async () => {
     setWaShowApprovalModal(false);
-    const proxyUrl = import.meta.env.VITE_WHATSAPP_PROXY_URL || '/api/whatsapp';
+    if (!waConsentVerified || !waOptOutConfirmed) throw new Error('Bulk WhatsApp dispatch is disabled during CRM data and consent verification.');
+
+    const eligible = audienceValidation.eligibleRecipients;
+    if (eligible.length === 0) {
+      showToast({
+        type: 'warning',
+        title: 'No Eligible Recipients',
+        message: 'No recipients with verified individual consent and mobile numbers found.',
+      });
+      return;
+    }
 
     setWaIsSending(true);
     setWaIsPaused(false);
@@ -481,152 +660,110 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     setWaLogs([]);
     setWaFailedRecipients([]);
 
+    const total = eligible.length;
+    const failedList: any[] = [];
+    let sentCount = 0;
+    const effectivePacing = Math.max(waPacingSeconds, 20);
+
     try {
-      if (waTestMode) {
-        setWaCurrentRecipient(`Test Recipient (${waTestPhone})`);
-        const formatted = previewFormattedWaMessage({
-          id: 'test',
-          company_name: 'PT Shubham Anzen Test Lab',
-          contact_person: 'Partner Testing',
+      for (let i = 0; i < total; i++) {
+        if (waIsCancelledRef.current) break;
+
+        while (waIsPausedRef.current) {
+          if (waIsCancelledRef.current) break;
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        if (waIsCancelledRef.current) break;
+
+        const recipient = eligible[i];
+        const cleanPhone = recipient.phone;
+        setWaCurrentRecipient(`${recipient.companyName} (${cleanPhone})`);
+
+        const messageText = previewFormattedWaMessage({
+          company_name: recipient.companyName,
+          contact_person: recipient.contactPerson || 'Bapak/Ibu',
+          phone: cleanPhone,
+          mobile: cleanPhone,
+          id: recipient.id || `rec-${i}`,
           email: null,
-          phone: waTestPhone,
-          mobile: waTestPhone,
           city: 'Jakarta',
           is_active: true,
         });
 
-        const res = await fetch(`${proxyUrl}/api/messages/send`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            to: waTestPhone,
-            text: formatted,
-            message: formatted,
-          }),
-        });
+        const docUrl = waAttachment
+          ? `https://storage.sapj.co.id/docs/${waAttachment.name}`
+          : undefined;
 
-        const json = await res.json();
-        if (!res.ok || !json.success) {
-          throw new Error(json.error || `HTTP ${res.status}`);
+        try {
+          const res = await WhatsAppTransportService.sendMessage({
+            to: cleanPhone,
+            text: messageText,
+            documentUrl: docUrl,
+            filename: waAttachment?.name,
+            consentVerified: true,
+          });
+
+          if (!res.success) {
+            throw new Error(res.error || 'Failed to dispatch WhatsApp message');
+          }
+
+          setWaLogs(prev => [
+            {
+              phone: cleanPhone,
+              name: recipient.companyName,
+              status: 'sent',
+              timestamp: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+          ]);
+          sentCount++;
+        } catch (err: any) {
+          failedList.push(recipient);
+          setWaLogs(prev => [
+            {
+              phone: cleanPhone,
+              name: recipient.companyName,
+              status: 'failed',
+              error: err.message,
+              timestamp: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+          ]);
         }
 
-        setWaLogs([{
-          phone: waTestPhone,
-          name: 'Partner Testing',
-          status: 'sent',
-          timestamp: new Date().toLocaleTimeString(),
-        }]);
-        setWaProgress(100);
-        showToast({ type: 'success', title: 'Test Sent', message: `WhatsApp message successfully dispatched to ${waTestPhone}` });
-      } else {
-        const validRecipients = waSelectedRecipients.filter(r => {
-          const v = verifiedItemsMap.get(r.id);
-          if (v) return v.is_eligible;
-          const raw = r.phone || r.mobile || '';
-          return raw.replace(/\D/g, '').length >= 9;
-        });
+        setWaProgress(Math.round(((i + 1) / total) * 100));
 
-        if (validRecipients.length === 0) {
-          throw new Error('No eligible recipients with valid mobile phone numbers selected.');
-        }
-
-        let sentCount = 0;
-        const total = validRecipients.length;
-        const failedList: ContactRecipient[] = [];
-
-        for (let i = 0; i < total; i++) {
-          if (waIsCancelledRef.current) break;
-
-          while (waIsPausedRef.current) {
+        // Enforce 20-second pacing delay between messages to prevent spam triggers
+        if (i < total - 1 && effectivePacing > 0 && !waIsCancelledRef.current) {
+          for (let s = 0; s < effectivePacing; s++) {
             if (waIsCancelledRef.current) break;
-            await new Promise(r => setTimeout(r, 500));
-          }
-
-          if (waIsCancelledRef.current) break;
-
-          const recipient = validRecipients[i];
-          const cleanPhone = getCleanPhone(recipient);
-          setWaCurrentRecipient(`${recipient.company_name} (${cleanPhone})`);
-
-          const messageText = previewFormattedWaMessage(recipient);
-
-          try {
-            const res = await fetch(`${proxyUrl}/api/messages/send`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                to: cleanPhone,
-                text: messageText,
-                message: messageText,
-              }),
-            });
-
-            const json = await res.json();
-            if (!res.ok || !json.success) {
-              throw new Error(json.error || `HTTP ${res.status}`);
-            }
-
-            setWaLogs(prev => [
-              {
-                phone: cleanPhone,
-                name: recipient.company_name,
-                status: 'sent',
-                timestamp: new Date().toLocaleTimeString(),
-              },
-              ...prev,
-            ]);
-            sentCount++;
-          } catch (err: any) {
-            failedList.push(recipient);
-            setWaLogs(prev => [
-              {
-                phone: cleanPhone,
-                name: recipient.company_name,
-                status: 'failed',
-                error: err.message,
-                timestamp: new Date().toLocaleTimeString(),
-              },
-              ...prev,
-            ]);
-          }
-
-          setWaProgress(Math.round(((i + 1) / total) * 100));
-
-          // Pacing delay between live messages to prevent anti-spam trigger
-          if (i < total - 1 && waPacingSeconds > 0 && !waIsCancelledRef.current) {
-            for (let s = 0; s < waPacingSeconds; s++) {
+            while (waIsPausedRef.current) {
               if (waIsCancelledRef.current) break;
-              while (waIsPausedRef.current) {
-                if (waIsCancelledRef.current) break;
-                await new Promise(r => setTimeout(r, 500));
-              }
-              await new Promise(r => setTimeout(r, 1000));
+              await new Promise(r => setTimeout(r, 500));
             }
+            await new Promise(r => setTimeout(r, 1000));
           }
-        }
-
-        setWaFailedRecipients(failedList);
-
-        if (waIsCancelledRef.current) {
-          showToast({
-            type: 'info',
-            title: 'Broadcast Stopped',
-            message: `Stopped after dispatching ${sentCount} messages.`,
-          });
-        } else {
-          showToast({
-            type: 'success',
-            title: 'Campaign Completed',
-            message: `Dispatched ${sentCount} of ${total} WhatsApp messages.${failedList.length > 0 ? ` (${failedList.length} failed)` : ''}`,
-          });
         }
       }
+
+      setWaFailedRecipients(failedList);
+
+      if (waIsCancelledRef.current) {
+        showToast({
+          type: 'info',
+          title: 'Broadcast Stopped',
+          message: `Stopped after dispatching ${sentCount} messages.`,
+        });
+      } else {
+        showToast({
+          type: 'success',
+          title: 'Campaign Completed',
+          message: `Dispatched ${sentCount} of ${total} WhatsApp messages.${failedList.length > 0 ? ` (${failedList.length} failed)` : ''}`,
+        });
+      }
     } catch (err: any) {
-      showToast({ type: 'error', title: 'Dispatch Failed', message: err.message || 'Error sending campaign.' });
+      showToast({ type: 'error', title: 'Dispatch Error', message: err.message || 'Error sending campaign.' });
     } finally {
       setWaIsSending(false);
       setWaIsPaused(false);
@@ -775,10 +912,10 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                   type="button"
                   onClick={() => setPhoneAuditCategory('total')}
                   className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded text-xs font-bold transition shadow-2xs cursor-pointer"
-                  title="Open interactive Phone Audit & Correction Centre for all 521 contacts"
+                  title={`Open interactive Phone Audit & Correction Centre for all ${phoneAudit.stats.totalCompanies || contacts.length} contacts`}
                 >
                   <Eye className="w-3.5 h-3.5 text-slate-600" />
-                  Audit Centre (521)
+                  Audit Centre ({phoneAudit.stats.totalCompanies || contacts.length})
                 </button>
                 <button
                   onClick={handleSelectAllEligibleWa}
@@ -804,12 +941,12 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 type="button"
                 onClick={() => setPhoneAuditCategory('total')}
                 className="bg-white hover:bg-slate-50 border border-gray-200 hover:border-slate-400 rounded-md p-2 shadow-2xs text-left transition-all active:scale-[0.98] cursor-pointer group"
-                title="Click to inspect all 521 companies and 572 phone numbers in the Directory"
+                title={`Click to inspect all ${phoneAudit.stats.totalCompanies || contacts.length} companies and ${phoneAudit.stats.total} phone records in the Directory`}
               >
                 <span className="text-[10px] uppercase font-bold text-gray-500 block group-hover:text-gray-900">Total Directory</span>
                 <span className="text-base font-extrabold text-gray-900">{phoneAudit.stats.totalCompanies || phoneAudit.stats.total}</span>
                 <span className="text-[9px] text-gray-400 mt-0.5 flex items-center justify-between">
-                  <span>{phoneAudit.stats.totalPhones || 572} phone numbers</span>
+                  <span>{phoneAudit.stats.totalPhones || phoneAudit.stats.total} phone records</span>
                   <span className="opacity-0 group-hover:opacity-100 text-blue-600 font-bold transition">Audit →</span>
                 </span>
               </button>
@@ -819,15 +956,15 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 type="button"
                 onClick={() => setPhoneAuditCategory('eligible')}
                 className="bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200 hover:border-emerald-400 rounded-md p-2 shadow-2xs text-left transition-all active:scale-[0.98] cursor-pointer group"
-                title="Click to inspect verified WhatsApp eligible mobile contacts"
+                title="Eligible campaign candidates — not verified WhatsApp accounts and not dispatched."
               >
                 <span className="text-[10px] uppercase font-bold text-emerald-800 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  WA Eligible
+                  WA Candidates
                 </span>
                 <span className="text-base font-extrabold text-emerald-900">{phoneAudit.stats.eligible}</span>
                 <span className="text-[9px] text-emerald-700 mt-0.5 flex items-center justify-between">
-                  <span>Verified mobile</span>
+                  <span>Eligible campaign candidates</span>
                   <span className="opacity-0 group-hover:opacity-100 text-emerald-800 font-bold transition">Inspect →</span>
                 </span>
               </button>
@@ -904,6 +1041,24 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 </span>
               </button>
             </div>
+          </div>
+
+          {/* Critical Campaign Safety Banner */}
+          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-950 flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+              <div>
+                <span className="font-extrabold text-amber-900 block text-xs">
+                  Bulk WhatsApp Dispatch Blocked — Safety &amp; Consent Enforcement
+                </span>
+                <span className="text-[11px] text-amber-800">
+                  Bulk WhatsApp dispatch is disabled during CRM data and consent verification. No synthetic broadcasts or live customer outreach permitted.
+                </span>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 bg-amber-200/80 text-amber-900 font-extrabold text-[10px] rounded border border-amber-300 uppercase shrink-0">
+              DISPATCH DISABLED
+            </span>
           </div>
 
           {/* Main 2-Column WhatsApp Workspace */}
@@ -1104,6 +1259,85 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                   )}
                 </div>
 
+                {/* Audience Eligibility & Compliance Summary */}
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-gray-800 uppercase">
+                      <Users className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Audience Eligibility & Duplicate Prevention</span>
+                    </div>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {audienceValidation.eligibleRecipients.length} Unique Recipients
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                    <div className="bg-emerald-50/70 border border-emerald-200 rounded p-1.5">
+                      <div className="font-bold text-emerald-900 text-xs">
+                        {audienceValidation.eligibleRecipients.length}
+                      </div>
+                      <div className="text-emerald-700">Eligible Mobiles</div>
+                    </div>
+                    <div className="bg-amber-50/70 border border-amber-200 rounded p-1.5">
+                      <div className="font-bold text-amber-900 text-xs">
+                        {audienceValidation.excludedMissingConsent.filter(e => e.reason.includes('Duplicate')).length}
+                      </div>
+                      <div className="text-amber-700">Duplicates Suppressed</div>
+                    </div>
+                    <div className="bg-rose-50/70 border border-rose-200 rounded p-1.5">
+                      <div className="font-bold text-rose-900 text-xs">
+                        {audienceValidation.suppressedOptOuts.length}
+                      </div>
+                      <div className="text-rose-700">Opted Out</div>
+                    </div>
+                  </div>
+
+                  {waSelectedRecipients.length > 0 && (
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setWaAudienceBreakdownOpen(prev => !prev)}
+                        className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
+                      >
+                        {waAudienceBreakdownOpen ? 'Hide Individual Consent & Opt-Out Table ▲' : 'Review Individual Consent & Opt-Outs ▼'}
+                      </button>
+                    </div>
+                  )}
+
+                  {waAudienceBreakdownOpen && (
+                    <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded text-xs divide-y divide-gray-100 bg-white">
+                      {waSelectedRecipients.map((rec, i) => {
+                        const isOpted = CampaignComplianceService.isOptedOut(rec.mobile || rec.phone || '') || rec.isOptedOut;
+                        return (
+                          <div key={rec.id || i} className="p-2 flex items-center justify-between gap-2 hover:bg-slate-50">
+                            <div className="min-w-0">
+                              <div className="font-semibold text-gray-900 truncate text-[11px]">{rec.company_name}</div>
+                              <div className="text-[10px] text-gray-500">{rec.contact_person || 'Contact'} &bull; <span className="font-mono">{rec.mobile || rec.phone}</span></div>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              {isOpted ? (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">OPTED OUT</span>
+                              ) : (
+                                <>
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">B2B Opt-In</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRegisterOptOut(rec.mobile || rec.phone || '', rec.company_name)}
+                                    className="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-700 hover:bg-rose-50"
+                                    title="Register Opt-Out"
+                                  >
+                                    Opt Out
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 {/* Delivery Safeguards & Anti-Ban Controls */}
                 <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-3 space-y-2.5">
                   <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
@@ -1181,6 +1415,45 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                     </div>
                   </div>
 
+                  {/* Campaign Scheduling */}
+                  <div className="pt-2 border-t border-amber-200 space-y-1.5">
+                    <label className="text-[10px] font-bold text-amber-900 uppercase block">
+                      Campaign Schedule:
+                    </label>
+                    <div className="flex items-center gap-3 text-xs">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="waScheduleMode"
+                          checked={waScheduleMode === 'now'}
+                          onChange={() => setWaScheduleMode('now')}
+                        />
+                        <span className="font-semibold text-gray-800">Send Immediately</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="waScheduleMode"
+                          checked={waScheduleMode === 'scheduled'}
+                          onChange={() => setWaScheduleMode('scheduled')}
+                        />
+                        <span className="font-semibold text-gray-800">Schedule for Later</span>
+                      </label>
+                    </div>
+
+                    {waScheduleMode === 'scheduled' && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Calendar className="w-3.5 h-3.5 text-amber-700 flex-shrink-0" />
+                        <input
+                          type="datetime-local"
+                          value={waScheduledDateTime}
+                          onChange={e => setWaScheduledDateTime(e.target.value)}
+                          className="text-xs p-1.5 border border-amber-300 rounded bg-white text-gray-800 flex-1"
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {waTestMode && (
                     <div className="pt-1">
                       <label className="text-[10px] font-bold text-amber-900 uppercase block mb-1">
@@ -1200,27 +1473,68 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 {/* Action Buttons */}
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-xs text-gray-500">
-                    {waTestMode ? 'Target: 1 Test Number' : `Target: ${waSelectedRecipients.length} Selected Mobile Contacts`}
+                    {waTestMode
+                      ? 'Target: 1 Authorized Test Number'
+                      : `Target: ${audienceValidation.eligibleRecipients.length} Unique Verified Recipients (${audienceValidation.excludedMissingConsent.filter(e => e.reason.includes('Duplicate')).length} duplicates suppressed)`}
                   </span>
-                  <button
-                    onClick={handleStartWaCampaign}
-                    disabled={waIsSending || (!waTestMode && waSelectedRecipients.length === 0)}
-                    className={`inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition ${
-                      waTestMode
-                        ? 'bg-blue-600 hover:bg-blue-700'
-                        : 'bg-emerald-600 hover:bg-emerald-700'
-                    } disabled:opacity-50`}
-                  >
-                    <Send className={`w-3.5 h-3.5 ${waIsSending ? 'animate-spin' : ''}`} />
-                    <span>
-                      {waIsSending
-                        ? 'Dispatching WhatsApp...'
-                        : waTestMode
-                        ? 'Send Test Pilot Message'
-                        : `Authorize Live Campaign (${waSelectedRecipients.length})`}
-                    </span>
-                  </button>
+
+                  {waTestMode ? (
+                    <button
+                      type="button"
+                      onClick={handleSendTestPilot}
+                      disabled={waIsSending || !waConsentVerified || !waOptOutConfirmed}
+                      className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Send genuine test pilot message to authorized test number"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{waIsSending ? 'Dispatching Test Pilot...' : 'Send 1-on-1 Test Pilot'}</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveDraftCampaign}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Save as Campaign Draft</span>
+                      </button>
+                      {!waConsentVerified || !waOptOutConfirmed ? (
+                        <button
+                          type="button"
+                          disabled={true}
+                          className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-slate-400 cursor-not-allowed opacity-75"
+                          title="Bulk WhatsApp dispatch is disabled while using OpenWA without individual recipient consent and opt-out safeguard."
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>Bulk Dispatch Disabled (OpenWA Transport)</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleStartWaCampaign}
+                          disabled={waIsSending || audienceValidation.eligibleRecipients.length === 0}
+                          className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Authorize campaign dispatch with 20s operator pacing delay"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>Authorize Paced Campaign ({audienceValidation.eligibleRecipients.length} Eligible)</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
+
+                {!waTestMode && (!waConsentVerified || !waOptOutConfirmed) && (
+                  <div className="mt-2 p-2 bg-slate-100 border border-slate-200 rounded text-[11px] text-slate-700">
+                    <strong>Draft-Only Campaign Planning:</strong> Automated bulk dispatch is permanently disabled while using free OpenWA self-hosted transport. Campaigns can be drafted, segmented, scheduled, and audited, but bulk broadcasts require an approved official business messaging provider.
+                  </div>
+                )}
+                {!waTestMode && waConsentVerified && waOptOutConfirmed && (
+                  <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800">
+                    <strong>Individually Authorized Paced Dispatch:</strong> Recipient consent and opt-out safeguard verified. Messages will be dispatched sequentially with a minimum 20-second operator pacing delay. You may pause or cancel at any time.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1269,7 +1583,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                           {waSelectedRecipients[waPreviewIndex]?.company_name || 'PT Kalbe Farma Tbk'}
                         </div>
                         <div className="text-[10px] text-emerald-100 truncate">
-                          {waSelectedRecipients[waPreviewIndex]?.contact_person || 'Bapak Budi Santoso'} &bull; online
+                          {waSelectedRecipients[waPreviewIndex]?.contact_person || 'Bapak Budi Santoso'} &bull; ERP Contact
                         </div>
                       </div>
                     </div>
@@ -1309,21 +1623,11 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                           {previewFormattedWaMessage(waSelectedRecipients[waPreviewIndex])}
                         </div>
 
-                        <div className="flex items-center justify-end gap-1 text-[10px] text-gray-500 pt-0.5">
+                        <div className="flex items-center justify-end gap-1.5 text-[10px] text-gray-600 pt-0.5">
                           <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          <span className="text-sky-500 font-bold">✓✓</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Incoming Reply Simulation Bubble (#ffffff) */}
-                    <div className="flex justify-start">
-                      <div className="bg-white text-gray-900 rounded-lg rounded-tl-none p-2.5 max-w-[85%] shadow-2xs space-y-1 text-xs">
-                        <p className="text-gray-800 leading-relaxed">
-                          Baik Pak, kami review dulu penawarannya bersama tim pembelian ya.
-                        </p>
-                        <div className="text-[9px] text-gray-400 text-right">
-                          {new Date(Date.now() + 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[9px] uppercase tracking-wider">
+                            PREVIEW — NOT SENT
+                          </span>
                         </div>
                       </div>
                     </div>

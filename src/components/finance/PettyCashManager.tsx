@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, ArrowDownCircle, ArrowUpCircle, Upload, X, FileText, Image, Eye, Pencil as Edit2, Trash2, ExternalLink, Download, DollarSign, Package, Truck, Building2, CheckCircle, XCircle, Clock, Lock, RotateCcw, Search } from 'lucide-react';
+import { Plus, ArrowDownCircle, ArrowUpCircle, Upload, X, FileText, Image, Eye, Pencil as Edit2, Trash2, ExternalLink, Download, DollarSign, Package, Truck, Building2, CheckCircle, XCircle, Clock, Lock, RotateCcw, Search, ChevronDown } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
 import { FinanceModal } from './FinanceModal';
@@ -27,6 +27,7 @@ import { useExpenseCategories } from './useExpenseCategories';
 import { getPostedJournalsForExport, writeReconciliationWorkbook, type ReconciliationSummaryRow } from './reconciliationExport';
 import { ExpenseCategorySelect, groupExpenseCategories } from './ExpenseCategorySelect';
 import { useErpSyncListener, emitErpSync } from '../../utils/erpSyncBus';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface PettyCashDocument {
   id: string;
@@ -153,6 +154,16 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
   const [postingAccounts, setPostingAccounts] = useState<PostingAccount[]>([]);
   const [selectedBankTransaction, setSelectedBankTransaction] = useState<BankTransactionLine | null>(null);
   const [loading, setLoading] = useState(true);
+  const [expandedTransactions, setExpandedTransactions] = useState<Set<string>>(new Set());
+
+  const toggleTransactionExpand = (id: string) => {
+    setExpandedTransactions(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewingTransaction, setViewingTransaction] = useState<PettyCashTransaction | null>(null);
@@ -671,9 +682,12 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
           const fileName = `${transactionId}_${Date.now()}.${fileExt}`;
           const filePath = `${fileName}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from('petty-cash-receipts')
-            .upload(filePath, file);
+          const { error: uploadError, optimization } = await uploadOptimizedFile(
+            supabase,
+            'petty-cash-receipts',
+            filePath,
+            file
+          );
 
           if (uploadError) throw uploadError;
 
@@ -683,13 +697,14 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
 
           // Map MIME type to database-allowed file types
           let fileType = 'proof'; // default
-          if (file.type.startsWith('image/')) {
+          const effectiveMime = optimization.mimeType || file.type;
+          if (effectiveMime.startsWith('image/')) {
             fileType = 'photo';
-          } else if (file.type === 'application/pdf') {
+          } else if (effectiveMime === 'application/pdf') {
             fileType = 'invoice';
           }
 
-          // Save document record
+          // Save document record with optimized file size
           const { error: docError } = await supabase
             .from('petty_cash_documents')
             .insert([{
@@ -697,7 +712,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
               file_type: fileType,
               file_name: file.name,
               file_url: publicUrl,
-              file_size: file.size,
+              file_size: optimization.optimizedSize,
               uploaded_by: profile?.id,
             }]);
 
@@ -1176,7 +1191,8 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Search petty cash"
             aria-label="Search petty cash"
-            className="h-6 w-44 rounded border border-gray-300 bg-white pl-6 pr-2 text-[11px]"
+            style={{ paddingLeft: '1.75rem' }}
+            className="h-6 w-44 rounded border border-gray-300 bg-white pr-2 text-[11px]"
           />
         </div>
 
@@ -1190,7 +1206,8 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
         </button>
       </div>
 
-      <div className="bg-white rounded border border-gray-200 overflow-x-auto">
+      {/* Desktop Table View (>= 768px) */}
+      <div className="hidden md:block bg-white rounded border border-gray-200 overflow-x-auto">
         <table className="min-w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
@@ -1405,6 +1422,116 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile Card View (< 768px) */}
+      <div className="block md:hidden space-y-2.5">
+        {loading ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-xs text-gray-500">
+            Loading...
+          </div>
+        ) : filteredTransactions.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-xs text-gray-500">
+            No petty cash transactions found
+          </div>
+        ) : (
+          filteredTransactions.map((tx) => {
+            const isExpanded = expandedTransactions.has(tx.id);
+            const isWithdraw = tx.transaction_type === 'withdraw';
+
+            return (
+              <div
+                key={tx.id}
+                onClick={() => toggleTransactionExpand(tx.id)}
+                className="bg-white rounded-xl border border-slate-200/90 p-2.5 space-y-1 shadow-2xs hover:border-slate-300 transition active:scale-[0.99] cursor-pointer"
+              >
+                {/* Line 1: Transaction Number + In/Out Badge + Quick Actions */}
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                      {tx.transaction_number || '—'}
+                    </span>
+                    <span className={`inline-flex px-1.5 py-0.5 text-[10px] font-bold rounded shrink-0 ${
+                      isWithdraw ? 'bg-blue-100 text-blue-700' : 'bg-rose-100 text-rose-700'
+                    }`}>
+                      {isWithdraw ? 'In' : 'Out'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <FinanceActionButton
+                      action="view"
+                      label={tx.fund_transfer_id ? 'Contra' : 'View'}
+                      onClick={() => viewTransaction(tx)}
+                    />
+                    {!tx.fund_transfer_id && canManage && tx.approval_status !== 'approved' && (
+                      <FinanceActionButton action="edit" onClick={() => openEditModal(tx)} />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleTransactionExpand(tx.id)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100"
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Line 2: Category + Transaction Date */}
+                <div className="flex items-center justify-between text-xs text-gray-600 gap-2">
+                  <div className="font-medium text-gray-800 truncate min-w-0 flex-1">
+                    {tx.expense_category || 'Petty Cash'}
+                  </div>
+                  <div className="text-[11px] text-gray-400 font-normal shrink-0">
+                    {formatDate(tx.transaction_date)}
+                  </div>
+                </div>
+
+                {/* Line 3: Amount + Approval Status Pill */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs gap-2">
+                  <div className={`font-mono font-bold text-xs truncate ${
+                    isWithdraw ? 'text-blue-600' : 'text-red-600'
+                  }`}>
+                    {isWithdraw ? '+' : '-'} {formatCurrency(tx.amount, 'IDR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </div>
+                  <div className="shrink-0 text-xs font-semibold">
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded capitalize ${
+                      tx.approval_status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-amber-50 text-amber-700 border border-amber-200/60'
+                    }`}>
+                      {tx.approval_status || 'Pending'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Expandable Drawer */}
+                {isExpanded && (
+                  <div
+                    className="pt-2 mt-1 border-t border-dashed border-slate-200 bg-slate-50/70 p-2 rounded-lg text-xs space-y-1.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {tx.description && (
+                      <div>
+                        <span className="text-[10px] font-semibold text-gray-400 block uppercase tracking-wider">Description</span>
+                        <p className="text-gray-700 text-[11px] mt-0.5">{tx.description}</p>
+                      </div>
+                    )}
+                    {tx.fund_transfer_id && (
+                      <div className="text-[11px]">
+                        <span className="text-[10px] text-purple-600 font-semibold uppercase tracking-wider block">Contra Link</span>
+                        <span className="text-purple-700 font-medium">Auto-generated via Fund Transfer</span>
+                      </div>
+                    )}
+                    {!tx.fund_transfer_id && canManage && tx.approval_status !== 'approved' && (
+                      <div className="flex justify-end pt-1 border-t border-slate-200">
+                        <FinanceActionButton action="delete" onClick={() => handleDelete(tx.id)} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
 
       <FinanceModal

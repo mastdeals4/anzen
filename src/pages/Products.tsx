@@ -19,6 +19,7 @@ import {
   normalizeCountry,
   formatProductPackaging,
 } from '../constants/masterData';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 
 interface Product {
   id: string;
@@ -517,9 +518,12 @@ export function Products() {
           const fileExt = file.name.split('.').pop();
           const fileName = `${productId}/${sourceId}/${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from('product-source-documents')
-            .upload(fileName, file);
+          const { error: uploadError, optimization } = await uploadOptimizedFile(
+            supabase,
+            'product-source-documents',
+            fileName,
+            file
+          );
 
           if (uploadError) {
             console.error('Upload error:', uploadError);
@@ -537,7 +541,7 @@ export function Products() {
               doc_type: 'Other',
               file_url: urlData.publicUrl,
               original_filename: file.name,
-              file_size: file.size,
+              file_size: optimization.optimizedSize,
               uploaded_by: profile?.id
             }]);
           if (documentError) {

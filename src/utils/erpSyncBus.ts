@@ -257,7 +257,7 @@ export function emitErpSync(
   }
 
   // 3. Notify other connected users via Supabase Realtime Broadcast (pure invalidation notification)
-  if (supabaseRealtimeSyncChannel) {
+  if (supabaseRealtimeSyncChannel && (typeof navigator === 'undefined' || navigator.onLine)) {
     try {
       supabaseRealtimeSyncChannel.send({
         type: 'broadcast',

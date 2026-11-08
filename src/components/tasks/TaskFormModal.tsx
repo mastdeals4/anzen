@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Modal } from '../Modal';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 import {
   Calendar, User, Tag, Paperclip, X, Loader, Search,
   FileText, AlertCircle
@@ -179,9 +180,12 @@ export function TaskFormModal({ isOpen, onClose, onSuccess, initialData }: TaskF
       const fileName = `${Date.now()}_${file.name}`;
       const filePath = `tasks/${taskId}/${fileName}`;
 
-      const { error } = await supabase.storage
-        .from('task-attachments')
-        .upload(filePath, file);
+      const { error } = await uploadOptimizedFile(
+        supabase,
+        'task-attachments',
+        filePath,
+        file
+      );
 
       if (error) {
         console.error('Error uploading file:', error);

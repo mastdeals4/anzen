@@ -15,6 +15,7 @@ import { formatDate } from '../utils/dateFormat';
 import { MoneyInput } from '../components/MoneyInput';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 
 interface AppSettings {
   id: string;
@@ -284,10 +285,13 @@ export function Settings() {
       const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
       const rand = (globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
       const path = `${kind}/${rand}.${ext}`;
-      const { error } = await supabase.storage.from('company-assets').upload(path, file, {
-        contentType: file.type || undefined,
-        upsert: false,
-      });
+      const { error } = await uploadOptimizedFile(
+        supabase,
+        'company-assets',
+        path,
+        file,
+        { upsert: false }
+      );
       if (error) throw error;
       return path;
     } catch (err: any) {

@@ -100,6 +100,10 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
 
     const subscribe = () => {
       if (disposed || subscribing) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        // Defer subscription until network connection is restored
+        return;
+      }
       subscribing = true;
       if (channel) safeRemoveChannel(channel);
       channel = supabase.channel(channelName);
@@ -134,9 +138,21 @@ export function useSupabaseRealtimeChannel(opts: RealtimeChannelOptions): void {
       }
     }, 150);
 
+    const onOnline = () => {
+      if (!disposed) {
+        subscribe();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', onOnline);
+    }
+
     return () => {
       disposed = true;
       clearTimeout(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onOnline);
+      }
       if (channel) safeRemoveChannel(channel);
       const current = activeChannels.get(channelName);
       if (current?.token === token) activeChannels.delete(channelName);

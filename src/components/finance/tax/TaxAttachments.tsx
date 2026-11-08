@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Upload, Trash2, FileText, ExternalLink, Download, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
+import { uploadOptimizedFile } from '../../../services/storage/uploadOptimizationService';
 
 type AttachmentTable = 'tax_payment_files' | 'faktur_pajak_files';
 
@@ -125,9 +126,13 @@ export function TaxAttachments({ table, parentId, storagePrefix, allowedKinds, d
           continue;
         }
         const path = `${storagePrefix}/${parentId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, '_')}`;
-        const { error: upErr } = await supabase.storage
-          .from(TAX_ATTACHMENT_BUCKET)
-          .upload(path, file, { upsert: false, contentType: file.type });
+        const { error: upErr, optimization } = await uploadOptimizedFile(
+          supabase,
+          TAX_ATTACHMENT_BUCKET,
+          path,
+          file,
+          { upsert: false }
+        );
         if (upErr) throw upErr;
 
         const { data: authData } = await supabase.auth.getUser();
@@ -137,8 +142,8 @@ export function TaxAttachments({ table, parentId, storagePrefix, allowedKinds, d
           [parentColumn]: parentId,
           file_url: path,
           file_name: file.name,
-          file_type: file.type,
-          file_size: file.size,
+          file_type: optimization.mimeType || file.type,
+          file_size: optimization.optimizedSize,
           kind,
           uploaded_by: currentUserId,
         });

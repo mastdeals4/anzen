@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Building, Package, Calendar, DollarSign, User, AlertCircle } from 'lucide-react';
+import { CRM_INQUIRY_SELECT_FIELDS } from './inquiries/useCrmInquiries';
 
 interface Inquiry {
   id: string;
@@ -14,6 +15,7 @@ interface Inquiry {
   priority: string;
   estimated_value: number | null;
   created_at: string;
+  [key: string]: any;
 }
 
 interface PipelineStage {
@@ -27,19 +29,33 @@ interface PipelineStage {
 interface PipelineBoardProps {
   canManage: boolean;
   onInquiryClick?: (inquiry: Inquiry) => void;
+  inquiries?: Inquiry[] | any[];
+  loading?: boolean;
+  onRefresh?: () => void;
 }
 
-export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps) {
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+export function PipelineBoard({
+  canManage,
+  onInquiryClick,
+  inquiries: propInquiries,
+  loading: propLoading,
+  onRefresh,
+}: PipelineBoardProps) {
+  const [internalInquiries, setInternalInquiries] = useState<Inquiry[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [internalLoading, setInternalLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [draggedInquiry, setDraggedInquiry] = useState<Inquiry | null>(null);
 
+  const inquiries = propInquiries !== undefined ? propInquiries : internalInquiries;
+  const loading = propLoading !== undefined ? propLoading : internalLoading;
+
   useEffect(() => {
     loadStages();
-    loadInquiries();
-  }, []);
+    if (propInquiries === undefined) {
+      loadInquiries();
+    }
+  }, [propInquiries]);
 
   const loadStages = async () => {
     try {
@@ -68,21 +84,21 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
       setError(null);
       const { data, error } = await supabase
         .from('crm_inquiries')
-        .select('*')
+        .select(CRM_INQUIRY_SELECT_FIELDS)
         .order('created_at', { ascending: false });
 
       if (error) {
         console.error('Database error loading inquiries:', error);
         throw new Error(error.message || 'Failed to load inquiries');
       }
-      setInquiries(data || []);
+      setInternalInquiries(data || []);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to load inquiries';
       console.error('Error loading inquiries:', error);
       setError(errorMessage);
-      setInquiries([]);
+      setInternalInquiries([]);
     } finally {
-      setLoading(false);
+      setInternalLoading(false);
     }
   };
 
@@ -150,7 +166,11 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
 
       if (error) throw error;
 
-      loadInquiries();
+      if (onRefresh) {
+        onRefresh();
+      } else {
+        loadInquiries();
+      }
     } catch (error) {
       console.error('Error updating inquiry status:', error);
       alert('Failed to update inquiry status');
@@ -198,7 +218,11 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
               <button
                 onClick={() => {
                   loadStages();
-                  loadInquiries();
+                  if (onRefresh) {
+        onRefresh();
+      } else {
+        loadInquiries();
+      }
                 }}
                 className="mt-3 text-sm font-medium text-red-700 hover:text-red-800 underline"
               >

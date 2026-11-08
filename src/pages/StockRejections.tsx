@@ -10,6 +10,7 @@ import { StockRejectionView } from '../components/StockRejectionView';
 import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
 import { formatDate } from '../utils/dateFormat';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 
 interface StockRejection {
   id: string;
@@ -246,9 +247,12 @@ export default function StockRejections() {
 
     for (const photo of photos) {
       const fileName = `${rejectionId}/${Date.now()}_${photo.name}`;
-      const { data, error } = await supabase.storage
-        .from('rejection_photos')
-        .upload(fileName, photo);
+      const { data, error } = await uploadOptimizedFile(
+        supabase,
+        'rejection_photos',
+        fileName,
+        photo
+      );
 
       if (error) {
         console.error('Error uploading photo:', error);

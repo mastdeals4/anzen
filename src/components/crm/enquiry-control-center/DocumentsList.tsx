@@ -64,11 +64,19 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
 
   const handleOpenDocument = async (doc: EnquiryDocumentItem, download = false) => {
     const filename = doc.display_file_name || doc.original_file_name || 'document';
+    let popupWin: Window | null = null;
+    if (!download) {
+      popupWin = window.open('', '_blank');
+      if (popupWin) {
+        popupWin.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569;font-size:14px;">Loading document securely...</p>');
+      }
+    }
     try {
       const url = await getSignedUrlCached('crm-documents', doc.storage_path, 3600, {
         download: download ? filename : undefined,
       });
       if (!url) {
+        if (popupWin && !popupWin.closed) popupWin.close();
         alert('Unable to generate secure signed URL for this document.');
         return;
       }
@@ -80,10 +88,13 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
         document.body.appendChild(link);
         link.click();
         link.remove();
+      } else if (popupWin && !popupWin.closed) {
+        popupWin.location.href = url;
       } else {
         window.open(url, '_blank', 'noopener,noreferrer');
       }
     } catch (err) {
+      if (popupWin && !popupWin.closed) popupWin.close();
       console.error('[DocumentsList] Error opening document:', err);
       alert('Failed to access document.');
     }

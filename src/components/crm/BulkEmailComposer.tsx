@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { showToast } from '../ToastNotification';
 import { getDisplayContactName } from '../../utils/crmEmailPersonalization';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface EmailTemplate {
   id: string;
@@ -61,9 +62,13 @@ function getJwtExpiryMs(accessToken: string): number | null {
 async function uploadBulkEmailAttachment(campaignId: string, attached: AttachedFile) {
   const safeName = attached.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const storagePath = `bulk-email/${campaignId}/${attached.id}-${safeName}`;
-  const { error: uploadError } = await supabase.storage
-    .from('crm-documents')
-    .upload(storagePath, attached.file, { upsert: true, contentType: attached.file.type || 'application/octet-stream' });
+  const { error: uploadError, optimization } = await uploadOptimizedFile(
+    supabase,
+    'crm-documents',
+    storagePath,
+    attached.file,
+    { upsert: true }
+  );
   if (uploadError) throw uploadError;
 
   const { data: signed, error: signedError } = await supabase.storage
@@ -74,7 +79,7 @@ async function uploadBulkEmailAttachment(campaignId: string, attached: AttachedF
   return {
     url: signed.signedUrl,
     filename: attached.file.name,
-    mimeType: attached.file.type || 'application/octet-stream',
+    mimeType: optimization.mimeType || attached.file.type || 'application/octet-stream',
     source: 'bulk_email_upload',
     storagePath,
   };

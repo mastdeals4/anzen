@@ -566,11 +566,21 @@ export function CrmCustomerDrawer({
   };
 
   const handleViewDocument = async (storagePath: string, filename: string) => {
+    let popupWin: Window | null = null;
+    popupWin = window.open('', '_blank');
+    if (popupWin) {
+      popupWin.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569;font-size:14px;">Loading document securely...</p>');
+    }
     try {
       const signedUrl = await getSignedUrlCached('crm-documents', storagePath, 3600);
       if (!signedUrl) throw new Error('Signed URL generation failed');
-      window.open(signedUrl, '_blank');
+      if (popupWin && !popupWin.closed) {
+        popupWin.location.href = signedUrl;
+      } else {
+        window.open(signedUrl, '_blank');
+      }
     } catch (err: any) {
+      if (popupWin && !popupWin.closed) popupWin.close();
       showToast({ type: 'error', title: 'Document Error', message: `Cannot open ${filename}: ${err.message}` });
     }
   };

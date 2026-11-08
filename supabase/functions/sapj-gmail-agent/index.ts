@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { Buffer } from "node:buffer";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getGmailConnectionSecret, listGmailConnectionSecrets, type GmailConnectionSecret } from "../_shared/gmailSecrets.ts";
+import { evaluateEmailAttachment } from "../_shared/emailAttachmentFilter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -803,48 +804,52 @@ Analyze and return JSON.`;
     required_origin: r.required_origin ? String(r.required_origin).slice(0, 80) : null,
   }));
 
-  // Detected documents: match attachments with LLM guesses and filename rules
-  const detectedDocuments: DetectedDocument[] = email.attachments.map(att => {
-    const fname = att.filename.toLowerCase();
+  // Detected documents: match attachments with strict pharma filter, LLM guesses and filename rules
+  const detectedDocuments: DetectedDocument[] = [];
+  for (const att of email.attachments) {
+    const evalRes = evaluateEmailAttachment({
+      filename: att.filename,
+      mimeType: att.mimeType,
+      size: att.size,
+      emailSubject: email.subject,
+      emailSender: email.from,
+      emailBody: email.snippet,
+      hasMatchedInquiry: !!parsed.extracted_inquiry_num || !!parsed.extracted_product,
+      matchedProductName: parsed.extracted_product || null,
+    });
+
+    if (evalRes.disposition === 'EXCLUDE') {
+      // Excluded: bounce, signature, tracking pixel, telecom bill, video, etc.
+      continue;
+    }
+
     const docMatch = (parsed.documents || []).find((d: any) =>
       d.filename && att.filename.toLowerCase().includes(String(d.filename).toLowerCase())
     );
 
-    let docType: DetectedDocument["documentType"] = docMatch?.document_type || "OTHER";
-    if (docType === "OTHER") {
-      if (fname.includes("coa") || fname.includes("certificate of analysis")) docType = "COA";
-      else if (fname.includes("msds") || fname.includes("sds")) docType = "MSDS";
-      else if (fname.includes("gmp")) docType = "GMP";
-      else if (fname.includes("tds") || fname.includes("technical data")) docType = "TDS";
-      else if (fname.includes("spec")) docType = "SPEC";
-      else if (fname.includes("coc")) docType = "COC";
-      else if (fname.includes("iso")) docType = "ISO";
-      else if (fname.includes("dmf")) docType = "DMF";
-      else if (fname.includes("price list") || fname.includes("pricelist")) docType = "PRICE_LIST";
-      else if (fname.includes("catalog")) docType = "CATALOGUE";
-    }
-
+    const docType = (evalRes.documentType !== 'OTHER' ? evalRes.documentType : (docMatch?.document_type || 'OTHER')) as DetectedDocument["documentType"];
     const batchNumber = docMatch?.batch_number || null;
     const matchConfidence = (batchNumber && parsed.extracted_product) ? "HIGH" : (parsed.extracted_product ? "MEDIUM" : "LOW");
+    const matchStatus = evalRes.disposition === 'REVIEW_BEFORE_IMPORT' ? "FILE UNAVAILABLE / NEEDS REVIEW" : "AVAILABLE";
 
-    return {
+    detectedDocuments.push({
       attachmentId: att.attachmentId,
       filename: att.filename,
       mimeType: att.mimeType,
       size: att.size,
       documentType: docType,
       batchNumber,
-      matchStatus: "AVAILABLE",
+      matchStatus,
       matchConfidence,
       matchedProduct: parsed.extracted_product || null,
       matchedMake: parsed.extracted_make || null,
       matchReasons: [
-        `Detected as ${docType}`,
+        evalRes.reason,
         parsed.extracted_product ? `Product: ${parsed.extracted_product}` : "Product unassigned",
         batchNumber ? `Batch: ${batchNumber}` : "No batch in filename/body",
       ],
-    };
-  });
+    });
+  }
 
   const firstRow = pricingRows[0] || null;
   const altMakeObj = parsed.alternative_make?.detected ? {
@@ -1094,7 +1099,7 @@ Deno.serve(async (req: Request) => {
           let totalUnavailable = 0;
           let storageFailures = 0;
           const resyncErrors: string[] = [];
-          const DB_DOC_TYPES = ["COA","MSDS","MHD","TDS","SPEC","COC","GMP","ISO","DMF","OTHER"];
+          const DB_DOC_TYPES = ["COA","MSDS","GMP","SPEC","TDS","HALAL","DMF","COC","ISO","MHD","PURCHASE_ORDER","PRODUCT_CATALOGUE","CATALOGUE","PRICE_LIST","OTHER"];
 
           // Step 0: Helper to verify storage object exists without downloading entire file into RAM
           const verifyStorageObject = async (path: string): Promise<boolean> => {
@@ -1135,6 +1140,26 @@ Deno.serve(async (req: Request) => {
             for (const doc of detectedDocs) {
               totalDetected += 1;
               const fnameLower = (doc.filename || "").toLowerCase();
+
+              // Pre-check filter: exclude bounces, signatures, pixels, telecom bills, media files
+              const filterEval = evaluateEmailAttachment({
+                filename: doc.filename,
+                mimeType: doc.mimeType,
+                size: doc.size,
+                emailSubject: rev.subject,
+                emailSender: rev.from_email,
+                hasMatchedInquiry: !!rev.matched_inquiry_id,
+                matchedProductName: rev.product_name,
+              });
+
+              if (filterEval.disposition === 'EXCLUDE' || filterEval.disposition === 'REVIEW_BEFORE_IMPORT') {
+                doc.matchStatus = filterEval.disposition === 'EXCLUDE' ? "EXCLUDED / JUNK" : "FILE UNAVAILABLE / NEEDS REVIEW";
+                doc.isUnavailable = true;
+                doc.errorReason = filterEval.reason;
+                reviewModified = true;
+                continue;
+              }
+
               const lookupKey = `${rev.gmail_message_id}::${fnameLower}`;
               let matchedDoc = existingByMsgAndName.get(lookupKey) || (doc.storagePath ? existingByPath.get(doc.storagePath) : null);
 
@@ -1647,19 +1672,32 @@ Deno.serve(async (req: Request) => {
               extractedAceErp: extractAceErpReference(`${subject} ${bodyText}`),
               extractedInquiryNum: extractInquiryNumber(`${subject} ${bodyText}`),
               pricingRows: [],
-              detectedDocuments: attachments.map(a => ({
-                attachmentId: a.attachmentId,
-                filename: a.filename,
-                mimeType: a.mimeType,
-                size: a.size,
-                documentType: "OTHER" as const,
-                batchNumber: null,
-                matchStatus: "AVAILABLE" as const,
-                matchConfidence: "LOW" as const,
-                matchedProduct: null,
-                matchedMake: null,
-                matchReasons: ["Fallback document classification"],
-              })),
+              detectedDocuments: attachments.flatMap(a => {
+                const evalRes = evaluateEmailAttachment({
+                  filename: a.filename,
+                  mimeType: a.mimeType,
+                  size: a.size,
+                  emailSubject: subject,
+                  emailSender: fromEmail,
+                  emailBody: bodyText,
+                  hasMatchedInquiry: false,
+                  matchedProductName: null,
+                });
+                if (evalRes.disposition === 'EXCLUDE') return [];
+                return [{
+                  attachmentId: a.attachmentId,
+                  filename: a.filename,
+                  mimeType: a.mimeType,
+                  size: a.size,
+                  documentType: (evalRes.documentType !== 'OTHER' ? evalRes.documentType : 'OTHER') as DetectedDocument["documentType"],
+                  batchNumber: null,
+                  matchStatus: (evalRes.disposition === 'REVIEW_BEFORE_IMPORT' ? 'FILE UNAVAILABLE / NEEDS REVIEW' : 'AVAILABLE') as const,
+                  matchConfidence: 'LOW' as const,
+                  matchedProduct: null,
+                  matchedMake: null,
+                  matchReasons: [evalRes.reason],
+                }];
+              }),
               rawExcerpt: bodyText.slice(0, 200),
               alternativeMake: null,
             };
@@ -1719,6 +1757,11 @@ Deno.serve(async (req: Request) => {
           // 9. Document Real Storage Upload: Fetch attachment bytes from Gmail & store in Supabase crm-documents bucket
           if (aiExtracted.detectedDocuments.length > 0 && attachments.length > 0) {
             for (const doc of aiExtracted.detectedDocuments) {
+              // Exclude attachments queued for review before import or flagged as unavailable
+              if (doc.matchStatus === "FILE UNAVAILABLE / NEEDS REVIEW") {
+                continue;
+              }
+
               const matchingAtt = attachments.find(a =>
                 (doc as any).attachmentId ? a.attachmentId === (doc as any).attachmentId : a.filename.toLowerCase() === doc.filename.toLowerCase()
               ) || attachments[0];
@@ -1744,7 +1787,7 @@ Deno.serve(async (req: Request) => {
                         });
 
                       if (!uploadErr) {
-                        const DB_DOC_TYPES = ["COA","MSDS","MHD","TDS","SPEC","COC","GMP","ISO","DMF","OTHER"];
+                        const DB_DOC_TYPES = ["COA","MSDS","GMP","SPEC","TDS","HALAL","DMF","COC","ISO","MHD","PURCHASE_ORDER","PRODUCT_CATALOGUE","CATALOGUE","PRICE_LIST","OTHER"];
                         const docType = DB_DOC_TYPES.includes(doc.documentType) ? doc.documentType : "OTHER";
 
                         // Verify or upsert crm_product_documents record without invalid onConflict target
@@ -1792,6 +1835,8 @@ Deno.serve(async (req: Request) => {
                               is_permanent: false,
                               storage_bucket: "crm-documents",
                               storage_path: storagePath,
+                              file_size: matchingAtt.size || bytes.length,
+                              mime_type: contentType,
                               uploaded_by: callingUserId || connection.user_id,
                             })
                             .eq("id", existingDocRow.id);
@@ -1815,6 +1860,8 @@ Deno.serve(async (req: Request) => {
                               original_file_name: doc.filename,
                               storage_bucket: "crm-documents",
                               storage_path: storagePath,
+                              file_size: matchingAtt.size || bytes.length,
+                              mime_type: contentType,
                               source_gmail_message_id: ref.id,
                               source_gmail_thread_id: ref.threadId || null,
                               source_email_subject: subject || null,

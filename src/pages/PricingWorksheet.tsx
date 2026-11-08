@@ -24,6 +24,7 @@ import {
 import { KunalEmailEvidenceDrawer } from '../components/pricing/KunalEmailEvidenceDrawer';
 import { ImportInfo } from '../components/ImportInfo';
 import { getSignedUrlCached } from '../utils/signedUrlCache';
+import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
 import {
   CheckCircle2,
   ChevronDown,
@@ -444,22 +445,44 @@ export function PricingWorksheet() {
   const [uploadDocFile, setUploadDocFile] = useState<File | null>(null);
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
 
-  // Helper to open / download documents via signed URL
+  // Helper to open / download documents via signed URL without popup blocker interception
   const handleOpenDocument = async (storagePath?: string, filename?: string, isDownload = false) => {
     if (!storagePath) {
       showToast({ type: 'warning', title: 'File Missing', message: 'No file storage path recorded for this document.' });
       return;
     }
+    // Synchronously open blank window prior to async task to preserve user activation
+    let popupWin: Window | null = null;
+    if (!isDownload) {
+      popupWin = window.open('', '_blank');
+      if (popupWin) {
+        popupWin.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569;font-size:14px;">Loading document securely...</p>');
+      }
+    }
     try {
-      const url = await getSignedUrlCached('crm-documents', storagePath, 600, {
+      const url = await getSignedUrlCached('crm-documents', storagePath, 3600, {
         download: isDownload ? filename : undefined,
       });
       if (url) {
-        window.open(url, '_blank', 'noopener,noreferrer');
+        if (isDownload) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename || 'document';
+          a.target = '_blank';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } else if (popupWin && !popupWin.closed) {
+          popupWin.location.href = url;
+        } else {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
       } else {
-        showToast({ type: 'error', title: 'Open Failed', message: 'Could not generate signed document URL.' });
+        if (popupWin && !popupWin.closed) popupWin.close();
+        showToast({ type: 'error', title: 'Open Failed', message: 'Could not generate signed document URL. The file may be missing from storage.' });
       }
     } catch (err: any) {
+      if (popupWin && !popupWin.closed) popupWin.close();
       showToast({ type: 'error', title: 'Document Error', message: err.message || 'Could not open document' });
     }
   };
@@ -481,13 +504,14 @@ export function PricingWorksheet() {
       const cleanFileName = uploadDocFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const storagePath = `${row.inquiryId}/${uploadDocType}_${Date.now()}_${cleanFileName}`;
 
-      // 1. Upload to Supabase Storage 'crm-documents' bucket
-      const { error: uploadErr } = await supabase.storage
-        .from('crm-documents')
-        .upload(storagePath, uploadDocFile, {
-          cacheControl: '3600',
-          upsert: true,
-        });
+      // 1. Upload to Supabase Storage 'crm-documents' bucket with automatic optimization
+      const { error: uploadErr, optimization } = await uploadOptimizedFile(
+        supabase,
+        'crm-documents',
+        storagePath,
+        uploadDocFile,
+        { upsert: true }
+      );
 
       if (uploadErr) {
         throw new Error(`Storage upload failed: ${uploadErr.message}`);
@@ -509,6 +533,8 @@ export function PricingWorksheet() {
           display_file_name: displayFileName,
           storage_bucket: 'crm-documents',
           storage_path: storagePath,
+          file_size: optimization.optimizedSize,
+          mime_type: optimization.mimeType || uploadDocFile.type || 'application/octet-stream',
           uploaded_by: profile?.id || null,
         })
         .select('id, inquiry_id, document_type, display_file_name, original_file_name, storage_path, storage_bucket, make, specification, pricing_option_id, is_permanent')

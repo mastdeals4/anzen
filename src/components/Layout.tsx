@@ -99,7 +99,7 @@ export function Layout({ children }: LayoutProps) {
   const { profile, accessibleModules, signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { currentPage, setCurrentPage, setNavigationData, sidebarCollapsed, setSidebarCollapsed } = useNavigation();
-  const { dateRange, setDateRange } = useFinance();
+  const { dateRange, setDateRange, activePreset, applyPreset } = useFinance();
 
   useEffect(() => {
     supabase
@@ -541,63 +541,127 @@ export function Layout({ children }: LayoutProps) {
               </div>
             </div>
 
-            {/* Desktop date range */}
+            {/* Desktop date range with quick presets */}
             <div className={`flex-1 hidden md:flex items-center justify-center px-2 ${!showDateRange ? 'invisible' : ''}`} aria-hidden={!showDateRange}>
-              {showDateRange && <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
-                <Calendar className="w-3.5 h-3.5 text-gray-500" />
-                <input name="date_range" aria-label="Date Range"
-                  type="date"
-                  value={dateRange.startDate}
-                  onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-                  className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <span className="text-xs text-gray-400">to</span>
-                <input name="date_range" aria-label="Date Range"
-                  type="date"
-                  value={dateRange.endDate}
-                  onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-                  className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>}
+              {showDateRange && (
+                <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg p-1">
+                  <div className="flex items-center gap-1 mr-1">
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('1M')}
+                      className={`px-2 py-0.5 text-xs font-semibold rounded transition ${
+                        activePreset === '1M'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                      }`}
+                      title="Last 1 Month (Rolling Calendar Month)"
+                    >
+                      1M
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('2M')}
+                      className={`px-2 py-0.5 text-xs font-semibold rounded transition ${
+                        activePreset === '2M'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                      }`}
+                      title="Last 2 Months (Extended Operational Range)"
+                    >
+                      2M
+                    </button>
+                  </div>
+                  <Calendar className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <input
+                    name="date_range"
+                    aria-label="Date Range"
+                    type="date"
+                    value={dateRange.startDate}
+                    onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
+                    className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                  />
+                  <span className="text-xs text-gray-400">to</span>
+                  <input
+                    name="date_range"
+                    aria-label="Date Range"
+                    type="date"
+                    value={dateRange.endDate}
+                    onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
+                    className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Mobile date range toggle */}
             <div className={`md:hidden relative ${!showDateRange ? 'invisible' : ''}`} ref={datePickerRef} aria-hidden={!showDateRange}>
-              {showDateRange && <button
-                onClick={() => setDatePickerOpen(!datePickerOpen)}
-                className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 focus:outline-none"
-                aria-label="Toggle date filter"
-              >
-                <Calendar className="w-4 h-4" />
-              </button>}
+              {showDateRange && (
+                <button
+                  onClick={() => setDatePickerOpen(!datePickerOpen)}
+                  className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 focus:outline-none"
+                  aria-label="Toggle date filter"
+                >
+                  <Calendar className="w-4 h-4" />
+                </button>
+              )}
               {showDateRange && datePickerOpen && (
-                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-50 w-64">
-                  <p className="text-xs font-medium text-gray-600 mb-2">Date Range Filter</p>
+                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-3 z-50 w-72">
+                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                    <p className="text-xs font-semibold text-gray-800">Date Range Filter</p>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => applyPreset('1M')}
+                        className={`px-2 py-0.5 text-[11px] font-semibold rounded ${
+                          activePreset === '1M'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        1 Month
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyPreset('2M')}
+                        className={`px-2 py-0.5 text-[11px] font-semibold rounded ${
+                          activePreset === '2M'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        2 Months
+                      </button>
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <div>
-                      <label className="text-xs text-gray-500">From</label>
-                      <input name="from" aria-label="From"
+                      <label className="text-[11px] font-medium text-gray-500">From Date</label>
+                      <input
+                        name="from"
+                        aria-label="From"
                         type="date"
                         value={dateRange.startDate}
                         onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-                        className="w-full mt-0.5 px-2 py-1.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500"
+                        className="w-full mt-0.5 px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:ring-1 focus:ring-blue-500 font-mono"
                       />
                     </div>
                     <div>
-                      <label className="text-xs text-gray-500">To</label>
-                      <input name="to" aria-label="To"
+                      <label className="text-[11px] font-medium text-gray-500">To Date</label>
+                      <input
+                        name="to"
+                        aria-label="To"
                         type="date"
                         value={dateRange.endDate}
                         onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-                        className="w-full mt-0.5 px-2 py-1.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500"
+                        className="w-full mt-0.5 px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:ring-1 focus:ring-blue-500 font-mono"
                       />
                     </div>
                   </div>
                   <button
                     onClick={() => setDatePickerOpen(false)}
-                    className="mt-2 w-full text-xs bg-blue-600 text-white py-1.5 rounded hover:bg-blue-700"
+                    className="mt-2.5 w-full text-xs font-semibold bg-blue-600 text-white py-1.5 rounded-lg hover:bg-blue-700 transition"
                   >
-                    Apply
+                    Apply Filter
                   </button>
                 </div>
               )}

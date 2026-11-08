@@ -44,76 +44,15 @@ import {
   isDuplicateCrmContactError,
 } from '../utils/customerValidation';
 import { fuzzyMatchCompanyName, detectCustomerChanges, findBestMatch } from '../utils/customerMatching';
+import {
+  useCrmInquiries,
+  CRM_INQUIRY_SELECT_FIELDS,
+  type Inquiry,
+} from '../components/crm/inquiries/useCrmInquiries';
+
+export type { Inquiry };
 
 export type CrmPrimaryTab = 'dashboard' | 'inbox' | 'followups' | 'inquiries' | 'campaigns' | 'customers' | 'documents';
-
-export interface Inquiry {
-  id: string;
-  inquiry_number: string;
-  inquiry_date: string;
-  product_name: string;
-  specification?: string | null;
-  quantity: string;
-  supplier_name: string | null;
-  supplier_country: string | null;
-  company_name: string;
-  contact_person: string | null;
-  contact_email: string | null;
-  contact_phone: string | null;
-  email_subject: string | null;
-  mail_subject?: string | null;
-  status: string;
-  pipeline_status?: string;
-  assigned_to?: string | null;
-  next_follow_up?: string | null;
-  priority: string;
-  coa_sent: boolean;
-  coa_sent_date: string | null;
-  msds_sent: boolean;
-  msds_sent_date: string | null;
-  sample_sent: boolean;
-  sample_sent_date: string | null;
-  price_quoted: boolean;
-  price_quoted_date: string | null;
-  price_required?: boolean;
-  coa_required?: boolean;
-  sample_required?: boolean;
-  agency_letter_required?: boolean;
-  price_sent_at?: string | null;
-  coa_sent_at?: string | null;
-  sample_sent_at?: string | null;
-  agency_letter_sent_at?: string | null;
-  aceerp_no?: string | null;
-  purchase_price?: number | null;
-  purchase_price_currency?: string;
-  offered_price?: number | null;
-  offered_price_currency?: string;
-  delivery_date?: string | null;
-  delivery_terms?: string | null;
-  lost_reason?: string | null;
-  lost_at?: string | null;
-  competitor_name?: string | null;
-  competitor_price?: number | null;
-  remarks: string | null;
-  internal_notes: string | null;
-  created_at: string;
-  price_ready?: boolean;
-  source_type?: string | null;
-  source_status?: string | null;
-  document_status?: string | null;
-  kunal_price_status?: string | null;
-  quote_status?: string | null;
-  quote_sent_at?: string | null;
-  last_sourcing_sent_at?: string | null;
-  last_reminder_sent_at?: string | null;
-  reminder_count?: number | null;
-  kunal_pricing_requested_at?: string | null;
-  kunal_pricing_requested_by?: string | null;
-  kunal_pricing_note?: string | null;
-  user_profiles?: {
-    full_name: string;
-  };
-}
 
 export function CRM() {
   const { profile } = useAuth();
@@ -171,9 +110,8 @@ export function CRM() {
     }
   }, [resolveActiveTabFromUrl, activeTab]);
 
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { inquiries, loading, error: crmError, refresh: loadInquiries } = useCrmInquiries();
+  const error = crmError ? t('errors.failedToLoadInquiries') : null;
 
   // Inquiry Drawer & Modals
   const [targetInquiryId, setTargetInquiryId] = useState<string | null>(null);
@@ -206,9 +144,7 @@ export function CRM() {
   const [customerChanges, setCustomerChanges] = useState<any>(null);
   const [inquiryCounts, setInquiryCounts] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    loadInquiries();
-  }, []);
+
 
   // Global Hotkey (Cmd/Ctrl+K) for CRM Global Search
   useEffect(() => {
@@ -256,30 +192,6 @@ export function CRM() {
     clearNavigationData();
   }, [clearNavigationData, navigationData]);
 
-  const loadInquiries = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const { data, error } = await supabase
-        .from('crm_inquiries')
-        .select(`
-          *,
-          user_profiles:assigned_to (
-            full_name
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setInquiries(data || []);
-    } catch (err: any) {
-      console.error('Error loading inquiries:', err);
-      setError(t('errors.failedToLoadInquiries'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleOpenInquiry = async (inquiryId: string) => {
     // Preserve URL state for refresh retention
     const newParams = new URLSearchParams(searchParams);
@@ -293,12 +205,7 @@ export function CRM() {
     } else {
       const { data } = await supabase
         .from('crm_inquiries')
-        .select(`
-          *,
-          user_profiles:assigned_to (
-            full_name
-          )
-        `)
+        .select(CRM_INQUIRY_SELECT_FIELDS)
         .eq('id', inquiryId)
         .maybeSingle();
 
@@ -764,7 +671,7 @@ export function CRM() {
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center justify-between text-xs text-red-700">
             <span>{error}</span>
             <button
-              onClick={loadInquiries}
+              onClick={() => loadInquiries()}
               className="px-2.5 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition"
             >
               {t('crm.retry')}

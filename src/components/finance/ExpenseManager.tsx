@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search, Clock, Loader2 } from 'lucide-react';
+import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search, Clock, Loader2, ChevronDown } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
 import { SearchableSelect } from '../SearchableSelect';
@@ -558,6 +558,16 @@ export function ExpenseManager({
   const [selectedBankTransactionId, setSelectedBankTransactionId] = useState<string>('');
   const [selectedBankAllocationAmount, setSelectedBankAllocationAmount] = useState<number | undefined>();
   const [loading, setLoading] = useState(true);
+  const [expandedExpenses, setExpandedExpenses] = useState<Set<string>>(new Set());
+
+  const toggleExpenseExpand = (id: string) => {
+    setExpandedExpenses(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [modalOpen, setModalOpen] = useState(false);
   const isSubmittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -3397,13 +3407,15 @@ export function ExpenseManager({
                   onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="Search expenses by voucher, utility, description..."
                   aria-label="Search expenses"
-                  className="h-7 w-full rounded border border-gray-300 bg-white pl-8 pr-2.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  style={{ paddingLeft: '2rem' }}
+                  className="h-7 w-full rounded border border-gray-300 bg-white pr-2.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
             </div>
           </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
+      {/* Desktop Table View (>= 768px) */}
+      <div className="hidden md:block bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
         <table className="min-w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
@@ -3842,6 +3854,130 @@ export function ExpenseManager({
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile Card View (< 768px) */}
+      <div className="block md:hidden space-y-2.5">
+        {loading ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-xs text-gray-500">
+            Loading...
+          </div>
+        ) : filteredExpenses.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-xs text-gray-500">
+            No expenses found
+          </div>
+        ) : (
+          sortedExpenses.map((expense) => {
+            const category = expenseCategories.find(c => c.value === expense.expense_category);
+            const postingState = expense.effective_posting_state || 'AMBIGUOUS';
+
+            const isExpanded = expandedExpenses.has(expense.id);
+            const isPaid = (calculateCanonicalCashPayable(expense) - (expense.paid_amount ?? 0)) <= 0.01;
+            const isPartial = (expense.paid_amount ?? 0) > 0.01 && !isPaid;
+
+            return (
+              <div
+                key={expense.id}
+                onClick={() => toggleExpenseExpand(expense.id)}
+                className="bg-white rounded-xl border border-slate-200/90 p-2.5 space-y-1 shadow-2xs hover:border-slate-300 transition active:scale-[0.99] cursor-pointer"
+              >
+                {/* Line 1: Voucher Number + Status Badge + Actions */}
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                      {expense.voucher_number || '—'}
+                    </span>
+                    <span className="shrink-0">
+                      {postingState === 'ACTIVE' ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700">Active</span>
+                      ) : postingState === 'REVERSED' ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-700">Reversed</span>
+                      ) : postingState === 'REJECTED' ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">Rejected</span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800">Pending</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <FinanceActionButton
+                      action="view"
+                      label="View"
+                      onClick={() => void handleViewExpense(expense)}
+                    />
+                    {(postingState === 'ACTIVE' || postingState === 'PENDING' || postingState === 'REJECTED') && (
+                      <FinanceActionButton action="edit" onClick={() => handleEdit(expense)} />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleExpenseExpand(expense.id)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100"
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Line 2: Category + Expense Date */}
+                <div className="flex items-center justify-between text-xs text-gray-600 gap-2">
+                  <div className="font-medium text-gray-800 truncate min-w-0 flex-1">
+                    {category?.label || expense.expense_category}
+                  </div>
+                  <div className="text-[11px] text-gray-400 font-normal shrink-0">
+                    {formatDate(expense.expense_date)}
+                  </div>
+                </div>
+
+                {/* Line 3: Total Amount + Bill Status Pill */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs gap-2">
+                  <div className="font-mono font-bold text-xs text-gray-900 truncate">
+                    {formatCurrency(calculateCanonicalExpenseTotal(expense), getExpenseCurrency(expense))}
+                  </div>
+                  <div className="shrink-0 text-xs font-semibold">
+                    {isPaid ? (
+                      <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-emerald-200/60">Paid</span>
+                    ) : isPartial ? (
+                      <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-amber-200/60">Partial</span>
+                    ) : (
+                      <span className="text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-rose-200/60">Unpaid</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expandable Drawer for Secondary Info */}
+                {isExpanded && (
+                  <div
+                    className="pt-2 mt-1 border-t border-dashed border-slate-200 bg-slate-50/70 p-2 rounded-lg text-xs space-y-1.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {expense.description && (
+                      <div>
+                        <span className="text-[10px] font-semibold text-gray-400 block uppercase tracking-wider">Description</span>
+                        <p className="text-gray-700 text-[11px] mt-0.5">{expense.description}</p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-[10px] font-semibold text-gray-400 block uppercase tracking-wider">Approval Status</span>
+                        <span className="text-gray-800 font-medium capitalize">{expense.approval_status || 'Pending'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-semibold text-gray-400 block uppercase tracking-wider">Paid Amount</span>
+                        <span className="text-gray-800 font-mono font-medium">{formatCurrency(expense.paid_amount ?? 0, getExpenseCurrency(expense))}</span>
+                      </div>
+                    </div>
+                    {canManage && (postingState === 'PENDING' || postingState === 'REJECTED') && (
+                      <div className="flex justify-end pt-1 border-t border-slate-200">
+                        <FinanceActionButton action="delete" onClick={() => handleDelete(expense.id)} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
         </>
       )}

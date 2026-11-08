@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Search, FileText, X, AlertCircle, CreditCard, PackageCheck, CheckCircle } from 'lucide-react';
+import { Plus, Search, FileText, X, AlertCircle, CreditCard, PackageCheck, CheckCircle, Eye, Pencil, Trash2, ChevronDown } from 'lucide-react';
 import { showConfirm } from '../ConfirmDialog';
 import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
@@ -20,6 +20,7 @@ import { useNavigation } from '../../contexts/NavigationContext';
 import { extractPurchaseInvoicePdf, ExtractedPurchaseInvoice } from '../../utils/purchaseInvoicePdfExtractor';
 import { applySettlementAdjustment } from '../../services/financeCommands';
 import { useAuth } from '../../contexts/AuthContext';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface Supplier {
   id: string;
@@ -132,6 +133,15 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   const [importContainers, setImportContainers] = useState<ImportContainerOption[]>([]);
   const [accounts, setAccounts] = useState<ChartOfAccount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<string>>(new Set());
+  const toggleExpandInvoice = (id: string) => {
+    setExpandedInvoiceIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [ppnRate, setPpnRate] = useState(0); // 0 or 11
   const [stampDutyAmount, setStampDutyAmount] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -520,7 +530,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       try {
         const fileName = `${Date.now()}_${fileData.file!.name}`;
         const filePath = `${batchId}/${fileName}`;
-        const { error: uploadError } = await supabase.storage.from('batch-documents').upload(filePath, fileData.file!);
+        const { error: uploadError, optimization } = await uploadOptimizedFile(supabase, 'batch-documents', filePath, fileData.file!);
         if (uploadError) throw uploadError;
         const { data: { publicUrl } } = supabase.storage.from('batch-documents').getPublicUrl(filePath);
         const { error: dbError } = await supabase.from('batch_documents').insert([{
@@ -528,7 +538,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           file_url: publicUrl,
           file_name: fileData.file_name,
           file_type: fileData.file_type,
-          file_size: fileData.file_size,
+          file_size: optimization.optimizedSize,
         }]);
         if (dbError) throw dbError;
       } catch (error) {
@@ -1009,9 +1019,12 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const filePath = `purchase-invoices/${fileName}`;
 
-        const { error: uploadError, data } = await supabase.storage
-          .from('documents')
-          .upload(filePath, file);
+        const { error: uploadError } = await uploadOptimizedFile(
+          supabase,
+          'documents',
+          filePath,
+          file
+        );
 
         if (uploadError) throw uploadError;
 
@@ -1201,7 +1214,8 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             placeholder="Search by invoice number or supplier..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-8 pl-8 pr-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            style={{ paddingLeft: '2rem' }}
+            className="w-full h-8 pr-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
         {canManage && (
@@ -1216,32 +1230,33 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
         )}
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-x-auto">
+      {/* Desktop Table View (>= 768px) */}
+      <div className="hidden md:block bg-white rounded-lg shadow overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-3 sm:px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Invoice #
               </th>
-              <th className="hidden md:table-cell px-3 sm:px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Supplier
               </th>
-              <th className="hidden lg:table-cell px-3 sm:px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Date
               </th>
-              <th className="hidden sm:table-cell px-3 sm:px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Currency
               </th>
-              <th className="px-3 sm:px-2 py-1.5 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Total
               </th>
-              <th className="hidden xl:table-cell px-3 sm:px-2 py-1.5 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Balance
               </th>
-              <th className="hidden lg:table-cell px-3 sm:px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Status
               </th>
-              <th className="px-3 sm:px-2 py-1.5 text-right text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50">
+              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Actions
               </th>
             </tr>
@@ -1256,64 +1271,52 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             ) : (
               filteredInvoices.map((invoice) => (
                 <tr key={invoice.id} className="hover:bg-gray-50">
-                  <td className="px-3 sm:px-2 py-1.5 whitespace-nowrap text-sm font-medium text-gray-900">
-                    <div className="flex flex-col">
-                      <span>{invoice.invoice_number}</span>
-                      <span className="md:hidden text-xs text-gray-500">{invoice.suppliers?.company_name}</span>
-                    </div>
+                  <td className="px-3 py-2 whitespace-nowrap text-xs font-mono font-bold text-gray-900">
+                    {invoice.invoice_number}
                   </td>
-                  <td className="hidden md:table-cell px-3 sm:px-2 py-1.5 whitespace-nowrap text-sm text-gray-900">
-                    {invoice.suppliers?.company_name}
+                  <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-medium">
+                    {invoice.suppliers?.company_name || '—'}
                   </td>
-                  <td className="hidden lg:table-cell px-3 sm:px-2 py-1.5 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">
                     {formatDate(invoice.invoice_date)}
                   </td>
-                  <td className="hidden sm:table-cell px-3 sm:px-2 py-1.5 whitespace-nowrap text-sm text-gray-500">
-                    <div className="flex flex-col">
-                      <span>{invoice.currency}</span>
-                      {invoice.currency === 'USD' && (
-                        <span className="text-xs text-gray-400">
-                          @ {invoice.exchange_rate.toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 sm:px-2 py-1.5 whitespace-nowrap text-sm text-right text-gray-900 font-medium">
-                    <div className="flex flex-col items-end">
-                      <span>{formatCurrency(invoice.total_amount, invoice.currency)}</span>
-                      <span className="lg:hidden text-xs">
-                        <span className={invoice.balance_amount > 0 ? 'text-red-600' : 'text-green-600'}>
-                          Bal: {formatCurrency(invoice.balance_amount, invoice.currency)}
-                        </span>
+                  <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600">
+                    <span className="font-medium">{invoice.currency}</span>
+                    {invoice.currency === 'USD' && (
+                      <span className="text-[11px] text-gray-400 ml-1">
+                        @ {invoice.exchange_rate.toLocaleString()}
                       </span>
-                    </div>
+                    )}
                   </td>
-                  <td className="hidden xl:table-cell px-3 sm:px-2 py-1.5 whitespace-nowrap text-sm text-right font-medium">
-                    <span className={invoice.balance_amount > 0 ? 'text-red-600' : 'text-green-600'}>
+                  <td className="px-3 py-2 whitespace-nowrap text-xs font-mono font-bold text-right text-gray-900">
+                    {formatCurrency(invoice.total_amount, invoice.currency)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-xs font-mono font-bold text-right">
+                    <span className={invoice.balance_amount > 0 ? 'text-red-600' : 'text-emerald-600'}>
                       {formatCurrency(invoice.balance_amount, invoice.currency)}
                     </span>
                   </td>
-                  <td className="hidden lg:table-cell px-3 sm:px-2 py-1.5 whitespace-nowrap">
+                  <td className="px-3 py-2 whitespace-nowrap text-center">
                     <FinanceBadge status={invoice.status === 'paid' ? 'paid' : invoice.status === 'partial' ? 'partial' : 'unpaid'}>
                       {invoice.status}
                     </FinanceBadge>
                   </td>
-                  <td className="px-3 sm:px-2 py-1.5 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="px-3 py-2 whitespace-nowrap text-center text-xs">
+                    <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                       <FinanceActionButton action="view" label="View Details" onClick={() => handleOpenView(invoice)} />
                       {canManage && (
                         <FinanceActionButton action="edit" onClick={() => handleOpenEdit(invoice)} />
                       )}
                       {canManage && (!invoice.receiving_approval_status || invoice.receiving_approval_status === 'draft' || invoice.receiving_approval_status === 'rejected') && (
-                        <button onClick={() => void updateReceivingApproval(invoice, 'submit')} className="text-blue-600 hover:text-blue-800 text-xs" title="Submit for inward approval">Submit</button>
+                        <button onClick={() => void updateReceivingApproval(invoice, 'submit')} className="text-blue-600 hover:text-blue-800 text-xs px-1.5 py-0.5 rounded bg-blue-50" title="Submit for inward approval">Submit</button>
                       )}
                       {canManage && invoice.receiving_approval_status === 'pending_approval' && (
-                        <button onClick={() => void updateReceivingApproval(invoice, 'approve')} className="text-green-600 hover:text-green-800 text-xs" title="Approve for inward">Approve</button>
+                        <button onClick={() => void updateReceivingApproval(invoice, 'approve')} className="text-green-600 hover:text-green-800 text-xs px-1.5 py-0.5 rounded bg-green-50" title="Approve for inward">Approve</button>
                       )}
                       {canManage && onPayInvoice && invoice.status !== 'paid' && invoice.balance_amount > 0 && (
                         <button
                           onClick={() => onPayInvoice({ id: invoice.id, invoice_number: invoice.invoice_number, supplier_id: invoice.supplier_id, balance_amount: invoice.balance_amount })}
-                          className="text-green-600 hover:text-green-800"
+                          className="text-green-600 hover:text-green-800 p-1 rounded hover:bg-green-50"
                           title="Record Payment"
                         >
                           <CreditCard className="w-4 h-4" />
@@ -1329,6 +1332,155 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile App-Style Card View (< 768px) - High Density 3-Line Format */}
+      <div className="block md:hidden p-2 space-y-1.5">
+        {filteredInvoices.length === 0 ? (
+          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-500 text-xs">
+            No purchase invoices found. Create your first one!
+          </div>
+        ) : (
+          filteredInvoices.map((invoice) => {
+            const isExpanded = expandedInvoiceIds.has(invoice.id);
+
+            return (
+              <div
+                key={invoice.id}
+                onClick={() => toggleExpandInvoice(invoice.id)}
+                className="bg-white rounded-xl border border-slate-200/90 p-2.5 space-y-1 shadow-2xs hover:border-slate-300 transition active:scale-[0.99] cursor-pointer"
+              >
+                {/* Line 1: Invoice # + Status Badge + Actions */}
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                      {invoice.invoice_number}
+                    </span>
+                    <FinanceBadge status={invoice.status === 'paid' ? 'paid' : invoice.status === 'partial' ? 'partial' : 'unpaid'}>
+                      {invoice.status}
+                    </FinanceBadge>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenView(invoice)}
+                      className="p-1 text-slate-500 hover:text-slate-800 rounded active:bg-slate-100"
+                      title="View Invoice"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                    </button>
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(invoice)}
+                        className="p-1 text-blue-600 hover:text-blue-800 rounded active:bg-blue-50"
+                        title="Edit Invoice"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleExpandInvoice(invoice.id)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100"
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Line 2: Supplier Name + Date */}
+                <div className="flex items-center justify-between text-xs text-gray-600 gap-2">
+                  <span className="font-medium text-gray-800 truncate min-w-0 flex-1">
+                    {invoice.suppliers?.company_name || '—'}
+                  </span>
+                  <span className="text-[11px] text-gray-400 font-normal shrink-0">
+                    {formatDate(invoice.invoice_date)}
+                  </span>
+                </div>
+
+                {/* Line 3: Total Amount + Balance Due */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs gap-2">
+                  <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                    {formatCurrency(invoice.total_amount, invoice.currency)}
+                  </span>
+                  <span className={`font-mono text-xs font-semibold shrink-0 text-right ${
+                    invoice.balance_amount > 0 ? 'text-red-600' : 'text-emerald-600'
+                  }`}>
+                    {invoice.balance_amount > 0 ? `Due: ${formatCurrency(invoice.balance_amount, invoice.currency)}` : 'Settled'}
+                  </span>
+                </div>
+
+                {/* Expandable Drawer: Currency Details & Actions */}
+                {isExpanded && (
+                  <div
+                    className="mt-2 pt-2 border-t border-dashed border-slate-200 bg-slate-50/70 p-2 rounded-lg text-xs space-y-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-gray-400 block">Currency / Rate</span>
+                        <span className="text-gray-700 font-medium">
+                          {invoice.currency} {invoice.currency === 'USD' ? `@ ${invoice.exchange_rate.toLocaleString()}` : ''}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-gray-400 block">Inward Status</span>
+                        <span className="text-gray-700 font-medium capitalize">
+                          {invoice.receiving_approval_status || 'Draft'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-200/80">
+                      {canManage && onPayInvoice && invoice.status !== 'paid' && invoice.balance_amount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => onPayInvoice({ id: invoice.id, invoice_number: invoice.invoice_number, supplier_id: invoice.supplier_id, balance_amount: invoice.balance_amount })}
+                          className="flex-1 min-h-[32px] inline-flex items-center justify-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-semibold transition"
+                        >
+                          <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Pay</span>
+                        </button>
+                      )}
+                      {canManage && (!invoice.receiving_approval_status || invoice.receiving_approval_status === 'draft' || invoice.receiving_approval_status === 'rejected') && (
+                        <button
+                          type="button"
+                          onClick={() => void updateReceivingApproval(invoice, 'submit')}
+                          className="flex-1 min-h-[32px] inline-flex items-center justify-center px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg text-xs font-semibold transition"
+                        >
+                          Submit Inward
+                        </button>
+                      )}
+                      {canManage && invoice.receiving_approval_status === 'pending_approval' && (
+                        <button
+                          type="button"
+                          onClick={() => void updateReceivingApproval(invoice, 'approve')}
+                          className="flex-1 min-h-[32px] inline-flex items-center justify-center px-2 py-1 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-semibold transition"
+                        >
+                          Approve Inward
+                        </button>
+                      )}
+                      {canManage && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(invoice)}
+                          disabled={deleting}
+                          className="min-h-[32px] px-2.5 inline-flex items-center justify-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition ml-auto"
+                          title="Delete Invoice"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* Create/Edit Modal */}

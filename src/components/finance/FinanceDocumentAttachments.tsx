@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { Download, ExternalLink, FileText, Upload, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { downloadStorageDocument, openStorageDocument } from '../../utils/signedUrlCache';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface FinanceDocumentAttachmentsProps {
   documentUrls: string[];
@@ -20,8 +21,7 @@ export async function uploadFinanceDocuments(files: File[], folder: string): Pro
   for (const file of files) {
     const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const path = `${folder}/${Date.now()}_${crypto.randomUUID()}_${safeName}`;
-    const { error } = await supabase.storage.from('expense-documents').upload(path, file, {
-      cacheControl: '3600',
+    const { error } = await uploadOptimizedFile(supabase, 'expense-documents', path, file, {
       upsert: false,
     });
     if (error) throw new Error(`Failed to upload ${file.name}: ${error.message}`);

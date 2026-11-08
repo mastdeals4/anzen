@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -42,94 +42,133 @@ export function ApprovalNotifications() {
     return (rawCustomer as CompanyRef | null)?.company_name || 'Unknown';
   };
 
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const loadPendingApprovals = useCallback(async () => {
-    try {
-      const approvals: PendingApproval[] = [];
-
-      const [soRes, dcRes, expRes, pcRes] = await Promise.all([
-        supabase
-          .from('sales_orders')
-          .select('id, so_number, so_date, total_amount, currency, customers(company_name)')
-          .eq('status', 'pending_approval')
-          .order('created_at', { ascending: false })
-          .limit(5),
-
-        supabase
-          .from('delivery_challans')
-          .select('id, challan_number, challan_date, customers(company_name)')
-          .eq('approval_status', 'pending_approval')
-          .order('created_at', { ascending: false })
-          .limit(5),
-
-        supabase
-          .from('finance_expenses')
-          .select(`
-            id, voucher_number, expense_date, amount, description,
-            transaction_currency, currency_code, payment_currency,
-            bank_account_currency, bank_accounts(currency)
-          `)
-          .eq('approval_status', 'pending_approval')
-          .order('created_at', { ascending: false })
-          .limit(5),
-
-        supabase
-          .from('petty_cash_transactions')
-          .select('id, transaction_number, transaction_date, amount, description')
-          .is('fund_transfer_id', null)
-          .eq('approval_status', 'pending_approval')
-          .order('created_at', { ascending: false })
-          .limit(5),
-      ]);
-
-      soRes.data?.forEach(so => approvals.push({
-        id: so.id, type: 'sales_order', number: so.so_number,
-        description: getCompanyName(so.customers),
-        amount: so.total_amount, currency: so.currency || 'IDR', date: so.so_date,
-      }));
-
-      dcRes.data?.forEach(ch => approvals.push({
-        id: ch.id, type: 'delivery_challan', number: ch.challan_number,
-        description: getCompanyName(ch.customers),
-        date: ch.challan_date,
-      }));
-
-      const rawExpenses = expRes.data || [];
-      const expenseLifecycleMap = rawExpenses.length > 0
-        ? await getEffectiveExpensePostingStates(rawExpenses.map(e => e.id))
-        : new Map();
-
-      rawExpenses
-        .filter(e => {
-          const lifecycle = expenseLifecycleMap.get(e.id);
-          if (lifecycle && (lifecycle.effective_posting_state === 'REVERSED' || lifecycle.effective_posting_state === 'REPLACED' || lifecycle.document_approval_status === 'cancelled')) {
-            return false;
-          }
-          return true;
-        })
-        .slice(0, 5)
-        .forEach(e => approvals.push({
-          id: e.id, type: 'expense', number: e.voucher_number || '—',
-          description: e.description || 'Expense',
-          amount: e.amount, currency: resolveTransactionCurrency(e), date: e.expense_date,
-        }));
-
-      pcRes.data?.forEach(pc => approvals.push({
-        id: pc.id, type: 'petty_cash', number: pc.transaction_number,
-        description: pc.description || 'Petty Cash',
-        amount: pc.amount, currency: resolveTransactionCurrency(undefined), date: pc.transaction_date,
-      }));
-
-      setPendingApprovals(approvals);
-      const currentSignature = getSignature(approvals);
-      if (approvals.length > 0 && currentSignature !== dismissedSignature) {
-        setShowNotification(true);
-      } else {
-        setShowNotification(false);
-      }
-    } catch (error) {
-      console.error('Error loading pending approvals:', error);
+    if (inFlightRef.current) {
+      return inFlightRef.current;
     }
+
+    const run = (async () => {
+      try {
+        const approvals: PendingApproval[] = [];
+
+        const [soRes, dcRes, expRes, pcRes] = await Promise.allSettled([
+          supabase
+            .from('sales_orders')
+            .select('id, so_number, so_date, total_amount, currency, customers(company_name)')
+            .eq('status', 'pending_approval')
+            .order('created_at', { ascending: false })
+            .limit(5),
+
+          supabase
+            .from('delivery_challans')
+            .select('id, challan_number, challan_date, customers(company_name)')
+            .eq('approval_status', 'pending_approval')
+            .order('created_at', { ascending: false })
+            .limit(5),
+
+          supabase
+            .from('finance_expenses')
+            .select(`
+              id, voucher_number, expense_date, amount, description,
+              transaction_currency, currency_code, payment_currency,
+              bank_account_currency, bank_accounts(currency)
+            `)
+            .eq('approval_status', 'pending_approval')
+            .order('created_at', { ascending: false })
+            .limit(5),
+
+          supabase
+            .from('petty_cash_transactions')
+            .select('id, transaction_number, transaction_date, amount, description')
+            .is('fund_transfer_id', null)
+            .eq('approval_status', 'pending_approval')
+            .order('created_at', { ascending: false })
+            .limit(5),
+        ]);
+
+        if (soRes.status === 'fulfilled' && !soRes.value.error && soRes.value.data) {
+          soRes.value.data.forEach(so => approvals.push({
+            id: so.id, type: 'sales_order', number: so.so_number,
+            description: getCompanyName(so.customers),
+            amount: so.total_amount, currency: so.currency || 'IDR', date: so.so_date,
+          }));
+        } else if (soRes.status === 'rejected' || (soRes.status === 'fulfilled' && soRes.value.error)) {
+          console.warn('[ApprovalNotifications] sales_orders fetch error:', soRes.status === 'rejected' ? soRes.reason : soRes.value.error);
+        }
+
+        if (dcRes.status === 'fulfilled' && !dcRes.value.error && dcRes.value.data) {
+          dcRes.value.data.forEach(ch => approvals.push({
+            id: ch.id, type: 'delivery_challan', number: ch.challan_number,
+            description: getCompanyName(ch.customers),
+            date: ch.challan_date,
+          }));
+        } else if (dcRes.status === 'rejected' || (dcRes.status === 'fulfilled' && dcRes.value.error)) {
+          console.warn('[ApprovalNotifications] delivery_challans fetch error:', dcRes.status === 'rejected' ? dcRes.reason : dcRes.value.error);
+        }
+
+        if (expRes.status === 'fulfilled' && !expRes.value.error && expRes.value.data) {
+          const rawExpenses = expRes.value.data;
+          const expenseLifecycleMap = rawExpenses.length > 0
+            ? await getEffectiveExpensePostingStates(rawExpenses.map(e => e.id)).catch(() => new Map())
+            : new Map();
+
+          rawExpenses
+            .filter(e => {
+              const lifecycle = expenseLifecycleMap.get(e.id);
+              if (lifecycle && (lifecycle.effective_posting_state === 'REVERSED' || lifecycle.effective_posting_state === 'REPLACED' || lifecycle.document_approval_status === 'cancelled')) {
+                return false;
+              }
+              return true;
+            })
+            .slice(0, 5)
+            .forEach(e => approvals.push({
+              id: e.id, type: 'expense', number: e.voucher_number || '—',
+              description: e.description || 'Expense',
+              amount: e.amount, currency: resolveTransactionCurrency(e), date: e.expense_date,
+            }));
+        } else if (expRes.status === 'rejected' || (expRes.status === 'fulfilled' && expRes.value.error)) {
+          console.warn('[ApprovalNotifications] finance_expenses fetch error:', expRes.status === 'rejected' ? expRes.reason : expRes.value.error);
+        }
+
+        if (pcRes.status === 'fulfilled' && !pcRes.value.error && pcRes.value.data) {
+          pcRes.value.data.forEach(pc => approvals.push({
+            id: pc.id, type: 'petty_cash', number: pc.transaction_number,
+            description: pc.description || 'Petty Cash',
+            amount: pc.amount, currency: resolveTransactionCurrency(undefined), date: pc.transaction_date,
+          }));
+        } else if (pcRes.status === 'rejected' || (pcRes.status === 'fulfilled' && pcRes.value.error)) {
+          console.warn('[ApprovalNotifications] petty_cash_transactions fetch error:', pcRes.status === 'rejected' ? pcRes.reason : pcRes.value.error);
+        }
+
+        setPendingApprovals(approvals);
+        const currentSignature = getSignature(approvals);
+        if (approvals.length > 0 && currentSignature !== dismissedSignature) {
+          setShowNotification(true);
+        } else {
+          setShowNotification(false);
+        }
+      } catch (error) {
+        console.error('Error loading pending approvals:', error);
+      } finally {
+        inFlightRef.current = null;
+      }
+    })();
+
+    inFlightRef.current = run;
+    return run;
   }, [dismissedSignature, getSignature]);
+
+  const debouncedLoad = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      loadPendingApprovals();
+    }, 300);
+  }, [loadPendingApprovals]);
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -143,17 +182,20 @@ export function ApprovalNotifications() {
 
     loadPendingApprovals();
 
-    // Realtime + on-focus refresh replaces the 60s polling.
-    const onFocus = () => loadPendingApprovals();
+    // Debounced realtime + on-focus refresh prevents flood on window focus
+    const onFocus = () => debouncedLoad();
     window.addEventListener('focus', onFocus);
 
     return () => {
       window.removeEventListener('focus', onFocus);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
     };
-  }, [getDismissKey, loadPendingApprovals, profile?.role]);
+  }, [debouncedLoad, getDismissKey, loadPendingApprovals, profile?.role]);
 
   const approvalEnabled = profile?.role === 'admin';
-  const onApprovalEvent = () => { loadPendingApprovals(); };
+  const onApprovalEvent = () => { debouncedLoad(); };
   useSupabaseRealtimeChannel({
     channelName: 'approval_popup_sales_orders',
     table: 'sales_orders',
@@ -220,7 +262,7 @@ export function ApprovalNotifications() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-96 max-h-[600px] overflow-hidden rounded-lg shadow-2xl bg-white border border-gray-200 animate-slide-up">
+    <div className="fixed bottom-16 sm:bottom-4 right-2 sm:right-4 left-2 sm:left-auto sm:w-96 max-w-[calc(100vw-16px)] max-h-[70vh] sm:max-h-[600px] overflow-hidden rounded-xl shadow-2xl bg-white border border-gray-200 animate-slide-up z-50">
       <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />

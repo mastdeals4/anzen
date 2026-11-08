@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
-import { Search, ArrowDownCircle, Printer, Lock, RotateCcw, CheckCircle, Download, Link2, FileText, Banknote } from 'lucide-react';
+import { Search, ArrowDownCircle, Printer, Lock, RotateCcw, CheckCircle, Download, Link2, FileText, Banknote, ChevronDown } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
@@ -175,6 +175,15 @@ export function ReceiptVoucherManager({
   const { profile } = useAuth();
   const { dateRange } = useFinance();
   const isAdmin = profile?.role === 'admin';
+  const [expandedVoucherIds, setExpandedVoucherIds] = useState<Set<string>>(new Set());
+  const toggleExpandVoucher = (id: string) => {
+    setExpandedVoucherIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const printRef = useRef<HTMLDivElement>(null);
   const [cancelPostingTarget, setCancelPostingTarget] = useState<ReceiptVoucher | null>(null);
   const [cancelPostingReason, setCancelPostingReason] = useState('');
@@ -1567,7 +1576,8 @@ export function ReceiptVoucherManager({
             </div>
           </div>
 
-      <div className="bg-white rounded border border-gray-200 overflow-hidden">
+      {/* Desktop Table View (>= 768px) */}
+      <div className="hidden md:block bg-white rounded border border-gray-200 overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
@@ -1646,6 +1656,131 @@ export function ReceiptVoucherManager({
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile Card View (< 768px) - High Density 3-Line Format */}
+      <div className="block md:hidden p-2 space-y-1.5">
+        {filteredVouchers.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-xs text-gray-500">
+            No receipt vouchers found
+          </div>
+        ) : (
+          filteredVouchers.map(voucher => {
+            const isExpanded = expandedVoucherIds.has(voucher.id);
+
+            return (
+              <div
+                key={voucher.id}
+                onClick={() => toggleExpandVoucher(voucher.id)}
+                className="bg-white rounded-xl border border-slate-200/90 p-2.5 space-y-1 shadow-2xs hover:border-slate-300 transition active:scale-[0.99] cursor-pointer"
+              >
+                {/* Line 1: Voucher Number + Status Badge + Actions */}
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="font-mono font-bold text-xs text-gray-900 truncate">
+                      {voucher.voucher_number}
+                    </span>
+                    <div className="shrink-0 scale-90 origin-left">
+                      {voucher.is_posted ? (
+                        <FinanceBadge status="posted"><Lock className="mr-0.5 h-3 w-3" /> Posted</FinanceBadge>
+                      ) : (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                          Draft
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <FinanceActionButton action="view" label="View" onClick={() => handleView(voucher)} />
+                    {canManage && !voucher.is_posted && (
+                      <FinanceActionButton action="edit" onClick={() => handleEdit(voucher)} />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleExpandVoucher(voucher.id)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100"
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Line 2: Party Name + Date */}
+                <div className="flex items-center justify-between text-xs text-gray-600 gap-2">
+                  <div className="flex items-center gap-1 min-w-0 flex-1">
+                    <span className="font-medium text-gray-800 truncate">
+                      {getPartyDisplayName(voucher)}
+                    </span>
+                    <span className="shrink-0 scale-90 origin-left">
+                      {getPartyTypeBadge(voucher.party_type)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-gray-400 font-normal shrink-0">
+                    {new Date(voucher.voucher_date).toLocaleDateString('id-ID')}
+                  </span>
+                </div>
+
+                {/* Line 3: Amount + Method / Allocated To */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs gap-2">
+                  <span className="font-mono font-bold text-xs text-green-600 truncate">
+                    {formatCurrency(voucher.amount, voucherCurrency(voucher))}
+                  </span>
+                  <span className="text-[11px] text-gray-500 truncate text-right capitalize">
+                    {voucher.payment_method.replace('_', ' ')}
+                  </span>
+                </div>
+
+                {/* Expandable Drawer */}
+                {isExpanded && (
+                  <div
+                    className="mt-2 pt-2 border-t border-dashed border-slate-200 bg-slate-50/70 p-2 rounded-lg text-xs space-y-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider block">Bank</span>
+                        <span className="text-gray-700 truncate block font-medium">
+                          {voucher.bank_accounts?.alias || voucher.bank_accounts?.account_name || '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider block">Allocated To</span>
+                        <span className="text-gray-700 truncate block font-medium">{voucher.allocated_to || '—'}</span>
+                      </div>
+                      {voucher.settlement_discount && voucher.settlement_discount > 0 ? (
+                        <div className="col-span-2">
+                          <span className="text-[10px] text-amber-600 font-medium uppercase tracking-wider block">Discount / Diff</span>
+                          <span className="text-xs text-amber-700 font-medium">{formatCurrency(voucher.settlement_discount, voucherCurrency(voucher))}</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/80 gap-2">
+                      <VoucherBankLinkIndicator
+                        voucherNumber={voucher.voucher_number}
+                        evaluation={voucher.bank_link_evaluation}
+                        bankAccountId={voucher.bank_account_id}
+                        onOpenBankReconciliation={onOpenBankReconciliation}
+                      />
+                      <div className="flex items-center gap-1 ml-auto">
+                        {canManage && !voucher.is_posted && (
+                          <>
+                            <FinanceActionButton action="approve" label="Post" onClick={() => handlePostVoucher(voucher)} disabled={postingLoading === voucher.id} />
+                            <FinanceActionButton action="delete" onClick={() => handleDelete(voucher)} />
+                          </>
+                        )}
+                        {voucher.is_posted && isAdmin && (
+                          <FinanceActionButton action="reverse" label="Cancel" onClick={() => openCancelPostingModal(voucher)} />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
         </>
       )}

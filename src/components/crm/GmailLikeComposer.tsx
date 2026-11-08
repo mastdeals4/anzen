@@ -9,6 +9,7 @@ import { applyEmailTemplateVariables, getDisplayContactName, getSalutation } fro
 import { buildNormalizedBaseKey, buildUniqueDocumentNames } from '../../utils/documentNaming';
 import { escapeHtml, buildCompanySignature, buildIndiaRfqEmail, buildIndiaRfqSubject, buildChinaRfqEmail, buildChinaRfqSubject } from '../../utils/emailFormatting';
 import { type CompanySnapshot, FALLBACK_COMPANY } from '../../types/company';
+import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface Inquiry {
   id: string;
@@ -597,7 +598,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
           existingStoragePaths: existingStoragePaths.filter(p => p.split('/').pop()?.startsWith(normalizedBaseKey)),
         });
         const filePath = `${attachmentFolder}/${fileNaming.fileName}`;
-        const { error: upErr } = await supabase.storage.from('crm-documents').upload(filePath, att.file);
+        const { error: upErr } = await uploadOptimizedFile(supabase, 'crm-documents', filePath, att.file);
         if (upErr) throw new Error(`Failed to upload attachment ${att.name}: ${upErr.message}`);
         uploadedFiles.push({ storagePath: filePath, fileName: fileNaming.fileName });
         existingStoragePaths.push(filePath);

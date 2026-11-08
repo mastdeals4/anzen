@@ -120,12 +120,13 @@ export async function getOrCreateCanonicalConversation(
   participants: string[],
   lastMessageAt: string,
   customerId: string | null = null,
-  channel: "email" | "whatsapp" = "email"
+  channel: "email" | "whatsapp" = "email",
+  crmContactId: string | null = null
 ): Promise<{ id: string; isNew: boolean }> {
   // Check existing by channel + external_thread_id
   const { data: existing, error: findError } = await supabase
     .from("enquiry_conversations")
-    .select("id, participant_identifiers")
+    .select("id, participant_identifiers, customer_id, crm_contact_id")
     .eq("channel", channel)
     .eq("external_thread_id", threadId)
     .maybeSingle();
@@ -149,7 +150,8 @@ export async function getOrCreateCanonicalConversation(
       last_message_at: lastMessageAt,
     };
     if (changed) updates.participant_identifiers = merged;
-    if (customerId) updates.customer_id = customerId;
+    if (customerId && !existing.customer_id) updates.customer_id = customerId;
+    if (crmContactId && !existing.crm_contact_id) updates.crm_contact_id = crmContactId;
 
     await supabase
       .from("enquiry_conversations")
@@ -160,13 +162,14 @@ export async function getOrCreateCanonicalConversation(
   }
 
   // Insert new conversation
-  const newPayload = {
+  const newPayload: Record<string, unknown> = {
     channel: channel,
     external_thread_id: threadId,
     title: cleanTitle(title),
     participant_identifiers: participants.filter(Boolean),
     last_message_at: lastMessageAt,
     customer_id: customerId,
+    crm_contact_id: crmContactId,
     status: "active",
   };
 
@@ -642,18 +645,41 @@ export async function mirrorInboundWhatsApp(
 
   const participants = [senderPhone, businessPhone].filter(Boolean) as string[];
 
-  // Customer resolution by phone number
+  // Safe Customer & Contact resolution by phone number (customers & crm_contacts)
   let customerId: string | null = null;
+  let crmContactId: string | null = null;
   const cleanPhone = senderPhone.replace(/\D/g, "");
   if (cleanPhone.length >= 7) {
     const lastDigits = cleanPhone.slice(-8);
-    const { data: cust } = await supabase
+
+    // 1. Check crm_contacts
+    const { data: contactMatches } = await supabase
+      .from("crm_contacts")
+      .select("id, company_name")
+      .or(`mobile.ilike.%${lastDigits}%,phone.ilike.%${lastDigits}%`)
+      .limit(5);
+
+    // 2. Check customers master
+    const { data: customerMatches } = await supabase
       .from("customers")
-      .select("id")
+      .select("id, company_name")
       .ilike("phone", `%${lastDigits}%`)
-      .limit(1)
-      .maybeSingle();
-    if (cust) customerId = cust.id;
+      .limit(5);
+
+    // Check unique company count across matches
+    const uniqueCompanies = new Set<string>();
+    (contactMatches || []).forEach(c => uniqueCompanies.add(c.company_name?.toLowerCase().trim()));
+    (customerMatches || []).forEach(c => uniqueCompanies.add(c.company_name?.toLowerCase().trim()));
+
+    // Only auto-link if exactly one unique company matches!
+    if (uniqueCompanies.size === 1) {
+      if (customerMatches && customerMatches.length > 0) {
+        customerId = customerMatches[0].id;
+      }
+      if (contactMatches && contactMatches.length > 0) {
+        crmContactId = contactMatches[0].id;
+      }
+    }
   }
 
   const { id: conversationId } = await getOrCreateCanonicalConversation(
@@ -663,7 +689,8 @@ export async function mirrorInboundWhatsApp(
     participants,
     receivedAt,
     customerId,
-    "whatsapp"
+    "whatsapp",
+    crmContactId
   );
 
   // 2. Ingest message idempotently
@@ -780,6 +807,21 @@ export async function mirrorInboundWhatsApp(
           })
           .catch(() => {});
       }
+    }
+
+    // Auto-cancel pending follow-ups for this conversation on customer reply
+    try {
+      await supabase
+        .from("tasks")
+        .update({
+          status: "COMPLETED",
+          completed_at: new Date().toISOString(),
+          completion_notes: "Auto-completed on inbound customer WhatsApp reply",
+        })
+        .eq("status", "PENDING")
+        .filter("system_metadata->>conversation_id", "eq", conversationId);
+    } catch {
+      // non-blocking task update
     }
   }
 

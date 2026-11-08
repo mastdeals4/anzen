@@ -83,20 +83,25 @@ export function FinancePage({ title, subtitle, actions, kpis, toolbar, chips, cu
         customHeader
       ) : (
         /* Consolidated header toolbar: Title | Subtitle | Toolbar/Filters | Actions */
-        <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg">
-          <div className="flex items-center gap-2 shrink-0">
-            {title && <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">{title}</h1>}
-            {subtitle && <span className="text-xs text-gray-500 hidden md:inline truncate">{subtitle}</span>}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg">
+          <div className="flex items-center justify-between gap-2 w-full md:w-auto shrink-0">
+            <div className="flex items-center gap-2">
+              {title && <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">{title}</h1>}
+              {subtitle && <span className="text-xs text-gray-500 hidden md:inline truncate">{subtitle}</span>}
+            </div>
+            {actions && (
+              <div className="flex shrink-0 items-center gap-2 md:hidden">{actions}</div>
+            )}
           </div>
 
           {toolbar && (
-            <div className="flex flex-1 items-center gap-2 min-w-0 flex-wrap">
+            <div className="flex flex-1 items-center gap-2 min-w-0 flex-wrap w-full md:w-auto">
               {toolbar}
             </div>
           )}
 
           {actions && (
-            <div className="flex shrink-0 items-center gap-2 ml-auto">{actions}</div>
+            <div className="hidden md:flex shrink-0 items-center gap-2 ml-auto">{actions}</div>
           )}
         </div>
       )}

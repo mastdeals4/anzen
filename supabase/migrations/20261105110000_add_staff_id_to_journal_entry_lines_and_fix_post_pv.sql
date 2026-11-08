@@ -617,27 +617,33 @@ BEGIN
       END IF;
     END IF;
 
-    -- Multi-Document Allocation Handling for FX Realization
+    -- Multi-Document Allocation Handling for FX Realization (only for USD receipts)
     SELECT 
-      COALESCE(SUM(ra.allocated_amount), 0),
-      COALESCE(SUM(ra.allocated_amount * COALESCE(
-        (SELECT frl.revalued_rate
-         FROM public.fx_revaluation_lines frl
-         JOIN public.fx_revaluations fr ON fr.id = frl.revaluation_id
-         WHERE frl.sales_invoice_id = ra.sales_invoice_id
-           AND fr.status = 'posted'
-           AND fr.revaluation_date <= v_rv.voucher_date
-         ORDER BY fr.revaluation_date DESC, fr.created_at DESC
-         LIMIT 1),
-        si.exchange_rate,
-        v_rate
-      )), 0)
+      COALESCE(SUM(CASE WHEN upper(COALESCE(so.currency, v_currency)) = 'USD' THEN va.allocated_amount ELSE 0 END), 0),
+      COALESCE(SUM(CASE 
+        WHEN upper(COALESCE(so.currency, v_currency)) = 'USD' THEN
+          va.allocated_amount * COALESCE(
+            (SELECT frl.revalued_rate
+             FROM public.fx_revaluation_lines frl
+             JOIN public.fx_revaluations fr ON fr.id = frl.revaluation_id
+             WHERE frl.sales_invoice_id = va.sales_invoice_id
+               AND fr.status = 'posted'
+               AND fr.revaluation_date <= v_rv.voucher_date
+             ORDER BY fr.revaluation_date DESC, fr.created_at DESC
+             LIMIT 1),
+            so.commercial_usd_to_idr_rate,
+            v_rate
+          )
+        ELSE 0
+      END), 0)
     INTO v_alloc_foreign, v_alloc_carrying_idr
-    FROM public.receipt_voucher_allocations ra
-    JOIN public.sales_invoices si ON si.id = ra.sales_invoice_id
-    WHERE ra.receipt_voucher_id = p_rv_id;
+    FROM public.voucher_allocations va
+    LEFT JOIN public.sales_invoices si ON si.id = va.sales_invoice_id
+    LEFT JOIN public.sales_orders so ON so.id = COALESCE(va.sales_order_id, si.sales_order_id)
+    WHERE va.receipt_voucher_id = p_rv_id
+      AND va.voucher_type = 'receipt';
 
-    IF v_alloc_foreign > 0 AND v_currency = 'USD' THEN
+    IF v_currency = 'USD' AND v_alloc_foreign > 0 THEN
       v_ar_relief_idr := v_alloc_carrying_idr + ((v_carrying_amount - v_alloc_foreign) * v_rate);
       v_bank_received_idr := v_actual_received * (CASE WHEN v_bank_curr = 'USD' THEN v_usd_bank_rate ELSE v_rate END);
       v_realized_fx := v_bank_received_idr - (v_ar_relief_idr - (v_settle_diff * v_rate));
@@ -647,9 +653,21 @@ BEGIN
       ELSIF v_realized_fx < 0 THEN
         v_fx_loss_amt := abs(v_realized_fx);
       END IF;
+    ELSIF v_currency = 'USD' THEN
+      v_bank_received_idr := v_actual_received * (CASE WHEN v_bank_curr = 'USD' THEN v_usd_bank_rate ELSE v_rate END);
+      v_ar_relief_idr := v_carrying_amount * v_rate;
+      v_realized_fx := v_bank_received_idr - (v_ar_relief_idr - (v_settle_diff * v_rate));
+      IF v_realized_fx > 0 THEN
+        v_fx_gain_amt := v_realized_fx;
+      ELSIF v_realized_fx < 0 THEN
+        v_fx_loss_amt := abs(v_realized_fx);
+      END IF;
     ELSE
+      -- Standard IDR customer receipt
       v_ar_relief_idr := v_carrying_amount;
       v_bank_received_idr := v_actual_received;
+      v_fx_gain_amt := 0;
+      v_fx_loss_amt := 0;
     END IF;
 
   ELSIF v_party_type = 'supplier' THEN
@@ -831,6 +849,13 @@ BEGIN
   UPDATE public.receipt_vouchers
   SET is_posted = TRUE, journal_entry_id = v_je_id
   WHERE id = p_rv_id;
+
+  -- Recalculate Sales Invoice states if customer receipt
+  IF v_party_type = 'customer' THEN
+    PERFORM public.recalculate_sales_invoice_payment_state(va.sales_invoice_id)
+    FROM public.voucher_allocations va
+    WHERE va.receipt_voucher_id = p_rv_id AND va.sales_invoice_id IS NOT NULL;
+  END IF;
 
   -- Sync Bank GL
   IF v_rv.bank_account_id IS NOT NULL THEN

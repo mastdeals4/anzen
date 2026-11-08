@@ -38,6 +38,7 @@ export interface ReceiptPayload {
   reference_number?: string | null;
   amount: number;
   description?: string | null;
+  currency_code?: FinanceCurrency;
   transaction_currency: FinanceCurrency;
   exchange_rate: number;
   created_by?: string;

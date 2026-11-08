@@ -420,7 +420,8 @@ export function AccountLedger({ initialCode, onCodeConsumed, onOpenJournal }: Ac
             placeholder="Search account..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
+            style={{ paddingLeft: '1.75rem' }}
+            className="w-full h-7 pr-2 text-xs border border-gray-300 rounded"
           />
         </div>
         <select name="account" aria-label="Account"
