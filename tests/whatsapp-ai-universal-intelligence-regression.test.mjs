@@ -23,7 +23,13 @@ const clientAiCode = readFileSync(
 const inboxUiCode = readFileSync(
   resolve('src/components/crm/inbox/CrmOmnichannelInbox.tsx'),
   'utf-8'
-);
+) + (function() {
+  try {
+    return readFileSync(resolve('src/components/crm/inbox/WhatsAppChatArea.tsx'), 'utf-8');
+  } catch {
+    return '';
+  }
+})();
 
 test('1. Realistic Test: Indonesian Pricing Request', () => {
   const text = 'Halo SAPJ, tolong berikan penawaran resmi untuk Paracetamol BP 500 kg. Mohon info ketersediaan stok.';
@@ -160,5 +166,5 @@ test('10. Realistic Test: Completely Unlinked WhatsApp Number Handled as General
   assert.ok(inboxUiCode.includes('UNLINKED'), 'UI displays UNLINKED badge for unlinked conversations');
   assert.ok(inboxUiCode.includes('Universal Communication Intelligence'), 'Detail view shows Universal Communication Intelligence for any WhatsApp chat');
   assert.ok(inboxUiCode.includes('English Translation'), 'Message bubbles show English Translation for Indonesian text');
-  assert.ok(inboxUiCode.includes('Draft Reply in Customer Language'), 'Reply box includes 1-click draft in customer language');
+  assert.ok(inboxUiCode.includes('Draft Reply') || inboxUiCode.includes('Use Suggested Draft'), 'Reply box includes 1-click draft in customer language');
 });

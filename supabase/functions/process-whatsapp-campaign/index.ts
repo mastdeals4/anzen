@@ -405,3 +405,4 @@ async function processCampaign(supabase: any, campaignId: string, executionId: s
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 }
+

@@ -532,3 +532,4 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
     </div>
   );
 }
+

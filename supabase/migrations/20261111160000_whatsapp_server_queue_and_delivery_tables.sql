@@ -130,3 +130,4 @@ CREATE POLICY "Allow authenticated read whatsapp_campaign_recipients" ON public.
 DROP POLICY IF EXISTS "Allow authenticated write whatsapp_campaign_recipients" ON public.whatsapp_campaign_recipients;
 CREATE POLICY "Allow authenticated write whatsapp_campaign_recipients" ON public.whatsapp_campaign_recipients
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
+

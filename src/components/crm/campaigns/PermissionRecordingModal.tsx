@@ -224,3 +224,4 @@ export function PermissionRecordingModal({ isOpen, onClose, target, onSaved }: P
     </div>
   );
 }
+

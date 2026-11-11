@@ -42,6 +42,36 @@ async function timingSafeEqualString(a: string, b: string): Promise<boolean> {
   return timingSafeEqual(new Uint8Array(hashA), new Uint8Array(hashB));
 }
 
+async function verifyMetaSignature(
+  rawBodyText: string,
+  signatureHeader: string | null,
+  appSecret: string | null
+): Promise<boolean> {
+  if (!signatureHeader || !appSecret) return false;
+  if (!signatureHeader.startsWith("sha256=")) return false;
+  const signatureHex = signatureHeader.slice(7).trim().toLowerCase();
+  if (signatureHex.length !== 64) return false;
+
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(appSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signatureBuffer = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    enc.encode(rawBodyText)
+  );
+  const computedHex = Array.from(new Uint8Array(signatureBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  return timingSafeEqualString(signatureHex, computedHex);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -72,7 +102,23 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // 2. Authenticate webhook caller via shared secret or Meta signature
+  // Read raw text body first for cryptographic signature verification
+  let rawBodyText = "";
+  try {
+    rawBodyText = await req.text();
+  } catch {
+    return new Response(
+      JSON.stringify({ success: false, error: "Failed to read request body" }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // 2. Authenticate webhook caller via Meta signature HMAC-SHA256 or shared secret
+  const metaAppSecret =
+    Deno.env.get("META_APP_SECRET") ||
+    Deno.env.get("WHATSAPP_APP_SECRET");
+  const metaSignature = req.headers.get("X-Hub-Signature-256");
+
   const expectedSecret =
     Deno.env.get("WHATSAPP_WEBHOOK_SECRET") ||
     Deno.env.get("OPENWA_WEBHOOK_SECRET") ||
@@ -81,15 +127,26 @@ Deno.serve(async (req: Request) => {
   const secretHeader = req.headers.get("X-Webhook-Secret") || "";
   const authHeader = req.headers.get("Authorization") || "";
   const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const metaSignature = req.headers.get("X-Hub-Signature-256") || "";
+  const providedSecret = secretHeader || bearerToken;
 
   let isAuthorized = false;
-  const providedSecret = secretHeader || bearerToken;
-  if (expectedSecret && providedSecret) {
+
+  // A. Meta Cloud API Signature Verification (cryptographic HMAC-SHA256 fail-closed)
+  if (metaSignature) {
+    if (metaAppSecret) {
+      isAuthorized = await verifyMetaSignature(rawBodyText, metaSignature, metaAppSecret);
+      if (!isAuthorized) {
+        console.warn("[WhatsApp Ingress] Invalid Meta X-Hub-Signature-256 HMAC digest");
+      }
+    } else {
+      console.error("[WhatsApp Ingress] META_APP_SECRET not configured on server; rejecting signed webhook");
+      isAuthorized = false;
+    }
+  }
+
+  // B. Internal shared secret / Bearer token (for internal worker or ERP calls)
+  if (!isAuthorized && expectedSecret && providedSecret) {
     isAuthorized = await timingSafeEqualString(providedSecret, expectedSecret);
-  } else if (metaSignature) {
-    // Verified by Meta signature header
-    isAuthorized = true;
   }
 
   if (!isAuthorized) {
@@ -102,7 +159,7 @@ Deno.serve(async (req: Request) => {
   // 3. Parse JSON body
   let rawBody: any;
   try {
-    rawBody = await req.json();
+    rawBody = JSON.parse(rawBodyText);
   } catch {
     return new Response(
       JSON.stringify({ success: false, error: "Invalid JSON body" }),
