@@ -50,7 +50,7 @@ import {
 import { FloatingField, FLOAT_INPUT } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
 import { AttachFromDocumentBankModal } from '../components/documents/AttachFromDocumentBankModal';
-import { linkUniversalDocument } from '../services/documents/universalDocumentBankService';
+import { linkUniversalDocument, safeDeleteDocumentReference } from '../services/documents/universalDocumentBankService';
 
 export const MANUAL_DOC_TYPES = [
   'COA',
@@ -2031,7 +2031,7 @@ export function PricingWorksheet() {
     );
   };
 
-  // Helper to delete temporary AI documents belonging to an exact source/option
+  // Helper to safely delete temporary AI documents or unlink banked/archived documents belonging to an exact source/option
   const deleteTemporaryDocumentsForSource = async (opts: {
     inquiryId?: string | null;
     pricingOptionId?: string | null;
@@ -2040,8 +2040,7 @@ export function PricingWorksheet() {
     try {
       let query = supabase
         .from('crm_product_documents')
-        .select('id, storage_bucket, storage_path, is_permanent')
-        .eq('is_permanent', false);
+        .select('id, storage_bucket, storage_path, is_permanent, lifecycle_status');
 
       if (opts.pricingOptionId) {
         query = query.eq('pricing_option_id', opts.pricingOptionId);
@@ -2051,19 +2050,20 @@ export function PricingWorksheet() {
         return;
       }
 
-      const { data: tempDocs, error } = await query;
-      if (error || !tempDocs || tempDocs.length === 0) return;
+      const { data: matchedDocs, error } = await query;
+      if (error || !matchedDocs || matchedDocs.length === 0) return;
 
-      for (const d of tempDocs) {
-        if (d.storage_path) {
-          await supabase.storage
-            .from(d.storage_bucket || 'crm-documents')
-            .remove([d.storage_path]);
-        }
-        await supabase.from('crm_product_documents').delete().eq('id', d.id);
+      for (const d of matchedDocs) {
+        await safeDeleteDocumentReference({
+          legacyDocId: d.id,
+          storageBucket: d.storage_bucket || 'crm-documents',
+          storagePath: d.storage_path || undefined,
+          entityType: 'crm_inquiry',
+          entityId: opts.inquiryId || undefined,
+        });
       }
     } catch (err) {
-      console.warn('Failed to delete temporary documents:', err);
+      console.warn('Failed to safely delete documents for source:', err);
     }
   };
 

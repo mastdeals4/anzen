@@ -834,3 +834,205 @@ export async function safeArchiveOrDeleteDocument(
 
   return { success: true, action: 'DELETED' };
 }
+
+export interface SafeDeleteDocRefOptions {
+  legacyDocId?: string;
+  documentId?: string;
+  storageBucket?: string;
+  storagePath?: string;
+  entityType?: string;
+  entityId?: string;
+}
+
+export interface SafeDeleteDocRefResult {
+  action: 'HARD_DELETED' | 'UNLINKED_ONLY' | 'PRESERVED_BANKED' | 'PRESERVED_ARCHIVED' | 'NOOP';
+  physicalFileDeleted: boolean;
+  documentId?: string;
+  reason: string;
+}
+
+/**
+ * Enforces the exact lifecycle deletion contract:
+ * - TEMP with no remaining references: delete the Bank record and physical file.
+ * - TEMP with other references: remove only the current reference.
+ * - BANKED: preserve the permanent Bank record and physical file.
+ * - ARCHIVED: preserve history.
+ */
+export async function safeDeleteDocumentReference(
+  opts: SafeDeleteDocRefOptions
+): Promise<SafeDeleteDocRefResult> {
+  let uDoc: { id: string; lifecycle_status: UniversalLifecycleStatus } | null = null;
+  let legacyDoc: {
+    id: string;
+    storage_bucket: string | null;
+    storage_path: string | null;
+    is_permanent: boolean | null;
+    lifecycle_status: string | null;
+  } | null = null;
+
+  // 1. Resolve records
+  if (opts.documentId) {
+    const { data } = await supabase
+      .from('universal_documents')
+      .select('id, lifecycle_status')
+      .eq('id', opts.documentId)
+      .maybeSingle();
+    if (data) uDoc = data as any;
+  }
+
+  if (opts.legacyDocId) {
+    const { data } = await supabase
+      .from('crm_product_documents')
+      .select('id, storage_bucket, storage_path, is_permanent, lifecycle_status')
+      .eq('id', opts.legacyDocId)
+      .maybeSingle();
+    if (data) legacyDoc = data;
+
+    if (!uDoc) {
+      const { data: uData } = await supabase
+        .from('universal_documents')
+        .select('id, lifecycle_status')
+        .eq('legacy_source_table', 'crm_product_documents')
+        .eq('legacy_source_id', opts.legacyDocId)
+        .maybeSingle();
+      if (uData) uDoc = uData as any;
+    }
+  }
+
+  const effectiveStatus: UniversalLifecycleStatus =
+    uDoc?.lifecycle_status ||
+    (legacyDoc?.lifecycle_status as UniversalLifecycleStatus) ||
+    (legacyDoc?.is_permanent ? 'BANKED' : 'TEMP');
+
+  const storageBucket = opts.storageBucket || legacyDoc?.storage_bucket || 'crm-documents';
+  const storagePath = opts.storagePath || legacyDoc?.storage_path || null;
+
+  // 2. BANKED CONTRACT: Preserve permanent Bank record and physical file
+  if (effectiveStatus === 'BANKED') {
+    if (opts.legacyDocId) {
+      await supabase.from('crm_product_documents').delete().eq('id', opts.legacyDocId);
+    }
+    if (opts.entityType && opts.entityId && uDoc?.id) {
+      await supabase
+        .from('universal_document_links')
+        .delete()
+        .eq('document_id', uDoc.id)
+        .eq('entity_type', opts.entityType)
+        .eq('entity_id', opts.entityId);
+    }
+    return {
+      action: 'PRESERVED_BANKED',
+      physicalFileDeleted: false,
+      documentId: uDoc?.id,
+      reason: 'BANKED document: permanent Bank record and physical file strictly preserved.',
+    };
+  }
+
+  // 3. ARCHIVED CONTRACT: Preserve history
+  if (effectiveStatus === 'ARCHIVED') {
+    if (opts.legacyDocId) {
+      await supabase.from('crm_product_documents').delete().eq('id', opts.legacyDocId);
+    }
+    if (opts.entityType && opts.entityId && uDoc?.id) {
+      await supabase
+        .from('universal_document_links')
+        .delete()
+        .eq('document_id', uDoc.id)
+        .eq('entity_type', opts.entityType)
+        .eq('entity_id', opts.entityId);
+    }
+    return {
+      action: 'PRESERVED_ARCHIVED',
+      physicalFileDeleted: false,
+      documentId: uDoc?.id,
+      reason: 'ARCHIVED document: historical record and physical file strictly preserved.',
+    };
+  }
+
+  // 4. TEMP CONTRACT: Count remaining references across links, crm, and versions
+  let otherLinksCount = 0;
+  if (uDoc?.id) {
+    let linkQuery = supabase
+      .from('universal_document_links')
+      .select('id', { count: 'exact', head: true })
+      .eq('document_id', uDoc.id);
+
+    if (opts.entityId) {
+      linkQuery = linkQuery.neq('entity_id', opts.entityId);
+    }
+    const { count } = await linkQuery;
+    otherLinksCount = count || 0;
+  }
+
+  let otherCrmCount = 0;
+  if (storagePath) {
+    let crmQuery = supabase
+      .from('crm_product_documents')
+      .select('id', { count: 'exact', head: true })
+      .eq('storage_path', storagePath);
+
+    if (opts.legacyDocId) {
+      crmQuery = crmQuery.neq('id', opts.legacyDocId);
+    }
+    const { count } = await crmQuery;
+    otherCrmCount = count || 0;
+  }
+
+  let otherVersionCount = 0;
+  if (storagePath && uDoc?.id) {
+    const { count } = await supabase
+      .from('universal_document_versions')
+      .select('id', { count: 'exact', head: true })
+      .eq('storage_path', storagePath)
+      .neq('document_id', uDoc.id);
+    otherVersionCount = count || 0;
+  }
+
+  const totalOtherReferences = otherLinksCount + otherCrmCount + otherVersionCount;
+
+  // Case 4A: TEMP with other references -> remove only current reference
+  if (totalOtherReferences > 0) {
+    if (opts.legacyDocId) {
+      await supabase.from('crm_product_documents').delete().eq('id', opts.legacyDocId);
+    }
+    if (opts.entityType && opts.entityId && uDoc?.id) {
+      await supabase
+        .from('universal_document_links')
+        .delete()
+        .eq('document_id', uDoc.id)
+        .eq('entity_type', opts.entityType)
+        .eq('entity_id', opts.entityId);
+    }
+    return {
+      action: 'UNLINKED_ONLY',
+      physicalFileDeleted: false,
+      documentId: uDoc?.id,
+      reason: `TEMP document has ${totalOtherReferences} other reference(s): current reference unlinked, physical file preserved.`,
+    };
+  }
+
+  // Case 4B: TEMP with no remaining references -> delete Bank record and physical file
+  if (opts.legacyDocId) {
+    await supabase.from('crm_product_documents').delete().eq('id', opts.legacyDocId);
+  }
+  if (uDoc?.id) {
+    await supabase.from('universal_document_versions').delete().eq('document_id', uDoc.id);
+    await supabase.from('universal_documents').delete().eq('id', uDoc.id);
+  }
+
+  let fileRemoved = false;
+  if (storagePath) {
+    invalidateSignedUrl(storageBucket, storagePath);
+    const { error: remErr } = await supabase.storage
+      .from(storageBucket)
+      .remove([storagePath]);
+    if (!remErr) fileRemoved = true;
+  }
+
+  return {
+    action: 'HARD_DELETED',
+    physicalFileDeleted: fileRemoved,
+    documentId: uDoc?.id,
+    reason: 'TEMP document with no remaining references: Bank record and physical file deleted.',
+  };
+}
