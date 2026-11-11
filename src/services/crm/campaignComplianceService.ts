@@ -11,8 +11,8 @@ export interface RecipientConsentRecord {
   phone: string;
   companyName: string;
   contactPerson?: string | null;
-  optInSource: 'web_inquiry' | 'inbound_whatsapp' | 'contract' | 'explicit_form';
-  optInTimestamp: string;
+  optInSource?: 'web_inquiry' | 'inbound_whatsapp' | 'contract' | 'explicit_form';
+  optInTimestamp?: string;
   permittedCategories: Array<'customer_service' | 'price_alerts' | 'regulatory_updates'>;
   isOptedOut: boolean;
   optedOutAt?: string | null;
@@ -193,8 +193,8 @@ export class CampaignComplianceService {
           phone: cand.phone,
           companyName: cand.companyName,
           contactPerson: cand.contactPerson,
-          optInSource: cand.consent?.optInSource || 'inbound_whatsapp',
-          optInTimestamp: cand.consent?.optInTimestamp || new Date().toISOString(),
+          optInSource: cand.consent?.optInSource,
+          optInTimestamp: cand.consent?.optInTimestamp,
           permittedCategories: cand.consent?.permittedCategories || [],
           isOptedOut: true,
           optedOutAt: cand.consent?.optedOutAt || new Date().toISOString(),

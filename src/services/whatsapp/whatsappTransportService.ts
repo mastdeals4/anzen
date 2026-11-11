@@ -5,7 +5,7 @@
 // Isolates local OpenWA automation for development only.
 // Explicitly tags mock/test simulations and never claims successful delivery without provider response.
 
-import {
+import type {
   WhatsAppTransportType,
   WhatsAppSendOptions,
   WhatsAppSendResult,
@@ -13,8 +13,8 @@ import {
   WhatsAppInboundMessage,
   WhatsAppProviderConfig,
   WhatsAppConnectionHealth,
-} from './types';
-import { normalizeE164 } from '../../utils/phoneValidation';
+} from './types.ts';
+import { normalizeE164 } from '../../utils/phoneValidation.ts';
 
 export interface IWhatsAppProvider {
   readonly providerType: WhatsAppTransportType;
@@ -543,20 +543,30 @@ export class SimulationProvider implements IWhatsAppProvider {
   }
 }
 
+const getEnv = (): Record<string, any> => {
+  if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
+    return (import.meta as any).env;
+  }
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env;
+  }
+  return {};
+};
+
 /**
  * Singleton Orchestrator & Transport Resolver.
  */
 export class WhatsAppTransportService {
   private static activeConfig: WhatsAppProviderConfig = {
     providerType:
-      (import.meta.env.VITE_WHATSAPP_PROVIDER as WhatsAppTransportType) ||
-      (import.meta.env.VITE_META_PHONE_NUMBER_ID ? 'meta_cloud' : 'openwa_adapter'),
-    metaPhoneNumberId: import.meta.env.VITE_META_PHONE_NUMBER_ID || '',
-    metaWabaId: import.meta.env.VITE_META_WABA_ID || '',
-    metaAccessToken: import.meta.env.VITE_META_ACCESS_TOKEN || '',
-    metaAppSecret: import.meta.env.VITE_META_APP_SECRET || '',
-    metaWebhookVerifyToken: import.meta.env.VITE_META_WEBHOOK_VERIFY_TOKEN || 'sapj_meta_wa_verify_2026',
-    adapterUrl: import.meta.env.VITE_WHATSAPP_PROXY_URL || '/api/whatsapp',
+      (getEnv().VITE_WHATSAPP_PROVIDER as WhatsAppTransportType) ||
+      (getEnv().VITE_META_PHONE_NUMBER_ID ? 'meta_cloud' : 'openwa_adapter'),
+    metaPhoneNumberId: getEnv().VITE_META_PHONE_NUMBER_ID || '',
+    metaWabaId: getEnv().VITE_META_WABA_ID || '',
+    metaAccessToken: getEnv().VITE_META_ACCESS_TOKEN || '',
+    metaAppSecret: getEnv().VITE_META_APP_SECRET || '',
+    metaWebhookVerifyToken: getEnv().VITE_META_WEBHOOK_VERIFY_TOKEN || 'sapj_meta_wa_verify_2026',
+    adapterUrl: getEnv().VITE_WHATSAPP_PROXY_URL || '/api/whatsapp',
   };
 
   private static providerInstances = new Map<WhatsAppTransportType, IWhatsAppProvider>();
@@ -587,15 +597,15 @@ export class WhatsAppTransportService {
   }
 
   static async sendMessage(options: WhatsAppSendOptions): Promise<WhatsAppSendResult> {
-    if (options.isBulk || options.broadcast || (options.isCampaign && !options.consentVerified)) {
+    if (options.isBulk || options.broadcast || options.isCampaign) {
       return {
         success: false,
         status: 'failed',
         provider: this.activeConfig.providerType,
         timestamp: new Date().toISOString(),
         isSimulation: false,
-        error: 'Bulk WhatsApp dispatch is disabled during CRM data and consent verification.',
-        errorCode: 'BULK_DISPATCH_DISABLED',
+        error: 'Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.',
+        errorCode: 'BULK_DISPATCH_LOCKED',
       };
     }
     const provider = this.getProvider();

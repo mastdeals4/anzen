@@ -108,6 +108,41 @@ test.describe('WhatsApp Business Composer — Attachment Popup, Single Attachmen
       });
     });
 
+    await page.route('**/rest/v1/crm_contact_phones*', async (route: any) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'p-1',
+            contact_id: 'c-1',
+            company_name: 'PT Kalbe Farma Tbk',
+            contact_person: 'Budi Santoso',
+            department: 'Purchasing',
+            raw_phone: '+6281288889999',
+            normalized_phone: '+6281288889999',
+            phone_type: 'valid_mobile',
+            is_whatsapp_eligible: true,
+            is_primary: true,
+            consent_status: 'pending',
+          },
+          {
+            id: 'p-2',
+            contact_id: 'c-2',
+            company_name: 'PT Kimia Farma Tbk',
+            contact_person: 'Siti Rahma',
+            department: 'Purchasing',
+            raw_phone: '+6281377778888',
+            normalized_phone: '+6281377778888',
+            phone_type: 'valid_mobile',
+            is_whatsapp_eligible: true,
+            is_primary: true,
+            consent_status: 'pending',
+          },
+        ]),
+      });
+    });
+
     // Mock Document Bank view
     const mockBankDocuments = [
       {
@@ -330,5 +365,38 @@ test.describe('WhatsApp Business Composer — Attachment Popup, Single Attachmen
     // Screenshot of warning
     const warningShotPath = path.join(artifactDir, '03_whatsapp_caption_limit_warning.png');
     await page.screenshot({ path: warningShotPath });
+  });
+
+  test('5. Safety verification: 6 distinct counts, dynamic banner, and hard bulk safety lock', async ({ page }) => {
+    await setupAuthAndMocks(page);
+    await page.goto('/crm?tab=campaigns&subtab=whatsapp', { waitUntil: 'networkidle' });
+
+    // Verify dynamic banner shows Test Pilot Active by default in test mode
+    await expect(page.locator('text=Test Pilot Active — Controlled 1-on-1 Verification')).toBeVisible();
+    await expect(page.getByText('TEST PILOT ACTIVE', { exact: true })).toBeVisible();
+
+    // Switch to Live Campaign mode
+    await page.getByLabel(/Live Campaign/i).click();
+
+    // Verify dynamic banner switches to Bulk WhatsApp Dispatch Blocked
+    await expect(page.locator('text=Bulk WhatsApp Dispatch Blocked — Safety & Consent Enforcement')).toBeVisible();
+    await expect(page.getByText('BULK DISPATCH LOCKED', { exact: true })).toBeVisible();
+
+    // Verify 6 distinct counts are visible
+    await expect(page.getByText('Valid Mobiles', { exact: true })).toBeVisible();
+    await expect(page.getByText('Verified Opt-Ins', { exact: true })).toBeVisible();
+    await expect(page.getByText('Missing Consent', { exact: true })).toBeVisible();
+    await expect(page.getByText('Opted Out', { exact: true })).toBeVisible();
+    await expect(page.getByText('Duplicate Numbers', { exact: true })).toBeVisible();
+    await expect(page.getByText('Eligible Recipients', { exact: true })).toBeVisible();
+
+    // Verify bulk dispatch button is locked and cannot be clicked
+    const bulkButton = page.getByRole('button', { name: /Bulk Dispatch Locked/i });
+    await expect(bulkButton).toBeVisible();
+    await expect(bulkButton).toBeDisabled();
+
+    // Save screenshot of safety lock and 6 counts
+    const safetyShotPath = path.join(artifactDir, '04_whatsapp_compliance_matrix_and_bulk_lock.png');
+    await page.screenshot({ path: safetyShotPath });
   });
 });

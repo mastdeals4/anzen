@@ -786,7 +786,36 @@ export class OpenWAProvider implements WhatsAppProvider {
         }
       }
 
-      // Extract real WhatsApp message ID from DOM if available
+      // Extract real WhatsApp message ID from DOM if available and verify delivery status
+      const deliveryVerification = await this.page.evaluate(async () => {
+        const checkOutgoing = () => {
+          const outMsgs = document.querySelectorAll('.message-out, [data-testid="msg-container"]');
+          if (outMsgs.length === 0) return null;
+          const lastMsg = outMsgs[outMsgs.length - 1];
+          const hasError = lastMsg.querySelector('span[data-icon="msg-error"], span[data-icon="alert-phone"]');
+          if (hasError) return { status: 'error', reason: 'WhatsApp reported dispatch error icon in message bubble' };
+          const hasDblCheck = lastMsg.querySelector('span[data-icon="msg-dblcheck"]');
+          if (hasDblCheck) return { status: 'delivered' };
+          const hasCheck = lastMsg.querySelector('span[data-icon="msg-check"]');
+          if (hasCheck) return { status: 'sent' };
+          const hasClock = lastMsg.querySelector('span[data-icon="msg-time"]');
+          if (hasClock) return { status: 'pending' };
+          return { status: 'dispatched' };
+        };
+
+        // Poll up to 10 seconds for completion of send
+        for (let i = 0; i < 20; i++) {
+          const res = checkOutgoing();
+          if (res && res.status !== 'pending') return res;
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        return checkOutgoing() || { status: 'dispatched' };
+      });
+
+      if (deliveryVerification && deliveryVerification.status === 'error') {
+        throw new Error(`WhatsApp delivery failed: ${deliveryVerification.reason || 'Message failed to send'}`);
+      }
+
       const realMessageId = await this.page.evaluate(() => {
         const rows = document.querySelectorAll('[data-id]');
         if (rows.length > 0) {

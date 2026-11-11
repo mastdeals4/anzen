@@ -166,3 +166,4 @@ test('WhatsApp Business Composer — Attachment Popup, Single-Attachment Rule & 
     assert.match(wsCode, /setWaPreviewIndex/i, 'Must support cycling preview recipients');
   });
 });
+

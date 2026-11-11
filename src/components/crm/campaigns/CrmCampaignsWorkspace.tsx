@@ -49,7 +49,12 @@ import {
   Calendar,
   Save,
   Image as ImageIcon,
+  Lock,
+  FlaskConical,
+  WifiOff,
+  ShieldAlert,
 } from 'lucide-react';
+import { classifyCanonicalPhone } from '../../../services/crm/canonicalPhoneService';
 import { CampaignComplianceService } from '../../../services/crm/campaignComplianceService';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { WhatsAppTransportService } from '../../../services/whatsapp/whatsappTransportService';
@@ -167,7 +172,48 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const [waScheduledDateTime, setWaScheduledDateTime] = useState<string>('');
   const [waAudienceBreakdownOpen, setWaAudienceBreakdownOpen] = useState(false);
 
-  // Audience Compliance & Duplicate Prevention via Canonical Engine
+  // OpenWA Adapter Health & Session State
+  const [adapterHealth, setAdapterHealth] = useState<{
+    checked: boolean;
+    status: 'connected' | 'disconnected' | 'checking';
+    businessPhone?: string;
+    details?: string;
+    error?: string;
+  }>({
+    checked: false,
+    status: 'checking',
+  });
+
+  // Verify adapter connection on mount and interval
+  useEffect(() => {
+    let isMounted = true;
+    const verifyHealth = async () => {
+      try {
+        const health = await WhatsAppTransportService.checkHealth();
+        if (!isMounted) return;
+        setAdapterHealth({
+          checked: true,
+          status: health.status === 'connected' ? 'connected' : 'disconnected',
+          businessPhone: health.businessPhone,
+          details: health.details,
+        });
+      } catch (err: any) {
+        if (!isMounted) return;
+        setAdapterHealth({
+          checked: true,
+          status: 'disconnected',
+          details: err.message,
+          error: err.message,
+        });
+      }
+    };
+    verifyHealth();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Audience Compliance & Duplicate Prevention via Canonical Engine (NO SYNTHETIC CONSENT DEFAULTS)
   const audienceValidation = useMemo(() => {
     if (waSelectedRecipients.length === 0) {
       return {
@@ -178,24 +224,94 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         isCompliant: true,
       };
     }
-    const candidates = waSelectedRecipients.map(r => ({
-      phone: r.mobile || r.phone || '',
-      companyName: r.company_name || 'Customer',
-      contactPerson: r.contact_person,
-      consent: {
+    const candidates = waSelectedRecipients.map(r => {
+      // Validate actual persisted individual consent data from CRM source
+      // Rules:
+      // - Missing consent record means NOT VERIFIED.
+      // - Never invent an opt-in source or timestamp.
+      // - Never assume an existing B2B relationship automatically provides marketing consent.
+      // - Never convert a phone-number-valid contact into a consent-verified contact.
+      const hasVerifiedOptIn = r.consent_status === 'opted_in' && Boolean(r.consent && r.consent.optInSource);
+      const isExplicitOptOut = r.isOptedOut || r.consent_status === 'opted_out';
+
+      return {
         phone: r.mobile || r.phone || '',
         companyName: r.company_name || 'Customer',
-        optInSource: (r.optInSource as any) || 'explicit_form',
-        optInTimestamp: r.optInTimestamp || new Date().toISOString(),
-        permittedCategories: ['customer_service', 'price_alerts'] as any,
-        isOptedOut: r.isOptedOut || false,
-      },
-      trustedRegion: r.trustedRegion || (r.country === 'Indonesia' ? 'ID' : null),
-    }));
+        contactPerson: r.contact_person,
+        consent: hasVerifiedOptIn ? r.consent : null,
+        isOptedOut: isExplicitOptOut,
+        trustedRegion: r.trustedRegion || (r.country === 'Indonesia' ? 'ID' : null),
+      };
+    });
     return CampaignComplianceService.validateAudience(candidates, {
       permittedCategory: 'price_alerts',
     });
   }, [waSelectedRecipients]);
+
+  // Separate operator confirmation from customer consent — 6 distinct compliance counts
+  const complianceCounts = useMemo(() => {
+    const total = waSelectedRecipients.length;
+    if (total === 0) {
+      return {
+        validMobileCount: 0,
+        verifiedOptInCount: 0,
+        missingConsentCount: 0,
+        optedOutCount: 0,
+        duplicateCount: 0,
+        eligibleRecipientsCount: 0,
+      };
+    }
+
+    const seenE164 = new Set<string>();
+    let validMobileCount = 0;
+    let duplicateCount = 0;
+    let optedOutCount = 0;
+    let verifiedOptInCount = 0;
+    let missingConsentCount = 0;
+
+    for (const r of waSelectedRecipients) {
+      const rawPhone = r.mobile || r.phone || '';
+      const canonical = classifyCanonicalPhone(rawPhone, {
+        trustedRegion: r.trustedRegion || (r.country === 'Indonesia' ? 'ID' : null),
+      });
+
+      const isValidMobile = canonical.isValid && canonical.phoneType === 'mobile';
+      if (isValidMobile) {
+        validMobileCount++;
+      }
+
+      if (canonical.e164) {
+        if (seenE164.has(canonical.e164)) {
+          duplicateCount++;
+          continue;
+        }
+        seenE164.add(canonical.e164);
+      }
+
+      const isOptedOut =
+        CampaignComplianceService.isOptedOut(rawPhone) || r.isOptedOut || r.consent_status === 'opted_out';
+      if (isOptedOut) {
+        optedOutCount++;
+        continue;
+      }
+
+      const hasOptIn = r.consent_status === 'opted_in' && Boolean(r.consent && r.consent.optInSource);
+      if (hasOptIn) {
+        verifiedOptInCount++;
+      } else if (isValidMobile) {
+        missingConsentCount++;
+      }
+    }
+
+    return {
+      validMobileCount,
+      verifiedOptInCount,
+      missingConsentCount,
+      optedOutCount,
+      duplicateCount,
+      eligibleRecipientsCount: audienceValidation.eligibleRecipients.length,
+    };
+  }, [waSelectedRecipients, audienceValidation]);
 
   const handleRegisterOptOut = (phone: string, companyName: string) => {
     CampaignComplianceService.registerOptOut(phone);
@@ -261,6 +377,17 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         type: 'error',
         title: 'Unauthorized Test Number',
         message: `Only authorized test numbers (${authorizedTestNumbers.join(', ')}) can be messaged during operational testing.`,
+      });
+      return;
+    }
+
+    // Live Adapter Connection Health Check
+    const health = await WhatsAppTransportService.checkHealth();
+    if (health.status !== 'connected') {
+      showToast({
+        type: 'error',
+        title: 'Adapter Disconnected',
+        message: `OpenWA adapter is offline or disconnected (${health.details}). Cannot dispatch Test Pilot.`,
       });
       return;
     }
@@ -429,18 +556,46 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const waIsPausedRef = React.useRef(false);
   const waIsCancelledRef = React.useRef(false);
 
-  // Load Contacts Directory
+  // Load Contacts Directory and Relational Phone Records
   const loadContacts = async () => {
     setLoadingContacts(true);
     try {
-      const { data, error } = await supabase
-        .from('crm_contacts')
-        .select('id, company_name, contact_person, designation, email, phone, mobile, landline, country, city, customer_type, notes, is_active')
-        .eq('is_active', true)
-        .order('company_name');
+      const [{ data: contactsData, error: contactsErr }, { data: phonesData }] = await Promise.all([
+        supabase
+          .from('crm_contacts')
+          .select('id, company_name, contact_person, designation, email, phone, mobile, landline, country, city, customer_type, notes, is_active')
+          .eq('is_active', true)
+          .order('company_name'),
+        supabase
+          .from('crm_contact_phones')
+          .select('id, contact_id, company_name, contact_person, department, raw_phone, normalized_phone, phone_type, is_whatsapp_eligible, is_primary, consent_status'),
+      ]);
 
-      if (error) throw error;
-      setContacts(data || []);
+      if (contactsErr) throw contactsErr;
+
+      const phoneMap = new Map<string, any[]>();
+      if (phonesData) {
+        for (const p of phonesData) {
+          if (!phoneMap.has(p.contact_id)) {
+            phoneMap.set(p.contact_id, []);
+          }
+          phoneMap.get(p.contact_id)!.push(p);
+        }
+      }
+
+      const merged = (contactsData || []).map((c: any) => {
+        const related = phoneMap.get(c.id) || [];
+        const primary = related.find((p: any) => p.is_primary) || related[0];
+        // Consent status strictly from persisted record; default is 'pending' (NOT VERIFIED)
+        const consentStatus = primary?.consent_status || 'pending';
+        return {
+          ...c,
+          consent_status: consentStatus,
+          crm_phones: related,
+        };
+      });
+
+      setContacts(merged);
     } catch (err: any) {
       console.error('Failed to load contacts directory:', err);
     } finally {
@@ -704,180 +859,19 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   };
 
   const handleStartWaCampaign = () => {
-    if (!waConsentVerified || !waOptOutConfirmed) showToast({
+    showToast({
       type: 'warning',
       title: 'Bulk Dispatch Blocked',
-      message: 'Bulk WhatsApp dispatch is disabled during CRM data and consent verification.',
+      message: 'Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.',
     });
-    if (!waConsentVerified || !waOptOutConfirmed) return;
-
-    if (audienceValidation.eligibleRecipients.length === 0) {
-      showToast({
-        type: 'warning',
-        title: 'No Eligible Recipients',
-        message: 'No recipients with verified individual consent and mobile numbers found.',
-      });
-      return;
-    }
-    setWaShowApprovalModal(true);
+    return;
   };
 
   const executeWaDispatch = async () => {
     setWaShowApprovalModal(false);
-    if (!waConsentVerified || !waOptOutConfirmed) throw new Error('Bulk WhatsApp dispatch is disabled during CRM data and consent verification.');
-
-    const eligible = audienceValidation.eligibleRecipients;
-    if (eligible.length === 0) {
-      showToast({
-        type: 'warning',
-        title: 'No Eligible Recipients',
-        message: 'No recipients with verified individual consent and mobile numbers found.',
-      });
-      return;
-    }
-
-    setWaIsSending(true);
-    setWaIsPaused(false);
-    waIsPausedRef.current = false;
-    waIsCancelledRef.current = false;
-    setWaProgress(0);
-    setWaLogs([]);
-    setWaFailedRecipients([]);
-
-    const total = eligible.length;
-    const failedList: any[] = [];
-    let sentCount = 0;
-    const effectivePacing = Math.max(waPacingSeconds, 20);
-
-    // If attachment is attached, prepare/upload media ONCE before loop begins
-    let preparedMediaUrl: string | undefined = undefined;
-    if (waAttachment) {
-      const capCheck = validateMediaCaption(waMessageTemplate, true);
-      if (!capCheck.isValid) {
-        showToast({
-          type: 'error',
-          title: 'Caption Too Long',
-          message: capCheck.error || 'WhatsApp media captions cannot exceed 1024 characters.',
-        });
-        setWaIsSending(false);
-        return;
-      }
-
-      setWaCurrentRecipient('Preparing single attachment for dispatch...');
-      try {
-        preparedMediaUrl = await prepareAttachmentMediaUrl(waAttachment);
-        if (!waAttachment.url && preparedMediaUrl) {
-          setWaAttachment(prev => (prev ? { ...prev, url: preparedMediaUrl } : null));
-        }
-      } catch (attErr: any) {
-        showToast({
-          type: 'error',
-          title: 'Attachment Preparation Failed',
-          message: `${attErr.message}. Campaign dispatch halted to prevent sending without attachment.`,
-        });
-        setWaIsSending(false);
-        return;
-      }
-    }
-
-    try {
-      for (let i = 0; i < total; i++) {
-        if (waIsCancelledRef.current) break;
-
-        while (waIsPausedRef.current) {
-          if (waIsCancelledRef.current) break;
-          await new Promise(r => setTimeout(r, 500));
-        }
-
-        if (waIsCancelledRef.current) break;
-
-        const recipient = eligible[i];
-        const cleanPhone = recipient.phone;
-        setWaCurrentRecipient(`${recipient.companyName} (${cleanPhone})`);
-
-        // Resolve dynamic placeholders independently per recipient
-        const messageText = formatPersonalizedWhatsAppMessage(
-          waMessageTemplate,
-          recipient,
-          { productName: waProductName }
-        );
-
-        try {
-          const res = await WhatsAppTransportService.sendMessage({
-            to: cleanPhone,
-            text: messageText,
-            caption: messageText,
-            documentUrl: waAttachment?.mediaCategory === 'document' ? preparedMediaUrl : undefined,
-            imageUrl: waAttachment?.mediaCategory === 'image' ? preparedMediaUrl : undefined,
-            filename: waAttachment?.name,
-            consentVerified: true,
-          });
-
-          if (!res.success) {
-            throw new Error(res.error || 'Failed to dispatch WhatsApp message');
-          }
-
-          setWaLogs(prev => [
-            {
-              phone: cleanPhone,
-              name: recipient.companyName,
-              status: 'sent',
-              timestamp: new Date().toLocaleTimeString(),
-            },
-            ...prev,
-          ]);
-          sentCount++;
-        } catch (err: any) {
-          failedList.push(recipient);
-          setWaLogs(prev => [
-            {
-              phone: cleanPhone,
-              name: recipient.companyName,
-              status: 'failed',
-              error: err.message,
-              timestamp: new Date().toLocaleTimeString(),
-            },
-            ...prev,
-          ]);
-        }
-
-        setWaProgress(Math.round(((i + 1) / total) * 100));
-
-        // Enforce 20-second pacing delay between messages to prevent spam triggers
-        if (i < total - 1 && effectivePacing > 0 && !waIsCancelledRef.current) {
-          for (let s = 0; s < effectivePacing; s++) {
-            if (waIsCancelledRef.current) break;
-            while (waIsPausedRef.current) {
-              if (waIsCancelledRef.current) break;
-              await new Promise(r => setTimeout(r, 500));
-            }
-            await new Promise(r => setTimeout(r, 1000));
-          }
-        }
-      }
-
-      setWaFailedRecipients(failedList);
-
-      if (waIsCancelledRef.current) {
-        showToast({
-          type: 'info',
-          title: 'Broadcast Stopped',
-          message: `Stopped after dispatching ${sentCount} messages.`,
-        });
-      } else {
-        showToast({
-          type: 'success',
-          title: 'Campaign Completed',
-          message: `Dispatched ${sentCount} of ${total} WhatsApp messages.${failedList.length > 0 ? ` (${failedList.length} failed)` : ''}`,
-        });
-      }
-    } catch (err: any) {
-      showToast({ type: 'error', title: 'Dispatch Error', message: err.message || 'Error sending campaign.' });
-    } finally {
-      setWaIsSending(false);
-      setWaIsPaused(false);
-      setWaCurrentRecipient(null);
-    }
+    throw new Error(
+      'Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.'
+    );
   };
 
   // Save new template
@@ -1152,23 +1146,59 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
             </div>
           </div>
 
-          {/* Critical Campaign Safety Banner */}
-          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-950 flex items-center justify-between shadow-xs">
-            <div className="flex items-center gap-2.5">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-              <div>
-                <span className="font-extrabold text-amber-900 block text-xs">
-                  Bulk WhatsApp Dispatch Blocked — Safety &amp; Consent Enforcement
-                </span>
-                <span className="text-[11px] text-amber-800">
-                  Bulk WhatsApp dispatch is disabled during CRM data and consent verification. No synthetic broadcasts or live customer outreach permitted.
-                </span>
+          {/* Dynamic Dispatch & Connection Status Banner */}
+          {adapterHealth.checked && adapterHealth.status === 'disconnected' ? (
+            <div className="bg-rose-50 border border-rose-300 rounded-lg p-3 text-xs text-rose-950 flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <WifiOff className="w-5 h-5 text-rose-600 shrink-0" />
+                <div>
+                  <span className="font-extrabold text-rose-900 block text-xs">
+                    OpenWA Adapter Disconnected — Dispatch Unavailable
+                  </span>
+                  <span className="text-[11px] text-rose-800">
+                    The local OpenWA adapter service is offline ({adapterHealth.details || adapterHealth.error || 'Connection refused at 127.0.0.1:3100'}). WhatsApp message dispatch is unavailable until the daemon is running and authenticated.
+                  </span>
+                </div>
               </div>
+              <span className="px-2.5 py-1 bg-rose-200/80 text-rose-900 font-extrabold text-[10px] rounded border border-rose-300 uppercase shrink-0">
+                ADAPTER OFFLINE
+              </span>
             </div>
-            <span className="px-2.5 py-1 bg-amber-200/80 text-amber-900 font-extrabold text-[10px] rounded border border-amber-300 uppercase shrink-0">
-              DISPATCH DISABLED
-            </span>
-          </div>
+          ) : waTestMode ? (
+            <div className="bg-blue-50 border border-blue-300 rounded-lg p-3 text-xs text-blue-950 flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <FlaskConical className="w-5 h-5 text-blue-600 shrink-0" />
+                <div>
+                  <span className="font-extrabold text-blue-900 block text-xs">
+                    Test Pilot Active — Controlled 1-on-1 Verification
+                  </span>
+                  <span className="text-[11px] text-blue-800">
+                    Available only for approved test recipients (+6285888600999, +919823533833) connected via verified OpenWA session ({adapterHealth.businessPhone || '+6285888600999'}). Customer bulk broadcasting is disarmed.
+                  </span>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-blue-200/80 text-blue-900 font-extrabold text-[10px] rounded border border-blue-300 uppercase shrink-0">
+                TEST PILOT ACTIVE
+              </span>
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-950 flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+                <div>
+                  <span className="font-extrabold text-amber-900 block text-xs">
+                    Bulk WhatsApp Dispatch Blocked — Safety &amp; Consent Enforcement
+                  </span>
+                  <span className="text-[11px] text-amber-800">
+                    Bulk campaign dispatch is strictly locked at UI and execution level pending verified individual customer opt-in records and approved dispatch readiness. Found {complianceCounts.eligibleRecipientsCount} verified opt-in recipients in CRM database.
+                  </span>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-amber-200/80 text-amber-900 font-extrabold text-[10px] rounded border border-amber-300 uppercase shrink-0">
+                BULK DISPATCH LOCKED
+              </span>
+            </div>
+          )}
 
           {/* Main 2-Column WhatsApp Workspace */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -1468,36 +1498,55 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                   )}
                 </div>
 
-                {/* Audience Eligibility & Compliance Summary */}
+                {/* Audience Eligibility & Compliance Summary — 6 Distinct Compliance Counts */}
                 <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-gray-800 uppercase">
                       <Users className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Audience Eligibility & Duplicate Prevention</span>
+                      <span>Audience Compliance &amp; Consent Verification</span>
                     </div>
                     <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      {audienceValidation.eligibleRecipients.length} Unique Recipients
+                      {complianceCounts.eligibleRecipientsCount} Verified Eligible
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                  {/* 6 Distinct Verification Counts */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center text-[10px]">
+                    <div className="bg-slate-50 border border-slate-200 rounded p-1.5">
+                      <div className="font-bold text-slate-900 text-xs">
+                        {complianceCounts.validMobileCount}
+                      </div>
+                      <div className="text-slate-600 font-medium">Valid Mobiles</div>
+                    </div>
                     <div className="bg-emerald-50/70 border border-emerald-200 rounded p-1.5">
                       <div className="font-bold text-emerald-900 text-xs">
-                        {audienceValidation.eligibleRecipients.length}
+                        {complianceCounts.verifiedOptInCount}
                       </div>
-                      <div className="text-emerald-700">Eligible Mobiles</div>
+                      <div className="text-emerald-700 font-medium">Verified Opt-Ins</div>
                     </div>
                     <div className="bg-amber-50/70 border border-amber-200 rounded p-1.5">
                       <div className="font-bold text-amber-900 text-xs">
-                        {audienceValidation.excludedMissingConsent.filter(e => e.reason.includes('Duplicate')).length}
+                        {complianceCounts.missingConsentCount}
                       </div>
-                      <div className="text-amber-700">Duplicates Suppressed</div>
+                      <div className="text-amber-700 font-medium">Missing Consent</div>
                     </div>
                     <div className="bg-rose-50/70 border border-rose-200 rounded p-1.5">
                       <div className="font-bold text-rose-900 text-xs">
-                        {audienceValidation.suppressedOptOuts.length}
+                        {complianceCounts.optedOutCount}
                       </div>
-                      <div className="text-rose-700">Opted Out</div>
+                      <div className="text-rose-700 font-medium">Opted Out</div>
+                    </div>
+                    <div className="bg-orange-50/70 border border-orange-200 rounded p-1.5">
+                      <div className="font-bold text-orange-900 text-xs">
+                        {complianceCounts.duplicateCount}
+                      </div>
+                      <div className="text-orange-700 font-medium">Duplicate Numbers</div>
+                    </div>
+                    <div className="bg-teal-50/70 border border-teal-300 rounded p-1.5 ring-1 ring-teal-400/30">
+                      <div className="font-extrabold text-teal-950 text-xs">
+                        {complianceCounts.eligibleRecipientsCount}
+                      </div>
+                      <div className="text-teal-800 font-bold">Eligible Recipients</div>
                     </div>
                   </div>
 
@@ -1516,7 +1565,8 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                   {waAudienceBreakdownOpen && (
                     <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded text-xs divide-y divide-gray-100 bg-white">
                       {waSelectedRecipients.map((rec, i) => {
-                        const isOpted = CampaignComplianceService.isOptedOut(rec.mobile || rec.phone || '') || rec.isOptedOut;
+                        const isOpted = CampaignComplianceService.isOptedOut(rec.mobile || rec.phone || '') || rec.isOptedOut || rec.consent_status === 'opted_out';
+                        const hasVerifiedOptIn = !isOpted && rec.consent_status === 'opted_in' && Boolean(rec.consent?.optInSource);
                         return (
                           <div key={rec.id || i} className="p-2 flex items-center justify-between gap-2 hover:bg-slate-50">
                             <div className="min-w-0">
@@ -1526,9 +1576,21 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               {isOpted ? (
                                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">OPTED OUT</span>
+                              ) : hasVerifiedOptIn ? (
+                                <>
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">VERIFIED OPT-IN</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRegisterOptOut(rec.mobile || rec.phone || '', rec.company_name)}
+                                    className="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-700 hover:bg-rose-50"
+                                    title="Register Opt-Out"
+                                  >
+                                    Opt Out
+                                  </button>
+                                </>
                               ) : (
                                 <>
-                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">B2B Opt-In</span>
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">MISSING CONSENT (PENDING)</span>
                                   <button
                                     type="button"
                                     onClick={() => handleRegisterOptOut(rec.mobile || rec.phone || '', rec.company_name)}
@@ -1551,7 +1613,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-3 space-y-2.5">
                   <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
                     <ShieldCheck className="w-4 h-4 text-amber-700" />
-                    <span>Delivery Safeguards & Anti-Ban Controls</span>
+                    <span>Delivery Safeguards &amp; Anti-Ban Controls</span>
                   </div>
 
                   <div className="space-y-2 text-xs text-amber-950">
@@ -1563,7 +1625,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                         className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
                       />
                       <span>
-                        <strong>Consent Verification:</strong> I confirm these recipients are existing B2B pharmaceutical commercial partners who have engaged with PT Shubham Anzen Pharma Jaya.
+                        <strong>Operator Compliance Attestation:</strong> I certify that I am authorized to dispatch messages and that this communication adheres to operational and regulatory guidelines.
                       </span>
                     </label>
 
@@ -1575,9 +1637,13 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                         className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
                       />
                       <span>
-                        <strong>Opt-out Safeguard:</strong> Messages honor contact preferences and will immediately halt upon recipient request.
+                        <strong>Operator Opt-Out Attestation:</strong> I confirm that stop/unsubscribe requests will be immediately honored and recorded in the suppression list.
                       </span>
                     </label>
+
+                    <div className="text-[10px] text-amber-800 italic pt-0.5">
+                      * Administrative operator attestations do not create, modify, or substitute for customer opt-in consent records. Recipient eligibility is strictly determined by individual verified consent records on file.
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-amber-200">
@@ -1684,7 +1750,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                   <span className="text-xs text-gray-500">
                     {waTestMode
                       ? 'Target: 1 Authorized Test Number'
-                      : `Target: ${audienceValidation.eligibleRecipients.length} Unique Verified Recipients (${audienceValidation.excludedMissingConsent.filter(e => e.reason.includes('Duplicate')).length} duplicates suppressed)`}
+                      : `Valid: ${complianceCounts.validMobileCount} | Opt-Ins: ${complianceCounts.verifiedOptInCount} | Missing: ${complianceCounts.missingConsentCount} | Opted Out: ${complianceCounts.optedOutCount} | Duplicates: ${complianceCounts.duplicateCount} | Eligible: ${complianceCounts.eligibleRecipientsCount}`}
                   </span>
 
                   {waTestMode ? (
@@ -1708,40 +1774,25 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                         <Save className="w-3.5 h-3.5" />
                         <span>Save as Campaign Draft</span>
                       </button>
-                      {!waConsentVerified || !waOptOutConfirmed ? (
-                        <button
-                          type="button"
-                          disabled={true}
-                          className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-slate-400 cursor-not-allowed opacity-75"
-                          title="Bulk WhatsApp dispatch is disabled while using OpenWA without individual recipient consent and opt-out safeguard."
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>Bulk Dispatch Disabled (OpenWA Transport)</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleStartWaCampaign}
-                          disabled={waIsSending || audienceValidation.eligibleRecipients.length === 0}
-                          className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Authorize campaign dispatch with 20s operator pacing delay"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>Authorize Paced Campaign ({audienceValidation.eligibleRecipients.length} Eligible)</span>
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        disabled={true}
+                        className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-slate-400 cursor-not-allowed opacity-80"
+                        title="Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness."
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Bulk Dispatch Locked ({complianceCounts.eligibleRecipientsCount} Eligible)</span>
+                      </button>
                     </div>
                   )}
                 </div>
 
-                {!waTestMode && (!waConsentVerified || !waOptOutConfirmed) && (
-                  <div className="mt-2 p-2 bg-slate-100 border border-slate-200 rounded text-[11px] text-slate-700">
-                    <strong>Draft-Only Campaign Planning:</strong> Automated bulk dispatch is permanently disabled while using free OpenWA self-hosted transport. Campaigns can be drafted, segmented, scheduled, and audited, but bulk broadcasts require an approved official business messaging provider.
-                  </div>
-                )}
-                {!waTestMode && waConsentVerified && waOptOutConfirmed && (
-                  <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800">
-                    <strong>Individually Authorized Paced Dispatch:</strong> Recipient consent and opt-out safeguard verified. Messages will be dispatched sequentially with a minimum 20-second operator pacing delay. You may pause or cancel at any time.
+                {!waTestMode && (
+                  <div className="mt-2 p-2 bg-slate-100 border border-slate-200 rounded text-[11px] text-slate-700 flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-slate-500 shrink-0" />
+                    <span>
+                      <strong>Bulk Safety Lock Active:</strong> Bulk WhatsApp campaign dispatch is technically blocked at UI and execution level. Campaigns can be drafted, segmented, scheduled, and previewed, but bulk customer outreach requires verified individual opt-in consent records in CRM and approved dispatch readiness.
+                    </span>
                   </div>
                 )}
               </div>

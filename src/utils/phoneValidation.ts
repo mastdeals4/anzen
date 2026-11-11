@@ -396,6 +396,7 @@ export function auditAndVerifyContacts(
     customer_type?: string | null;
     notes?: string | null;
     last_contact?: string | null;
+    consent_status?: 'opted_in' | 'opted_out' | 'pending';
   }>,
   options?: { multiPhone?: boolean }
 ): PhoneAuditResult {
@@ -425,6 +426,7 @@ export function auditContactsMultiPhone(
     customer_type?: string | null;
     notes?: string | null;
     last_contact?: string | null;
+    consent_status?: 'opted_in' | 'opted_out' | 'pending';
   }>,
   existingPhonesTable?: ContactPhoneRecord[]
 ): PhoneAuditResult {
@@ -444,10 +446,10 @@ export function auditContactsMultiPhone(
 
     const noteText = (c.notes || '').toLowerCase();
     const consentStatus: 'opted_in' | 'opted_out' | 'pending' =
-      noteText.includes('opt-out') || noteText.includes('stop wa') || noteText.includes('unsubscribe')
+      c.consent_status === 'opted_in' || c.consent_status === 'opted_out'
+        ? c.consent_status
+        : noteText.includes('opt-out') || noteText.includes('stop wa') || noteText.includes('unsubscribe')
         ? 'opted_out'
-        : noteText.includes('opt-in') || noteText.includes('verified wa')
-        ? 'opted_in'
         : 'pending';
 
     const seenCleaned = new Set<string>();
@@ -573,11 +575,13 @@ export function auditContactsMultiPhone(
           is_primary: record.is_primary,
           extension: record.extension,
           is_duplicate: false, // will update in pass 2
-          is_eligible: canonical.isWhatsAppEligibleCandidate && consentStatus !== 'opted_out',
+          is_eligible: canonical.isWhatsAppEligibleCandidate && consentStatus === 'opted_in',
           exclusion_reason: !canonical.isWhatsAppEligibleCandidate
             ? canonical.validationReason
             : consentStatus === 'opted_out'
             ? 'Contact opted out from WhatsApp communications'
+            : consentStatus === 'pending'
+            ? 'Missing verified opt-in consent record on file'
             : undefined,
           last_contact_date: c.last_contact || null,
         };
