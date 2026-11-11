@@ -20,6 +20,8 @@ import {
   formatProductPackaging,
 } from '../constants/masterData';
 import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
+import { AttachFromDocumentBankModal } from '../components/documents/AttachFromDocumentBankModal';
+import { linkUniversalDocument } from '../services/documents/universalDocumentBankService';
 
 interface Product {
   id: string;
@@ -80,6 +82,7 @@ export function Products() {
     documents: SourceDocument[];
   }>>([]);
   const [viewingProductDocuments, setViewingProductDocuments] = useState<ProductDocument[]>([]);
+  const [bankAttachOpen, setBankAttachOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   const [formData, setFormData] = useState({
@@ -201,6 +204,29 @@ export function Products() {
     setViewingProduct(product);
     await loadProductSources(product.id);
     setViewModalOpen(true);
+  };
+
+  const handleAttachFromBank = async (doc: any) => {
+    if (!viewingProduct) return;
+    try {
+      await linkUniversalDocument({
+        documentId: doc.id,
+        entityType: 'product',
+        entityId: viewingProduct.id,
+        productId: viewingProduct.id,
+      });
+      await supabase.from('product_documents').insert({
+        product_id: viewingProduct.id,
+        file_name: doc.original_file_name || doc.title,
+        document_type: doc.document_type?.toLowerCase() || 'other',
+        file_url: doc.file_url,
+        file_size: doc.file_size,
+      });
+      showToast({ type: 'success', title: 'Document Attached', message: `Linked "${doc.title}" to ${viewingProduct.product_name}` });
+      await loadProductSources(viewingProduct.id);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: err.message });
+    }
   };
 
   const addSourceRow = () => {
@@ -1195,10 +1221,19 @@ export function Products() {
               )}
             </div>
 
-            {viewingProductDocuments.length > 0 && (
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Product Documents</h3>
-                <p className="text-xs text-gray-500 mb-2">General historical product documents that are not linked to a specific Make.</p>
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold">Product Documents</h3>
+                <button
+                  type="button"
+                  onClick={() => setBankAttachOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Attach from Document Bank
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mb-2">Technical documents, COA, MSDS, and GMP certificates associated with this product.</p>
+              {viewingProductDocuments.length > 0 ? (
                 <div className="border rounded-lg divide-y">
                   {viewingProductDocuments.map(doc => (
                     <div key={doc.id} className="flex items-center gap-2 px-4 py-2 text-sm">
@@ -1208,8 +1243,12 @@ export function Products() {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="p-4 bg-gray-50 rounded-lg border border-dashed text-center text-xs text-gray-500">
+                  No documents attached yet. Click "Attach from Document Bank" above to reuse an existing document.
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Modal>
@@ -1274,6 +1313,17 @@ export function Products() {
             )}
           </div>
         </Modal>
+      )}
+
+      {/* Attach from Universal Document Bank Modal */}
+      {bankAttachOpen && viewingProduct && (
+        <AttachFromDocumentBankModal
+          isOpen={bankAttachOpen}
+          onClose={() => setBankAttachOpen(false)}
+          initialProductId={viewingProduct.id}
+          title={`Attach Document to ${viewingProduct.product_name}`}
+          onDocumentSelected={handleAttachFromBank}
+        />
       )}
     </Layout>
   );

@@ -88,7 +88,7 @@ test.describe('Anzen ERP — Master Multi-Module & Multi-Viewport Mobile Audit',
     await page.goto('/finance/purchase', { waitUntil: 'networkidle' });
     await waitForAppReady(page);
 
-    const piMobileCards = page.locator('div.block.md\\:hidden');
+    const piMobileCards = page.locator('[data-testid="purchase-invoices-mobile-list"]');
     await expect(piMobileCards).toBeVisible({ timeout: 20000 });
     await expect(piMobileCards.getByText('PI-2026-0089').first()).toBeVisible({ timeout: 15000 });
     await assertNoLoadingState(page);
@@ -118,7 +118,7 @@ test.describe('Anzen ERP — Master Multi-Module & Multi-Viewport Mobile Audit',
     await page.goto('/finance/receipt', { waitUntil: 'networkidle' });
     await waitForAppReady(page);
 
-    const rvMobileCards = page.locator('div.block.md\\:hidden');
+    const rvMobileCards = page.locator('[data-testid="receipt-vouchers-mobile-list"]');
     await expect(rvMobileCards).toBeVisible({ timeout: 20000 });
     await expect(rvMobileCards.getByText('RV-2026-0034').first()).toBeVisible({ timeout: 15000 });
     await assertNoLoadingState(page);
@@ -129,7 +129,7 @@ test.describe('Anzen ERP — Master Multi-Module & Multi-Viewport Mobile Audit',
     await page.goto('/finance/payment', { waitUntil: 'networkidle' });
     await waitForAppReady(page);
 
-    const pvMobileCards = page.locator('div.block.md\\:hidden');
+    const pvMobileCards = page.locator('[data-testid="payment-vouchers-mobile-list"]');
     await expect(pvMobileCards).toBeVisible({ timeout: 20000 });
     await expect(pvMobileCards.getByText('PV-2026-0056').first()).toBeVisible({ timeout: 15000 });
     await assertNoLoadingState(page);
@@ -281,5 +281,103 @@ test.describe('Anzen ERP — Master Multi-Module & Multi-Viewport Mobile Audit',
     await assertNoLoadingState(page);
     await assertNoHorizontalOverflow(page);
     await captureVerifiedScreenshot(page, 'finance', 'tax', VIEWPORTS.mobileStandard.name);
+  });
+
+  test('Module 10: Bilingual Localization & Bahasa Indonesia Persistence (Mobile & Desktop)', async ({ page }) => {
+    test.setTimeout(120000);
+    await setupAuditAuth(page);
+
+    // 1. Start in Mobile View (390x844)
+    await page.setViewportSize({ width: VIEWPORTS.mobileStandard.width, height: VIEWPORTS.mobileStandard.height });
+    await page.goto('/crm', { waitUntil: 'networkidle' });
+    await waitForAppReady(page);
+
+    // 2. Toggle Language to Bahasa Indonesia
+    const langBtn = page.locator('button[aria-label="Toggle language"]').first();
+    await expect(langBtn).toBeVisible({ timeout: 10000 });
+    await langBtn.click();
+    await page.waitForTimeout(500);
+
+    // 3. Verify Bottom Navigation and Shell localized in Bahasa Indonesia
+    const bottomNav = page.locator('nav[aria-label="Mobile Navigation"]');
+    await expect(bottomNav.getByText('Beranda')).toBeVisible({ timeout: 10000 });
+    await expect(bottomNav.getByText('Penjualan')).toBeVisible({ timeout: 10000 });
+    await expect(bottomNav.getByText('Stok')).toBeVisible({ timeout: 10000 });
+    await expect(bottomNav.getByText('Lainnya')).toBeVisible({ timeout: 10000 });
+
+    // 4. Navigate to Purchase Invoices in Indonesian
+    await page.goto('/finance/purchase', { waitUntil: 'networkidle' });
+    await waitForAppReady(page);
+    await expect(page.getByText('Faktur Pembelian').first()).toBeVisible({ timeout: 15000 });
+
+    await assertNoLoadingState(page);
+    await assertNoHorizontalOverflow(page);
+    await captureVerifiedScreenshot(page, 'localization', 'purchase-invoices-id', VIEWPORTS.mobileStandard.name);
+
+    // 5. Toggle back to English and confirm reversion
+    await langBtn.click();
+    await page.waitForTimeout(500);
+    await expect(page.getByText('Purchase Invoices').first()).toBeVisible({ timeout: 15000 });
+    await expect(bottomNav.getByText('Sales')).toBeVisible({ timeout: 10000 });
+    await captureVerifiedScreenshot(page, 'localization', 'purchase-invoices-en', VIEWPORTS.mobileStandard.name);
+  });
+
+  test('Module 11: Multi-Viewport Responsive Matrix (360x800, 375x812, 390x844, 412x915, 430x932)', async ({ page }) => {
+    test.setTimeout(180000);
+    await setupAuditAuth(page);
+
+    const targetViewports = [
+      { name: '360x800', width: 360, height: 800 },
+      { name: '375x812', width: 375, height: 812 },
+      { name: '390x844', width: 390, height: 844 },
+      { name: '412x915', width: 412, height: 915 },
+      { name: '430x932', width: 430, height: 932 },
+    ];
+
+    for (const vp of targetViewports) {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('/dashboard', { waitUntil: 'networkidle' });
+      await waitForAppReady(page);
+      await assertNoHorizontalOverflow(page);
+
+      // Verify bottom nav is visible and properly anchored
+      const nav = page.locator('nav[aria-label="Mobile Navigation"]');
+      await expect(nav).toBeVisible();
+
+      // Test a data-dense page (batches)
+      await page.goto('/batches', { waitUntil: 'networkidle' });
+      await waitForAppReady(page);
+      await assertNoHorizontalOverflow(page);
+    }
+  });
+
+  test('Module 12: Pricing, Sourcing & Operational Reports Workspaces (Mobile & Desktop)', async ({ page }) => {
+    test.setTimeout(120000);
+    await setupAuditAuth(page);
+
+    // 1. Pricing Dashboard
+    await page.setViewportSize({ width: VIEWPORTS.mobileStandard.width, height: VIEWPORTS.mobileStandard.height });
+    await page.goto('/pricing-dashboard', { waitUntil: 'networkidle' });
+    await waitForAppReady(page);
+    await expect(page.getByText('Pricing Overview').first()).toBeVisible({ timeout: 15000 });
+    await assertNoHorizontalOverflow(page);
+
+    // 2. Price Calculator
+    await page.goto('/calculator', { waitUntil: 'networkidle' });
+    await waitForAppReady(page);
+    await expect(page.getByText('Price Calculator').first()).toBeVisible({ timeout: 15000 });
+    await assertNoHorizontalOverflow(page);
+
+    // 3. Operational Reports (Tab Navigation)
+    await page.goto('/reports', { waitUntil: 'networkidle' });
+    await waitForAppReady(page);
+    await expect(page.getByText('Reports').first()).toBeVisible({ timeout: 15000 });
+    await assertNoHorizontalOverflow(page);
+
+    // 4. Chart of Accounts
+    await page.goto('/finance/chart-of-accounts', { waitUntil: 'networkidle' });
+    await waitForAppReady(page);
+    await expect(page.getByText('Chart of Accounts').first()).toBeVisible({ timeout: 15000 });
+    await assertNoHorizontalOverflow(page);
   });
 });

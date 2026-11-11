@@ -34,6 +34,7 @@ export const ALL_MODULES = [
   { id: 'command-center', label: 'Command Center' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'inventory', label: 'Inventory Adjustments' },
+  { id: 'document-bank', label: 'Document Bank' },
   { id: 'reports', label: 'Reports' },
 
   // Pricing — clean labels surfaced in sidebar + permission UI
@@ -67,7 +68,7 @@ const ROLE_DEFAULT_MODULES: Record<UserRole, ModuleId[]> = {
     'dashboard', 'products', 'batches', 'stock', 'customers',
     'sales-orders', 'delivery-challan', 'sales', 'purchase-orders',
     'import-requirements', 'import-containers', 'finance', 'price-calculator',
-    'crm', 'command-center', 'tasks', 'inventory', 'reports',
+    'crm', 'command-center', 'tasks', 'inventory', 'document-bank', 'reports',
     'pricing-dashboard', 'sourcing-outbox', 'pricing-worksheet', 'pricing-ledger',
     // Advanced pricing intentionally NOT given by default to manager either —
     // can be enabled per-user from the permission grid if needed.
@@ -76,13 +77,13 @@ const ROLE_DEFAULT_MODULES: Record<UserRole, ModuleId[]> = {
   accounts: [
     'dashboard', 'batches', 'stock', 'customers', 'sales-orders',
     'delivery-challan', 'sales', 'purchase-orders', 'import-containers',
-    'finance', 'tasks', 'settings',
+    'finance', 'tasks', 'document-bank', 'settings',
   ],
 
   sales: [
     'dashboard', 'products', 'stock', 'customers', 'sales-orders',
     'delivery-challan', 'sales', 'purchase-orders', 'import-requirements',
-    'price-calculator', 'crm', 'command-center', 'tasks', 'settings',
+    'price-calculator', 'crm', 'command-center', 'tasks', 'document-bank', 'settings',
     // Pricing for sales = Pricing Overview only.
     // No Sourcing Outbox. No Pricing Worksheet. No Price History.
     'pricing-dashboard',
@@ -91,7 +92,7 @@ const ROLE_DEFAULT_MODULES: Record<UserRole, ModuleId[]> = {
   warehouse: [
     'dashboard', 'products', 'batches', 'stock', 'customers', 'sales-orders',
     'delivery-challan', 'sales', 'purchase-orders', 'import-containers',
-    'tasks', 'inventory', 'settings',
+    'tasks', 'inventory', 'document-bank', 'settings',
   ],
 
   auditor_ca: ['dashboard', 'sales', 'purchase-orders', 'finance'],

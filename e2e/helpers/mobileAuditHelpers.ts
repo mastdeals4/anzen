@@ -5,6 +5,12 @@ import path from 'path';
 export const VIEWPORTS = {
   desktop: { width: 1440, height: 900, name: 'desktop-1440x900' },
   tablet: { width: 768, height: 1024, name: 'tablet-768x1024' },
+  mobileCompact360: { width: 360, height: 800, name: 'mobile-360x800' },
+  mobileIphoneMini375: { width: 375, height: 812, name: 'mobile-375x812' },
+  mobileStandard390: { width: 390, height: 844, name: 'mobile-390x844' },
+  mobilePixel412: { width: 412, height: 915, name: 'mobile-412x915' },
+  mobileLarge430: { width: 430, height: 932, name: 'mobile-430x932' },
+  // Aliases for backwards compatibility
   mobileStandard: { width: 390, height: 844, name: 'mobile-390x844' },
   mobileCompact: { width: 360, height: 800, name: 'mobile-compact-360x800' },
 };

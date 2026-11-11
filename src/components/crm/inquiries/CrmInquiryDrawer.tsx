@@ -5,6 +5,7 @@ import { useNavigation } from '../../../contexts/NavigationContext';
 import { showToast } from '../../ToastNotification';
 import { SpeechToTextButton } from '../SpeechToTextButton';
 import { getSignedUrlCached } from '../../../utils/signedUrlCache';
+import { findBankedDocumentsForProductMake } from '../../../services/crm/documentBankService';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { PipelineStatusBadge } from '../PipelineStatusBadge';
 import { KunalCustomerQuoteModal } from '../KunalCustomerQuoteModal';
@@ -35,7 +36,10 @@ import {
   Sparkles,
   RefreshCw,
   ArrowRight,
+  FolderArchive,
 } from 'lucide-react';
+import { AttachFromDocumentBankModal } from '../../documents/AttachFromDocumentBankModal';
+import { linkUniversalDocument } from '../../../services/documents/universalDocumentBankService';
 
 interface InquiryDetail {
   id: string;
@@ -129,6 +133,65 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
   // Documents state
   const [documents, setDocuments] = useState<InquiryDoc[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
+  const [bankModalOpen, setBankModalOpen] = useState(false);
+
+  const handleAttachFromBank = async (doc: any) => {
+    if (!inquiry) return;
+    try {
+      await linkUniversalDocument({
+        documentId: doc.id,
+        entityType: 'crm_inquiry',
+        entityId: inquiry.id,
+        productId: doc.primary_product_id || undefined,
+        productSourceId: doc.primary_product_source_id || undefined,
+      });
+
+      const { data: newDoc, error } = await supabase
+        .from('crm_product_documents')
+        .insert({
+          inquiry_id: inquiry.id,
+          product_name: inquiry.product_name,
+          make: doc.make_name || inquiry.offered_make || inquiry.requested_make || null,
+          document_type: doc.document_type || 'COA',
+          specification: doc.specification || null,
+          is_permanent: true,
+          lifecycle_status: 'BANKED',
+          original_file_name: doc.original_file_name || doc.title,
+          display_file_name: `[Bank] ${doc.title}`,
+          storage_bucket: doc.storage_bucket || 'product-documents',
+          storage_path: doc.storage_path || '',
+          file_size: doc.file_size || null,
+        })
+        .select('id')
+        .single();
+
+      if (error) console.warn('Could not insert legacy crm_product_documents ref:', error);
+
+      setDocuments(prev => [
+        ...prev,
+        {
+          id: newDoc?.id || doc.id,
+          filename: doc.original_file_name || doc.title,
+          documentType: doc.document_type || 'COA',
+          make: doc.make_name,
+          specification: doc.specification,
+          isPermanent: true,
+          storagePath: doc.storage_path,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      showToast({
+        type: 'success',
+        title: 'Attached from Bank',
+        message: `Attached "${doc.title}" to ${inquiry.inquiry_number}`,
+      });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Attach Failed', message: err.message || 'Could not attach document' });
+    } finally {
+      setBankModalOpen(false);
+    }
+  };
 
   // Activities & Reminders
   const [activities, setActivities] = useState<any[]>([]);
@@ -399,20 +462,43 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
       events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       setTimelineEvents(events);
 
-      // 3. Fetch Documents
+      // 3. Fetch Documents: Direct Inquiry Documents + Auto-Surfaced Banked Library Documents
       const { data: docs } = await supabase
         .from('crm_product_documents')
-        .select('id, original_file_name, display_file_name, document_type, make, specification, is_permanent, storage_path, created_at')
+        .select('id, original_file_name, display_file_name, document_type, make, specification, is_permanent, lifecycle_status, storage_path, created_at, batch_number')
         .eq('inquiry_id', inquiryId);
 
+      let bankedDocs: any[] = [];
+      if (inquiry?.product_name) {
+        bankedDocs = await findBankedDocumentsForProductMake({
+          productName: inquiry.product_name,
+          make: inquiry.supplier_name || inquiry.requested_make || undefined,
+        });
+      }
+
+      // Merge and deduplicate by id
+      const allDocsMap = new Map();
+      (docs || []).forEach((d: any) => allDocsMap.set(d.id, { ...d, isDirect: true }));
+      (bankedDocs || []).forEach((d: any) => {
+        if (!allDocsMap.has(d.id)) {
+          allDocsMap.set(d.id, { ...d, isDirect: false, isBankedLibrary: true });
+        }
+      });
+
+      const mergedDocs = Array.from(allDocsMap.values());
       setDocuments(
-        (docs || []).map((d: any) => ({
+        mergedDocs.map((d: any) => ({
           id: d.id,
-          filename: d.display_file_name || d.original_file_name || 'document',
+          filename: d.isBankedLibrary
+            ? `[Banked] ${d.display_file_name || d.original_file_name || 'document'}`
+            : d.display_file_name || d.original_file_name || 'document',
           documentType: d.document_type || 'OTHER',
           make: d.make || null,
           specification: d.specification || null,
-          isPermanent: Boolean(d.is_permanent),
+          isPermanent: Boolean(d.is_permanent || d.lifecycle_status === 'BANKED'),
+          lifecycleStatus: d.lifecycle_status || (d.is_permanent ? 'BANKED' : 'TEMP'),
+          isBankedLibrary: Boolean(d.isBankedLibrary),
+          batchNumber: d.batch_number || null,
           storagePath: d.storage_path,
           created_at: d.created_at,
         }))
@@ -1098,6 +1184,14 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
                 <h4 className="font-bold text-gray-900 text-xs uppercase tracking-wide">
                   Verified Product Documents ({documents.length})
                 </h4>
+                <button
+                  type="button"
+                  onClick={() => setBankModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  <FolderArchive className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Attach from Document Bank</span>
+                </button>
               </div>
 
               {documents.length === 0 ? (
@@ -1234,6 +1328,15 @@ export function CrmInquiryDrawer({ isOpen, onClose, inquiry, onRefresh, onOpenCu
           }}
           option={pricingOptions.find(o => o.is_selected) || pricingOptions[0] || null}
           options={pricingOptions}
+        />
+      )}
+
+      {bankModalOpen && (
+        <AttachFromDocumentBankModal
+          isOpen={bankModalOpen}
+          onClose={() => setBankModalOpen(false)}
+          onDocumentSelected={handleAttachFromBank}
+          title={`Attach Document from Bank for ${inquiry.inquiry_number} (${inquiry.product_name})`}
         />
       )}
     </div>

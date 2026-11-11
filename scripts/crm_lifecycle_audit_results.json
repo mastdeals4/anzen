@@ -1,0 +1,440 @@
+{
+  "crm_product_documents_count": 94,
+  "banked_count": 4,
+  "temporary_count": 90,
+  "crm_storage_objects_count": 135,
+  "crm_storage_total_mb": "200.59",
+  "linked_storage_count": 91,
+  "linked_storage_mb": "54.92",
+  "unlinked_storage_count": 44,
+  "unlinked_storage_mb": "145.67",
+  "catalog_documents": [
+    {
+      "id": "8b200aa8-b185-4365-a61b-34692bb53b94",
+      "name": "bulk-email/8e6d195c-2e59-4f61-bd80-0172768058fa/1782098766486-0.011548525956134537-ourcatalog.pdf",
+      "filename": "1782098766486-0.011548525956134537-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-22T03:26:17.654Z",
+      "campaign_id": "8e6d195c-2e59-4f61-bd80-0172768058fa",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "completed",
+      "campaign_completed_at": "2026-06-22T03:28:44.929Z"
+    },
+    {
+      "id": "2543778b-19b7-4845-84c3-eca1261a543b",
+      "name": "bulk-email/db163e4e-ea05-4d57-94c3-28f5d5c78e78/1782121644677-0.5498774059361751-ourcatalog.pdf",
+      "filename": "1782121644677-0.5498774059361751-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-22T09:47:46.452Z",
+      "campaign_id": "db163e4e-ea05-4d57-94c3-28f5d5c78e78",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "completed",
+      "campaign_completed_at": "2026-06-22T12:38:34.208Z"
+    },
+    {
+      "id": "942f9e7f-8399-4820-946d-5afd5e3c35f6",
+      "name": "bulk-email/a2e1ad4c-8d6f-4b3d-8725-fbe5fc32d1c1/1781842637438-0.9148383304429083-ourcatalog.pdf",
+      "filename": "1781842637438-0.9148383304429083-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-19T04:21:01.070Z",
+      "campaign_id": "a2e1ad4c-8d6f-4b3d-8725-fbe5fc32d1c1",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "completed",
+      "campaign_completed_at": "2026-06-19T04:22:55.875Z"
+    },
+    {
+      "id": "eaf4d628-3349-4739-a2b6-0bf1858b236c",
+      "name": "bulk-email/ab033d4b-7247-4c03-a69c-e9855d90a960/1782113267219-0.25679081115288604-ourcatalog.pdf",
+      "filename": "1782113267219-0.25679081115288604-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-22T07:28:05.175Z",
+      "campaign_id": "ab033d4b-7247-4c03-a69c-e9855d90a960",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "completed",
+      "campaign_completed_at": "2026-06-22T08:49:38.409Z"
+    },
+    {
+      "id": "d5a4f417-3a14-46a0-b5e3-88c95b3bdb47",
+      "name": "bulk-email/1b9e4eb2-7d6d-4ccd-8885-7a007a76e423/1781843187647-0.3024903593819681-ourcatalog.pdf",
+      "filename": "1781843187647-0.3024903593819681-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-19T04:27:01.398Z",
+      "campaign_id": "1b9e4eb2-7d6d-4ccd-8885-7a007a76e423",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "partial",
+      "campaign_completed_at": "2026-06-19T15:23:11.673Z"
+    },
+    {
+      "id": "1ccb6ee6-71c1-4ce6-b043-0815b0f56fd4",
+      "name": "bulk-email/8113eeaf-f0ef-4aed-b527-464709dd22b6/1782097287454-0.1170522006386091-ourcatalog.pdf",
+      "filename": "1782097287454-0.1170522006386091-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-22T03:01:44.251Z",
+      "campaign_id": "8113eeaf-f0ef-4aed-b527-464709dd22b6",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "partial",
+      "campaign_completed_at": "2026-06-22T03:08:49.515Z"
+    },
+    {
+      "id": "3ed25728-1a33-42ed-b7eb-da4752625d91",
+      "name": "bulk-email/5882d092-a7c6-496a-959d-d5a67e236d6f/1782097524689-0.7693653059430471-ourcatalog.pdf",
+      "filename": "1782097524689-0.7693653059430471-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-22T03:05:35.274Z",
+      "campaign_id": "5882d092-a7c6-496a-959d-d5a67e236d6f",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "completed",
+      "campaign_completed_at": "2026-06-22T03:11:58.075Z"
+    },
+    {
+      "id": "8f84bc6c-35b5-4365-80f7-d809351f2df7",
+      "name": "bulk-email/84cda73a-4022-4ff4-9753-0dc08709f259/1782112759624-0.9544067726375255-ourcatalog.pdf",
+      "filename": "1782112759624-0.9544067726375255-ourcatalog.pdf",
+      "size_bytes": 13779558,
+      "size_mb": "13.14",
+      "mime": "application/pdf",
+      "created_at": "2026-06-22T07:24:26.627Z",
+      "campaign_id": "84cda73a-4022-4ff4-9753-0dc08709f259",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "partial",
+      "campaign_completed_at": "2026-06-22T09:13:56.264Z"
+    },
+    {
+      "id": "9eb3fd33-c77c-4f59-a84b-09ffb6246407",
+      "name": "bulk-email/53dca12f-3ba6-43ed-a00c-5b5b59b632f2/1787812942815-0.8168702021102018-Anzen_-_API_Catalogue.pdf",
+      "filename": "1787812942815-0.8168702021102018-Anzen_-_API_Catalogue.pdf",
+      "size_bytes": 7580823,
+      "size_mb": "7.23",
+      "mime": "application/pdf",
+      "created_at": "2026-08-27T06:42:52.298Z",
+      "campaign_id": "53dca12f-3ba6-43ed-a00c-5b5b59b632f2",
+      "campaign_subject": "Update Stocklist & Appointment – PT Avira Parama Farma",
+      "campaign_status": "in_progress",
+      "campaign_completed_at": null
+    },
+    {
+      "id": "487ca832-0823-4d4a-84b1-0e4018a8e25a",
+      "name": "bulk-email/dea9d724-ce0f-4099-99b4-9ac3ec791f6e/1787730130376-0.005152587829043598-Anzen_-_API_Catalogue.pdf",
+      "filename": "1787730130376-0.005152587829043598-Anzen_-_API_Catalogue.pdf",
+      "size_bytes": 7580823,
+      "size_mb": "7.23",
+      "mime": "application/pdf",
+      "created_at": "2026-08-26T07:42:36.693Z",
+      "campaign_id": "dea9d724-ce0f-4099-99b4-9ac3ec791f6e",
+      "campaign_subject": "Update Stocklist & Appointment – PT Avira Parama Farma",
+      "campaign_status": "in_progress",
+      "campaign_completed_at": null
+    },
+    {
+      "id": "48b268a6-9fe4-46e1-b8cf-c7a6e47e5d77",
+      "name": "bulk-email/9e06abd2-b951-402b-8694-075a4721eb1d/1782186906114-0.23821755306140457-ourcatalog__1_.pdf",
+      "filename": "1782186906114-0.23821755306140457-ourcatalog__1_.pdf",
+      "size_bytes": 3734490,
+      "size_mb": "3.56",
+      "mime": "application/pdf",
+      "created_at": "2026-06-23T03:56:59.481Z",
+      "campaign_id": "9e06abd2-b951-402b-8694-075a4721eb1d",
+      "campaign_subject": "Product Catalog and Stock List – PT. Shubham Anzen Pharma Jaya",
+      "campaign_status": "partial",
+      "campaign_completed_at": "2026-11-02T17:55:16.191Z"
+    },
+    {
+      "id": "f83faca4-8582-4bb5-8bdc-7392da1b405f",
+      "name": "bulk-email/9f1335a1-f94b-47b1-a3f2-ecbd96e7f3e5/1782186906114-0.23821755306140457-ourcatalog__1_.pdf",
+      "filename": "1782186906114-0.23821755306140457-ourcatalog__1_.pdf",
+      "size_bytes": 3734490,
+      "size_mb": "3.56",
+      "mime": "application/pdf",
+      "created_at": "2026-06-23T03:57:53.820Z",
+      "campaign_id": "9f1335a1-f94b-47b1-a3f2-ecbd96e7f3e5",
+      "campaign_subject": "Product Catalog and Stock List – PT. Shubham Anzen Pharma Jaya",
+      "campaign_status": "completed",
+      "campaign_completed_at": "2026-06-24T04:54:09.334Z"
+    },
+    {
+      "id": "a02e0885-1fc0-4758-a7f6-241f12510d0b",
+      "name": "bulk-email/d94653dc-7962-4633-9b73-f1c2840b24e8/1782457529598-0.3521327835556558-ourcatalog__1_.pdf",
+      "filename": "1782457529598-0.3521327835556558-ourcatalog__1_.pdf",
+      "size_bytes": 3734490,
+      "size_mb": "3.56",
+      "mime": "application/pdf",
+      "created_at": "2026-06-26T07:05:47.814Z",
+      "campaign_id": "d94653dc-7962-4633-9b73-f1c2840b24e8",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "partial",
+      "campaign_completed_at": "2026-06-26T07:51:35.265Z"
+    },
+    {
+      "id": "c8b3961c-aa7f-4006-aad8-9ae3ebdc12be",
+      "name": "bulk-email/addeb381-9154-449e-ab14-7feadd713003/1782874964221-0.2186293491810093-ourcatalog__1_.pdf",
+      "filename": "1782874964221-0.2186293491810093-ourcatalog__1_.pdf",
+      "size_bytes": 3734490,
+      "size_mb": "3.56",
+      "mime": "application/pdf",
+      "created_at": "2026-07-01T03:02:53.633Z",
+      "campaign_id": "addeb381-9154-449e-ab14-7feadd713003",
+      "campaign_subject": "Introduction – PT Shubham Anzen Pharma Jaya | Pharmaceutical Raw Materials",
+      "campaign_status": "partial",
+      "campaign_completed_at": "2026-07-01T03:59:52.146Z"
+    },
+    {
+      "id": "cdf2f0c6-1545-4899-9f19-150cef950507",
+      "name": "bulk-email/c0f69f24-ee8d-402d-b9c2-3104c6a70074/1787902757695-0.685571631698586-OUR_CATALOG.pdf",
+      "filename": "1787902757695-0.685571631698586-OUR_CATALOG.pdf",
+      "size_bytes": 2770276,
+      "size_mb": "2.64",
+      "mime": "application/pdf",
+      "created_at": "2026-08-28T07:39:56.014Z",
+      "campaign_id": "c0f69f24-ee8d-402d-b9c2-3104c6a70074",
+      "campaign_subject": "Update Stocklist & Appointment – PT Avira Parama Farma",
+      "campaign_status": "in_progress",
+      "campaign_completed_at": null
+    }
+  ],
+  "catalog_total_mb": "136.48",
+  "unlinked_folders": {
+    "bulk-email": {
+      "count": 39,
+      "bytes": 151556234
+    },
+    "requirement-documents": {
+      "count": 3,
+      "bytes": 1174363
+    },
+    "gmail-attachments": {
+      "count": 1,
+      "bytes": 12980
+    },
+    "whatsapp": {
+      "count": 1,
+      "bytes": 130
+    }
+  },
+  "crm_duplicates": [
+    {
+      "key": "283991_MSDS (1).pdf",
+      "filename": "MSDS (1).pdf",
+      "size_kb": "277.3",
+      "count": 2,
+      "product": "Chemical Item",
+      "make": "Logistics Import- Shubham Pharmachem Pvt Ltd",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a19b7e91aa0d665/1793667636811_msds_1_.pdf",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a19b7e993a5e9cd/1793617214705_msds_1_.pdf"
+      ]
+    },
+    {
+      "key": "474_inline-b4acdc6b-57af-4a18-b4be-95201de00f83",
+      "filename": "inline-b4acdc6b-57af-4a18-b4be-95201de00f83",
+      "size_kb": "0.5",
+      "count": 3,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0fba8ea64e8516/1790989226272_inline_b4acdc6b_57af_4a18_b4be_95201de00f83",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0f6fe04a05132f/1790852437054_inline_b4acdc6b_57af_4a18_b4be_95201de00f83",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0f143f0b08878a/1790766015517_inline_b4acdc6b_57af_4a18_b4be_95201de00f83"
+      ]
+    },
+    {
+      "key": "455_inline-ba731492-0ce2-4513-84e3-50fdea9a5e6d",
+      "filename": "inline-ba731492-0ce2-4513-84e3-50fdea9a5e6d",
+      "size_kb": "0.4",
+      "count": 3,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0fba8ea64e8516/1790989225082_inline_ba731492_0ce2_4513_84e3_50fdea9a5e6d",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0f6fe04a05132f/1790852436219_inline_ba731492_0ce2_4513_84e3_50fdea9a5e6d",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0f143f0b08878a/1790766014073_inline_ba731492_0ce2_4513_84e3_50fdea9a5e6d"
+      ]
+    },
+    {
+      "key": "575_inline-4ddd414d-9ad3-4a5e-aff0-77bc09b2253c",
+      "filename": "inline-4ddd414d-9ad3-4a5e-aff0-77bc09b2253c",
+      "size_kb": "0.6",
+      "count": 3,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0fba8ea64e8516/1790989224301_inline_4ddd414d_9ad3_4a5e_aff0_77bc09b2253c",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0f6fe04a05132f/1790852435462_inline_4ddd414d_9ad3_4a5e_aff0_77bc09b2253c",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0f143f0b08878a/1790766012934_inline_4ddd414d_9ad3_4a5e_aff0_77bc09b2253c"
+      ]
+    },
+    {
+      "key": "768_inline-64c673a9-2797-4d5d-b3c1-fd23fbf840dc",
+      "filename": "inline-64c673a9-2797-4d5d-b3c1-fd23fbf840dc",
+      "size_kb": "0.8",
+      "count": 3,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0fba8ea64e8516/1790989223597_inline_64c673a9_2797_4d5d_b3c1_fd23fbf840dc",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0f6fe04a05132f/1790852434645_inline_64c673a9_2797_4d5d_b3c1_fd23fbf840dc",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0f143f0b08878a/1790766012314_inline_64c673a9_2797_4d5d_b3c1_fd23fbf840dc"
+      ]
+    },
+    {
+      "key": "445_inline-10b31128-208c-4f57-a8ec-d8b027721216",
+      "filename": "inline-10b31128-208c-4f57-a8ec-d8b027721216",
+      "size_kb": "0.4",
+      "count": 3,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0fba8ea64e8516/1790989223012_inline_10b31128_208c_4f57_a8ec_d8b027721216",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0f6fe04a05132f/1790852433936_inline_10b31128_208c_4f57_a8ec_d8b027721216",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0f143f0b08878a/1790766011631_inline_10b31128_208c_4f57_a8ec_d8b027721216"
+      ]
+    },
+    {
+      "key": "4655_inline-6eb9107e-76d9-4ea8-b9d9-6af382bd3e89",
+      "filename": "inline-6eb9107e-76d9-4ea8-b9d9-6af382bd3e89",
+      "size_kb": "4.5",
+      "count": 3,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0fba8ea64e8516/1790989222367_inline_6eb9107e_76d9_4ea8_b9d9_6af382bd3e89",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0f6fe04a05132f/1790852432571_inline_6eb9107e_76d9_4ea8_b9d9_6af382bd3e89",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0f143f0b08878a/1790766010110_inline_6eb9107e_76d9_4ea8_b9d9_6af382bd3e89"
+      ]
+    },
+    {
+      "key": "474_b72b0791.jpeg",
+      "filename": "b72b0791.jpeg",
+      "size_kb": "0.5",
+      "count": 2,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0e74ffeeb9eeb6/1790593237858_b72b0791.jpeg",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0cd2ed243689e9/1790423320211_b72b0791.jpeg"
+      ]
+    },
+    {
+      "key": "455_d9cc46f1.jpeg",
+      "filename": "d9cc46f1.jpeg",
+      "size_kb": "0.4",
+      "count": 2,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0e74ffeeb9eeb6/1790593236997_d9cc46f1.jpeg",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0cd2ed243689e9/1790423319329_d9cc46f1.jpeg"
+      ]
+    },
+    {
+      "key": "575_3dd99ec3.png",
+      "filename": "3dd99ec3.png",
+      "size_kb": "0.6",
+      "count": 2,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0e74ffeeb9eeb6/1790593236059_3dd99ec3.png",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0cd2ed243689e9/1790423317824_3dd99ec3.png"
+      ]
+    },
+    {
+      "key": "768_7668a742.jpeg",
+      "filename": "7668a742.jpeg",
+      "size_kb": "0.8",
+      "count": 2,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0e74ffeeb9eeb6/1790593235397_7668a742.jpeg",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0cd2ed243689e9/1790423316239_7668a742.jpeg"
+      ]
+    },
+    {
+      "key": "445_be4ea0a7.jpeg",
+      "filename": "be4ea0a7.jpeg",
+      "size_kb": "0.4",
+      "count": 2,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0e74ffeeb9eeb6/1790593234716_be4ea0a7.jpeg",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0cd2ed243689e9/1790423315499_be4ea0a7.jpeg"
+      ]
+    },
+    {
+      "key": "4655_d71089d2.png",
+      "filename": "d71089d2.png",
+      "size_kb": "4.5",
+      "count": 2,
+      "product": "Corn Starch",
+      "make": "Everest",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0e74ffeeb9eeb6/1790593233910_d71089d2.png",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0cd2ed243689e9/1790423314619_d71089d2.png"
+      ]
+    },
+    {
+      "key": "45370_240415143058466.png",
+      "filename": "240415143058466.png",
+      "size_kb": "44.3",
+      "count": 2,
+      "product": "Chemical Item",
+      "make": "Supplier",
+      "paths": [
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0d1abcc28450ed/1790423743735_240415143058466.png",
+        "gmail-attachments/a82db049-ed45-4861-a115-a20155129f3a/1a0d250404817962/1790422994818_240415143058466.png"
+      ]
+    },
+    {
+      "key": "155127_Coa-Menthol Powder 60 Mesh.pdf",
+      "filename": "Coa-Menthol Powder 60 Mesh.pdf",
+      "size_kb": "151.5",
+      "count": 2,
+      "product": "Menthol Powder",
+      "make": "Supplier",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0c36bb11f6afdf/1790418808716_coa_menthol_powder_60_mesh.pdf",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0c36a49d02a8ae/1790418813601_coa_menthol_powder_60_mesh.pdf"
+      ]
+    },
+    {
+      "key": "161906_image.png",
+      "filename": "image.png",
+      "size_kb": "158.1",
+      "count": 2,
+      "product": "Finasteride",
+      "make": "Pharma Grade",
+      "paths": [
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0c281cac6d7fae/1790419286728_image.png",
+        "gmail-attachments/1075a773-bb55-4296-bc71-af2eab9a0780/1a0c28143b1a0577/1790419293164_image.png"
+      ]
+    },
+    {
+      "key": "0_COA_Product_A.pdf",
+      "filename": "COA_Product_A.pdf",
+      "size_kb": "0.0",
+      "count": 2,
+      "product": null,
+      "make": null,
+      "paths": [
+        "whatsapp/chat_123/wa_doc_COA.pdf",
+        "whatsapp/chat_123/wa_doc_COA.pdf"
+      ]
+    }
+  ],
+  "master_products_count": 33
+}

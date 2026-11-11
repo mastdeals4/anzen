@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 import { Search, ArrowUpCircle, Printer, Lock, RotateCcw, CheckCircle, X, ExternalLink, Info, Link2, ChevronDown } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
@@ -270,6 +271,7 @@ export function PaymentVoucherManager({
   onCloseEmbedded,
 }: PaymentVoucherManagerProps) {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const { dateRange } = useFinance();
   const isAdmin = profile?.role === 'admin';
   const [cancelPostingTarget, setCancelPostingTarget] = useState<PaymentVoucher | null>(null);
@@ -1731,15 +1733,15 @@ export function PaymentVoucherManager({
     <>
       {!embeddedModalOnly && (
         <FinancePage
-        title="Payment Vouchers"
+        title={t('paymentVouchers.title', 'Payment Vouchers')}
         actions={canManage && (
           <button
             type="button"
             onClick={() => { resetForm(); setModalOpen(true); }}
-            className="inline-flex items-center gap-1.5 h-8 px-3 bg-red-600 text-white rounded-md text-xs font-medium hover:bg-red-700 transition-colors shadow-xs whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 h-8 px-3 bg-red-600 text-white rounded-md text-xs font-medium hover:bg-red-700 transition-colors shadow-xs whitespace-nowrap min-h-[32px]"
           >
             <ArrowUpCircle className="w-3.5 h-3.5" />
-            <span>New Payment</span>
+            <span>{t('paymentVouchers.newVoucher', 'New Payment')}</span>
           </button>
         )}
         toolbar={
@@ -1748,9 +1750,9 @@ export function PaymentVoucherManager({
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
               <input
                 name="search_term"
-                aria-label="Search payments..."
+                aria-label={t('paymentVouchers.searchPlaceholder', 'Search payments...')}
                 type="text"
-                placeholder="Search voucher, supplier, or staff..."
+                placeholder={t('paymentVouchers.searchPlaceholder', 'Search voucher, supplier, or staff...')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 style={{ paddingLeft: '2rem' }}
@@ -1766,7 +1768,7 @@ export function PaymentVoucherManager({
                   voucherView === 'payments' ? 'bg-white text-blue-700 font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                Payments ({paymentVoucherCount})
+                {t('paymentVouchers.title', 'Payments')} ({paymentVoucherCount})
               </button>
               <button
                 type="button"
@@ -1786,7 +1788,7 @@ export function PaymentVoucherManager({
                   voucherView === 'all' ? 'bg-white text-gray-900 font-semibold shadow-xs' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                All
+                {t('common.all', 'All')}
               </button>
             </div>
             {voucherView === 'settlements' && (

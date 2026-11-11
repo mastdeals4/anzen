@@ -825,6 +825,8 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, inquiries, mode = 
               display_file_name: fileName,
               storage_bucket: 'crm-documents',
               storage_path: storagePath,
+              is_permanent: false,
+              lifecycle_status: 'TEMP',
               uploaded_by: user.id,
             };
           });

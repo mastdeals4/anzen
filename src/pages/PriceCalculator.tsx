@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { Layout } from '../components/Layout';
+import { useLanguage } from '../contexts/LanguageContext';
 import {
   Calculator, Settings as SettingsIcon, DollarSign,
   ChevronDown, ChevronUp, Info, AlertTriangle, RefreshCw, TrendingDown, Database,
@@ -285,6 +286,7 @@ function PurchasePriceField({ section, inputs, setInput, inrRate }: {
 }
 
 export function PriceCalculator() {
+  const { t, language } = useLanguage();
   const [activeTab, setActiveTab] = useState<'calculator' | 'settings' | 'import_info'>('calculator');
   const [mode, setMode] = useState<'fcl' | 'lcl' | 'air'>('fcl');
   const [selectedProduct, setSelectedProduct] = useState<string>('');
@@ -522,15 +524,15 @@ export function PriceCalculator() {
     <Layout>
       <div className="max-w-5xl mx-auto">
         <div className="mb-4">
-          <h1 className="text-lg font-bold text-gray-900">Price Calculator</h1>
-          <p className="text-xs text-gray-400">FCL / LCL / Air import costing · INR / USD · Live FX</p>
+          <h1 className="text-lg font-bold text-gray-900">{t('pricing.calculatorTitle')}</h1>
+          <p className="text-xs text-gray-400">{t('pricing.calculatorSubtitle')}</p>
         </div>
 
         <div className="border-b border-gray-200 mb-4 flex overflow-x-auto">
           {([
-            { key: 'calculator', label: 'Calculator', icon: <Calculator className="w-3.5 h-3.5" /> },
-            { key: 'settings', label: 'Settings', icon: <SettingsIcon className="w-3.5 h-3.5" /> },
-            { key: 'import_info', label: 'Import Info', icon: <Database className="w-3.5 h-3.5" /> },
+            { key: 'calculator', label: language === 'id' ? 'Kalkulator' : 'Calculator', icon: <Calculator className="w-3.5 h-3.5" /> },
+            { key: 'settings', label: t('common.settings'), icon: <SettingsIcon className="w-3.5 h-3.5" /> },
+            { key: 'import_info', label: language === 'id' ? 'Info Impor' : 'Import Info', icon: <Database className="w-3.5 h-3.5" /> },
           ] as const).map((tab) => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
@@ -544,12 +546,12 @@ export function PriceCalculator() {
           <div className="space-y-3">
             {/* Product Selector & View Import Data action */}
             <div className="flex flex-wrap items-center gap-2 bg-white border border-gray-200 rounded-lg p-3 shadow-2xs">
-              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide flex-shrink-0">Product:</span>
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide flex-shrink-0">{language === 'id' ? 'Produk:' : 'Product:'}</span>
               <input
                 type="text"
                 value={selectedProduct}
                 onChange={e => setSelectedProduct(e.target.value)}
-                placeholder="Product name (e.g. Paracetamol, Ibuprofen)"
+                placeholder={language === 'id' ? 'Nama produk (misal Paracetamol, Ibuprofen)' : 'Product name (e.g. Paracetamol, Ibuprofen)'}
                 className="flex-1 min-w-[200px] px-2.5 py-1 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium text-gray-800"
               />
               <button
@@ -559,7 +561,7 @@ export function PriceCalculator() {
                 title="View compact historical import data for this product"
               >
                 <Database className="w-3.5 h-3.5" />
-                VIEW IMPORT DATA
+                {t('pricing.viewImportData')}
               </button>
             </div>
 

@@ -20,6 +20,8 @@ import { formatUnit, abbreviateUnit, formatPackagingDetails } from '../utils/uni
 import { PACKAGING_TYPES, normalizePackagingType } from '../constants/masterData';
 import { useErpSyncListener, emitErpSync } from '../utils/erpSyncBus';
 import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
+import { AttachFromDocumentBankModal } from '../components/documents/AttachFromDocumentBankModal';
+import { linkUniversalDocument } from '../services/documents/universalDocumentBankService';
 
 interface Batch {
   id: string;
@@ -125,6 +127,7 @@ export function Batches() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
+  const [batchBankAttachOpen, setBatchBankAttachOpen] = useState(false);
   const [transactionHistoryModal, setTransactionHistoryModal] = useState(false);
   const [selectedBatchDocs, setSelectedBatchDocs] = useState<BatchDocument[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -487,6 +490,32 @@ export function Batches() {
     } catch (error) {
       console.error('Error loading documents:', error);
       showToast({ type: 'error', title: 'Error', message: 'Failed to load documents' });
+    }
+  };
+
+  const handleAttachBatchDocFromBank = async (doc: any) => {
+    if (!selectedBatchId) return;
+    try {
+      const currentBatch = batches.find(b => b.id === selectedBatchId);
+      await linkUniversalDocument({
+        documentId: doc.id,
+        entityType: 'batch',
+        entityId: selectedBatchId,
+        batchId: selectedBatchId,
+        productId: currentBatch?.product_id || null,
+        batchNumber: currentBatch?.batch_number || null,
+      });
+      await supabase.from('batch_documents').insert({
+        batch_id: selectedBatchId,
+        file_name: doc.original_file_name || doc.title,
+        file_type: doc.document_type?.toLowerCase() || 'other',
+        file_url: doc.file_url,
+        file_size: doc.file_size,
+      });
+      showToast({ type: 'success', title: 'Document Attached', message: `Linked "${doc.title}" to Batch` });
+      await loadBatchDocuments(selectedBatchId);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: err.message });
     }
   };
 
@@ -2146,6 +2175,15 @@ export function Batches() {
           title="Batch Documents"
         >
           <div className="space-y-3">
+            <div className="flex justify-end pb-1 border-b border-gray-100">
+              <button
+                type="button"
+                onClick={() => setBatchBankAttachOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition shadow-xs"
+              >
+                <Plus className="w-3.5 h-3.5" /> Attach from Document Bank
+              </button>
+            </div>
             {selectedBatchDocs.length > 0 ? (
               selectedBatchDocs.map((doc) => (
                 <a
@@ -2177,6 +2215,18 @@ export function Batches() {
             )}
           </div>
         </Modal>
+
+        {/* Attach from Universal Document Bank */}
+        {batchBankAttachOpen && selectedBatchId && (
+          <AttachFromDocumentBankModal
+            isOpen={batchBankAttachOpen}
+            onClose={() => setBatchBankAttachOpen(false)}
+            initialProductId={batches.find(b => b.id === selectedBatchId)?.product_id || null}
+            initialBatchNumber={batches.find(b => b.id === selectedBatchId)?.batch_number || null}
+            title="Attach Document to Batch"
+            onDocumentSelected={handleAttachBatchDocFromBank}
+          />
+        )}
 
         {/* Stock Movements Ledger Modal */}
         <StockMovementsModal

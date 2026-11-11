@@ -45,9 +45,12 @@ import {
   Download,
   FileText,
   X,
+  FolderArchive,
 } from 'lucide-react';
 import { FloatingField, FLOAT_INPUT } from '../components/finance/FloatingField';
 import { SapRow } from '../components/finance/SapLayout';
+import { AttachFromDocumentBankModal } from '../components/documents/AttachFromDocumentBankModal';
+import { linkUniversalDocument } from '../services/documents/universalDocumentBankService';
 
 export const MANUAL_DOC_TYPES = [
   'COA',
@@ -444,6 +447,118 @@ export function PricingWorksheet() {
   const [uploadDocType, setUploadDocType] = useState<string>('COA');
   const [uploadDocFile, setUploadDocFile] = useState<File | null>(null);
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [bankModalRow, setBankModalRow] = useState<UnifiedPricingRow | null>(null);
+
+  // Promote an unbanked document into the central Universal Document Bank
+  const handleApproveDocumentToBank = async (row: UnifiedPricingRow, doc: any) => {
+    if (!doc.id) {
+      showToast({ type: 'warning', title: 'Action Unavailable', message: 'Document ID missing. Please refresh and retry.' });
+      return;
+    }
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const now = new Date().toISOString();
+
+      const { error } = await supabase
+        .from('crm_product_documents')
+        .update({
+          lifecycle_status: 'BANKED',
+          is_permanent: true,
+          reviewed_by: user?.id || null,
+          reviewed_at: now,
+        })
+        .eq('id', doc.id);
+
+      if (error) throw error;
+
+      // Update local row state
+      const nextDocs = row.documents.map(d => {
+        if (d.id === doc.id || d.filename === doc.filename) {
+          return {
+            ...d,
+            isPermanent: true,
+            status: 'MATCHED' as const,
+          };
+        }
+        return d;
+      });
+
+      updateRow(row.id, { documents: nextDocs });
+
+      showToast({
+        type: 'success',
+        title: 'Promoted to Bank',
+        message: `"${doc.filename}" is now approved and BANKED in the Universal Document Bank`,
+      });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Approval Failed', message: err.message || 'Could not approve document' });
+    }
+  };
+
+  // Attach an existing document from Universal Document Bank without duplicate file upload
+  const handleAttachFromBank = async (selectedDoc: any) => {
+    if (!bankModalRow || !bankModalRow.inquiryId) return;
+    try {
+      // 1. Relational link in universal_document_links
+      await linkUniversalDocument({
+        documentId: selectedDoc.id,
+        entityType: 'crm_inquiry',
+        entityId: bankModalRow.inquiryId,
+        productId: selectedDoc.primary_product_id || undefined,
+        productSourceId: selectedDoc.primary_product_source_id || undefined,
+      });
+
+      // 2. Also register in crm_product_documents for local display
+      const { data: newDoc, error } = await supabase
+        .from('crm_product_documents')
+        .insert({
+          inquiry_id: bankModalRow.inquiryId,
+          product_name: bankModalRow.productName,
+          make: selectedDoc.make_name || bankModalRow.offeredMake || bankModalRow.requestedMake || null,
+          document_type: selectedDoc.document_type || 'COA',
+          specification: selectedDoc.specification || bankModalRow.specification || null,
+          pricing_option_id: bankModalRow.pricingOptionId || null,
+          is_permanent: true,
+          lifecycle_status: 'BANKED',
+          original_file_name: selectedDoc.original_file_name || selectedDoc.title,
+          display_file_name: `[Bank] ${selectedDoc.title}`,
+          storage_bucket: selectedDoc.storage_bucket || 'product-documents',
+          storage_path: selectedDoc.storage_path || '',
+          file_size: selectedDoc.file_size || null,
+        })
+        .select('id')
+        .single();
+
+      if (error) console.warn('Could not insert legacy crm_product_documents ref:', error);
+
+      // 3. Update row state
+      updateRow(bankModalRow.id, {
+        documents: [
+          ...bankModalRow.documents,
+          {
+            id: newDoc?.id || selectedDoc.id,
+            documentType: selectedDoc.document_type || 'COA',
+            filename: selectedDoc.original_file_name || selectedDoc.title,
+            storagePath: selectedDoc.storage_path,
+            storageBucket: selectedDoc.storage_bucket,
+            status: 'MATCHED',
+            isPermanent: true,
+            specification: selectedDoc.specification,
+          } as any,
+        ],
+      });
+
+      showToast({
+        type: 'success',
+        title: 'Attached from Bank',
+        message: `Attached "${selectedDoc.title}" to ${bankModalRow.inquiryNumber}`,
+      });
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Attach Failed', message: err.message || 'Could not attach document' });
+    } finally {
+      setBankModalRow(null);
+    }
+  };
 
   // Helper to open / download documents via signed URL without popup blocker interception
   const handleOpenDocument = async (storagePath?: string, filename?: string, isDownload = false) => {
@@ -3689,6 +3804,15 @@ export function PricingWorksheet() {
                                             <Plus className="w-3 h-3" />
                                             <span>ADD DOCUMENT</span>
                                           </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setBankModalRow(row)}
+                                            className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                            title="Attach existing verified technical document from Universal Document Bank"
+                                          >
+                                            <FolderArchive className="w-3 h-3 text-emerald-600" />
+                                            <span>ATTACH FROM BANK</span>
+                                          </button>
                                         </div>
                                       </div>
 
@@ -3841,6 +3965,17 @@ export function PricingWorksheet() {
                                                 </div>
 
                                                 <div className="flex items-center gap-1 flex-shrink-0">
+                                                  {!(doc as any).isPermanent && doc.id && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleApproveDocumentToBank(row, doc)}
+                                                      className="px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[10px] flex items-center gap-0.5 cursor-pointer font-bold transition-colors"
+                                                      title="Approve and promote document into Universal Document Bank"
+                                                    >
+                                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                                      <span>Bank</span>
+                                                    </button>
+                                                  )}
                                                   <button
                                                     type="button"
                                                     onClick={() => handleOpenDocument(doc.storagePath, doc.filename, false)}
@@ -4331,6 +4466,16 @@ export function PricingWorksheet() {
             />
           </div>
         </div>
+      )}
+
+      {/* 9. ATTACH FROM UNIVERSAL DOCUMENT BANK MODAL */}
+      {bankModalRow && (
+        <AttachFromDocumentBankModal
+          isOpen={!!bankModalRow}
+          onClose={() => setBankModalRow(null)}
+          onDocumentSelected={handleAttachFromBank}
+          title={`Attach Document from Bank for ${bankModalRow.inquiryNumber} (${bankModalRow.productName})`}
+        />
       )}
     </Layout>
   );

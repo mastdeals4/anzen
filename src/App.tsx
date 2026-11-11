@@ -40,6 +40,7 @@ const PricingParserReview = lazy(() => import('./pages/PricingParserReview').the
 const PricingDashboard = lazy(() => import('./pages/PricingDashboard').then(m => ({ default: m.PricingDashboard })));
 const PricingWorksheet = lazy(() => import('./pages/PricingWorksheet').then(m => ({ default: m.PricingWorksheet })));
 const SourcingOutbox = lazy(() => import('./pages/SourcingOutbox').then(m => ({ default: m.SourcingOutbox })));
+const DocumentBankPage = lazy(() => import('./pages/DocumentBankPage').then(m => ({ default: m.DocumentBankPage })));
 
 function LoadingFallback() {
   return (
@@ -120,6 +121,8 @@ function AppContent() {
         return <ImportContainers />;
       case 'crm':
         return <CRM />;
+      case 'document-bank':
+        return <DocumentBankPage />;
       case 'command-center':
         return <CRMCommandCenter />;
       case 'sales-team':

@@ -30,6 +30,7 @@ import {
   CanonicalMessageItem,
 } from './ConversationTimeline';
 import { DocumentsList, EnquiryDocumentItem } from './DocumentsList';
+import { findBankedDocumentsForProductMake } from '../../../services/crm/documentBankService';
 import { AiUnderstandingCard } from './AiUnderstandingCard';
 import { AiProposal } from '../../../types/enquiry';
 
@@ -395,6 +396,14 @@ export const EnquiryDetailDrawer: React.FC<EnquiryDetailDrawerProps> = ({
 
       if (error) throw error;
 
+      // Auto-surface BANKED technical documents for this Product + Make
+      let bankedDocs: any[] = [];
+      if (enquiry?.productName) {
+        bankedDocs = await findBankedDocumentsForProductMake({
+          productName: enquiry.productName,
+        });
+      }
+
       const docList: EnquiryDocumentItem[] = [];
       const reqDocsMap: Record<string, RequestLinkedDocumentItem[]> = {};
 
@@ -429,6 +438,28 @@ export const EnquiryDetailDrawer: React.FC<EnquiryDetailDrawerProps> = ({
             original_file_name: d.original_file_name,
             storage_path: d.storage_path,
             created_at: d.created_at,
+          });
+        }
+      }
+
+      // Add auto-surfaced banked documents not already directly linked
+      const existingDocIds = new Set(docList.map(d => d.id));
+      for (const b of bankedDocs) {
+        if (!existingDocIds.has(b.id)) {
+          existingDocIds.add(b.id);
+          docList.push({
+            id: b.id,
+            inquiry_id: null,
+            enquiry_request_id: null,
+            product_name: b.product_name,
+            make: b.make,
+            document_type: b.document_type,
+            original_file_name: b.original_file_name,
+            display_file_name: b.display_file_name ? `[Banked] ${b.display_file_name}` : b.original_file_name,
+            storage_path: b.storage_path,
+            uploaded_by: b.uploaded_by,
+            created_at: b.created_at,
+            ai_extraction: null,
           });
         }
       }

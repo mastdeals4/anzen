@@ -6,6 +6,7 @@ import { FinancePage } from './FinancePage';
 import { FinanceActionButton, FinanceBadge, FinanceButton } from './FinanceUI';
 import { SapRow } from './SapLayout';
 import { FloatingField, FLOAT_INPUT } from './FloatingField';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 interface Account {
   id: string;
@@ -35,6 +36,7 @@ const accountTypes = [
 ];
 
 export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProps) {
+  const { t, language } = useLanguage();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -185,11 +187,11 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
 
   return (
     <FinancePage
-      title="Chart of Accounts"
-      subtitle="General ledger account master"
+      title={t('finance.chartOfAccounts')}
+      subtitle={language === 'id' ? 'Master akun buku besar umum' : 'General ledger account master'}
       actions={canManage ? (
         <FinanceButton variant="primary" onClick={() => { resetForm(); setModalOpen(true); }}>
-          <Plus className="w-3.5 h-3.5" /> Add Account
+          <Plus className="w-3.5 h-3.5" /> {language === 'id' ? 'Tambah Akun' : 'Add Account'}
         </FinanceButton>
       ) : undefined}
       toolbar={(
@@ -197,7 +199,7 @@ export function ChartOfAccountsManager({ canManage }: ChartOfAccountsManagerProp
           <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3 h-3" />
           <input name="search_term" aria-label="Search accounts..."
             type="text"
-            placeholder="Search accounts..."
+            placeholder={language === 'id' ? 'Cari akun...' : 'Search accounts...'}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full h-7 pl-7 pr-2 border border-gray-300 rounded"

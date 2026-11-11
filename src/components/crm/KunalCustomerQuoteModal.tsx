@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { X, Send, Loader, Paperclip } from 'lucide-react';
+import { X, Send, Loader, Paperclip, Plus } from 'lucide-react';
+import { AttachFromDocumentBankModal } from '../documents/AttachFromDocumentBankModal';
+import { linkUniversalDocument } from '../../services/documents/universalDocumentBankService';
 import { showToast } from '../ToastNotification';
 import {
   buildCompanySignature,
@@ -11,6 +13,7 @@ import {
 import { type CompanySnapshot, FALLBACK_COMPANY } from '../../types/company';
 import { sendPricingWorkflowEmail, type PricingEmailAttachment } from '../../services/pricingEmail';
 import { getSignedUrlCached } from '../../utils/signedUrlCache';
+import { findBankedDocumentsForProductMake } from '../../services/crm/documentBankService';
 import { CustomerPriceHistoryCard } from '../pricing/CustomerPriceHistoryCard';
 import { FloatingField, FLOAT_INPUT } from '../finance/FloatingField';
 import { SapRow } from '../finance/SapLayout';
@@ -137,6 +140,32 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, opti
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [resolvedCustomerId, setResolvedCustomerId] = useState<string | null>(null);
   const [resolvedProductId, setResolvedProductId] = useState<string | null>(null);
+  const [bankModalOpen, setBankModalOpen] = useState(false);
+
+  const handleAttachBankDoc = async (doc: any) => {
+    try {
+      await linkUniversalDocument({
+        documentId: doc.id,
+        entityType: 'crm_inquiry',
+        entityId: inquiry.id,
+        productId: resolvedProductId || undefined,
+        productSourceId: doc.primary_product_source_id || undefined,
+      });
+    } catch (err) {
+      console.error('Failed to create relational document link:', err);
+    }
+
+    const newDocItem: DocItem = {
+      id: doc.id,
+      document_type: doc.document_type,
+      display_file_name: `[Bank] ${doc.title}`,
+      original_file_name: doc.original_file_name,
+      storage_path: doc.storage_path || '',
+    };
+    setDocs(prev => [...prev.filter(d => d.id !== doc.id), newDocItem]);
+    setSelectedDocs(prev => new Set(prev).add(doc.id));
+    showToast({ type: 'success', title: 'Attached from Bank', message: `Attached "${doc.title}" to quotation` });
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -166,7 +195,33 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, opti
           .maybeSingle(),
       ]);
       const co = (coResult.data as CompanySnapshot | null) ?? FALLBACK_COMPANY;
-      setDocs((docResult.data as DocItem[]) || []);
+      const directDocs = (docResult.data as DocItem[]) || [];
+
+      // Auto-surface BANKED technical documents for this Product + Make
+      const targetProductName = inqResult.data?.product_name || inquiry.product_name;
+      let bankedDocs: DocItem[] = [];
+      if (targetProductName) {
+        const foundBanked = await findBankedDocumentsForProductMake({
+          productName: targetProductName,
+          make: option?.offered_make || undefined,
+        });
+        bankedDocs = foundBanked.map(b => ({
+          id: b.id,
+          document_type: b.document_type,
+          display_file_name: b.display_file_name ? `[Banked] ${b.display_file_name}` : b.display_file_name,
+          original_file_name: b.original_file_name,
+          storage_path: b.storage_path,
+        }));
+      }
+
+      // Merge and deduplicate by id
+      const mergedMap = new Map<string, DocItem>();
+      directDocs.forEach(d => mergedMap.set(d.id, d));
+      bankedDocs.forEach(d => {
+        if (!mergedMap.has(d.id)) mergedMap.set(d.id, d);
+      });
+
+      setDocs(Array.from(mergedMap.values()));
       setSelectedDocs(new Set());
       setToEmail(inquiry.contact_email || '');
       setSubject(buildSubject(inquiry));
@@ -175,7 +230,6 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, opti
       if (inqResult.data?.customer_id) {
         setResolvedCustomerId(inqResult.data.customer_id);
       }
-      const targetProductName = inqResult.data?.product_name || inquiry.product_name;
       if (targetProductName) {
         const { data: prodData } = await supabase
           .from('products')
@@ -337,11 +391,20 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, opti
           </SapRow>
 
           {/* Attachment picker */}
-          {docs.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
                 <Paperclip className="w-3.5 h-3.5 text-gray-400" /> Attach documents:
               </label>
+              <button
+                type="button"
+                onClick={() => setBankModalOpen(true)}
+                className="text-xs text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> Attach from Document Bank
+              </button>
+            </div>
+            {docs.length > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {docs.map(doc => (
                   <label key={doc.id} className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs cursor-pointer ${selectedDocs.has(doc.id) ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}>
@@ -351,8 +414,10 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, opti
                   </label>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-[11px] text-gray-400 italic">No pre-loaded attachments. Click "Attach from Document Bank" above to attach verified technical specs.</p>
+            )}
+          </div>
 
           {/* Informational Customer Price History & Rate Card Benchmark */}
           {resolvedProductId && (
@@ -384,6 +449,16 @@ export function KunalCustomerQuoteModal({ isOpen, onClose, inquiry, option, opti
           </button>
         </div>
       </div>
+
+      {bankModalOpen && (
+        <AttachFromDocumentBankModal
+          isOpen={bankModalOpen}
+          onClose={() => setBankModalOpen(false)}
+          initialProductId={resolvedProductId}
+          title={`Attach Document to Quote (${inquiry.product_name})`}
+          onDocumentSelected={handleAttachBankDoc}
+        />
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
 } from '../../utils/customerValidation';
 import { Plus, X, Search } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 import { SearchableSelect } from '../SearchableSelect';
 import { useDebounce } from '../../hooks/useDebounce';
 import {
@@ -35,6 +36,7 @@ interface CompactInquiryFormProps {
 
 export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing = false }: CompactInquiryFormProps) {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
@@ -367,7 +369,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
           />
           <label htmlFor="multiProductToggle" className="text-sm font-medium text-gray-700 cursor-pointer">
-            Multi-Product Inquiry (Common data will be applied to all products)
+            {t('crm.form.multiProductToggle', 'Multi-Product Inquiry (Common data will be applied to all products)')}
           </label>
         </div>
 
@@ -376,22 +378,22 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
           <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                Products ({formData.products.length})
+                {t('crm.form.productsList', 'Products')} ({formData.products.length})
               </span>
               <button
                 type="button"
                 onClick={addProduct}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-md font-medium transition"
               >
-                <Plus className="w-3.5 h-3.5" /> Add Another Product
+                <Plus className="w-3.5 h-3.5" /> {t('crm.form.addAnotherProduct', 'Add Another Product')}
               </button>
             </div>
 
             {(formData.products as any[]).map((prod: any, index: number) => (
               <div key={index} className="grid grid-cols-12 gap-2 p-2 bg-white rounded border border-gray-200 items-end">
-                <div className="col-span-5">
+                <div className="col-span-12 sm:col-span-5">
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Product Name <span className="text-red-500">*</span>
+                    {t('crm.form.productName', 'Product Name')} <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -402,9 +404,9 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                     required
                   />
                 </div>
-                <div className="col-span-3">
+                <div className="col-span-6 sm:col-span-3">
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Specification
+                    {t('crm.form.specification', 'Specification')}
                   </label>
                   <input
                     type="text"
@@ -414,9 +416,9 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                     className="w-full h-8 px-2 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
-                <div className="col-span-3">
+                <div className="col-span-5 sm:col-span-3">
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Quantity <span className="text-red-500">*</span>
+                    {t('crm.form.quantity', 'Quantity')} <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -433,7 +435,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                       type="button"
                       onClick={() => removeProduct(index)}
                       className="text-red-500 hover:text-red-700 p-1"
-                      title="Remove product"
+                      title={t('crm.form.removeProduct', 'Remove product')}
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -447,33 +449,33 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
         {/* Row: Product Name | Specification */}
         {!formData.is_multi_product && (
           <SapRow>
-            <FloatingField label="Product Name" required span={6} filled={!!formData.product_name}>
+            <FloatingField label={t('crm.form.productName', 'Product Name')} required span={6} filled={!!formData.product_name}>
               <SearchableSelect
                 id="inquiry_product_name"
                 name="product_name"
-                aria-label="Enter product name"
+                aria-label={t('crm.form.productNamePlaceholder', 'Enter product name')}
                 freeSolo
                 filterOptions={false}
                 value={formData.product_name}
                 onChange={(val) => setFormData((prev) => ({ ...prev, product_name: val }))}
                 options={productOptions}
                 loading={loadingProducts}
-                placeholder="Enter product name"
+                placeholder={t('crm.form.productNamePlaceholder', 'Enter product name')}
                 required
               />
             </FloatingField>
-            <FloatingField label="Specification" span={6} filled={!!formData.specification}>
+            <FloatingField label={t('crm.form.specification', 'Specification')} span={6} filled={!!formData.specification}>
               <SearchableSelect
                 id="inquiry_specification"
                 name="specification"
-                aria-label="Specification"
+                aria-label={t('crm.form.specification', 'Specification')}
                 freeSolo
                 filterOptions={false}
                 value={formData.specification}
                 onChange={(val) => setFormData((prev) => ({ ...prev, specification: val }))}
                 options={specOptions}
                 loading={loadingSpecs}
-                placeholder="BP / USP / EP"
+                placeholder={t('crm.form.specificationPlaceholder', 'BP / USP / EP')}
               />
             </FloatingField>
           </SapRow>
@@ -482,74 +484,74 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
         {/* Row: Quantity | Priority | Inquiry Source */}
         <SapRow>
           {!formData.is_multi_product && (
-            <FloatingField label="Quantity" required span={4} filled={!!formData.quantity}>
-              <input name="quantity" aria-label="e.g., 500 KG"
+            <FloatingField label={t('crm.form.quantity', 'Quantity')} required span={4} filled={!!formData.quantity}>
+              <input name="quantity" aria-label={t('crm.form.quantityPlaceholder', 'e.g., 500 KG')}
                 type="text"
                 value={formData.quantity}
                 onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
                 className={FLOAT_INPUT}
-                placeholder="e.g., 500 KG"
+                placeholder={t('crm.form.quantityPlaceholder', 'e.g., 500 KG')}
                 required
               />
             </FloatingField>
           )}
-          <FloatingField label="Priority" required span={formData.is_multi_product ? 4 : 4} filled={!!formData.priority}>
-            <select name="priority" aria-label="Priority"
+          <FloatingField label={t('crm.form.priority', 'Priority')} required span={formData.is_multi_product ? 4 : 4} filled={!!formData.priority}>
+            <select name="priority" aria-label={t('crm.form.priority', 'Priority')}
               value={formData.priority}
               onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
               className={FLOAT_INPUT}
             >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
+              <option value="low">{t('crm.priorityLevels.low', 'Low')}</option>
+              <option value="medium">{t('crm.priorityLevels.medium', 'Medium')}</option>
+              <option value="high">{t('crm.priorityLevels.high', 'High')}</option>
+              <option value="urgent">{t('crm.priorityLevels.urgent', 'Urgent')}</option>
             </select>
           </FloatingField>
-          <FloatingField label="Inquiry Source" span={formData.is_multi_product ? 8 : 4} filled={!!formData.inquiry_source}>
-            <select name="inquiry_source" aria-label="Inquiry Source"
+          <FloatingField label={t('crm.form.inquirySource', 'Inquiry Source')} span={formData.is_multi_product ? 8 : 4} filled={!!formData.inquiry_source}>
+            <select name="inquiry_source" aria-label={t('crm.form.inquirySource', 'Inquiry Source')}
               value={formData.inquiry_source}
               onChange={(e) => setFormData({ ...formData, inquiry_source: e.target.value })}
               className={FLOAT_INPUT}
             >
-              <option value="email">Email</option>
-              <option value="phone">Phone</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="website">Website</option>
-              <option value="referral">Referral</option>
-              <option value="other">Other</option>
+              <option value="email">{t('crm.inquirySources.email', 'Email')}</option>
+              <option value="phone">{t('crm.inquirySources.phone', 'Phone')}</option>
+              <option value="whatsapp">{t('crm.inquirySources.whatsapp', 'WhatsApp')}</option>
+              <option value="website">{t('crm.inquirySources.website', 'Website')}</option>
+              <option value="referral">{t('crm.inquirySources.referral', 'Referral')}</option>
+              <option value="other">{t('crm.inquirySources.other', 'Other')}</option>
             </select>
           </FloatingField>
         </SapRow>
 
         {/* Row: Supplier Name | Country of Origin | Customer Dropdown */}
         <SapRow>
-          <FloatingField label="Supplier Name" span={4} filled={!!formData.supplier_name}>
-            <input name="supplier_name" aria-label="Supplier Name"
+          <FloatingField label={t('crm.form.supplierName', 'Supplier Name')} span={4} filled={!!formData.supplier_name}>
+            <input name="supplier_name" aria-label={t('crm.form.supplierName', 'Supplier Name')}
               type="text"
               value={formData.supplier_name}
               onChange={(e) => setFormData({ ...formData, supplier_name: e.target.value })}
               className={FLOAT_INPUT}
-              placeholder="Manufacturer/Supplier"
+              placeholder={t('crm.form.supplierNamePlaceholder', 'Manufacturer/Supplier')}
             />
           </FloatingField>
-          <FloatingField label="Country of Origin" span={4} filled={!!formData.supplier_country}>
+          <FloatingField label={t('crm.form.countryOfOrigin', 'Country of Origin')} span={4} filled={!!formData.supplier_country}>
             <SearchableSelect
               id="inquiry_country_of_origin"
               name="country_of_origin"
-              aria-label="Country of Origin"
+              aria-label={t('crm.form.countryOfOrigin', 'Country of Origin')}
               freeSolo
               filterOptions={false}
               value={formData.supplier_country}
               onChange={(val) => setFormData((prev) => ({ ...prev, supplier_country: val }))}
               options={countryOptions}
               loading={loadingCountries}
-              placeholder="Supplier country"
+              placeholder={t('crm.form.countryOfOriginPlaceholder', 'Supplier country')}
             />
           </FloatingField>
           <div ref={dropdownRef} className="relative sm:col-span-4 min-w-0">
-            <FloatingField label="Customer" required span={12} filled={!!(customerSearch || formData.company_name)}>
+            <FloatingField label={t('crm.form.customer', 'Customer')} required span={12} filled={!!(customerSearch || formData.company_name)}>
               <div className="relative">
-                <input name="company_name" aria-label="Search customer..."
+                <input name="company_name" aria-label={t('crm.form.searchCustomerPlaceholder', 'Search customer...')}
                   type="text"
                   value={customerSearch || formData.company_name}
                   onChange={(e) => {
@@ -564,7 +566,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                   }}
                   onFocus={() => setShowCustomerDropdown(true)}
                   className={`${FLOAT_INPUT} pr-8`}
-                  placeholder="Search customer..."
+                  placeholder={t('crm.form.searchCustomerPlaceholder', 'Search customer...')}
                   required
                 />
                 <Search className="absolute right-2 top-2 w-4 h-4 text-gray-400" />
@@ -585,7 +587,7 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                   </div>
                 ))}
                 {filteredCustomers.length === 0 && (
-                  <div className="px-3 py-2 text-sm text-gray-500">No customers found</div>
+                  <div className="px-3 py-2 text-sm text-gray-500">{t('crm.form.noCustomersFound', 'No customers found')}</div>
                 )}
               </div>
             )}
@@ -595,15 +597,15 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               className="mt-1 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
             >
               <Plus className="w-3 h-3" />
-              Add New Customer
+              {t('crm.form.addNewCustomer', 'Add New Customer')}
             </button>
           </div>
         </SapRow>
 
         {/* Row: Contact Person | Email | Phone */}
         <SapRow>
-          <FloatingField label="Contact Person" span={4} filled={!!formData.contact_person}>
-            <input name="contact_person" aria-label="Contact Person"
+          <FloatingField label={t('crm.form.contactPerson', 'Contact Person')} span={4} filled={!!formData.contact_person}>
+            <input name="contact_person" aria-label={t('crm.form.contactPerson', 'Contact Person')}
               type="text"
               value={formData.contact_person}
               onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
@@ -611,17 +613,17 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               placeholder="Name"
             />
           </FloatingField>
-          <FloatingField label="Email" span={4} filled={!!formData.contact_email} hint="Use comma (,) or semicolon (;) to separate multiple emails">
-            <input name="email" aria-label="Email"
+          <FloatingField label={t('crm.form.email', 'Email')} span={4} filled={!!formData.contact_email} hint={t('crm.form.emailHint', 'Use comma (,) or semicolon (;) to separate multiple emails')}>
+            <input name="email" aria-label={t('crm.form.email', 'Email')}
               type="text"
               value={formData.contact_email}
               onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
               className={FLOAT_INPUT}
-              placeholder="email@example.com or multiple: email1@example.com, email2@example.com"
+              placeholder="email@example.com"
             />
           </FloatingField>
-          <FloatingField label="Phone" span={4} filled={!!formData.contact_phone}>
-            <input name="phone" aria-label="Phone"
+          <FloatingField label={t('crm.form.phone', 'Phone')} span={4} filled={!!formData.contact_phone}>
+            <input name="phone" aria-label={t('crm.form.phone', 'Phone')}
               type="tel"
               value={formData.contact_phone}
               onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
@@ -633,13 +635,13 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
 
         {/* Mail Subject - Full Width */}
         <SapRow>
-          <FloatingField label="Mail Subject" span={12} filled={!!formData.mail_subject}>
-            <input name="mail_subject" aria-label="Mail Subject"
+          <FloatingField label={t('crm.form.mailSubject', 'Mail Subject')} span={12} filled={!!formData.mail_subject}>
+            <input name="mail_subject" aria-label={t('crm.form.mailSubject', 'Mail Subject')}
               type="text"
               value={formData.mail_subject}
               onChange={(e) => setFormData({ ...formData, mail_subject: e.target.value })}
               className={FLOAT_INPUT}
-              placeholder="Email subject line"
+              placeholder={t('crm.form.mailSubjectPlaceholder', 'Email subject line')}
             />
           </FloatingField>
         </SapRow>
@@ -647,66 +649,66 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
         {/* Customer Requested - 5 checkboxes in one row */}
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-2">
-            Customer Requested
+            {t('crm.customerRequestedOptions.title', 'Customer Requested')}
           </label>
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input name="customer_requested" aria-label="Customer Requested"
+              <input name="customer_requested" aria-label={t('crm.customerRequestedOptions.price', 'Price')}
                 type="checkbox"
                 checked={formData.price_required}
                 onChange={(e) => setFormData({ ...formData, price_required: e.target.checked })}
                 className="w-4 h-4 rounded border-gray-300"
               />
-              <span className="text-xs text-gray-700">Price</span>
+              <span className="text-xs text-gray-700">{t('crm.customerRequestedOptions.price', 'Price')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input name="coa_required" aria-label="Coa Required"
+              <input name="coa_required" aria-label={t('crm.customerRequestedOptions.coa', 'COA')}
                 type="checkbox"
                 checked={formData.coa_required}
                 onChange={(e) => setFormData({ ...formData, coa_required: e.target.checked })}
                 className="w-4 h-4 rounded border-gray-300"
               />
-              <span className="text-xs text-gray-700">COA</span>
+              <span className="text-xs text-gray-700">{t('crm.customerRequestedOptions.coa', 'COA')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input name="sample_required" aria-label="Sample Required"
+              <input name="sample_required" aria-label={t('crm.customerRequestedOptions.sample', 'Sample')}
                 type="checkbox"
                 checked={formData.sample_required}
                 onChange={(e) => setFormData({ ...formData, sample_required: e.target.checked })}
                 className="w-4 h-4 rounded border-gray-300"
               />
-              <span className="text-xs text-gray-700">Sample</span>
+              <span className="text-xs text-gray-700">{t('crm.customerRequestedOptions.sample', 'Sample')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input name="agency_letter_required" aria-label="Agency Letter Required"
+              <input name="agency_letter_required" aria-label={t('crm.customerRequestedOptions.agencyLetter', 'Agency Letter')}
                 type="checkbox"
                 checked={formData.agency_letter_required}
                 onChange={(e) => setFormData({ ...formData, agency_letter_required: e.target.checked })}
                 className="w-4 h-4 rounded border-gray-300"
               />
-              <span className="text-xs text-gray-700">Agency Letter</span>
+              <span className="text-xs text-gray-700">{t('crm.customerRequestedOptions.agencyLetter', 'Agency Letter')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input name="others_required" aria-label="Others Required"
+              <input name="others_required" aria-label={t('crm.customerRequestedOptions.others', 'Others')}
                 type="checkbox"
                 checked={formData.others_required}
                 onChange={(e) => setFormData({ ...formData, others_required: e.target.checked })}
                 className="w-4 h-4 rounded border-gray-300"
               />
-              <span className="text-xs text-gray-700">Others</span>
+              <span className="text-xs text-gray-700">{t('crm.customerRequestedOptions.others', 'Others')}</span>
             </label>
           </div>
         </div>
 
         <div className="border-t border-gray-200 pt-3">
-          <h3 className="text-xs font-semibold text-gray-700 mb-2">Pricing</h3>
+          <h3 className="text-xs font-semibold text-gray-700 mb-2">{t('crm.form.pricing', 'Pricing')}</h3>
 
           {/* Row: Purchase Price (Admin Only) | Offered Price | Currency */}
           <SapRow>
             {profile?.role === 'admin' && (
               <>
-                <FloatingField label="Purchase Price" span={4} filled={!!formData.purchase_price}>
-                  <input name="purchase_price" aria-label="Purchase Price"
+                <FloatingField label={t('crm.form.purchasePrice', 'Purchase Price')} span={4} filled={!!formData.purchase_price}>
+                  <input name="purchase_price" aria-label={t('crm.form.purchasePrice', 'Purchase Price')}
                     type="text"
                     value={formData.purchase_price}
                     onChange={(e) => setFormData({ ...formData, purchase_price: e.target.value })}
@@ -714,8 +716,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                     placeholder="100.00"
                   />
                 </FloatingField>
-                <FloatingField label="Currency" span={2} filled={!!formData.purchase_price_currency}>
-                  <select name="currency" aria-label="Currency"
+                <FloatingField label={t('crm.form.currency', 'Currency')} span={2} filled={!!formData.purchase_price_currency}>
+                  <select name="currency" aria-label={t('crm.form.currency', 'Currency')}
                     value={formData.purchase_price_currency}
                     onChange={(e) => setFormData({ ...formData, purchase_price_currency: e.target.value })}
                     className={FLOAT_INPUT}
@@ -726,8 +728,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 </FloatingField>
               </>
             )}
-            <FloatingField label="Offered Price" span={profile?.role === 'admin' ? 4 : 8} filled={!!formData.offered_price}>
-              <input name="offered_price" aria-label="Offered Price"
+            <FloatingField label={t('crm.form.offeredPrice', 'Offered Price')} span={profile?.role === 'admin' ? 4 : 8} filled={!!formData.offered_price}>
+              <input name="offered_price" aria-label={t('crm.form.offeredPrice', 'Offered Price')}
                 type="text"
                 value={formData.offered_price}
                 onChange={(e) => setFormData({ ...formData, offered_price: e.target.value })}
@@ -735,8 +737,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 placeholder="150.00"
               />
             </FloatingField>
-            <FloatingField label="Currency" span={profile?.role === 'admin' ? 2 : 4} filled={!!formData.offered_price_currency}>
-              <select name="currency" aria-label="Currency"
+            <FloatingField label={t('crm.form.currency', 'Currency')} span={profile?.role === 'admin' ? 2 : 4} filled={!!formData.offered_price_currency}>
+              <select name="currency" aria-label={t('crm.form.currency', 'Currency')}
                 value={formData.offered_price_currency}
                 onChange={(e) => setFormData({ ...formData, offered_price_currency: e.target.value })}
                 className={FLOAT_INPUT}
@@ -750,40 +752,40 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
 
         {/* Delivery Date and Terms (always shown) */}
         <SapRow>
-          <FloatingField label="Delivery Date" span={6} filled={!!formData.delivery_date}>
-            <input name="delivery_date" aria-label="Delivery Date"
+          <FloatingField label={t('crm.form.deliveryDate', 'Delivery Date')} span={6} filled={!!formData.delivery_date}>
+            <input name="delivery_date" aria-label={t('crm.form.deliveryDate', 'Delivery Date')}
               type="date"
               value={formData.delivery_date}
               onChange={(e) => setFormData({ ...formData, delivery_date: e.target.value })}
               className={FLOAT_INPUT}
             />
           </FloatingField>
-          <FloatingField label="Delivery Terms" span={6} filled={!!formData.delivery_terms}>
-            <select name="delivery_terms" aria-label="Delivery Terms"
+          <FloatingField label={t('crm.form.deliveryTerms', 'Delivery Terms')} span={6} filled={!!formData.delivery_terms}>
+            <select name="delivery_terms" aria-label={t('crm.form.deliveryTerms', 'Delivery Terms')}
               value={formData.delivery_terms}
               onChange={(e) => setFormData({ ...formData, delivery_terms: e.target.value })}
               className={FLOAT_INPUT}
             >
-              <option value="">Select...</option>
-              <option value="FOB Jakarta">FOB Jakarta</option>
-              <option value="CIF Jakarta">CIF Jakarta</option>
-              <option value="FOB Surabaya">FOB Surabaya</option>
-              <option value="CIF Surabaya">CIF Surabaya</option>
-              <option value="FOB Semarang">FOB Semarang</option>
-              <option value="CIF Semarang">CIF Semarang</option>
-              <option value="EXW">EXW</option>
-              <option value="DDP">DDP</option>
-              <option value="DAP">DAP</option>
-              <option value="CFR">CFR</option>
-              <option value="FCA">FCA</option>
+              <option value="">{t('crm.form.selectDeliveryTerms', 'Select...')}</option>
+              <option value="FOB Jakarta">{t('crm.deliveryTermsList.fobJakarta', 'FOB Jakarta')}</option>
+              <option value="CIF Jakarta">{t('crm.deliveryTermsList.cifJakarta', 'CIF Jakarta')}</option>
+              <option value="FOB Surabaya">{t('crm.deliveryTermsList.fobSurabaya', 'FOB Surabaya')}</option>
+              <option value="CIF Surabaya">{t('crm.deliveryTermsList.cifSurabaya', 'CIF Surabaya')}</option>
+              <option value="FOB Semarang">{t('crm.deliveryTermsList.fobSemarang', 'FOB Semarang')}</option>
+              <option value="CIF Semarang">{t('crm.deliveryTermsList.cifSemarang', 'CIF Semarang')}</option>
+              <option value="EXW">{t('crm.deliveryTermsList.exw', 'EXW')}</option>
+              <option value="DDP">{t('crm.deliveryTermsList.ddp', 'DDP')}</option>
+              <option value="DAP">{t('crm.deliveryTermsList.dap', 'DAP')}</option>
+              <option value="CFR">{t('crm.deliveryTermsList.cfr', 'CFR')}</option>
+              <option value="FCA">{t('crm.deliveryTermsList.fca', 'FCA')}</option>
             </select>
           </FloatingField>
         </SapRow>
 
         {/* Row: ACE ERP No | Pipeline Status */}
         <SapRow>
-          <FloatingField label="ACE ERP No" span={6} filled={!!formData.aceerp_no}>
-            <input name="ace_erp_no" aria-label="ACE ERP No"
+          <FloatingField label={t('crm.form.aceErpNo', 'ACE ERP No')} span={6} filled={!!formData.aceerp_no}>
+            <input name="ace_erp_no" aria-label={t('crm.form.aceErpNo', 'ACE ERP No')}
               type="text"
               value={formData.aceerp_no}
               onChange={(e) => setFormData({ ...formData, aceerp_no: e.target.value })}
@@ -791,105 +793,106 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
               placeholder="Optional"
             />
           </FloatingField>
-          <FloatingField label="Pipeline Status" span={6} filled={!!formData.pipeline_status}>
-            <select name="pipeline_status" aria-label="Pipeline Status"
+          <FloatingField label={t('crm.form.pipelineStatus', 'Pipeline Status')} span={6} filled={!!formData.pipeline_status}>
+            <select name="pipeline_status" aria-label={t('crm.form.pipelineStatus', 'Pipeline Status')}
               value={formData.pipeline_status}
               onChange={(e) => setFormData({ ...formData, pipeline_status: e.target.value })}
               className={FLOAT_INPUT}
             >
-              <option value="new">New</option>
-              <option value="in_progress">In Progress</option>
-              <option value="follow_up">Follow Up</option>
-              <option value="won">Won</option>
-              <option value="lost">Lost</option>
-              <option value="on_hold">On Hold</option>
+              <option value="new">{t('crm.pipelineStatuses.new', 'New')}</option>
+              <option value="in_progress">{t('crm.pipelineStatuses.in_progress', 'In Progress')}</option>
+              <option value="follow_up">{t('crm.pipelineStatuses.follow_up', 'Follow Up')}</option>
+              <option value="won">{t('crm.pipelineStatuses.won', 'Won')}</option>
+              <option value="lost">{t('crm.pipelineStatuses.lost', 'Lost')}</option>
+              <option value="on_hold">{t('crm.pipelineStatuses.on_hold', 'On Hold')}</option>
             </select>
           </FloatingField>
         </SapRow>
 
         {/* Remarks - Full Width */}
         <SapRow>
-          <FloatingField label="Remarks" textarea span={12} filled={!!formData.remarks}>
-            <textarea name="remarks" aria-label="Remarks"
+          <FloatingField label={t('crm.form.remarks', 'Remarks')} textarea span={12} filled={!!formData.remarks}>
+            <textarea name="remarks" aria-label={t('crm.form.remarks', 'Remarks')}
               value={formData.remarks}
               onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
               rows={2}
               className={FLOAT_TEXTAREA}
-              placeholder="Customer notes, special requirements..."
+              placeholder={t('crm.form.remarksPlaceholder', 'Customer notes, special requirements...')}
             />
           </FloatingField>
         </SapRow>
 
         {/* Internal Notes - Full Width */}
         <SapRow>
-          <FloatingField label="Internal Notes" textarea span={12} filled={!!formData.internal_notes}>
-            <textarea name="internal_notes" aria-label="Internal Notes"
+          <FloatingField label={t('crm.form.internalNotes', 'Internal Notes')} textarea span={12} filled={!!formData.internal_notes}>
+            <textarea name="internal_notes" aria-label={t('crm.form.internalNotes', 'Internal Notes')}
               value={formData.internal_notes}
               onChange={(e) => setFormData({ ...formData, internal_notes: e.target.value })}
               rows={2}
               className={FLOAT_TEXTAREA}
-              placeholder="Private notes (not visible to customer)..."
+              placeholder={t('crm.form.internalNotesPlaceholder', 'Private notes (not visible to customer)...')}
             />
           </FloatingField>
         </SapRow>
 
-        {/* Action Buttons */}
-        <div className="flex justify-end gap-3 pt-3 border-t border-gray-200 sticky bottom-0 bg-white">
+        {/* Action Buttons — Sticky at bottom with safe-area spacing and non-obstructive padding */}
+        <div className="flex justify-end gap-3 pt-3 border-t border-gray-200 sticky bottom-0 bg-white pb-[max(env(safe-area-inset-bottom),0.5rem)] z-10">
           <button
             type="button"
             onClick={onCancel}
-            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition min-h-[38px]"
             disabled={submitting}
           >
-            Cancel
+            {t('common.cancel', 'Cancel')}
           </button>
           <button
             type="submit"
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 min-h-[38px] font-medium"
             disabled={submitting}
           >
-            {submitting ? 'Saving...' : (isEditing ? 'Update Inquiry' : 'Add Inquiry')}
+            {submitting ? t('common.saving', 'Saving...') : (isEditing ? t('crm.form.updateInquiry', 'Update Inquiry') : t('crm.form.addInquiry', 'Add Inquiry'))}
           </button>
         </div>
       </form>
 
       {/* Add Customer Modal */}
       {showAddCustomerModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl p-5 sm:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Add New Customer</h3>
+              <h3 className="text-lg font-semibold text-gray-900">{t('crm.form.addNewCustomer', 'Add New Customer')}</h3>
               <button
                 onClick={() => setShowAddCustomerModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md"
+                aria-label={t('common.cancel', 'Cancel')}
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="space-y-3">
               <SapRow>
-                <FloatingField label="Company Name" required span={6} filled={!!newCustomer.company_name}>
-                  <input name="company_name" aria-label="Company name"
+                <FloatingField label={t('crm.form.customer', 'Company Name')} required span={6} filled={!!newCustomer.company_name}>
+                  <input name="company_name" aria-label={t('crm.form.customer', 'Company Name')}
                     type="text"
                     value={newCustomer.company_name}
                     onChange={(e) => setNewCustomer({ ...newCustomer, company_name: e.target.value })}
                     className={FLOAT_INPUT}
-                    placeholder="Company name"
+                    placeholder={t('crm.form.customer', 'Company name')}
                   />
                 </FloatingField>
-                <FloatingField label="Contact Person" span={6} filled={!!newCustomer.contact_person}>
-                  <input name="contact_person" aria-label="Contact Person"
+                <FloatingField label={t('crm.form.contactPerson', 'Contact Person')} span={6} filled={!!newCustomer.contact_person}>
+                  <input name="contact_person" aria-label={t('crm.form.contactPerson', 'Contact Person')}
                     type="text"
                     value={newCustomer.contact_person}
                     onChange={(e) => setNewCustomer({ ...newCustomer, contact_person: e.target.value })}
                     className={FLOAT_INPUT}
-                    placeholder="Contact name"
+                    placeholder={t('crm.form.contactPerson', 'Contact name')}
                   />
                 </FloatingField>
               </SapRow>
               <SapRow>
-                <FloatingField label="Email" span={6} filled={!!newCustomer.email}>
-                  <input name="email" aria-label="Email"
+                <FloatingField label={t('crm.form.email', 'Email')} span={6} filled={!!newCustomer.email}>
+                  <input name="email" aria-label={t('crm.form.email', 'Email')}
                     type="text"
                     value={newCustomer.email}
                     onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
@@ -897,8 +900,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                     placeholder="email@example.com"
                   />
                 </FloatingField>
-                <FloatingField label="Phone" span={6} filled={!!newCustomer.phone}>
-                  <input name="phone" aria-label="Phone"
+                <FloatingField label={t('crm.form.phone', 'Phone')} span={6} filled={!!newCustomer.phone}>
+                  <input name="phone" aria-label={t('crm.form.phone', 'Phone')}
                     type="tel"
                     value={newCustomer.phone}
                     onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
@@ -908,8 +911,8 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                 </FloatingField>
               </SapRow>
               <SapRow>
-                <FloatingField label="Country" span={6} filled={!!newCustomer.country}>
-                  <input name="country" aria-label="Country"
+                <FloatingField label={t('crm.form.country', 'Country')} span={6} filled={!!newCustomer.country}>
+                  <input name="country" aria-label={t('crm.form.country', 'Country')}
                     type="text"
                     value={newCustomer.country}
                     onChange={(e) => setNewCustomer({ ...newCustomer, country: e.target.value })}
@@ -917,29 +920,31 @@ export function CompactInquiryForm({ onSubmit, onCancel, initialData, isEditing 
                     placeholder="Indonesia"
                   />
                 </FloatingField>
-                <FloatingField label="Address" textarea span={6} filled={!!newCustomer.address}>
-                  <textarea name="address" aria-label="Address"
+                <FloatingField label={t('crm.form.address', 'Address')} textarea span={6} filled={!!newCustomer.address}>
+                  <textarea name="address" aria-label={t('crm.form.address', 'Address')}
                     value={newCustomer.address}
                     onChange={(e) => setNewCustomer({ ...newCustomer, address: e.target.value })}
                     rows={2}
                     className={FLOAT_TEXTAREA}
-                    placeholder="Full address"
+                    placeholder={t('crm.form.address', 'Full address')}
                   />
                 </FloatingField>
               </SapRow>
             </div>
             <div className="flex justify-end gap-3 mt-4">
               <button
+                type="button"
                 onClick={() => setShowAddCustomerModal(false)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition min-h-[38px]"
               >
-                Cancel
+                {t('common.cancel', 'Cancel')}
               </button>
               <button
+                type="button"
                 onClick={handleAddCustomer}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition min-h-[38px] font-medium"
               >
-                Add Customer
+                {t('crm.form.saveCustomer', 'Save Customer')}
               </button>
             </div>
           </div>

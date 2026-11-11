@@ -13,6 +13,7 @@ import { OurSideChips } from './OurSideChips';
 import { PipelineStatusBadge, pipelineStatusOptions } from './PipelineStatusBadge';
 import { LostReasonModal } from './LostReasonModal';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 import { getSignedUrlCached } from '../../utils/signedUrlCache';
 import { sanitizeExportRows } from '../../utils/csvSafe';
 import { canSeeInternalPricing, canSeeFinalQuote } from '../../utils/permissions';
@@ -161,6 +162,7 @@ export function InquiryTableExcel({
   onOpenCustomer,
 }: InquiryTableProps) {
   const { profile } = useAuth();
+  const { t } = useLanguage();
   // Role-based pricing masks: P.Price is admin/manager only; O.Price is
   // admin/manager always, sales only when price_ready=true; warehouse / auditor
   // never see either.
@@ -1860,10 +1862,10 @@ export function InquiryTableExcel({
           <button
             onClick={() => { setExportMenuOpen(o => !o); setImportMenuOpen(false); setColumnsMenuOpen(false); }}
             disabled={exporting || filteredData.length === 0}
-            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed min-h-[32px]"
           >
             <Download className="w-3 h-3" />
-            {exporting ? 'Exporting…' : 'Export'}
+            {exporting ? 'Exporting…' : t('common.export', 'Export')}
             <ChevronDown className="w-3 h-3 opacity-60" />
           </button>
           {exportMenuOpen && (
@@ -1883,10 +1885,10 @@ export function InquiryTableExcel({
           <div className="relative">
             <button
               onClick={() => { setImportMenuOpen(o => !o); setExportMenuOpen(false); setColumnsMenuOpen(false); }}
-              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition"
+              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition min-h-[32px]"
             >
               <Upload className="w-3 h-3" />
-              Import
+              {t('common.import', 'Import')}
               <ChevronDown className="w-3 h-3 opacity-60" />
             </button>
             {importMenuOpen && (
@@ -1907,9 +1909,9 @@ export function InquiryTableExcel({
         <div className="relative">
           <button
             onClick={() => { setColumnsMenuOpen(o => !o); setExportMenuOpen(false); setImportMenuOpen(false); }}
-            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition"
+            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition min-h-[32px]"
           >
-            Columns
+            {t('common.columns', 'Columns')}
             <ChevronDown className="w-3 h-3 opacity-60" />
           </button>
           {columnsMenuOpen && (
@@ -1953,10 +1955,10 @@ export function InquiryTableExcel({
         {canManage && onAddInquiry && (
           <button
             onClick={onAddInquiry}
-            className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-white bg-blue-600 border border-blue-600 rounded hover:bg-blue-700 transition"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 border border-blue-600 rounded hover:bg-blue-700 transition min-h-[32px]"
           >
-            <Plus className="w-3 h-3" />
-            Add Inquiry
+            <Plus className="w-3.5 h-3.5" />
+            <span>{t('crm.form.addInquiry', 'Add Inquiry')}</span>
           </button>
         )}
 
@@ -1967,7 +1969,7 @@ export function InquiryTableExcel({
             type="text"
             value={productSearch}
             onChange={e => setProductSearch(e.target.value)}
-            placeholder="Search product..."
+            placeholder={t('crm.form.productNamePlaceholder', 'Search product...')}
             className="w-full pl-7 pr-6 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white"
           />
           {productSearch && (

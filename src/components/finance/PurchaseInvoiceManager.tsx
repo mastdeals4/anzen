@@ -20,6 +20,7 @@ import { useNavigation } from '../../contexts/NavigationContext';
 import { extractPurchaseInvoicePdf, ExtractedPurchaseInvoice } from '../../utils/purchaseInvoicePdfExtractor';
 import { applySettlementAdjustment } from '../../services/financeCommands';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 import { uploadOptimizedFile } from '../../services/storage/uploadOptimizationService';
 
 interface Supplier {
@@ -126,6 +127,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
   const hasManageAccess = canManage || profile?.role === 'admin' || profile?.role === 'accounts' || profile?.role === 'manager' || accessibleModules.has('purchase-invoices') || accessibleModules.has('finance');
   const { dateRange } = useFinance();
   const { navigationData, clearNavigationData } = useNavigation();
+  const { t, language } = useLanguage();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -1203,15 +1205,15 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       {/* Consolidated single-line header toolbar: Purchase Invoices | Search | + New Purchase Invoice */}
       <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg min-h-[42px] flex-wrap sm:flex-nowrap">
         <div className="flex items-center gap-2 shrink-0">
-          <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">Purchase Invoices</h1>
+          <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">{t('purchaseInvoices.title', 'Purchase Invoices')}</h1>
         </div>
         <div className="relative flex-1 max-w-md min-w-[200px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
           <input
             name="search_term"
-            aria-label="Search by invoice number or supplier..."
+            aria-label={t('common.searchPlaceholder', 'Search by invoice number or supplier...')}
             type="text"
-            placeholder="Search by invoice number or supplier..."
+            placeholder={t('common.searchPlaceholder', 'Search by invoice number or supplier...')}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{ paddingLeft: '2rem' }}
@@ -1225,7 +1227,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             className="inline-flex items-center gap-1.5 h-8 px-3 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors shadow-xs whitespace-nowrap shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>New Purchase Invoice</span>
+            <span>{t('purchaseInvoices.newInvoice', 'New Purchase Invoice')}</span>
           </button>
         )}
       </div>
@@ -1236,28 +1238,28 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           <thead className="bg-gray-50">
             <tr>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Invoice #
+                {t('purchaseInvoices.invoiceNumber', 'Invoice #')}
               </th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Supplier
+                {t('purchaseInvoices.supplier', 'Supplier')}
               </th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Date
+                {t('purchaseInvoices.invoiceDate', 'Date')}
               </th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Currency
+                {t('purchaseInvoices.currency', 'Currency')}
               </th>
               <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Total
+                {t('purchaseInvoices.total', 'Total')}
               </th>
               <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Balance
+                {t('purchaseInvoices.balanceDue', 'Balance')}
               </th>
               <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Status
+                {t('purchaseInvoices.status', 'Status')}
               </th>
               <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                Actions
+                {t('common.actions', 'Actions')}
               </th>
             </tr>
           </thead>
@@ -1265,7 +1267,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             {filteredInvoices.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
-                  No purchase invoices found. Create your first one!
+                  {t('purchaseInvoices.noItems', 'No purchase invoices found. Create your first one!')}
                 </td>
               </tr>
             ) : (
@@ -1335,10 +1337,10 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       </div>
 
       {/* Mobile App-Style Card View (< 768px) - High Density 3-Line Format */}
-      <div className="block md:hidden p-2 space-y-1.5">
+      <div className="block md:hidden p-2 space-y-1.5" data-testid="purchase-invoices-mobile-list">
         {filteredInvoices.length === 0 ? (
           <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-500 text-xs">
-            No purchase invoices found. Create your first one!
+            {t('purchaseInvoices.noItems', 'No purchase invoices found. Create your first one!')}
           </div>
         ) : (
           filteredInvoices.map((invoice) => {
@@ -1357,15 +1359,16 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       {invoice.invoice_number}
                     </span>
                     <FinanceBadge status={invoice.status === 'paid' ? 'paid' : invoice.status === 'partial' ? 'partial' : 'unpaid'}>
-                      {invoice.status}
+                      {t(`purchaseInvoices.statuses.${invoice.status}`, invoice.status)}
                     </FinanceBadge>
                   </div>
                   <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => handleOpenView(invoice)}
-                      className="p-1 text-slate-500 hover:text-slate-800 rounded active:bg-slate-100"
-                      title="View Invoice"
+                      className="p-1 text-slate-500 hover:text-slate-800 rounded active:bg-slate-100 min-h-[32px] min-w-[32px] flex items-center justify-center"
+                      title={t('common.view', 'View Invoice')}
+                      aria-label={t('common.view', 'View Invoice')}
                     >
                       <Eye className="w-3.5 h-3.5" />
                     </button>
@@ -1373,8 +1376,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                       <button
                         type="button"
                         onClick={() => handleOpenEdit(invoice)}
-                        className="p-1 text-blue-600 hover:text-blue-800 rounded active:bg-blue-50"
-                        title="Edit Invoice"
+                        className="p-1 text-blue-600 hover:text-blue-800 rounded active:bg-blue-50 min-h-[32px] min-w-[32px] flex items-center justify-center"
+                        title={t('common.edit', 'Edit Invoice')}
+                        aria-label={t('common.edit', 'Edit Invoice')}
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
@@ -1382,8 +1386,9 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     <button
                       type="button"
                       onClick={() => toggleExpandInvoice(invoice.id)}
-                      className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100"
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded active:bg-slate-100 min-h-[32px] min-w-[32px] flex items-center justify-center"
                       title={isExpanded ? 'Collapse' : 'Expand'}
+                      aria-label={isExpanded ? 'Collapse' : 'Expand'}
                     >
                       <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                     </button>
@@ -1408,7 +1413,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   <span className={`font-mono text-xs font-semibold shrink-0 text-right ${
                     invoice.balance_amount > 0 ? 'text-red-600' : 'text-emerald-600'
                   }`}>
-                    {invoice.balance_amount > 0 ? `Due: ${formatCurrency(invoice.balance_amount, invoice.currency)}` : 'Settled'}
+                    {invoice.balance_amount > 0 ? `${t('purchaseInvoices.balanceDue', 'Due')}: ${formatCurrency(invoice.balance_amount, invoice.currency)}` : t('purchaseInvoices.settled', 'Settled')}
                   </span>
                 </div>
 
@@ -1420,13 +1425,13 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   >
                     <div className="grid grid-cols-2 gap-2 text-[11px]">
                       <div>
-                        <span className="text-[10px] uppercase font-semibold text-gray-400 block">Currency / Rate</span>
+                        <span className="text-[10px] uppercase font-semibold text-gray-400 block">{t('purchaseInvoices.currency', 'Currency')} / {t('purchaseInvoices.exchangeRate', 'Rate')}</span>
                         <span className="text-gray-700 font-medium">
                           {invoice.currency} {invoice.currency === 'USD' ? `@ ${invoice.exchange_rate.toLocaleString()}` : ''}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] uppercase font-semibold text-gray-400 block">Inward Status</span>
+                        <span className="text-[10px] uppercase font-semibold text-gray-400 block">{t('purchaseInvoices.receiving', 'Inward Status')}</span>
                         <span className="text-gray-700 font-medium capitalize">
                           {invoice.receiving_approval_status || 'Draft'}
                         </span>
@@ -1441,7 +1446,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                           className="flex-1 min-h-[32px] inline-flex items-center justify-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-semibold transition"
                         >
                           <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Pay</span>
+                          <span>{t('paymentVouchers.pay', 'Pay')}</span>
                         </button>
                       )}
                       {canManage && (!invoice.receiving_approval_status || invoice.receiving_approval_status === 'draft' || invoice.receiving_approval_status === 'rejected') && (
@@ -1450,7 +1455,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                           onClick={() => void updateReceivingApproval(invoice, 'submit')}
                           className="flex-1 min-h-[32px] inline-flex items-center justify-center px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg text-xs font-semibold transition"
                         >
-                          Submit Inward
+                          {t('purchaseInvoices.submitInward', 'Submit Inward')}
                         </button>
                       )}
                       {canManage && invoice.receiving_approval_status === 'pending_approval' && (
@@ -1459,7 +1464,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                           onClick={() => void updateReceivingApproval(invoice, 'approve')}
                           className="flex-1 min-h-[32px] inline-flex items-center justify-center px-2 py-1 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-semibold transition"
                         >
-                          Approve Inward
+                          {t('purchaseInvoices.approveInward', 'Approve Inward')}
                         </button>
                       )}
                       {canManage && (
@@ -1468,10 +1473,10 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                           onClick={() => handleDelete(invoice)}
                           disabled={deleting}
                           className="min-h-[32px] px-2.5 inline-flex items-center justify-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition ml-auto"
-                          title="Delete Invoice"
+                          title={t('common.delete', 'Delete Invoice')}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>Delete</span>
+                          <span>{t('common.delete', 'Delete')}</span>
                         </button>
                       )}
                     </div>
@@ -1487,7 +1492,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
       <FinanceModal
         isOpen={modalOpen}
         onClose={() => { setModalOpen(false); setEditingInvoice(null); resetForm(); }}
-        title={editingInvoice ? `Edit Invoice: ${editingInvoice.invoice_number}` : 'New Purchase Invoice'}
+        title={editingInvoice ? `${t('purchaseInvoices.editInvoice', 'Edit Invoice')}: ${editingInvoice.invoice_number}` : t('purchaseInvoices.newInvoice', 'New Purchase Invoice')}
         size="xl"
         maxWidth="max-w-[90vw]"
         footer={
@@ -1497,7 +1502,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               onClick={() => { setModalOpen(false); setEditingInvoice(null); resetForm(); }}
               className={F_BTN_SECONDARY}
             >
-              Cancel
+              {t('common.cancel', 'Cancel')}
             </button>
             <button
               type="submit"
@@ -1505,7 +1510,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
               disabled={uploading}
               className={`${F_BTN_PRIMARY} disabled:opacity-50`}
             >
-              {uploading ? 'Uploading...' : editingInvoice ? 'Save Changes' : 'Create Invoice'}
+              {uploading ? t('purchaseInvoices.uploading', 'Uploading...') : editingInvoice ? t('purchaseInvoices.saveChanges', 'Save Changes') : t('purchaseInvoices.createInvoice', 'Create Invoice')}
             </button>
           </>
         }
@@ -1515,21 +1520,21 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           <div className="grid grid-cols-[minmax(0,7fr)_minmax(110px,3fr)] gap-2">
             <div>
               <label className="mb-0.5 flex items-center justify-between text-xs font-medium text-gray-700">
-                <span>Supplier <span className="text-red-500">*</span></span>
+                <span>{t('purchaseInvoices.supplier', 'Supplier')} <span className="text-red-500">*</span></span>
                 {selectedSupplier?.npwp && <span className="text-[9px] text-gray-500">NPWP: {selectedSupplier.npwp}</span>}
               </label>
               <SearchableSelect
                 value={formData.supplier_id}
                 onChange={handleSupplierChange}
                 options={suppliers.map(s => ({ value: s.id, label: `${s.company_name}${s.pkp_status ? ' (PKP)' : ''}` }))}
-                placeholder="Select Supplier"
+                placeholder={t('purchaseInvoices.selectSupplier', 'Select Supplier')}
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                Currency <span className="text-red-500">*</span>
+                {t('purchaseInvoices.currency', 'Currency')} <span className="text-red-500">*</span>
               </label>
-              <select name="currency" aria-label="Currency" value={formData.currency}
+              <select name="currency" aria-label={t('purchaseInvoices.currency', 'Currency')} value={formData.currency}
                 onChange={(e) => setFormData({ ...formData, currency: e.target.value, exchange_rate: e.target.value === 'IDR' ? 1 : formData.exchange_rate })}
                 className={SAP_INPUT}>
                 <option value="IDR">IDR</option>
@@ -1540,8 +1545,8 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
           {formData.supplier_id && (
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-0.5">Purchase Order (optional)</label>
-              <select name="purchase_order_optional" aria-label="Purchase Order (optional)"
+              <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('purchaseOrders.title', 'Purchase Order')} ({t('common.optional', 'optional')})</label>
+              <select name="purchase_order_optional" aria-label={t('purchaseOrders.title', 'Purchase Order')}
                 value={purchaseOrderId || ''}
                 onChange={(e) => handlePurchaseOrderChange(e.target.value)}
                 disabled={loadingSupplierPurchaseOrders}
@@ -1569,24 +1574,24 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)] gap-3 items-start">
             <div className="grid grid-cols-12 gap-2">
-              <FloatingField label="Invoice #" required span={4} filled={!!formData.invoice_number}>
+              <FloatingField label={t('purchaseInvoices.invoiceNumber', 'Invoice #')} required span={4} filled={!!formData.invoice_number}>
                 <input name="invoice_number" aria-label="INV-001" type="text" value={formData.invoice_number}
                   onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
                   required placeholder="INV-001" className={FLOAT_INPUT} />
               </FloatingField>
-              <FloatingField label="Inv Date" required span={4} filled={!!formData.invoice_date}>
-                <input name="invoice_date" aria-label="Invoice Date" type="date" value={formData.invoice_date}
+              <FloatingField label={t('purchaseInvoices.invoiceDate', 'Inv Date')} required span={4} filled={!!formData.invoice_date}>
+                <input name="invoice_date" aria-label={t('purchaseInvoices.invoiceDate', 'Invoice Date')} type="date" value={formData.invoice_date}
                   onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
                   required className={FLOAT_INPUT} />
               </FloatingField>
-              <FloatingField label="Due Date" span={4} filled={!!formData.due_date}>
-                <input name="due_date" aria-label="Due Date" type="date" value={formData.due_date}
+              <FloatingField label={t('purchaseInvoices.dueDate', 'Due Date')} span={4} filled={!!formData.due_date}>
+                <input name="due_date" aria-label={t('purchaseInvoices.dueDate', 'Due Date')} type="date" value={formData.due_date}
                   onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                   className={FLOAT_INPUT} />
               </FloatingField>
 
               {formData.currency === 'USD' && (
-                <FloatingField label="Rate (USD)" required span={4} filled={!!formData.exchange_rate}>
+                <FloatingField label={`${t('purchaseInvoices.exchangeRate', 'Rate')} (USD)`} required span={4} filled={!!formData.exchange_rate}>
                   <input name="exchange_rate" aria-label="15750" type="number" value={formData.exchange_rate}
                     onChange={(e) => setFormData({ ...formData, exchange_rate: parseFloat(e.target.value) || 1 })}
                     min="1" step="0.01" required placeholder="15750"
@@ -1605,7 +1610,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
             <div className="space-y-2">
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-0.5">Notes</label>
+                <label className="block text-xs font-medium text-gray-700 mb-0.5">{t('salesOrders.notes', 'Notes')}</label>
                 <input name="notes" aria-label="Notes" type="text" value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className={SAP_INPUT} placeholder="Supplier invoice notes..." />
@@ -1616,26 +1621,35 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
           {/* Line Items Section */}
           <div className="border-t pt-2">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wide">Line Items</h3>
+              <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wide">{t('purchaseInvoices.lineItems', 'Line Items')}</h3>
               <button
                 type="button"
                 onClick={handleAddLine}
-                className="inline-flex items-center gap-1 h-7 px-2 text-xs font-semibold bg-blue-600 text-white rounded hover:bg-blue-700"
+                className="inline-flex items-center gap-1 h-7 px-2 text-xs font-semibold bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[30px]"
               >
                 <Plus className="w-3.5 h-3.5" />
-                Add Line
+                {t('purchaseInvoices.addLine', 'Add Line')}
               </button>
             </div>
 
             <div className="max-h-[46vh] overflow-y-auto pr-1">
-              <div className="overflow-x-auto rounded border border-gray-200 mb-2">
+              {/* Desktop Inventory Table */}
+              <div className="hidden md:block overflow-x-auto rounded border border-gray-200 mb-2">
                 <table className="min-w-[980px] w-full text-xs">
                   <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr>
-                    <th className="px-2 py-1.5 text-left">Product</th><th className="px-2 py-1.5 text-left">Make</th><th className="px-2 py-1.5 text-left">Batch No.</th><th className="px-2 py-1.5 text-left">Expiry</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-left">UOM</th><th className="px-2 py-1.5 text-right">Unit Price</th><th className="px-2 py-1.5 text-right">Total</th><th className="px-2 py-1.5" />
+                    <th className="px-2 py-1.5 text-left">{t('purchaseInvoices.product', 'Product')}</th>
+                    <th className="px-2 py-1.5 text-left">{t('purchaseInvoices.make', 'Make')}</th>
+                    <th className="px-2 py-1.5 text-left">{t('purchaseInvoices.batchNumber', 'Batch No.')}</th>
+                    <th className="px-2 py-1.5 text-left">{t('purchaseInvoices.expiryDate', 'Expiry')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('purchaseInvoices.quantity', 'Qty')}</th>
+                    <th className="px-2 py-1.5 text-left">{t('purchaseInvoices.unit', 'UOM')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('purchaseInvoices.unitPrice', 'Unit Price')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('purchaseInvoices.total', 'Total')}</th>
+                    <th className="px-2 py-1.5" />
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">{lineItems.map((item, index) => item.item_type === 'inventory' && <tr key={`inventory-${index}`}>
-                    <td className="px-2 py-1"><select name="product_id" aria-label="Product Id" value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">Review Product</option>{item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && <option value={item.product_id}>{item.product_name}</option>}{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
-                    <td className="px-2 py-1"><select name="receiving_make_id" aria-label="Receiving Make Id" value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">Not specified</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
+                    <td className="px-2 py-1"><select name="product_id" aria-label="Product Id" value={item.product_id || ''} onChange={(e) => handleLineChange(index, 'product_id', e.target.value)} className="w-44 px-1.5 py-1 border border-gray-300 rounded"><option value="">{t('purchaseInvoices.reviewProduct', 'Review Product')}</option>{item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && <option value={item.product_id}>{item.product_name}</option>}{products.map(product => <option key={product.id} value={product.id}>{product.product_name}</option>)}</select>{!item.product_id && item.description && <div className="mt-0.5 max-w-44 truncate text-[10px] text-gray-400" title={item.description}>Supplier description: {item.description}</div>}</td>
+                    <td className="px-2 py-1"><select name="receiving_make_id" aria-label="Receiving Make Id" value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-36 px-1.5 py-1 border border-gray-300 rounded"><option value="">{t('purchaseInvoices.notSpecified', 'Not specified')}</option>{productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed'}{source.grade ? ` (${source.grade})` : ''}</option>)}</select>{(() => { const poItem = selectedPurchaseOrder?.purchase_order_items?.find(candidate => candidate.id === item.purchase_order_item_id); if (!poItem) return null; const matches = poItem.make_id === (item.receiving_make_id || null); return <div className={`mt-0.5 text-[9px] font-medium ${matches ? 'text-green-700' : 'text-amber-700'}`}>PO Make: {!poItem.make_id ? 'Not recorded' : matches ? 'Matched' : 'Review'}</div>; })()}</td>
                     <td className="px-2 py-1">
                       <input
                         name="receiving_batch_number"
@@ -1664,54 +1678,56 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   </tr>)}</tbody>
                 </table>
               </div>
+              {/* Responsive Cards (Mobile: all lines; Desktop: non-inventory lines) */}
               {lineItems.map((item, index) => (
-                <div key={index} className={`${item.item_type === 'inventory' ? 'hidden' : 'border border-gray-200 rounded p-2 space-y-1.5'}`}>
+                <div key={index} className={`${item.item_type === 'inventory' ? 'block md:hidden border border-gray-200 rounded p-2.5 space-y-2 bg-slate-50/50 mb-2' : 'border border-gray-200 rounded p-2.5 space-y-2 mb-2'}`}>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Line {index + 1}</span>
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">{t('purchaseInvoices.lineItems', 'Line')} {index + 1}</span>
                     {lineItems.length > 1 && (
                       <button
                         type="button"
                         onClick={() => handleRemoveLine(index)}
-                        className="p-0.5 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
-                        title="Remove line"
+                        className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded min-h-[32px] min-w-[32px] flex items-center justify-center"
+                        title={t('common.delete', 'Remove line')}
+                        aria-label={t('common.delete', 'Remove line')}
                       >
-                        <X className="w-3.5 h-3.5" />
+                        <X className="w-4 h-4" />
                       </button>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
-                        Type *
+                        {t('purchaseInvoices.itemType', 'Type')} *
                       </label>
-                      <select name="type" aria-label="Type"
+                      <select name="type" aria-label={t('purchaseInvoices.itemType', 'Type')}
                         value={item.item_type}
                         onChange={(e) => handleLineChange(index, 'item_type', e.target.value)}
-                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
                       >
-                        <option value="inventory">Inventory (Stock)</option>
-                        <option value="fixed_asset">Fixed Asset</option>
-                        <option value="expense">Expense</option>
-                        <option value="freight">Freight</option>
-                        <option value="duty">Import Duty</option>
-                        <option value="insurance">Insurance</option>
-                        <option value="clearing">Clearing & Forwarding</option>
-                        <option value="other">Other Cost</option>
+                        <option value="inventory">{t('purchaseInvoices.types.inventory', 'Inventory (Stock)')}</option>
+                        <option value="fixed_asset">{t('purchaseInvoices.types.fixed_asset', 'Fixed Asset')}</option>
+                        <option value="expense">{t('purchaseInvoices.types.expense', 'Expense')}</option>
+                        <option value="freight">{t('purchaseInvoices.types.freight', 'Freight')}</option>
+                        <option value="duty">{t('purchaseInvoices.types.duty', 'Customs Duty')}</option>
+                        <option value="insurance">{t('purchaseInvoices.types.insurance', 'Insurance')}</option>
+                        <option value="clearing">{t('purchaseInvoices.types.clearing', 'Clearing & Forwarding')}</option>
+                        <option value="other">{t('purchaseInvoices.types.other', 'Other Cost')}</option>
                       </select>
                     </div>
 
                     {item.item_type === 'inventory' ? (
-                      <div className="col-span-2">
+                      <div className="sm:col-span-2">
                         <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
-                          Product *
+                          {t('purchaseInvoices.product', 'Product')} *
                         </label>
-                        <select name="product" aria-label="Product"
+                        <select name="product" aria-label={t('purchaseInvoices.product', 'Product')}
                           value={item.product_id || ''}
                           onChange={(e) => handleLineChange(index, 'product_id', e.target.value)}
-                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
                         >
-                          <option value="">Select Product</option>
+                          <option value="">{t('purchaseInvoices.reviewProduct', 'Select Product')}</option>
                           {item.product_id && item.product_name && !products.some(product => product.id === item.product_id) && (
                             <option value={item.product_id}>{item.product_name}</option>
                           )}
@@ -1795,21 +1811,21 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   {item.item_type === 'inventory' && (
                     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                       <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Make</label>
-                        <select name="make" aria-label="Make" value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
-                          <option value="">Not specified</option>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.make', 'Make')}</label>
+                        <select name="make" aria-label={t('purchaseInvoices.make', 'Make')} value={item.receiving_make_id || ''} onChange={(e) => handleLineChange(index, 'receiving_make_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-white">
+                          <option value="">{t('purchaseInvoices.notSpecified', 'Not specified')}</option>
                           {productSources.filter(source => source.product_id === item.product_id).map(source => <option key={source.id} value={source.id}>{source.supplier_name || 'Unnamed make'}{source.grade ? ` (${source.grade})` : ''}</option>)}
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Batch Number</label>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.batchNumber', 'Batch Number')}</label>
                         <input
                           name="batch_number"
-                          aria-label="Batch Number"
+                          aria-label={t('purchaseInvoices.batchNumber', 'Batch Number')}
                           value={item.receiving_batch_number || ''}
                           onChange={(e) => handleLineChange(index, 'receiving_batch_number', e.target.value || null)}
-                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
-                          placeholder="If provided"
+                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-white"
+                          placeholder={t('common.optional', 'If provided')}
                           list={`mobile-batch-options-${index}`}
                           autoComplete="off"
                         />
@@ -1822,13 +1838,13 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                         </datalist>
                       </div>
                       <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Expiry</label>
-                        <input name="expiry" aria-label="Expiry" type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded" />
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.expiryDate', 'Expiry')}</label>
+                        <input name="expiry" aria-label={t('purchaseInvoices.expiryDate', 'Expiry')} type="date" value={item.receiving_expiry_date || ''} onChange={(e) => handleLineChange(index, 'receiving_expiry_date', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-white" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Import Container</label>
-                        <select name="import_container" aria-label="Import Container" value={item.receiving_import_container_id || ''} onChange={(e) => handleLineChange(index, 'receiving_import_container_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded">
-                          <option value="">None / local</option>
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">{t('common.importContainer', 'Import Container')}</label>
+                        <select name="import_container" aria-label={t('common.importContainer', 'Import Container')} value={item.receiving_import_container_id || ''} onChange={(e) => handleLineChange(index, 'receiving_import_container_id', e.target.value || null)} className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-white">
+                          <option value="">{t('common.noneOrLocal', 'None / local')}</option>
                           {importContainers.map(container => <option key={container.id} value={container.id}>{container.container_ref}</option>)}
                         </select>
                       </div>
@@ -1838,46 +1854,46 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                     <div>
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
-                        Qty *
+                        {t('purchaseInvoices.quantity', 'Qty')} *
                       </label>
-                      <input name="qty" aria-label="Qty"
+                      <input name="qty" aria-label={t('purchaseInvoices.quantity', 'Qty')}
                         type="number"
                         value={item.quantity}
                         onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)}
                         min="0"
                         step="0.01"
-                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
-                        Unit
+                        {t('purchaseInvoices.unit', 'Unit')}
                       </label>
-                      <input name="unit" aria-label="Unit"
+                      <input name="unit" aria-label={t('purchaseInvoices.unit', 'Unit')}
                         type="text"
                         value={item.unit}
                         onChange={(e) => handleLineChange(index, 'unit', e.target.value)}
                         placeholder="pcs"
-                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
-                        Rate *
+                        {t('purchaseInvoices.unitPrice', 'Rate')} *
                       </label>
                       <MoneyInput
                         decimal
                         value={item.unit_price}
                         onChange={(n) => handleLineChange(index, 'unit_price', n)}
                         placeholder="0.00"
-                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">
-                        Amount
+                        {t('purchaseInvoices.total', 'Amount')}
                       </label>
-                      <input name="amount" aria-label="Amount"
+                      <input name="amount" aria-label={t('purchaseInvoices.total', 'Amount')}
                         type="text"
                         value={item.line_total.toLocaleString()}
                         readOnly
@@ -1892,16 +1908,16 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             {/* Invoice-level Tax Footer */}
             <div className="mt-3 border-t pt-2 ml-auto w-full max-w-sm space-y-1">
               <div className="flex justify-between text-xs">
-                <span className="text-gray-600">Subtotal:</span>
+                <span className="text-gray-600">{t('purchaseInvoices.subtotal', 'Subtotal')}:</span>
                 <span className="font-medium">{formatCurrency(totals.subtotal, formData.currency)}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="text-gray-600">PPN:</span>
+                  <span className="text-gray-600">{t('purchaseInvoices.taxAmount', 'PPN')}:</span>
                   <select name="ppn_rate" aria-label="Ppn Rate"
                     value={ppnRate}
                     onChange={(e) => setPpnRate(Number(e.target.value))}
-                    className="text-xs border border-gray-300 rounded px-1.5 py-0.5 focus:ring-1 focus:ring-blue-500"
+                    className="text-xs border border-gray-300 rounded px-1.5 py-0.5 focus:ring-1 focus:ring-blue-500 bg-white"
                   >
                     <option value={0}>None (0%)</option>
                     <option value={11}>11%</option>
@@ -1910,16 +1926,16 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                 <span className="font-medium">{formatCurrency(totals.ppnAmount, formData.currency)}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">Bea Meterai:</span>
+                <span className="text-gray-600">{t('purchaseInvoices.stampDuty', 'Bea Meterai')}:</span>
                 <MoneyInput
                   value={stampDutyAmount}
                   onChange={(n) => setStampDutyAmount(n)}
                   placeholder="0"
-                  className="w-28 text-right px-2 py-0.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                  className="w-28 text-right px-2 py-0.5 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
                 />
               </div>
               <div className="flex justify-between text-sm font-bold border-t pt-1.5">
-                <span>Total:</span>
+                <span>{t('purchaseInvoices.total', 'Total')}:</span>
                 <span className="text-blue-600">{formatCurrency(totals.total, formData.currency)}</span>
               </div>
               {formData.currency === 'USD' && formData.exchange_rate > 1 && (
@@ -2001,32 +2017,32 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
             {/* Header Info */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 rounded-lg p-4">
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Supplier</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.supplier', 'Supplier')}</p>
                 <p className="font-semibold text-gray-900">{selectedInvoice.suppliers?.company_name || '—'}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Invoice Date</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.invoiceDate', 'Invoice Date')}</p>
                 <p className="font-semibold text-gray-900">{formatDate(selectedInvoice.invoice_date)}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Due Date</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.dueDate', 'Due Date')}</p>
                 <p className="font-semibold text-gray-900">{selectedInvoice.due_date ? formatDate(selectedInvoice.due_date) : '—'}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Status</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.status', 'Status')}</p>
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                   selectedInvoice.status === 'paid' ? 'bg-green-100 text-green-800'
                   : selectedInvoice.status === 'partial' ? 'bg-yellow-100 text-yellow-800'
                   : 'bg-red-100 text-red-800'
-                }`}>{selectedInvoice.status}</span>
-                <p className="mt-1 text-[10px] text-blue-700">Receiving: {selectedInvoice.receiving_approval_status || 'draft'}</p>
+                }`}>{t(`purchaseInvoices.statuses.${selectedInvoice.status}`, selectedInvoice.status)}</span>
+                <p className="mt-1 text-[10px] text-blue-700">{t('purchaseInvoices.receiving', 'Receiving')}: {selectedInvoice.receiving_approval_status || 'draft'}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Currency</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.currency', 'Currency')}</p>
                 <p className="font-semibold text-gray-900">{selectedInvoice.currency}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Subtotal</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.subtotal', 'Subtotal')}</p>
                 <p className="font-semibold text-gray-900">{formatCurrency(selectedInvoice.subtotal, selectedInvoice.currency)}</p>
                 {Number(selectedInvoice.tax_amount) > 0 && (
                   <p className="text-xs text-gray-500 mt-0.5">PPN: {formatCurrency(selectedInvoice.tax_amount, selectedInvoice.currency)}</p>
@@ -2036,11 +2052,11 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                 )}
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Paid Amount</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.paidAmount', 'Paid Amount')}</p>
                 <p className="font-semibold text-green-700">{formatCurrency(selectedInvoice.paid_amount, selectedInvoice.currency)}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Balance Due</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">{t('purchaseInvoices.balanceDue', 'Balance Due')}</p>
                 <p className="font-bold text-lg text-blue-700">{formatCurrency(selectedInvoice.balance_amount, selectedInvoice.currency)}</p>
                 {selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' && Number(selectedInvoice.balance_amount) > 0 && Number(selectedInvoice.balance_amount) <= (Number(roundingTolerance) > 0 ? Number(roundingTolerance) : 100) && hasManageAccess && (
                   <button
@@ -2051,7 +2067,7 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
                     title={`Post round-off adjustment of ${formatCurrency(selectedInvoice.balance_amount, selectedInvoice.currency)} to close this invoice`}
                   >
                     <CheckCircle className="w-3 h-3" />
-                    {settlingAdjustment ? 'Settling...' : 'Settle Round-Off'}
+                    {settlingAdjustment ? 'Settling...' : t('purchaseInvoices.settleRoundOff', 'Settle Round-Off')}
                   </button>
                 )}
               </div>
@@ -2079,64 +2095,121 @@ export function PurchaseInvoiceManager({ canManage, onPayInvoice, initialViewInv
 
             {/* Line Items */}
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">Line Items</h3>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('purchaseInvoices.lineItems', 'Line Items')}</h3>
               {viewLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : viewLineItems.length === 0 ? (
-                <p className="text-sm text-gray-400 italic py-4 text-center">No line items found</p>
+                <p className="text-sm text-gray-400 italic py-4 text-center">{t('purchaseInvoices.noItems', 'No line items found')}</p>
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-200 text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Make</th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Qty</th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Received</th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Remaining</th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Unit</th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Rate</th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {viewLineItems.map((item, idx) => (
-                        <tr key={item.id || idx} className="hover:bg-gray-50">
-                          <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
-                          <td className="px-3 py-2 font-medium text-gray-900">{item.product_name || <span className="text-gray-400 italic">—</span>}</td>
-                          <td className="px-3 py-2 text-gray-600">{item.receiving_make?.supplier_name || <span className="text-gray-400 italic">Not recorded</span>}{item.receiving_make?.grade ? ` (${item.receiving_make.grade})` : ''}</td>
-                          <td className="px-3 py-2 text-gray-600 max-w-xs">
-                            <p className="truncate" title={item.description}>{item.description || '—'}</p>
-                          </td>
-                          <td className="px-3 py-2 text-right text-gray-900">{Number(item.quantity).toLocaleString()}</td>
-                          <td className="px-3 py-2 text-right text-green-700">{receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0).toLocaleString()}</td>
-                          <td className="px-3 py-2 text-right text-orange-700">{Math.max(0, Number(item.quantity) - receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0)).toLocaleString()}</td>
-                          <td className="px-3 py-2 text-gray-500">{item.unit}</td>
-                          <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(item.unit_price, selectedInvoice.currency)}</td>
-                          <td className="px-3 py-2 text-right font-medium text-gray-900">{formatCurrency(item.line_total, selectedInvoice.currency)}</td>
-                          <td className="px-3 py-2 text-right">
-                            {item.item_type === 'inventory' && (!selectedInvoice.receiving_approval_status || selectedInvoice.receiving_approval_status === 'approved') && Number(item.quantity) > receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0) && canManage && (
-                              <button type="button" onClick={() => void openReceiving(item)} className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"><PackageCheck className="w-3 h-3" />Receive</button>
-                            )}
+                <>
+                  <div className="hidden md:block overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.product', 'Product')}</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.make', 'Make')}</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('common.description', 'Description')}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.quantity', 'Qty')}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.received', 'Received')}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.remaining', 'Remaining')}</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.unit', 'Unit')}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.unitPrice', 'Rate')}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('purchaseInvoices.total', 'Amount')}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('common.actions', 'Action')}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {viewLineItems.map((item, idx) => (
+                          <tr key={item.id || idx} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
+                            <td className="px-3 py-2 font-medium text-gray-900">{item.product_name || <span className="text-gray-400 italic">—</span>}</td>
+                            <td className="px-3 py-2 text-gray-600">{item.receiving_make?.supplier_name || <span className="text-gray-400 italic">Not recorded</span>}{item.receiving_make?.grade ? ` (${item.receiving_make.grade})` : ''}</td>
+                            <td className="px-3 py-2 text-gray-600 max-w-xs">
+                              <p className="truncate" title={item.description}>{item.description || '—'}</p>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-900">{Number(item.quantity).toLocaleString()}</td>
+                            <td className="px-3 py-2 text-right text-green-700">{receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0).toLocaleString()}</td>
+                            <td className="px-3 py-2 text-right text-orange-700">{Math.max(0, Number(item.quantity) - receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0)).toLocaleString()}</td>
+                            <td className="px-3 py-2 text-gray-500">{item.unit}</td>
+                            <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(item.unit_price, selectedInvoice.currency)}</td>
+                            <td className="px-3 py-2 text-right font-medium text-gray-900">{formatCurrency(item.line_total, selectedInvoice.currency)}</td>
+                            <td className="px-3 py-2 text-right">
+                              {item.item_type === 'inventory' && (!selectedInvoice.receiving_approval_status || selectedInvoice.receiving_approval_status === 'approved') && Number(item.quantity) > receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0) && canManage && (
+                                <button type="button" onClick={() => void openReceiving(item)} className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 min-h-[30px]"><PackageCheck className="w-3.5 h-3.5" />{t('purchaseInvoices.receive', 'Receive')}</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50">
+                        <tr>
+                          <td colSpan={10} className="px-3 py-2 text-right text-sm font-semibold text-gray-700">{t('purchaseInvoices.total', 'Total')}</td>
+                          <td className="px-3 py-2 text-right text-sm font-bold text-gray-900">
+                            {formatCurrency(selectedInvoice.total_amount, selectedInvoice.currency)}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-gray-50">
-                      <tr>
-                        <td colSpan={10} className="px-3 py-2 text-right text-sm font-semibold text-gray-700">Total</td>
-                        <td className="px-3 py-2 text-right text-sm font-bold text-gray-900">
-                          {formatCurrency(selectedInvoice.total_amount, selectedInvoice.currency)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {/* Mobile Line Items Card View (< 768px) */}
+                  <div className="block md:hidden space-y-2">
+                    {viewLineItems.map((item, idx) => {
+                      const received = receivingAllocations.filter(a => a.purchase_invoice_item_id === item.id).reduce((s, a) => s + Number(a.received_quantity), 0);
+                      const remaining = Math.max(0, Number(item.quantity) - received);
+                      return (
+                        <div key={item.id || idx} className="border border-slate-200 rounded-lg p-2.5 bg-white space-y-1.5 shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-gray-900">
+                              #{idx + 1} {item.product_name || '—'}
+                            </span>
+                            <span className="text-xs font-mono font-bold text-gray-900">
+                              {formatCurrency(item.line_total, selectedInvoice.currency)}
+                            </span>
+                          </div>
+                          {item.receiving_make?.supplier_name && (
+                            <p className="text-[11px] text-gray-500">
+                              {t('purchaseInvoices.make', 'Make')}: {item.receiving_make.supplier_name}{item.receiving_make.grade ? ` (${item.receiving_make.grade})` : ''}
+                            </p>
+                          )}
+                          {item.description && (
+                            <p className="text-xs text-gray-600 italic">{item.description}</p>
+                          )}
+                          <div className="grid grid-cols-3 gap-1 pt-1 border-t border-slate-100 text-[11px]">
+                            <div>
+                              <span className="text-gray-400 block">{t('purchaseInvoices.quantity', 'Qty')}</span>
+                              <span className="font-medium text-gray-800">{Number(item.quantity).toLocaleString()} {item.unit}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-400 block">{t('purchaseInvoices.received', 'Received')}</span>
+                              <span className="font-medium text-green-700">{received.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-400 block">{t('purchaseInvoices.remaining', 'Remaining')}</span>
+                              <span className="font-medium text-orange-700">{remaining.toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-1 text-[11px] text-gray-500">
+                            <span>{t('purchaseInvoices.unitPrice', 'Rate')}: {formatCurrency(item.unit_price, selectedInvoice.currency)}</span>
+                            {item.item_type === 'inventory' && (!selectedInvoice.receiving_approval_status || selectedInvoice.receiving_approval_status === 'approved') && Number(item.quantity) > received && canManage && (
+                              <button
+                                type="button"
+                                onClick={() => void openReceiving(item)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 min-h-[30px]"
+                              >
+                                <PackageCheck className="w-3.5 h-3.5" />
+                                <span>{t('purchaseInvoices.receive', 'Receive')}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
 

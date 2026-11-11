@@ -10,6 +10,7 @@ import { PeriodClosePanel } from './tax/PeriodClosePanel';
 import { TaxReportsPanel } from './tax/TaxReportsPanel';
 import { FinancePage } from './FinancePage';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 type TaxSubTab =
   | 'calendar' | 'periods' | 'pph' | 'payments' | 'faktur' | 'nota-retur' | 'close' | 'reports';
@@ -33,12 +34,24 @@ interface Props {
 
 export function TaxComplianceCentre({ onOpenExpense, onOpenPayment, onOpenJournal }: Props) {
   const { accessibleModules } = useAuth();
+  const { language } = useLanguage();
   const hasFullFinance = accessibleModules.has('finance');
   const visibleTabs = hasFullFinance ? TABS : TABS.filter(tab => tab.id === 'faktur');
   const [active, setActive] = useState<TaxSubTab>(() => hasFullFinance ? 'calendar' : 'faktur');
 
+  const getTabLabel = (id: TaxSubTab, defaultLabel: string) => {
+    if (language !== 'id') return defaultLabel;
+    switch (id) {
+      case 'calendar': return 'Kalender';
+      case 'payments': return 'Pembayaran Pajak';
+      case 'close': return 'Tutup Periode';
+      case 'reports': return 'Laporan Pajak';
+      default: return defaultLabel;
+    }
+  };
+
   return (
-    <FinancePage title="TAX COMPLIANCE">
+    <FinancePage title={language === 'id' ? 'KEPATUHAN PAJAK' : 'TAX COMPLIANCE'}>
       <div className="space-y-2">
       <div className="border-b border-gray-200 bg-white px-1 py-1.5">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -53,7 +66,7 @@ export function TaxComplianceCentre({ onOpenExpense, onOpenPayment, onOpenJourna
               }`}
             >
               {t.icon}
-              {t.label}
+              {getTabLabel(t.id, t.label)}
             </button>
           ))}
         </div>

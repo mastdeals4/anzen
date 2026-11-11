@@ -3,6 +3,7 @@ import { Layout } from '../components/Layout';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
+import { useLanguage } from '../contexts/LanguageContext';
 import {
   Clock, AlertCircle, FileText, CheckCircle2, Mail, RefreshCw, Inbox, Send, DollarSign,
 } from 'lucide-react';
@@ -71,6 +72,7 @@ function Card({ icon: Icon, label, value, color, description, onClick }: CardPro
 export function PricingDashboard() {
   const { profile } = useAuth();
   const { setCurrentPage } = useNavigation();
+  const { t } = useLanguage();
   const role = profile?.role || 'sales';
   const showKunal = role === 'admin' || role === 'manager';
   const showAnvi = role === 'admin' || role === 'manager' || role === 'sales';
@@ -179,35 +181,35 @@ export function PricingDashboard() {
       <div className="p-4 md:p-6">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">Pricing Overview</h1>
-            <p className="text-xs text-gray-500 mt-0.5">Pending work across CRM inquiries and the pricing workflow.</p>
+            <h1 className="text-lg font-semibold text-gray-900">{t('pricing.overviewTitle')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5">{t('pricing.overviewSubtitle')}</p>
           </div>
           <button onClick={load} disabled={loading}
             className="flex items-center gap-1.5 px-2.5 py-1 text-xs border border-gray-200 rounded hover:bg-gray-50 disabled:opacity-50">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> {t('common.refresh')}
           </button>
         </div>
 
         {/* Sourcing / sales-head section */}
         {showAnvi && (
           <div className="mb-4">
-            <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold mb-1.5">Sourcing</p>
+            <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold mb-1.5">{t('pricing.sourcing')}</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-              <Card icon={Mail} label="New (not sent)" value={crm.newNotSent}
+              <Card icon={Mail} label={t('pricing.newNotSent')} value={crm.newNotSent}
                 color="bg-blue-100 text-blue-700"
                 description="Inquiries not yet sent to India/China"
                 onClick={canRouteToInternal ? () => setCurrentPage('sourcing-outbox') : undefined} />
-              <Card icon={Clock} label="Reminder due" value={crm.reminderDue}
+              <Card icon={Clock} label={t('pricing.reminderDue')} value={crm.reminderDue}
                 color="bg-amber-100 text-amber-700"
                 description={`Stale >${REMINDER_AGE_DAYS}d, no reply yet`}
                 onClick={canRouteToInternal ? () => setCurrentPage('sourcing-outbox') : undefined} />
-              <Card icon={Inbox} label="Waiting reply" value={crm.waitingReply}
+              <Card icon={Inbox} label={t('pricing.waitingReply')} value={crm.waitingReply}
                 color="bg-purple-100 text-purple-700"
                 description="Sent / waiting for source price" />
-              <Card icon={FileText} label="Partial received" value={crm.partialReceived}
+              <Card icon={FileText} label={t('pricing.partialReceived')} value={crm.partialReceived}
                 color="bg-indigo-100 text-indigo-700"
                 description="Some products replied, others pending" />
-              <Card icon={FileText} label="Docs pending" value={crm.docsPending}
+              <Card icon={FileText} label={t('pricing.docsPending')} value={crm.docsPending}
                 color="bg-orange-100 text-orange-700"
                 description="Waiting for COA / MSDS" />
               <Card icon={CheckCircle2} label="Kunal price pending" value={crm.needKunal}

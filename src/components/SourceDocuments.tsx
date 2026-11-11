@@ -1,10 +1,12 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { FileText, Upload, X, ExternalLink, Trash2, Download } from 'lucide-react';
+import { FileText, Upload, X, ExternalLink, Trash2, Download, FolderArchive } from 'lucide-react';
 import { Modal } from './Modal';
 import { buildNormalizedBaseKey, buildUniqueDocumentNames } from '../utils/documentNaming';
 import { resolveStorageUrlCached } from '../utils/signedUrlCache';
 import { uploadOptimizedFile } from '../services/storage/uploadOptimizationService';
+import { AttachFromDocumentBankModal } from './documents/AttachFromDocumentBankModal';
+import { linkUniversalDocument } from '../services/documents/universalDocumentBankService';
 
 interface SourceDocument {
   id: string;
@@ -39,8 +41,41 @@ export function SourceDocuments({
   const [uploading, setUploading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<Array<{ file: File; doc_type: string }>>([]);
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
+  const [bankModalOpen, setBankModalOpen] = useState(false);
   const uploadAreaRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAttachFromBank = async (doc: any) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      await linkUniversalDocument({
+        documentId: doc.id,
+        entityType: 'product_source',
+        entityId: sourceId,
+        productSourceId: sourceId,
+      });
+
+      const { error } = await supabase.from('product_source_documents').insert([{
+        source_id: sourceId,
+        doc_type: doc.document_type || 'Other',
+        file_url: doc.file_url || (doc.storage_path ? `https://dkrtsqienlhpouohmfki.supabase.co/storage/v1/object/public/${doc.storage_bucket}/${doc.storage_path}` : ''),
+        original_filename: doc.original_file_name || doc.title,
+        display_name: doc.title,
+        storage_path: doc.storage_path,
+        file_size: doc.file_size,
+        notes: '[Attached from Bank]',
+        uploaded_by: user?.id,
+      }]);
+
+      if (error) console.warn('Could not insert local product_source_documents record:', error);
+
+      loadDocuments();
+      setBankModalOpen(false);
+    } catch (err: any) {
+      console.error('Failed to attach from bank:', err);
+    }
+  };
 
   useEffect(() => {
     if (isOpen && sourceId) {
@@ -340,7 +375,17 @@ export function SourceDocuments({
 
         {/* Existing Documents */}
         <div className="border-t pt-4">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3">Uploaded Documents</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-900">Uploaded Documents</h3>
+            <button
+              type="button"
+              onClick={() => setBankModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <FolderArchive className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Attach from Document Bank</span>
+            </button>
+          </div>
           {loading ? (
             <div className="text-center py-8 text-gray-500">Loading documents...</div>
           ) : documents.length === 0 ? (
@@ -405,6 +450,16 @@ export function SourceDocuments({
           )}
         </div>
       </div>
+
+      {bankModalOpen && (
+        <AttachFromDocumentBankModal
+          isOpen={bankModalOpen}
+          onClose={() => setBankModalOpen(false)}
+          onDocumentSelected={handleAttachFromBank}
+          initialProductSourceId={sourceId}
+          title={`Attach Document from Bank for ${sourceName} (${productName})`}
+        />
+      )}
     </Modal>
   );
 }

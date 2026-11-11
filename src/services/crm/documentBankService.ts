@@ -2,27 +2,39 @@
  * documentBankService.ts
  *
  * Safe operations and storage calculation service for ANZEN CRM Document Bank.
- * Handles deletion planning, protection guards, shared storage path detection,
- * and coordinated storage object + metadata record removal.
+ * Handles 4-state document lifecycle (TEMP -> REVIEWED -> BANKED -> ARCHIVED),
+ * Product + Make library auto-surfacing, SHA-256 deduplication and aliasing,
+ * deletion planning, protection guards, and coordinated storage management.
  */
 
 import { supabase } from '../../lib/supabase.ts';
 import { invalidateSignedUrl } from '../../utils/signedUrlCache.ts';
+
+export type DocumentLifecycleStatus = 'TEMP' | 'REVIEWED' | 'BANKED' | 'ARCHIVED';
 
 export interface CrmProductDocumentRecord {
   id: string;
   inquiry_id: string | null;
   product_name: string | null;
   make: string | null;
+  product_id?: string | null;
+  product_source_id?: string | null;
   document_type: string;
   specification: string | null;
   is_permanent: boolean;
+  lifecycle_status: DocumentLifecycleStatus;
+  batch_number?: string | null;
+  batch_id?: string | null;
+  sha256?: string | null;
+  valid_until?: string | null;
   pricing_option_id: string | null;
   original_file_name: string | null;
   display_file_name: string | null;
   storage_bucket?: string | null;
   storage_path: string;
   uploaded_by: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   source_gmail_message_id: string | null;
   source_email_subject?: string | null;
   file_size?: number | null;
@@ -30,17 +42,23 @@ export interface CrmProductDocumentRecord {
   created_at: string;
   enquiry_request_id?: string | null;
   crm_inquiries?: { inquiry_number: string }[] | null;
+  products?: { id: string; product_name: string; product_code?: string } | null;
+  product_sources?: { id: string; supplier_name: string; grade?: string; country?: string } | null;
 }
 
 export interface DocumentBankStats {
   total_documents: number;
   total_document_bytes: number;
+  temp_count: number;
+  reviewed_count: number;
+  banked_count: number;
+  archived_count: number;
   bucket_total_objects: number;
   bucket_total_bytes: number;
   unlinked_objects_count: number;
   unlinked_objects_bytes: number;
-  junk_other_count: number;
-  junk_other_bytes: number;
+  junk_other_count?: number;
+  junk_other_bytes?: number;
   permanent_count: number;
   linked_inquiry_count: number;
   linked_pricing_option_count: number;
@@ -96,7 +114,7 @@ export function formatBytes(bytes: number | null | undefined): string {
 
 /**
  * Evaluates selected documents and builds a safe deletion plan,
- * guaranteeing all permanent and referenced documents are protected.
+ * guaranteeing all permanent/banked and referenced documents are protected.
  */
 export function buildDeletionPlan(
   selectedDocs: CrmProductDocumentRecord[],
@@ -131,16 +149,16 @@ export function buildDeletionPlan(
   const accountedStoragePaths = new Set<string>();
 
   for (const doc of selectedDocs) {
-    // 1. Permanent status check
-    if (doc.is_permanent) {
+    // 1. Permanent / Banked status check
+    if (doc.is_permanent || doc.lifecycle_status === 'BANKED') {
       protectedItems.push({
         doc,
-        reason: 'Marked as Permanent / Banked document.',
+        reason: 'Protected: Document is Banked in the permanent library.',
       });
       continue;
     }
 
-    // 2. Inquiry reference check
+    // 2. Inquiry reference check (Transaction protection)
     if (doc.inquiry_id) {
       const inqNum = doc.crm_inquiries?.[0]?.inquiry_number || doc.inquiry_id;
       protectedItems.push({
@@ -289,6 +307,130 @@ export async function executeSafeDeletion(
   };
 }
 
+/**
+ * Transitions a document through the lifecycle states:
+ * TEMP -> REVIEWED -> BANKED -> ARCHIVED.
+ * Verifies Product + Make, Batch (for COA), and marks permanent status appropriately.
+ */
+export async function updateDocumentLifecycle(
+  id: string,
+  newStatus: DocumentLifecycleStatus,
+  updates?: {
+    product_id?: string | null;
+    product_source_id?: string | null;
+    product_name?: string | null;
+    make?: string | null;
+    document_type?: string;
+    specification?: string | null;
+    batch_number?: string | null;
+    valid_until?: string | null;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const payload: Record<string, any> = {
+      lifecycle_status: newStatus,
+      is_permanent: newStatus === 'BANKED',
+    };
+
+    if (newStatus === 'REVIEWED' || newStatus === 'BANKED') {
+      payload.reviewed_by = user?.id || null;
+      payload.reviewed_at = new Date().toISOString();
+    }
+
+    if (updates) {
+      if (updates.product_id !== undefined) payload.product_id = updates.product_id;
+      if (updates.product_source_id !== undefined) payload.product_source_id = updates.product_source_id;
+      if (updates.product_name !== undefined) payload.product_name = updates.product_name;
+      if (updates.make !== undefined) payload.make = updates.make;
+      if (updates.document_type !== undefined) payload.document_type = updates.document_type;
+      if (updates.specification !== undefined) payload.specification = updates.specification;
+      if (updates.batch_number !== undefined) payload.batch_number = updates.batch_number;
+      if (updates.valid_until !== undefined) payload.valid_until = updates.valid_until;
+    }
+
+    const { error } = await supabase
+      .from('crm_product_documents')
+      .update(payload)
+      .eq('id', id);
+
+    if (error) throw error;
+    return { success: true };
+  } catch (err: any) {
+    console.error(`Failed to update lifecycle for ${id}:`, err);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+/**
+ * Automatically discovers and surfaces BANKED canonical documents for a given Product and Make.
+ * Used across CRM inquiries, sourcing pricing requests, and customer quotation drawers.
+ */
+export async function findBankedDocumentsForProductMake(params: {
+  productId?: string | null;
+  productName?: string | null;
+  productSourceId?: string | null;
+  make?: string | null;
+  documentTypes?: string[];
+}): Promise<CrmProductDocumentRecord[]> {
+  try {
+    let query = supabase
+      .from('crm_product_documents')
+      .select('*, products(id, product_name, product_code), product_sources(id, supplier_name, grade, country)')
+      .eq('lifecycle_status', 'BANKED');
+
+    if (params.documentTypes && params.documentTypes.length > 0) {
+      query = query.in('document_type', params.documentTypes);
+    }
+
+    // Match on product_id or product_name
+    if (params.productId) {
+      query = query.eq('product_id', params.productId);
+    } else if (params.productName) {
+      query = query.ilike('product_name', `%${params.productName.trim()}%`);
+    }
+
+    // Match on product_source_id or make
+    if (params.productSourceId) {
+      query = query.eq('product_source_id', params.productSourceId);
+    } else if (params.make) {
+      query = query.ilike('make', `%${params.make.trim()}%`);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []) as CrmProductDocumentRecord[];
+  } catch (err) {
+    console.error('Error auto-surfacing banked documents:', err);
+    return [];
+  }
+}
+
+/**
+ * Checks for existing document by SHA-256 for safe storage deduplication and aliasing.
+ */
+export async function findExistingDocumentBySha256(
+  sha256: string
+): Promise<CrmProductDocumentRecord | null> {
+  if (!sha256) return null;
+  try {
+    const { data, error } = await supabase
+      .from('crm_product_documents')
+      .select('*')
+      .eq('sha256', sha256)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return null;
+    return data as CrmProductDocumentRecord | null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchDocumentBankStats(): Promise<DocumentBankStats | null> {
   try {
     const { data, error } = await supabase.rpc('get_crm_document_bank_stats');
@@ -316,4 +458,3 @@ export async function fetchUnlinkedStorageObjects(): Promise<UnlinkedStorageObje
     return [];
   }
 }
-

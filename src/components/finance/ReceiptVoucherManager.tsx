@@ -1659,10 +1659,10 @@ export function ReceiptVoucherManager({
       </div>
 
       {/* Mobile Card View (< 768px) - High Density 3-Line Format */}
-      <div className="block md:hidden p-2 space-y-1.5">
+      <div className="block md:hidden p-2 space-y-1.5" data-testid="receipt-vouchers-mobile-list">
         {filteredVouchers.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-xs text-gray-500">
-            No receipt vouchers found
+            {t('receiptVouchers.noVouchers', 'No receipt vouchers found')}
           </div>
         ) : (
           filteredVouchers.map(voucher => {

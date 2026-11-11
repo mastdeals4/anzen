@@ -10,7 +10,7 @@ import {
   LayoutDashboard, UsersRound, UserRound, ClipboardCheck, Truck, ReceiptText,
   Package, Boxes, Warehouse, ClipboardList, FileInput, Container, Landmark,
   Calculator, BadgeDollarSign, BarChart3, ListChecks, Zap, Settings,
-  LogOut, Menu, X, Globe, Calendar, Search, MoreHorizontal, ChevronRight,
+  LogOut, Menu, X, Globe, Calendar, Search, MoreHorizontal, ChevronRight, FolderArchive,
 } from 'lucide-react';
 import logo from '../assets/Untitled-1.svg';
 
@@ -223,6 +223,7 @@ export function Layout({ children }: LayoutProps) {
     { id: 'dashboard',           label: t('nav.dashboard'),           icon: LayoutDashboard },
     { id: 'crm',                 label: t('nav.crm'),                  icon: UsersRound },
     { id: 'customers',           label: t('nav.customers'),            icon: UserRound },
+    { id: 'document-bank',       label: t('nav.documentBank', 'Document Bank'), icon: FolderArchive },
     { id: 'sales-orders',        label: t('nav.salesOrders'),          icon: ClipboardCheck },
     { id: 'delivery-challan',    label: t('nav.deliveryChallan'),      icon: Truck },
     { id: 'sales',               label: t('nav.sales'),                icon: ReceiptText },
@@ -243,7 +244,7 @@ export function Layout({ children }: LayoutProps) {
   ];
 
   const groups: MenuGroup[] = [
-    { label: t('nav.groupMain', 'Main'),           items: allItems.filter(i => ['dashboard', 'crm', 'customers'].includes(i.id)) },
+    { label: t('nav.groupMain', 'Main'),           items: allItems.filter(i => ['dashboard', 'crm', 'customers', 'document-bank'].includes(i.id)) },
     { label: t('nav.groupSales', 'Sales'),         items: allItems.filter(i => ['sales-orders', 'delivery-challan', 'sales'].includes(i.id)) },
     { label: t('nav.groupStock', 'Stock'),         items: allItems.filter(i => ['products', 'batches', 'stock'].includes(i.id)) },
     { label: t('nav.groupPurchases', 'Purchases'), items: allItems.filter(i => ['purchase-orders', 'import-requirements', 'import-containers'].includes(i.id)) },
@@ -696,11 +697,12 @@ export function Layout({ children }: LayoutProps) {
               <button
                 type="button"
                 onClick={toggleLanguage}
-                className="hidden sm:flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 text-gray-700"
+                className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 text-gray-700 min-h-[36px]"
                 title="Toggle language"
+                aria-label="Toggle language"
               >
                 <Globe className="w-3.5 h-3.5 text-gray-600" />
-                <span className="text-xs font-medium uppercase">{language}</span>
+                <span className="text-xs font-semibold uppercase">{language}</span>
               </button>
 
               <button
@@ -716,8 +718,8 @@ export function Layout({ children }: LayoutProps) {
           </div>
         </header>
 
-        {/* Content Area */}
-        <main className="flex-1 p-2.5 sm:p-3 pb-20 lg:pb-3 max-w-full overflow-x-hidden">
+        {/* Content Area — pb-24 on mobile ensures floating elements and content clear the fixed bottom nav */}
+        <main className="flex-1 p-2.5 sm:p-3 pb-24 lg:pb-3 max-w-full overflow-x-hidden">
           {children}
         </main>
       </div>
@@ -780,7 +782,7 @@ export function Layout({ children }: LayoutProps) {
             ${sidebarOpen ? 'text-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'}`}
         >
           <MoreHorizontal className="w-5 h-5 flex-shrink-0" strokeWidth={1.75} />
-          <span className="text-[10px] mt-0.5 truncate tracking-tight">More</span>
+          <span className="text-[10px] mt-0.5 truncate tracking-tight">{t('common.more', 'More')}</span>
         </button>
       </nav>
 
@@ -789,12 +791,12 @@ export function Layout({ children }: LayoutProps) {
           <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden" onMouseDown={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 py-2 border-b">
               <Search className="w-4 h-4 text-gray-400" />
-              <input name="search_term" aria-label="Search invoices, SOs, DCs, customers, batches…" autoFocus value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search invoices, SOs, DCs, customers, batches…" className="flex-1 outline-none text-sm" />
-              <button onClick={() => setSearchOpen(false)} className="text-xs text-gray-400">Esc</button>
+              <input name="search_term" aria-label="Search" autoFocus value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder={t('common.searchPlaceholder', 'Search invoices, SOs, DCs, customers, batches…')} className="flex-1 outline-none text-sm" />
+              <button onClick={() => setSearchOpen(false)} className="text-xs text-gray-400">{t('common.close', 'Esc')}</button>
             </div>
             <div className="max-h-80 overflow-y-auto">
-              {searching && <p className="px-3 py-4 text-sm text-gray-500">Searching…</p>}
-              {!searching && searchTerm.trim().length >= 2 && searchResults.length === 0 && <p className="px-3 py-4 text-sm text-gray-500">No matching documents found.</p>}
+              {searching && <p className="px-3 py-4 text-sm text-gray-500">{t('common.searching', 'Searching…')}</p>}
+              {!searching && searchTerm.trim().length >= 2 && searchResults.length === 0 && <p className="px-3 py-4 text-sm text-gray-500">{t('common.noResults', 'No matching documents found.')}</p>}
               {searchResults.map(result => (
                 <button key={`${result.kind}-${result.id}`} className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b last:border-0" onClick={() => {
                   if (result.kind === 'Invoice') setNavigationData({ sourceType: 'sales_invoice', invoiceId: result.id });

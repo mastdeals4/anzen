@@ -14,6 +14,7 @@ import { FloatingField, FLOAT_INPUT, FLOAT_TEXTAREA } from '../FloatingField';
 import { SapRow } from '../SapLayout';
 import { openStoredAttachment, TaxAttachments } from './TaxAttachments';
 import { showToast } from '../../ToastNotification';
+import { uploadOptimizedFile } from '../../../services/storage/uploadOptimizationService';
 
 interface Customer {
   company_name: string | null;
@@ -382,16 +383,20 @@ export function FakturPajakPanel() {
       if (pdf) {
         const safeName = pdf.name.replace(/[^\w.-]/g, '_');
         const path = `faktur_pajak/${saved.id}/${Date.now()}-${safeName}`;
-        const { error: uploadError } = await supabase.storage
-          .from('documents')
-          .upload(path, pdf, { upsert: false, contentType: 'application/pdf' });
+        const { error: uploadError, optimization } = await uploadOptimizedFile(
+          supabase,
+          'documents',
+          path,
+          pdf,
+          { upsert: false, contentType: 'application/pdf' }
+        );
         if (uploadError) throw uploadError;
         const { error: fileError } = await supabase.from('faktur_pajak_files').insert({
           faktur_pajak_id: saved.id,
           file_url: path,
           file_name: pdf.name,
-          file_type: pdf.type || 'application/pdf',
-          file_size: pdf.size,
+          file_type: optimization.mimeType || pdf.type || 'application/pdf',
+          file_size: optimization.optimizedSize || pdf.size,
           kind: 'pdf',
           uploaded_by: authData.user?.id ?? null,
           uploaded_at: uploadedAt,

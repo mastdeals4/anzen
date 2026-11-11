@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BarChart2, Calendar, DollarSign, Package, RefreshCw, TrendingUp, Users } from 'lucide-react';
 import { Layout } from '../../components/Layout';
 import { useFinance } from '../../contexts/FinanceContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatNumber } from '../../utils/currency';
 
@@ -91,13 +92,19 @@ function ExpenseVsProfitTab({ dateRange }: { dateRange: DateRange }) {
   return <section className="space-y-4"><p className="text-sm text-blue-800 bg-blue-50 border border-blue-100 rounded-lg p-3">Operational management view — Finance P&amp;L is available in Finance Reports. This is not Finance Net Profit.</p><div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><StatCard label="Revenue ex-PPN" value={formatCurrency(data.total_sales)} /><StatCard label="Gross Profit" value={formatCurrency(data.gross_profit)} sub={`${data.costed_lines} / ${data.total_lines} lines costed`} /><StatCard label="Outbound Delivery" value={formatCurrency(data.outbound_delivery)} /><StatCard label="Operational Operating Profit" value={formatCurrency(data.operational_profit)} /></div><Toolbar onRefresh={load} /><div className="bg-white border border-gray-200 rounded-xl overflow-hidden"><table className="w-full text-sm"><tbody>{values.map(([label, value]) => <tr key={label} className={`border-t ${label.includes('Profit') ? 'bg-gray-50 font-semibold' : ''}`}><td className="p-4 text-gray-700">{label}</td><td className="p-4 text-right">{label.includes('COGS') || label.includes('Expenses') || label.includes('Outbound') ? `(${formatCurrency(value)})` : formatCurrency(value)}</td></tr>)}</tbody></table></div></section>;
 }
 
-const tabs: { id: Tab; label: string; icon: typeof TrendingUp }[] = [
-  { id: 'sales-profit', label: 'Sales Profit', icon: TrendingUp }, { id: 'monthly', label: 'Monthly Sales', icon: Calendar }, { id: 'product-perf', label: 'Product Performance', icon: Package }, { id: 'customer', label: 'Customer Sales', icon: Users }, { id: 'expense-profit', label: 'Expense vs Profit', icon: DollarSign },
-];
-
 export function Reports() {
   const { dateRange } = useFinance();
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<Tab>('sales-profit');
+
+  const tabs: { id: Tab; label: string; icon: typeof TrendingUp }[] = [
+    { id: 'sales-profit', label: t('operationalReports.salesProfit'), icon: TrendingUp },
+    { id: 'monthly', label: t('operationalReports.monthlySales'), icon: Calendar },
+    { id: 'product-perf', label: t('operationalReports.productPerformance'), icon: Package },
+    { id: 'customer', label: t('operationalReports.customerSales'), icon: Users },
+    { id: 'expense-profit', label: t('operationalReports.expenseVsProfit'), icon: DollarSign },
+  ];
+
   return (
     <Layout>
       <div className="space-y-3">
@@ -107,8 +114,8 @@ export function Reports() {
               <BarChart2 className="w-4 h-4" />
             </div>
             <div>
-              <h1 className="text-sm font-bold text-gray-900 leading-tight">Reports</h1>
-              <p className="text-[11px] text-gray-400">Operational management reporting</p>
+              <h1 className="text-sm font-bold text-gray-900 leading-tight">{t('operationalReports.title')}</h1>
+              <p className="text-[11px] text-gray-400">{t('operationalReports.subtitle')}</p>
             </div>
           </div>
           <div className="flex gap-1 bg-gray-100 p-0.5 rounded-lg overflow-x-auto max-w-full">
