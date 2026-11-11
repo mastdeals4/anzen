@@ -771,8 +771,9 @@ Deno.serve(async (req: Request) => {
 
     // Canonical outbound mirror hook (additive secondary path; errors do not fail Gmail send)
     let mirrorSucceeded = false;
+    let mirrorRes: any = null;
     try {
-      const mirrorRes = await mirrorOutboundEmail(supabase, {
+      mirrorRes = await mirrorOutboundEmail(supabase, {
         messageId: result.id,
         threadId: result.threadId || result.id,
         fromEmail: connection.email_address,
