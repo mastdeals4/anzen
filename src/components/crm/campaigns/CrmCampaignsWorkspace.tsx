@@ -59,6 +59,8 @@ import { CampaignComplianceService } from '../../../services/crm/campaignComplia
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { WhatsAppTransportService } from '../../../services/whatsapp/whatsappTransportService';
 import { WhatsAppAttachmentModal, WhatsAppCampaignAttachment } from './WhatsAppAttachmentModal';
+import { WhatsAppCampaignDeliveryReport } from './WhatsAppCampaignDeliveryReport';
+import { PermissionRecordingModal, PermissionTarget } from './PermissionRecordingModal';
 import {
   formatPersonalizedWhatsAppMessage,
   validateMediaCaption,
@@ -164,6 +166,11 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const [waRecipientSearch, setWaRecipientSearch] = useState('');
   const [waAttachment, setWaAttachment] = useState<WhatsAppCampaignAttachment | null>(null);
   const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
+  const [phoneRecords, setPhoneRecords] = useState<any[]>([]);
+  const [permissionModalOpen, setPermissionModalOpen] = useState(false);
+  const [permissionTarget, setPermissionTarget] = useState<PermissionTarget | null>(null);
+  const [activeDeliveryCampaignId, setActiveDeliveryCampaignId] = useState<string | null>(null);
+  const [historyChannel, setHistoryChannel] = useState<'email' | 'whatsapp'>('whatsapp');
   const [waLogs, setWaLogs] = useState<Array<{ phone: string; name: string; status: 'sent' | 'failed'; error?: string; timestamp: string }>>([]);
   const [waFailedRecipients, setWaFailedRecipients] = useState<any[]>([]);
 
@@ -568,10 +575,12 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
           .order('company_name'),
         supabase
           .from('crm_contact_phones')
-          .select('id, contact_id, company_name, contact_person, department, raw_phone, normalized_phone, phone_type, is_whatsapp_eligible, is_primary, consent_status'),
+          .select('id, contact_id, company_name, contact_person, department, raw_phone, normalized_phone, phone_type, is_whatsapp_eligible, is_primary, consent_status, opt_in_source, opt_in_timestamp, opt_in_evidence, permitted_categories'),
       ]);
 
       if (contactsErr) throw contactsErr;
+
+      setPhoneRecords(phonesData || []);
 
       const phoneMap = new Map<string, any[]>();
       if (phonesData) {
@@ -588,9 +597,20 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         const primary = related.find((p: any) => p.is_primary) || related[0];
         // Consent status strictly from persisted record; default is 'pending' (NOT VERIFIED)
         const consentStatus = primary?.consent_status || 'pending';
+        const consentObj = primary?.opt_in_source
+          ? {
+              optInSource: primary.opt_in_source,
+              optInTimestamp: primary.opt_in_timestamp,
+              optInEvidence: primary.opt_in_evidence,
+              permittedCategories: primary.permitted_categories || ['customer_service', 'price_alerts'],
+              isOptedOut: consentStatus === 'opted_out',
+            }
+          : null;
+
         return {
           ...c,
           consent_status: consentStatus,
+          consent: consentObj,
           crm_phones: related,
         };
       });
@@ -656,7 +676,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   }, []);
 
   // Phone audit across all contacts using enhanced multi-phone engine
-  const phoneAudit = useMemo(() => auditContactsMultiPhone(contacts), [contacts]);
+  const phoneAudit = useMemo(() => auditContactsMultiPhone(contacts, phoneRecords), [contacts, phoneRecords]);
   const verifiedItemsMap = useMemo(() => new Map(phoneAudit.items.map(i => [i.id, i])), [phoneAudit]);
 
   // Filtered contacts for recipient directory
@@ -752,10 +772,18 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     showToast({ type: 'success', title: 'Staged for WhatsApp', message: `${chosen.length} contacts staged for WhatsApp campaign.` });
   };
 
-  // WhatsApp selection helpers: selects individual verified mobile numbers
-  const handleSelectAllEligibleWa = () => {
-    const eligibleItems = phoneAudit.items.filter(i => i.is_eligible);
-    const mappedRecipients = eligibleItems.map(i => ({
+  // WhatsApp selection helpers: selects all valid mobile candidates
+  const handleSelectAllValidMobiles = () => {
+    const candidateItems = phoneAudit.items.filter(i => i.is_candidate);
+    const seen = new Set<string>();
+    const deduplicatedCandidates = candidateItems.filter(i => {
+      const key = i.validation.normalized || i.raw_phone;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const mappedRecipients = deduplicatedCandidates.map(i => ({
       id: i.id,
       contact_id: i.contact_id || i.id,
       company_name: i.company_name,
@@ -767,15 +795,21 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
       city: i.city,
       customer_type: i.customer_type,
       is_active: true,
+      consent_status: i.consent_status,
+      consent: i.consent,
+      is_candidate: i.is_candidate,
+      is_dispatch_cleared: i.is_dispatch_cleared,
     }));
     setWaSelectedRecipients(mappedRecipients);
     setWaPreviewIndex(0);
     showToast({
       type: 'success',
-      title: 'Eligible Mobiles Selected',
-      message: `${mappedRecipients.length} verified mobile contacts selected for WhatsApp broadcast.`,
+      title: 'Valid Mobile Candidates Selected',
+      message: `${mappedRecipients.length} valid mobile contacts selected for campaign preparation (${phoneAudit.stats.dispatchCleared} cleared for live dispatch).`,
     });
   };
+
+  const handleSelectAllEligibleWa = handleSelectAllValidMobiles;
 
   const handleToggleWaRecipient = (item: any) => {
     setWaSelectedRecipients(prev => {
@@ -859,19 +893,154 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   };
 
   const handleStartWaCampaign = () => {
-    showToast({
-      type: 'warning',
-      title: 'Bulk Dispatch Blocked',
-      message: 'Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.',
-    });
-    return;
+    if (waSelectedRecipients.length === 0) {
+      showToast({ type: 'warning', title: 'No Recipients Selected', message: 'Please select candidate recipients first.' });
+      return;
+    }
+
+    const clearedRecipients = waSelectedRecipients.filter(
+      r => r.consent_status === 'opted_in' && Boolean(r.consent && r.consent.optInSource)
+    );
+
+    if (clearedRecipients.length === 0) {
+      showToast({
+        type: 'warning',
+        title: 'Consent Verification Required',
+        message: `${waSelectedRecipients.length} candidate(s) selected, but none have verified opt-in consent records on file. Please record genuine permission before dispatching.`,
+      });
+      // Open permission recording modal for this batch
+      setPermissionTarget({
+        company: `${waSelectedRecipients.length} Selected Contacts`,
+        phoneRecordIds: waSelectedRecipients.map(r => r.id),
+      });
+      setPermissionModalOpen(true);
+      return;
+    }
+
+    if (waAttachment) {
+      const captionValidation = validateMediaCaption(waMessageTemplate, true);
+      if (!captionValidation.isValid) {
+        showToast({
+          type: 'error',
+          title: 'Caption Exceeds Limit',
+          message: `Attachment caption cannot exceed ${WHATSAPP_MEDIA_CAPTION_LIMIT} characters (current: ${captionValidation.length}).`,
+        });
+        return;
+      }
+    }
+
+    setWaShowApprovalModal(true);
   };
 
   const executeWaDispatch = async () => {
     setWaShowApprovalModal(false);
-    throw new Error(
-      'Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.'
-    );
+    setWaIsSending(true);
+
+    try {
+      const clearedRecipients = waSelectedRecipients.filter(
+        r => r.consent_status === 'opted_in' && Boolean(r.consent && r.consent.optInSource)
+      );
+
+      if (clearedRecipients.length === 0) {
+        throw new Error('No cleared recipients with verified opt-in records on file.');
+      }
+
+      // 1. Insert Campaign into whatsapp_campaigns
+      const campaignName = `Campaign: ${waProductName || 'Pharma Product Update'} - ${new Date().toLocaleDateString('id-ID')}`;
+      const { data: campaignRow, error: campErr } = await supabase
+        .from('whatsapp_campaigns')
+        .insert({
+          name: campaignName,
+          message_template: waMessageTemplate,
+          attachment_url: waAttachment?.url || null,
+          attachment_filename: waAttachment?.name || null,
+          attachment_type: waAttachment ? (waAttachment.mediaCategory === 'image' ? 'IMAGE' : 'DOCUMENT') : null,
+          status: 'in_progress',
+          total_recipients: clearedRecipients.length,
+          processing_delay_seconds: Math.max(waPacingSeconds, 20),
+          started_at: new Date().toISOString(),
+          next_run_at: new Date().toISOString(),
+        })
+        .select('*')
+        .single();
+
+      if (campErr || !campaignRow) {
+        throw new Error(`Failed to create persistent campaign: ${campErr?.message}`);
+      }
+
+      // 2. Insert Recipients into whatsapp_campaign_recipients
+      // Deduplicate phones to prevent constraint conflict
+      const seenPhones = new Set<string>();
+      const recipientRows: any[] = [];
+
+      for (const r of clearedRecipients) {
+        const phone = (r.mobile || r.phone || '').trim();
+        if (!phone || seenPhones.has(phone)) continue;
+        seenPhones.add(phone);
+
+        const personalized = formatPersonalizedWhatsAppMessage(
+          waMessageTemplate,
+          {
+            contact_person: r.contact_person,
+            company_name: r.company_name,
+          },
+          {
+            productName: waProductName,
+          }
+        );
+
+        recipientRows.push({
+          campaign_id: campaignRow.id,
+          contact_id: r.contact_id || null,
+          company_name: r.company_name || 'Customer',
+          contact_person: r.contact_person || null,
+          phone,
+          status: 'pending',
+          personalized_caption: personalized,
+        });
+      }
+
+      const { error: recErr } = await supabase
+        .from('whatsapp_campaign_recipients')
+        .insert(recipientRows);
+
+      if (recErr) {
+        throw new Error(`Failed to queue recipients in database: ${recErr.message}`);
+      }
+
+      // 3. Trigger Server-Side Worker Edge Function
+      // Supabase Edge Function processes recipient #1 and self-schedules next ticks every 20s.
+      // The browser / Mac can now be completely closed safely!
+      const { error: fnErr } = await supabase.functions.invoke('process-whatsapp-campaign', {
+        body: {
+          campaignId: campaignRow.id,
+          action: 'start',
+        },
+      });
+
+      if (fnErr) {
+        console.warn('Edge function trigger notice:', fnErr);
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Campaign Live On Server Worker',
+        message: `${recipientRows.length} recipients queued. Execution is 100% server-side with 20-second pacing. Computer can now be closed safely.`,
+      });
+
+      // Navigate to delivery report
+      setActiveDeliveryCampaignId(campaignRow.id);
+      setHistoryChannel('whatsapp');
+      handleSubTabChange('history');
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'Dispatch Initialization Failed',
+        message: err.message || 'Could not queue campaign on server',
+      });
+    } finally {
+      setWaIsSending(false);
+    }
   };
 
   // Save new template
@@ -1021,11 +1190,11 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                   Audit Centre ({phoneAudit.stats.totalCompanies || contacts.length})
                 </button>
                 <button
-                  onClick={handleSelectAllEligibleWa}
+                  onClick={handleSelectAllValidMobiles}
                   className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-xs transition cursor-pointer"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Select All Eligible Mobile ({phoneAudit.stats.eligible})
+                  Select All Valid Mobiles ({phoneAudit.stats.waCandidates})
                 </button>
                 <button
                   onClick={() => setWaRecipientSelectorOpen(true)}
@@ -1059,15 +1228,15 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 type="button"
                 onClick={() => setPhoneAuditCategory('eligible')}
                 className="bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200 hover:border-emerald-400 rounded-md p-2 shadow-2xs text-left transition-all active:scale-[0.98] cursor-pointer group"
-                title="Eligible campaign candidates — not verified WhatsApp accounts and not dispatched."
+                title="Valid, normalized mobile numbers eligible as campaign candidates"
               >
                 <span className="text-[10px] uppercase font-bold text-emerald-800 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                   WA Candidates
                 </span>
-                <span className="text-base font-extrabold text-emerald-900">{phoneAudit.stats.eligible}</span>
+                <span className="text-base font-extrabold text-emerald-900">{phoneAudit.stats.waCandidates}</span>
                 <span className="text-[9px] text-emerald-700 mt-0.5 flex items-center justify-between">
-                  <span>Eligible campaign candidates</span>
+                  <span>Cleared for Dispatch: {phoneAudit.stats.dispatchCleared}</span>
                   <span className="opacity-0 group-hover:opacity-100 text-emerald-800 font-bold transition">Inspect →</span>
                 </span>
               </button>
@@ -1774,25 +1943,76 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                         <Save className="w-3.5 h-3.5" />
                         <span>Save as Campaign Draft</span>
                       </button>
+
+                      {complianceCounts.missingConsentCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPermissionTarget({
+                              company: `${waSelectedRecipients.length} Selected Contacts`,
+                              phoneRecordIds: waSelectedRecipients.map(r => r.id),
+                            });
+                            setPermissionModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-md text-xs font-bold transition shadow-xs cursor-pointer"
+                          title="Record genuine permission and evidence for candidate contacts"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Record Permission ({complianceCounts.missingConsentCount})</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        disabled={true}
-                        className="inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition bg-slate-400 cursor-not-allowed opacity-80"
-                        title="Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness."
+                        onClick={handleStartWaCampaign}
+                        disabled={waIsSending || complianceCounts.verifiedOptInCount === 0}
+                        className={`inline-flex items-center gap-2 px-5 py-2 rounded-md text-xs font-bold text-white shadow-xs transition ${
+                          complianceCounts.verifiedOptInCount > 0
+                            ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'
+                            : 'bg-slate-400 cursor-not-allowed opacity-80'
+                        }`}
+                        title={
+                          complianceCounts.verifiedOptInCount > 0
+                            ? 'Queue live campaign on persistent server worker'
+                            : 'Select and record verified permission to clear contacts for live dispatch'
+                        }
                       >
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>Bulk Dispatch Locked ({complianceCounts.eligibleRecipientsCount} Eligible)</span>
+                        {complianceCounts.verifiedOptInCount > 0 ? (
+                          <>
+                            <Play className="w-3.5 h-3.5" />
+                            <span>Start Live Campaign ({complianceCounts.verifiedOptInCount} Cleared)</span>
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-3.5 h-3.5" />
+                            <span>Dispatch Locked (0 Cleared)</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   )}
                 </div>
 
                 {!waTestMode && (
-                  <div className="mt-2 p-2 bg-slate-100 border border-slate-200 rounded text-[11px] text-slate-700 flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-slate-500 shrink-0" />
-                    <span>
-                      <strong>Bulk Safety Lock Active:</strong> Bulk WhatsApp campaign dispatch is technically blocked at UI and execution level. Campaigns can be drafted, segmented, scheduled, and previewed, but bulk customer outreach requires verified individual opt-in consent records in CRM and approved dispatch readiness.
-                    </span>
+                  <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded text-[11px] text-slate-700 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>
+                        <strong>Server Queue Active:</strong> Dispatches sequentially with 20s minimum gap via official Meta WhatsApp Cloud API. Execution is persistent on Supabase server worker and continues after browser or computer is closed.
+                      </span>
+                    </div>
+                    {activeDeliveryCampaignId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryChannel('whatsapp');
+                          handleSubTabChange('history');
+                        }}
+                        className="text-xs text-blue-600 font-bold hover:underline whitespace-nowrap cursor-pointer"
+                      >
+                        View Live Delivery Report &rarr;
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2069,18 +2289,18 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                       className="text-xs border border-gray-300 rounded-md p-1.5 bg-slate-50 text-gray-700"
                     >
                       <option value="all">All Records ({phoneAudit.items.length})</option>
-                      <option value="eligible">WhatsApp Eligible ({phoneAudit.stats.eligible})</option>
+                      <option value="eligible">WA Candidates ({phoneAudit.stats.waCandidates})</option>
                       <option value="landline">Landlines Excluded ({phoneAudit.stats.landline})</option>
                       <option value="invalid">Invalid / Missing ({phoneAudit.stats.invalid + phoneAudit.stats.missing})</option>
                       <option value="duplicate">Duplicates ({phoneAudit.stats.duplicates})</option>
                     </select>
 
                     <button
-                      onClick={handleSelectAllEligibleWa}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold whitespace-nowrap shadow-xs"
+                      onClick={handleSelectAllValidMobiles}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold whitespace-nowrap shadow-xs cursor-pointer"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      Select All Eligible ({phoneAudit.stats.eligible})
+                      Select All Valid Mobiles ({phoneAudit.stats.waCandidates})
                     </button>
                   </div>
                 </div>
@@ -2096,7 +2316,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                             checked={waSelectedRecipients.length > 0 && waSelectedRecipients.length === filteredWaContacts.length}
                             onChange={e => {
                               if (e.target.checked) {
-                                const eligibleFiltered = filteredWaContacts.filter(f => f.is_eligible);
+                                const eligibleFiltered = filteredWaContacts.filter(f => f.is_candidate);
                                 setWaSelectedRecipients(eligibleFiltered.map(f => ({
                                   id: f.id,
                                   contact_id: f.contact_id || f.id,
@@ -2109,6 +2329,10 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                                   city: f.city,
                                   customer_type: f.customer_type,
                                   is_active: true,
+                                  consent_status: f.consent_status,
+                                  consent: f.consent,
+                                  is_candidate: f.is_candidate,
+                                  is_dispatch_cleared: f.is_dispatch_cleared,
                                 })));
                               } else {
                                 setWaSelectedRecipients([]);
@@ -2180,11 +2404,34 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                               {item.validation.normalized || '—'}
                             </td>
                             <td className="p-2">
-                              {item.is_eligible ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                              {item.is_dispatch_cleared ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded-full">
                                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  Eligible
+                                  Cleared for Dispatch
                                 </span>
+                              ) : item.is_candidate ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                                    Candidate (Pending Consent)
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setPermissionTarget({
+                                        id: item.id,
+                                        name: item.contact_person || item.company_name,
+                                        company: item.company_name,
+                                        phone: item.validation?.normalized || item.raw_phone || undefined,
+                                        phoneRecordIds: [item.id],
+                                      });
+                                      setPermissionModalOpen(true);
+                                    }}
+                                    className="text-[9px] font-bold text-emerald-700 hover:text-emerald-900 bg-white hover:bg-emerald-50 border border-emerald-300 rounded px-1.5 py-0.5 transition cursor-pointer"
+                                  >
+                                    + Permission
+                                  </button>
+                                </div>
                               ) : (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-medium text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full" title={item.exclusion_reason}>
                                   <AlertTriangle className="w-3 h-3 text-rose-600" />
@@ -2200,12 +2447,30 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                 </div>
 
                 <div className="px-5 py-3 border-t border-gray-200 bg-slate-50 flex items-center justify-between">
-                  <span className="text-xs text-gray-600">
-                    Selected <strong>{waSelectedRecipients.length}</strong> contacts for campaign.
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-600">
+                      Selected <strong>{waSelectedRecipients.length}</strong> contacts for campaign.
+                    </span>
+                    {waSelectedRecipients.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPermissionTarget({
+                            company: `${waSelectedRecipients.length} Selected Contacts`,
+                            phoneRecordIds: waSelectedRecipients.map(r => r.id),
+                          });
+                          setPermissionModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded text-xs font-semibold cursor-pointer"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                        Record Permission for Selected
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={() => setWaRecipientSelectorOpen(false)}
-                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold"
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold cursor-pointer"
                   >
                     Done Selecting
                   </button>
@@ -2243,7 +2508,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Transport:</span>
-                      <span className="font-bold text-emerald-700">OpenWA Real Transport (127.0.0.1:3100)</span>
+                      <span className="font-bold text-emerald-700">Official Meta WhatsApp Cloud API (Server Queue)</span>
                     </div>
                   </div>
 
@@ -2492,10 +2757,50 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
 
       {/* 5. CAMPAIGN HISTORY TAB */}
       {activeTab === 'history' && (
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-xs">
-          <DeliveryLog />
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200 max-w-xs">
+            <button
+              onClick={() => setHistoryChannel('whatsapp')}
+              className={`flex-1 px-3 py-1 rounded-md text-xs font-bold transition ${
+                historyChannel === 'whatsapp'
+                  ? 'bg-white text-emerald-800 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              WhatsApp Campaigns
+            </button>
+            <button
+              onClick={() => setHistoryChannel('email')}
+              className={`flex-1 px-3 py-1 rounded-md text-xs font-bold transition ${
+                historyChannel === 'email'
+                  ? 'bg-white text-blue-800 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Email Campaigns
+            </button>
+          </div>
+
+          {historyChannel === 'whatsapp' ? (
+            <WhatsAppCampaignDeliveryReport initialCampaignId={activeDeliveryCampaignId} />
+          ) : (
+            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-xs">
+              <DeliveryLog />
+            </div>
+          )}
         </div>
       )}
+
+      {/* Permission Recording Modal */}
+      <PermissionRecordingModal
+        isOpen={permissionModalOpen}
+        onClose={() => {
+          setPermissionModalOpen(false);
+          setPermissionTarget(null);
+        }}
+        target={permissionTarget}
+        onSaved={loadContacts}
+      />
 
       {/* New Template Modal */}
       {showNewTemplateModal && (

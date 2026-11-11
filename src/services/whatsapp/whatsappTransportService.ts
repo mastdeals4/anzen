@@ -597,7 +597,7 @@ export class WhatsAppTransportService {
   }
 
   static async sendMessage(options: WhatsAppSendOptions): Promise<WhatsAppSendResult> {
-    if (options.isBulk || options.broadcast || options.isCampaign) {
+    if ((options.isBulk || options.broadcast || options.isCampaign) && !options.consentVerified) {
       return {
         success: false,
         status: 'failed',

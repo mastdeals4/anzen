@@ -192,6 +192,7 @@ export interface ParsedPhoneItem {
   department?: string | null;
   extension?: string;
   validation: PhoneValidationResult;
+  dbRecord?: any;
 }
 
 /**
@@ -350,7 +351,16 @@ export interface VerifiedContactItem {
   extension?: string | null;
   is_duplicate: boolean;
   duplicate_group_type?: 'same_company' | 'cross_company';
+  is_candidate?: boolean;
+  is_dispatch_cleared?: boolean;
   is_eligible: boolean;
+  consent?: {
+    optInSource?: string | null;
+    optInTimestamp?: string | null;
+    optInEvidence?: string | null;
+    permittedCategories?: string[];
+    isOptedOut?: boolean;
+  } | null;
   exclusion_reason?: string;
   last_contact_date?: string | null;
 }
@@ -361,6 +371,8 @@ export interface PhoneAuditStats {
   totalContacts?: number;
   totalPhones?: number;
   eligible: number;
+  waCandidates: number;
+  dispatchCleared: number;
   landline: number;
   missing: number;
   invalid: number;
@@ -456,17 +468,24 @@ export function auditContactsMultiPhone(
     const parsedList: ParsedPhoneItem[] = [];
 
     // If pre-seeded records exist for this contact, use them
-    const preSeeded = existingPhonesTable?.filter(p => p.contact_id === c.id);
+    const preSeeded = existingPhonesTable?.filter(p => p.contact_id === c.id) || (c as any).crm_phones;
     if (preSeeded && preSeeded.length > 0) {
       for (const p of preSeeded) {
         const val = validatePhoneNumber(p.raw_phone);
+        if (p.is_whatsapp_eligible) {
+          val.isWhatsAppEligible = true;
+          if (val.type === 'invalid_number' || val.type === 'missing_number') {
+            val.type = (p.phone_type as PhoneNumberType) || 'valid_mobile';
+          }
+        }
         parsedList.push({
           raw: p.raw_phone,
-          cleaned: p.normalized_phone || p.raw_phone,
+          cleaned: p.normalized_phone || val.normalized || p.raw_phone,
           contactPerson: p.contact_person,
           department: p.department,
           extension: p.extension || undefined,
           validation: val,
+          dbRecord: p,
         });
       }
     } else {
@@ -524,11 +543,12 @@ export function auditContactsMultiPhone(
       });
     } else {
       const companyPhones: ContactPhoneRecord[] = [];
-      const firstMobileIdx = parsedList.findIndex(p => p.validation.isWhatsAppEligible);
+      const firstMobileIdx = parsedList.findIndex(p => p.validation.isWhatsAppEligible || p.dbRecord?.is_whatsapp_eligible);
       const primaryIdx = firstMobileIdx >= 0 ? firstMobileIdx : 0;
 
       for (let i = 0; i < parsedList.length; i++) {
         const p = parsedList[i];
+        const dbRec = p.dbRecord;
         const key = p.validation.normalized || p.cleaned;
         if (!phoneInstancesMap.has(key)) {
           phoneInstancesMap.set(key, []);
@@ -536,29 +556,45 @@ export function auditContactsMultiPhone(
         phoneInstancesMap.get(key)!.push({ companyId: c.id, companyName: c.company_name });
 
         const canonical = p.validation.canonical || classifyCanonicalPhone(p.raw, { companyCity: c.city });
+        const itemConsentStatus: 'opted_in' | 'opted_out' | 'pending' =
+          dbRec?.consent_status || consentStatus;
+        const isEligibleFormat = Boolean(
+          dbRec?.is_whatsapp_eligible ?? (canonical.isWhatsAppEligibleCandidate || p.validation.isWhatsAppEligible)
+        );
+
         const record: ContactPhoneRecord = {
-          id: `${c.id}_${i}`,
+          id: dbRec?.id || `${c.id}_${i}`,
           contact_id: c.id,
           company_name: c.company_name,
           contact_person: p.contactPerson || c.contact_person || null,
-          department: p.department || (p.validation.isWhatsAppEligible ? 'Purchasing' : 'General Office'),
+          department: p.department || (isEligibleFormat ? 'Purchasing' : 'General Office'),
           raw_phone: p.raw,
-          normalized_phone: p.validation.normalized || p.cleaned,
+          normalized_phone: dbRec?.normalized_phone || p.validation.normalized || p.cleaned,
           country_code: canonical.callingCode || '+62',
           country_name: canonical.phoneCountryName || 'Indonesia',
           country_flag: canonical.phoneCountryFlag || '🇮🇩',
           phone_type: p.validation.type,
           canonical_type: canonical.phoneType,
-          is_whatsapp_eligible: canonical.isWhatsAppEligibleCandidate,
+          is_whatsapp_eligible: isEligibleFormat,
           is_primary: i === primaryIdx,
-          consent_status: consentStatus,
+          consent_status: itemConsentStatus,
           extension: p.extension || null,
-          notes: canonical.validationReason,
+          notes: dbRec?.notes || canonical.validationReason,
           company_city: c.city || null,
         };
 
         companyPhones.push(record);
         phoneRecords.push(record);
+
+        const consentData = dbRec?.opt_in_source
+          ? {
+              optInSource: dbRec.opt_in_source,
+              optInTimestamp: dbRec.opt_in_timestamp,
+              optInEvidence: dbRec.opt_in_evidence,
+              permittedCategories: dbRec.permitted_categories || ['customer_service', 'price_alerts'],
+              isOptedOut: itemConsentStatus === 'opted_out',
+            }
+          : (c as any).consent || null;
 
         const vItem: VerifiedContactItem = {
           id: record.id,
@@ -571,16 +607,19 @@ export function auditContactsMultiPhone(
           city: c.city || null,
           customer_type: c.customer_type || 'Prospect',
           validation: p.validation,
-          consent_status: consentStatus,
+          consent_status: itemConsentStatus,
           is_primary: record.is_primary,
           extension: record.extension,
           is_duplicate: false, // will update in pass 2
-          is_eligible: canonical.isWhatsAppEligibleCandidate && consentStatus === 'opted_in',
-          exclusion_reason: !canonical.isWhatsAppEligibleCandidate
+          is_candidate: isEligibleFormat && itemConsentStatus !== 'opted_out',
+          is_dispatch_cleared: isEligibleFormat && itemConsentStatus === 'opted_in',
+          is_eligible: isEligibleFormat && itemConsentStatus === 'opted_in',
+          consent: consentData,
+          exclusion_reason: !isEligibleFormat
             ? canonical.validationReason
-            : consentStatus === 'opted_out'
+            : itemConsentStatus === 'opted_out'
             ? 'Contact opted out from WhatsApp communications'
-            : consentStatus === 'pending'
+            : itemConsentStatus === 'pending'
             ? 'Missing verified opt-in consent record on file'
             : undefined,
           last_contact_date: c.last_contact || null,
@@ -633,8 +672,27 @@ export function auditContactsMultiPhone(
     }
   }
 
+  // Pass 3: Recompute candidate & clearance status post-duplicate detection
+  for (const item of items) {
+    const isEligibleFormat = item.validation.isWhatsAppEligible || item.validation.canonical?.isWhatsAppEligibleCandidate;
+    const isOptedOut = item.consent_status === 'opted_out';
+    // WA Candidates = valid, normalized mobile numbers, excluding landlines, invalid numbers, duplicates, and opted-out contacts
+    item.is_candidate = Boolean(isEligibleFormat && !isOptedOut);
+    // Dispatch Cleared = candidate that is not a duplicate and has verified opt-in
+    item.is_dispatch_cleared = Boolean(item.is_candidate && !item.is_duplicate && item.consent_status === 'opted_in');
+    item.is_eligible = item.is_dispatch_cleared;
+  }
+
   // Compute accurate multi-phone stats
-  const eligibleCount = items.filter(i => i.is_eligible).length;
+  const waCandidatesCount =
+    existingPhonesTable && existingPhonesTable.length > 0
+      ? existingPhonesTable.filter(p => p.is_whatsapp_eligible && p.consent_status !== 'opted_out').length
+      : items.filter(i => i.is_candidate).length;
+  const dispatchClearedCount =
+    existingPhonesTable && existingPhonesTable.length > 0
+      ? existingPhonesTable.filter(p => p.is_whatsapp_eligible && p.consent_status === 'opted_in').length
+      : items.filter(i => i.is_dispatch_cleared).length;
+  const eligibleCount = dispatchClearedCount;
   const landlineCount = items.filter(i => i.validation.type === 'landline').length;
   const missingCount = items.filter(i => i.validation.type === 'missing_number').length;
   const invalidCount = items.filter(i => i.validation.type === 'invalid_number').length;
@@ -652,6 +710,8 @@ export function auditContactsMultiPhone(
       totalContacts: uniqueContactsCount,
       totalPhones: items.filter(i => i.raw_phone).length,
       eligible: eligibleCount,
+      waCandidates: waCandidatesCount,
+      dispatchCleared: dispatchClearedCount,
       landline: landlineCount,
       missing: missingCount,
       invalid: invalidCount,

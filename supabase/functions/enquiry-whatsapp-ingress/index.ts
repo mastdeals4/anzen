@@ -130,6 +130,10 @@ Deno.serve(async (req: Request) => {
           for (const statusObj of val.statuses) {
             const externalMsgId = statusObj.id;
             const newStatus = statusObj.status;
+            const timestamp = statusObj.timestamp
+              ? new Date(parseInt(statusObj.timestamp, 10) * 1000).toISOString()
+              : new Date().toISOString();
+
             if (externalMsgId && newStatus) {
               await supabase
                 .from("enquiry_conversation_messages")
@@ -141,6 +145,36 @@ Deno.serve(async (req: Request) => {
                   },
                 })
                 .eq("external_message_id", externalMsgId);
+
+              // Update whatsapp_campaign_recipients for persistent server-side campaign delivery reporting
+              const campUpdates: Record<string, any> = {
+                status: newStatus,
+                updated_at: new Date().toISOString(),
+              };
+              if (newStatus === "sent") campUpdates.sent_at = timestamp;
+              if (newStatus === "delivered") campUpdates.delivered_at = timestamp;
+              if (newStatus === "read") campUpdates.read_at = timestamp;
+              if (newStatus === "failed") {
+                campUpdates.failed_at = timestamp;
+                campUpdates.error_code = String(statusObj.errors?.[0]?.code || "DELIVERY_FAILED");
+                campUpdates.error_message =
+                  statusObj.errors?.[0]?.title ||
+                  statusObj.errors?.[0]?.message ||
+                  "WhatsApp delivery failed";
+              }
+
+              const { data: updatedRec } = await supabase
+                .from("whatsapp_campaign_recipients")
+                .update(campUpdates)
+                .eq("message_id", externalMsgId)
+                .select("campaign_id")
+                .maybeSingle();
+
+              if (updatedRec?.campaign_id) {
+                await supabase.rpc("refresh_whatsapp_campaign_counts", {
+                  p_campaign_id: updatedRec.campaign_id,
+                });
+              }
             }
           }
         }
