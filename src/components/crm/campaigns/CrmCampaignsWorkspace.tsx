@@ -48,10 +48,18 @@ import {
   Layers,
   Calendar,
   Save,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { CampaignComplianceService } from '../../../services/crm/campaignComplianceService';
 import { EnquiryWhatsAppService } from '../../../services/enquiry/EnquiryWhatsAppService';
 import { WhatsAppTransportService } from '../../../services/whatsapp/whatsappTransportService';
+import { WhatsAppAttachmentModal, WhatsAppCampaignAttachment } from './WhatsAppAttachmentModal';
+import {
+  formatPersonalizedWhatsAppMessage,
+  validateMediaCaption,
+  WHATSAPP_MEDIA_CAPTION_LIMIT,
+} from '../../../utils/whatsappPersonalization';
+import { uploadOptimizedFile } from '../../../services/storage/uploadOptimizationService';
 
 export type CampaignSubTab = 'email' | 'whatsapp' | 'recipients' | 'templates' | 'history';
 
@@ -149,7 +157,8 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
   const [waRecipientFilter, setWaRecipientFilter] = useState<'all' | 'eligible' | 'landline' | 'invalid' | 'duplicate'>('all');
   const [waDepartmentFilter, setWaDepartmentFilter] = useState<string>('all');
   const [waRecipientSearch, setWaRecipientSearch] = useState('');
-  const [waAttachment, setWaAttachment] = useState<{ name: string; type: string } | null>(null);
+  const [waAttachment, setWaAttachment] = useState<WhatsAppCampaignAttachment | null>(null);
+  const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
   const [waLogs, setWaLogs] = useState<Array<{ phone: string; name: string; status: 'sent' | 'failed'; error?: string; timestamp: string }>>([]);
   const [waFailedRecipients, setWaFailedRecipients] = useState<any[]>([]);
 
@@ -200,6 +209,40 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     });
   };
 
+  // Helper to resolve / sign / upload attachment media URL safely
+  const prepareAttachmentMediaUrl = async (attachment: WhatsAppCampaignAttachment): Promise<string> => {
+    if (attachment.url) return attachment.url;
+
+    if (attachment.source === 'upload' && attachment.file) {
+      const cleanFileName = attachment.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `campaigns/${Date.now()}_${cleanFileName}`;
+      const { error: upErr } = await uploadOptimizedFile(supabase, 'crm-documents', storagePath, attachment.file);
+      if (upErr) {
+        throw new Error(`Attachment upload to storage failed: ${upErr.message}`);
+      }
+      const { data: signData, error: signErr } = await supabase.storage
+        .from('crm-documents')
+        .createSignedUrl(storagePath, 86400);
+      if (signErr || !signData?.signedUrl) {
+        throw new Error(`Failed to generate signed download URL for uploaded attachment: ${signErr?.message || 'Unknown'}`);
+      }
+      return signData.signedUrl;
+    }
+
+    if (attachment.source === 'bank' && attachment.storagePath) {
+      const bucket = attachment.storageBucket || 'crm-documents';
+      const { data: signData, error: signErr } = await supabase.storage
+        .from(bucket)
+        .createSignedUrl(attachment.storagePath, 86400);
+      if (signErr || !signData?.signedUrl) {
+        throw new Error(`Failed to generate signed URL for document from Document Bank: ${signErr?.message || 'File not found'}`);
+      }
+      return signData.signedUrl;
+    }
+
+    throw new Error('Attachment does not have a valid storage reference or file.');
+  };
+
   const handleSendTestPilot = async () => {
     if (!waConsentVerified || !waOptOutConfirmed) {
       showToast({
@@ -223,43 +266,87 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     }
 
     setWaIsSending(true);
-    setWaProgress(25);
+    setWaProgress(20);
     setWaCurrentRecipient(`Test Pilot: ${waTestPhone}`);
 
     try {
-      const text = previewFormattedWaMessage({
+      const testRecipient = {
         id: 'test-pilot',
         company_name: 'PT Test Partner',
         contact_person: 'Operational Verifier',
+        designation: 'Purchasing Manager',
         email: null,
         phone: waTestPhone,
         mobile: waTestPhone,
         city: 'Jakarta',
+        country: 'Indonesia',
         is_active: true,
+      };
+
+      const messageText = formatPersonalizedWhatsAppMessage(waMessageTemplate, testRecipient, {
+        productName: waProductName,
       });
 
-      const options = waAttachment
-        ? {
-            filename: waAttachment.name,
-            documentUrl: `https://storage.sapj.co.id/docs/${waAttachment.name}`,
+      // Caption length validation if media is attached
+      if (waAttachment) {
+        const capCheck = validateMediaCaption(messageText, true);
+        if (!capCheck.isValid) {
+          showToast({
+            type: 'error',
+            title: 'Caption Too Long',
+            message: capCheck.error || 'WhatsApp media captions cannot exceed 1024 characters.',
+          });
+          setWaIsSending(false);
+          return;
+        }
+      }
+
+      let mediaUrl: string | undefined = undefined;
+      if (waAttachment) {
+        setWaProgress(40);
+        try {
+          mediaUrl = await prepareAttachmentMediaUrl(waAttachment);
+          if (!waAttachment.url && mediaUrl) {
+            setWaAttachment(prev => (prev ? { ...prev, url: mediaUrl } : null));
           }
-        : undefined;
+        } catch (mediaErr: any) {
+          showToast({
+            type: 'error',
+            title: 'Attachment Upload Failed',
+            message: `${mediaErr.message}. Dispatch halted to prevent sending without media.`,
+          });
+          setWaLogs(prev => [
+            {
+              name: 'Authorized Test Pilot',
+              phone: waTestPhone,
+              status: 'failed',
+              timestamp: new Date().toLocaleTimeString(),
+              error: mediaErr.message,
+            },
+            ...prev,
+          ]);
+          setWaFailedRecipients([waTestPhone]);
+          setWaIsSending(false);
+          return;
+        }
+      }
 
-      const directRes = await fetch('/api/whatsapp/api/messages/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: waTestPhone,
-          text,
-          options,
-        }),
+      setWaProgress(70);
+
+      const sendResult = await WhatsAppTransportService.sendMessage({
+        to: waTestPhone,
+        text: messageText,
+        caption: messageText,
+        documentUrl: waAttachment?.mediaCategory === 'document' ? mediaUrl : undefined,
+        imageUrl: waAttachment?.mediaCategory === 'image' ? mediaUrl : undefined,
+        filename: waAttachment?.name,
+        consentVerified: true,
       });
 
-      const data = await directRes.json().catch(() => ({}));
       setWaProgress(100);
       const timestamp = new Date().toLocaleTimeString();
 
-      if (directRes.ok && data.success) {
+      if (sendResult.success) {
         setWaLogs(prev => [
           {
             name: 'Authorized Test Pilot',
@@ -272,7 +359,9 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         showToast({
           type: 'success',
           title: 'Test Pilot Dispatched',
-          message: `Genuine WhatsApp test message dispatched to ${waTestPhone}. Message ID: ${data.messageId || 'verified'}`,
+          message: `Genuine WhatsApp test message dispatched to ${waTestPhone}.${
+            waAttachment ? ` Attachment: ${waAttachment.name} with personalized caption.` : ''
+          } Message ID: ${sendResult.messageId || 'verified'}`,
         });
       } else {
         setWaLogs(prev => [
@@ -281,7 +370,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
             phone: waTestPhone,
             status: 'failed',
             timestamp,
-            error: data.error || 'Failed to dispatch',
+            error: sendResult.error || 'Failed to dispatch',
           },
           ...prev,
         ]);
@@ -289,7 +378,7 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         showToast({
           type: 'error',
           title: 'Dispatch Failed',
-          message: data.error || 'WhatsApp adapter failed to dispatch test message',
+          message: sendResult.error || 'WhatsApp adapter failed to dispatch test message',
         });
       }
     } catch (err: any) {
@@ -572,13 +661,8 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     return raw;
   };
 
-  const previewFormattedWaMessage = (r?: ContactRecipient | VerifiedContactItem, prodName = waProductName): string => {
-    const contactName = (r?.contact_person || 'Bapak/Ibu').trim();
-    const company = (r?.company_name || 'Rekan Bisnis').trim();
-    return waMessageTemplate
-      .replace(/\{\{contact_person\}\}/gi, contactName)
-      .replace(/\{\{company_name\}\}/gi, company)
-      .replace(/\{\{product_name\}\}/gi, prodName);
+  const previewFormattedWaMessage = (r?: any, prodName = waProductName): string => {
+    return formatPersonalizedWhatsAppMessage(waMessageTemplate, r, { productName: prodName });
   };
 
   const insertVariable = (variableTag: string) => {
@@ -665,6 +749,37 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
     let sentCount = 0;
     const effectivePacing = Math.max(waPacingSeconds, 20);
 
+    // If attachment is attached, prepare/upload media ONCE before loop begins
+    let preparedMediaUrl: string | undefined = undefined;
+    if (waAttachment) {
+      const capCheck = validateMediaCaption(waMessageTemplate, true);
+      if (!capCheck.isValid) {
+        showToast({
+          type: 'error',
+          title: 'Caption Too Long',
+          message: capCheck.error || 'WhatsApp media captions cannot exceed 1024 characters.',
+        });
+        setWaIsSending(false);
+        return;
+      }
+
+      setWaCurrentRecipient('Preparing single attachment for dispatch...');
+      try {
+        preparedMediaUrl = await prepareAttachmentMediaUrl(waAttachment);
+        if (!waAttachment.url && preparedMediaUrl) {
+          setWaAttachment(prev => (prev ? { ...prev, url: preparedMediaUrl } : null));
+        }
+      } catch (attErr: any) {
+        showToast({
+          type: 'error',
+          title: 'Attachment Preparation Failed',
+          message: `${attErr.message}. Campaign dispatch halted to prevent sending without attachment.`,
+        });
+        setWaIsSending(false);
+        return;
+      }
+    }
+
     try {
       for (let i = 0; i < total; i++) {
         if (waIsCancelledRef.current) break;
@@ -680,26 +795,20 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         const cleanPhone = recipient.phone;
         setWaCurrentRecipient(`${recipient.companyName} (${cleanPhone})`);
 
-        const messageText = previewFormattedWaMessage({
-          company_name: recipient.companyName,
-          contact_person: recipient.contactPerson || 'Bapak/Ibu',
-          phone: cleanPhone,
-          mobile: cleanPhone,
-          id: recipient.id || `rec-${i}`,
-          email: null,
-          city: 'Jakarta',
-          is_active: true,
-        });
-
-        const docUrl = waAttachment
-          ? `https://storage.sapj.co.id/docs/${waAttachment.name}`
-          : undefined;
+        // Resolve dynamic placeholders independently per recipient
+        const messageText = formatPersonalizedWhatsAppMessage(
+          waMessageTemplate,
+          recipient,
+          { productName: waProductName }
+        );
 
         try {
           const res = await WhatsAppTransportService.sendMessage({
             to: cleanPhone,
             text: messageText,
-            documentUrl: docUrl,
+            caption: messageText,
+            documentUrl: waAttachment?.mediaCategory === 'document' ? preparedMediaUrl : undefined,
+            imageUrl: waAttachment?.mediaCategory === 'image' ? preparedMediaUrl : undefined,
             filename: waAttachment?.name,
             consentVerified: true,
           });
@@ -1166,6 +1275,22 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                     >
                       &#123;&#123;product_name&#125;&#125;
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => insertVariable(' {{designation}}')}
+                      className="px-2 py-1 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-mono hover:bg-emerald-100 transition"
+                      title="Insert recipient designation"
+                    >
+                      &#123;&#123;designation&#125;&#125;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertVariable(' {{city}}')}
+                      className="px-2 py-1 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-mono hover:bg-emerald-100 transition"
+                      title="Insert recipient city"
+                    >
+                      &#123;&#123;city&#125;&#125;
+                    </button>
 
                     <div className="h-4 w-px bg-gray-300 mx-1" />
 
@@ -1198,63 +1323,147 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
 
                 {/* Message Textarea */}
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 uppercase">
-                    Message Body:
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-gray-700 uppercase">
+                      {waAttachment ? 'Message Caption (Sent with Media):' : 'Message Body:'}
+                    </label>
+                    <div className="text-[11px] text-gray-500 font-mono">
+                      <span>{waMessageTemplate.length}</span>
+                      {waAttachment ? (
+                        <span className={waMessageTemplate.length > WHATSAPP_MEDIA_CAPTION_LIMIT ? 'text-rose-600 font-bold' : ''}>
+                          {' '}/ {WHATSAPP_MEDIA_CAPTION_LIMIT} chars max
+                        </span>
+                      ) : (
+                        <span className="text-gray-400"> / 4096 chars</span>
+                      )}
+                    </div>
+                  </div>
                   <textarea
-                    rows={8}
+                    rows={7}
                     value={waMessageTemplate}
                     onChange={e => setWaMessageTemplate(e.target.value)}
-                    className="w-full text-xs p-3 border border-gray-300 rounded-md focus:outline-emerald-500 font-sans leading-relaxed"
+                    className={`w-full text-xs p-3 border rounded-md focus:outline-emerald-500 font-sans leading-relaxed ${
+                      waAttachment && waMessageTemplate.length > WHATSAPP_MEDIA_CAPTION_LIMIT
+                        ? 'border-rose-400 bg-rose-50/20'
+                        : 'border-gray-300'
+                    }`}
                     placeholder="Tulis pesan WhatsApp Business..."
                   />
+
+                  {/* Warning if media caption exceeds provider limit */}
+                  {waAttachment && waMessageTemplate.length > WHATSAPP_MEDIA_CAPTION_LIMIT && (
+                    <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start gap-2 animate-in fade-in">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <strong>WhatsApp Caption Limit Exceeded:</strong> WhatsApp limits media captions to{' '}
+                        {WHATSAPP_MEDIA_CAPTION_LIMIT} characters (current: {waMessageTemplate.length}). Please shorten the
+                        message to dispatch with photo/document.
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Document Bank Attachment Selector */}
-                <div className="space-y-1 pt-1">
+                {/* Attachment Section (Document Bank & File Upload) */}
+                <div className="space-y-2 pt-1">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-gray-700 uppercase flex items-center gap-1.5">
-                      <Paperclip className="w-3.5 h-3.5 text-gray-500" />
-                      Attach Document (COA / Spec / Catalog):
+                      <Paperclip className="w-3.5 h-3.5 text-emerald-600" />
+                      Attachment (Photo / Document):
                     </span>
                     {waAttachment && (
                       <button
+                        type="button"
                         onClick={() => setWaAttachment(null)}
-                        className="text-[10px] text-rose-600 hover:underline font-semibold"
+                        className="text-[10px] text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1"
                       >
+                        <Trash2 className="w-3 h-3" />
                         Remove Attachment
                       </button>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={waAttachment?.name || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        if (!val) setWaAttachment(null);
-                        else {
-                          const type = val.includes('COA') ? 'COA' : val.includes('MSDS') ? 'MSDS' : 'SPEC';
-                          setWaAttachment({ name: val, type });
-                        }
-                      }}
-                      className="w-full text-xs border border-gray-300 rounded p-2 bg-slate-50 focus:bg-white"
+                  {!waAttachment ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsAttachmentModalOpen(true)}
+                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-slate-50 hover:bg-emerald-50/50 border border-dashed border-gray-300 hover:border-emerald-500 text-gray-700 hover:text-emerald-900 rounded-xl text-xs font-semibold transition group shadow-2xs"
                     >
-                      <option value="">No Document Attached (Text Only) ▼</option>
-                      <option value="COA_Pregabalin_IP_Batch26.pdf">COA — Pregabalin IP (Batch 2026, Shubham)</option>
-                      <option value="COA_Paracetamol_USP_2026.pdf">COA — Paracetamol USP (Batch 2026)</option>
-                      <option value="MSDS_Pharma_Raw_Materials.pdf">MSDS — General Pharmaceutical Raw Materials</option>
-                      <option value="Product_Catalog_SAPJ_Q4_2026.pdf">Product Catalog — Shubham Anzen Ready Stock Q4 2026</option>
-                    </select>
-                  </div>
-
-                  {waAttachment && (
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
-                      <FileText className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                      <span className="font-semibold truncate flex-1">{waAttachment.name}</span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-200 text-emerald-900 rounded">
-                        {waAttachment.type}
+                      <Paperclip className="w-4 h-4 text-gray-400 group-hover:text-emerald-600 transition" />
+                      <span>Attach Photo / Document</span>
+                      <span className="text-[10px] text-gray-400 group-hover:text-emerald-700 font-normal">
+                        (Select from Document Bank or Upload New File)
                       </span>
+                    </button>
+                  ) : (
+                    <div className="p-3 bg-emerald-50/60 border border-emerald-300 rounded-xl text-xs space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          {waAttachment.mediaCategory === 'image' ? (
+                            <div className="w-12 h-12 rounded-lg overflow-hidden border border-emerald-200 bg-white flex-shrink-0">
+                              {waAttachment.previewUrl || waAttachment.url ? (
+                                <img
+                                  src={waAttachment.previewUrl || waAttachment.url}
+                                  alt={waAttachment.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-blue-100 text-blue-700 flex items-center justify-center">
+                                  <ImageIcon className="w-5 h-5" />
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg bg-red-100 text-red-700 flex items-center justify-center flex-shrink-0 border border-red-200">
+                              <FileText className="w-6 h-6" />
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-gray-900 truncate">
+                                {waAttachment.name}
+                              </span>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-emerald-200 text-emerald-900">
+                                {waAttachment.documentType}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-gray-600 flex flex-wrap items-center gap-x-2">
+                              <span>{waAttachment.formattedSize || 'Document'}</span>
+                              <span>&bull;</span>
+                              <span className="text-emerald-700 font-semibold">
+                                {waAttachment.source === 'bank' ? 'Document Bank' : 'Uploaded File'}
+                              </span>
+                              {waAttachment.productName && (
+                                <>
+                                  <span>&bull;</span>
+                                  <span className="text-gray-700">{waAttachment.productName}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setIsAttachmentModalOpen(true)}
+                            className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-gray-300 hover:border-emerald-500 rounded-lg text-gray-700 hover:text-emerald-800 transition"
+                          >
+                            Replace
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setWaAttachment(null)}
+                            className="p-1 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-white transition"
+                            title="Remove Attachment"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-emerald-800 bg-white/70 px-2.5 py-1 rounded-md border border-emerald-200/60 font-medium">
+                        ✓ Single Attachment active: will be sent with message body as its caption to all recipients.
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1606,17 +1815,40 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
                       <div className="bg-[#d9fdd3] text-gray-900 rounded-lg rounded-tr-none p-3 max-w-[92%] shadow-2xs space-y-2">
                         {/* Attachment Preview Card inside Bubble */}
                         {waAttachment && (
-                          <div className="flex items-center gap-2 p-2 bg-white/70 border border-emerald-300 rounded-md text-xs">
-                            <FileText className="w-4 h-4 text-emerald-700 flex-shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <div className="font-semibold text-gray-900 truncate text-[11px]">
-                                {waAttachment.name}
+                          waAttachment.mediaCategory === 'image' ? (
+                            <div className="rounded-lg overflow-hidden -mx-1 -mt-1 mb-2 bg-black/5 border border-emerald-300">
+                              {waAttachment.previewUrl || waAttachment.url ? (
+                                <img
+                                  src={waAttachment.previewUrl || waAttachment.url}
+                                  alt={waAttachment.name}
+                                  className="w-full max-h-52 object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-32 bg-emerald-100 flex flex-col items-center justify-center text-emerald-800">
+                                  <ImageIcon className="w-8 h-8 opacity-60" />
+                                  <span className="text-[10px] mt-1 font-semibold">{waAttachment.name}</span>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2.5 p-2 bg-white/85 border border-emerald-300 rounded-lg text-xs shadow-2xs mb-1">
+                              <div className="w-9 h-9 rounded bg-red-100 text-red-700 flex items-center justify-center flex-shrink-0 border border-red-200">
+                                <FileText className="w-5 h-5" />
                               </div>
-                              <div className="text-[9px] text-gray-500 uppercase">
-                                {waAttachment.type} &bull; PDF Document &bull; 245 KB
+                              <div className="min-w-0 flex-1">
+                                <div className="font-semibold text-gray-900 truncate text-[11px] leading-tight">
+                                  {waAttachment.name}
+                                </div>
+                                <div className="text-[9px] text-gray-500 flex items-center gap-1.5 mt-0.5">
+                                  <span className="font-bold text-emerald-800 bg-emerald-100 px-1 py-0.2 rounded text-[9px]">
+                                    {waAttachment.documentType}
+                                  </span>
+                                  <span>&bull;</span>
+                                  <span>{waAttachment.formattedSize || 'PDF Document'}</span>
+                                </div>
                               </div>
                             </div>
-                          </div>
+                          )
                         )}
 
                         <div className="text-xs whitespace-pre-wrap leading-relaxed">
@@ -2320,6 +2552,14 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
           onContactsBatchUpdated={handleContactsBatchUpdated}
         />
       )}
+
+      {/* WhatsApp Attachment Modal (Document Bank & File Upload) */}
+      <WhatsAppAttachmentModal
+        isOpen={isAttachmentModalOpen}
+        onClose={() => setIsAttachmentModalOpen(false)}
+        currentAttachment={waAttachment}
+        onSelectAttachment={(att) => setWaAttachment(att)}
+      />
     </div>
   );
 }

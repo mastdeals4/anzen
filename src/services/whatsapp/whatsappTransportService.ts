@@ -85,17 +85,41 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
         components: options.templateComponents || [],
       };
     } else if (options.documentUrl) {
+      const captionText = options.caption || options.text || undefined;
+      if (captionText && captionText.length > 1024) {
+        return {
+          success: false,
+          status: 'failed',
+          provider: 'meta_cloud',
+          timestamp: new Date().toISOString(),
+          isSimulation: false,
+          error: `WhatsApp limits media captions to 1024 characters (current: ${captionText.length}). Please shorten the message.`,
+          errorCode: 'CAPTION_TOO_LONG',
+        };
+      }
       payload.type = 'document';
       payload.document = {
         link: options.documentUrl,
         filename: options.filename || 'Document.pdf',
-        caption: options.caption || undefined,
+        caption: captionText,
       };
     } else if (options.imageUrl) {
+      const captionText = options.caption || options.text || undefined;
+      if (captionText && captionText.length > 1024) {
+        return {
+          success: false,
+          status: 'failed',
+          provider: 'meta_cloud',
+          timestamp: new Date().toISOString(),
+          isSimulation: false,
+          error: `WhatsApp limits media captions to 1024 characters (current: ${captionText.length}). Please shorten the message.`,
+          errorCode: 'CAPTION_TOO_LONG',
+        };
+      }
       payload.type = 'image';
       payload.image = {
         link: options.imageUrl,
-        caption: options.caption || undefined,
+        caption: captionText,
       };
     } else if (options.text) {
       payload.type = 'text';
@@ -358,10 +382,20 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
 
   async sendMessage(options: WhatsAppSendOptions): Promise<WhatsAppSendResult> {
     const recipient = normalizeE164(options.to);
-    let text = options.text || '';
-    if (options.documentUrl && !text.includes(options.documentUrl)) {
-      const docHeader = options.filename ? `📄 Attachment: ${options.filename}\n` : '📄 Attachment:\n';
-      text = text ? `${text}\n\n${docHeader}${options.documentUrl}` : `${docHeader}${options.documentUrl}`;
+    const hasMedia = Boolean(options.documentUrl || options.imageUrl);
+    const captionText = options.caption || options.text || '';
+
+    // Enforce WhatsApp provider caption limit (1024 characters for media messages)
+    if (hasMedia && captionText.length > 1024) {
+      return {
+        success: false,
+        status: 'failed',
+        provider: 'openwa_adapter',
+        timestamp: new Date().toISOString(),
+        isSimulation: false,
+        error: `WhatsApp limits media captions to 1024 characters (current: ${captionText.length}). Please shorten the message.`,
+        errorCode: 'CAPTION_TOO_LONG',
+      };
     }
 
     try {
@@ -370,8 +404,14 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: recipient,
-          text,
-          options,
+          text: captionText,
+          options: {
+            ...options,
+            caption: captionText,
+            documentUrl: options.documentUrl,
+            imageUrl: options.imageUrl,
+            filename: options.filename,
+          },
         }),
       });
 

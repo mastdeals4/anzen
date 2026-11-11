@@ -625,49 +625,165 @@ export class OpenWAProvider implements WhatsAppProvider {
       };
     }
 
+    let tempFilePath: string | null = null;
     try {
-      let messageText = text;
-      const docUrl = (options?.documentUrl as string) || '';
-      const fn = (options?.filename as string) || '';
-      if (docUrl && !messageText.includes(docUrl)) {
-        const docHeader = fn ? `📄 Attachment: ${fn}\n` : '📄 Attachment:\n';
-        messageText = messageText ? `${messageText}\n\n${docHeader}${docUrl}` : `${docHeader}${docUrl}`;
-      }
+      const mediaUrl = (options?.documentUrl as string) || (options?.imageUrl as string) || '';
+      const fn = (options?.filename as string) || 'attachment.pdf';
+      const caption = ((options?.caption as string) || text || '').trim();
 
-      const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}&text=${encodeURIComponent(messageText)}`;
-      console.log(`[OpenWAProvider] Dispatching message to ${cleanDigits}...`);
-      await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      if (mediaUrl) {
+        // Enforce WhatsApp provider caption limit (1024 characters for media messages)
+        if (caption.length > 1024) {
+          throw new Error(
+            `WhatsApp limits media captions to 1024 characters (current: ${caption.length}). Please shorten the message.`
+          );
+        }
 
-      // Check for invalid phone popup modal
-      const invalidPopupText = await this.page.evaluate(() => {
-        const modal = document.querySelector('[data-animate-modal-popup="true"], [data-testid="confirm-popup"], div[role="dialog"]');
-        if (modal) {
-          const body = (modal.textContent || '').trim();
-          if (
-            body.includes('phone number shared via url is invalid') ||
-            body.includes("isn't on WhatsApp") ||
-            body.includes('tidak terdaftar')
-          ) {
-            const okBtn = modal.querySelector('button, div[role="button"]');
-            if (okBtn) (okBtn as HTMLElement).click();
-            return body;
+        // 1. Download attachment locally for Puppeteer file upload
+        const cleanFn = fn.replace(/[^a-zA-Z0-9._-]/g, '_');
+        tempFilePath = path.join('/tmp', `wa_dispatch_${Date.now()}_${cleanFn}`);
+        console.log(`[OpenWAProvider] Downloading media attachment from ${mediaUrl}...`);
+
+        const dlRes = await fetch(mediaUrl);
+        if (!dlRes.ok) {
+          throw new Error(`Failed to download attachment from storage: HTTP ${dlRes.status} ${dlRes.statusText}`);
+        }
+        const arrayBuf = await dlRes.arrayBuffer();
+        fs.writeFileSync(tempFilePath, Buffer.from(arrayBuf));
+
+        // 2. Open chat without pre-filled text to attach media cleanly
+        const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}`;
+        console.log(`[OpenWAProvider] Dispatching media with caption to ${cleanDigits}...`);
+        await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+        // Check for invalid phone popup modal
+        const invalidPopupText = await this.page.evaluate(() => {
+          const modal = document.querySelector(
+            '[data-animate-modal-popup="true"], [data-testid="confirm-popup"], div[role="dialog"]'
+          );
+          if (modal) {
+            const body = (modal.textContent || '').trim();
+            if (
+              body.includes('phone number shared via url is invalid') ||
+              body.includes("isn't on WhatsApp") ||
+              body.includes('tidak terdaftar')
+            ) {
+              const okBtn = modal.querySelector('button, div[role="button"]');
+              if (okBtn) (okBtn as HTMLElement).click();
+              return body;
+            }
+          }
+          return null;
+        });
+
+        if (invalidPopupText) {
+          throw new Error(`Recipient +${cleanDigits} is not registered on WhatsApp: ${invalidPopupText}`);
+        }
+
+        // Wait for chat interface to mount
+        await this.page.waitForSelector(
+          'span[data-icon="plus"], span[data-icon="attach-menu-plus"], div[data-testid="conversation-panel-wrapper"], footer',
+          { timeout: 30000 }
+        );
+
+        // Click the attach menu button to expose file inputs if required
+        const attachBtn = await this.page.$(
+          'span[data-icon="plus"], span[data-icon="attach-menu-plus"], button[title="Attach"], div[title="Attach"]'
+        );
+        if (attachBtn) {
+          await attachBtn.click();
+          await new Promise((r) => setTimeout(r, 600));
+        }
+
+        // Locate file inputs
+        let fileInputs = await this.page.$$('input[type="file"]');
+        if (fileInputs.length === 0) {
+          await this.page.waitForSelector('input[type="file"]', { timeout: 10000 });
+          fileInputs = await this.page.$$('input[type="file"]');
+        }
+
+        if (fileInputs.length === 0) {
+          throw new Error('Could not find file input element in WhatsApp Web conversation.');
+        }
+
+        const isImage = Boolean(options?.imageUrl) || /\.(jpg|jpeg|png|webp)$/i.test(fn);
+        const targetInput = isImage && fileInputs.length > 1 ? fileInputs[0] : fileInputs[fileInputs.length - 1];
+        await targetInput.uploadFile(tempFilePath);
+
+        // Wait for media preview drawer to mount
+        await this.page.waitForSelector(
+          'div[data-animate-media-viewer="true"], div[data-testid="media-caption-input-container"], span[data-icon="send"]',
+          { timeout: 25000 }
+        );
+
+        // Type caption into media caption input
+        if (caption) {
+          const captionInput = await this.page.$(
+            'div[data-testid="media-caption-input-container"] div[contenteditable="true"], div[aria-label="Add a caption"], div[data-tab="10"]'
+          );
+          if (captionInput) {
+            await captionInput.focus();
+            await this.page.evaluate(
+              (el: any, cText: string) => {
+                el.focus();
+                document.execCommand('selectAll', false);
+                document.execCommand('insertText', false, cText);
+              },
+              captionInput,
+              caption
+            );
+            await new Promise((r) => setTimeout(r, 500));
           }
         }
-        return null;
-      });
 
-      if (invalidPopupText) {
-        throw new Error(`Recipient +${cleanDigits} is not registered on WhatsApp: ${invalidPopupText}`);
-      }
+        // Click send button in media preview drawer
+        const mediaSendBtn = await this.page.waitForSelector(
+          'span[data-icon="send"], div[aria-label="Send"], span[data-icon="send-inverted"]',
+          { timeout: 15000 }
+        );
+        if (mediaSendBtn) {
+          await mediaSendBtn.click();
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      } else {
+        // Pure text-only message dispatch
+        const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}&text=${encodeURIComponent(text)}`;
+        console.log(`[OpenWAProvider] Dispatching text-only message to ${cleanDigits}...`);
+        await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
 
-      // Wait for send button and click
-      const sendButton = await this.page.waitForSelector('span[data-icon="send"], button[aria-label="Send"]', {
-        timeout: 20000,
-      });
+        // Check for invalid phone popup modal
+        const invalidPopupText = await this.page.evaluate(() => {
+          const modal = document.querySelector(
+            '[data-animate-modal-popup="true"], [data-testid="confirm-popup"], div[role="dialog"]'
+          );
+          if (modal) {
+            const body = (modal.textContent || '').trim();
+            if (
+              body.includes('phone number shared via url is invalid') ||
+              body.includes("isn't on WhatsApp") ||
+              body.includes('tidak terdaftar')
+            ) {
+              const okBtn = modal.querySelector('button, div[role="button"]');
+              if (okBtn) (okBtn as HTMLElement).click();
+              return body;
+            }
+          }
+          return null;
+        });
 
-      if (sendButton) {
-        await sendButton.click();
-        await new Promise((r) => setTimeout(r, 2000));
+        if (invalidPopupText) {
+          throw new Error(`Recipient +${cleanDigits} is not registered on WhatsApp: ${invalidPopupText}`);
+        }
+
+        // Wait for send button and click
+        const sendButton = await this.page.waitForSelector('span[data-icon="send"], button[aria-label="Send"]', {
+          timeout: 20000,
+        });
+
+        if (sendButton) {
+          await sendButton.click();
+          await new Promise((r) => setTimeout(r, 2000));
+        }
       }
 
       // Extract real WhatsApp message ID from DOM if available
@@ -700,6 +816,12 @@ export class OpenWAProvider implements WhatsAppProvider {
         timestamp,
         error: err.message,
       };
+    } finally {
+      if (tempFilePath) {
+        try {
+          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        } catch {}
+      }
     }
   }
 
