@@ -85,3 +85,4 @@ BEGIN
     RAISE LOG 'process-whatsapp-campaign-worker cron scheduled every 5 seconds';
   END IF;
 END $$;
+

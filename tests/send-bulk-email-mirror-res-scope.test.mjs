@@ -32,3 +32,4 @@ test('send-bulk-email: mirrorRes is properly scoped outside try block and safe o
     'mirrorErr catch block must not rethrow so Gmail send remains successful'
   );
 });
+

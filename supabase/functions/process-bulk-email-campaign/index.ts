@@ -120,7 +120,7 @@ Deno.serve(async (req: Request) => {
 
     const totals = [];
     let hasPendingWork = false;
-    let nextRunDelaySecs = 30;
+    let nextRunDelaySecs = 10;
     for (const campaignId of campaignIds) {
     if (!isInternal && !requestedCampaignId) {
       return new Response(JSON.stringify({ success: false, error: "Worker secret is required to process due campaigns" }), {
@@ -146,8 +146,9 @@ Deno.serve(async (req: Request) => {
     }
     if (!campaign.email_body) throw new Error("Campaign email body is missing");
 
-    const batchSize = Math.max(1, Math.min(Number(campaign.processing_batch_size || 10), 25));
-    const delaySeconds = Math.max(0, Number(campaign.processing_delay_seconds || 30));
+    // Strict ONE recipient at a time with minimum 10-second gap between send starts
+    const batchSize = 1;
+    const delaySeconds = Math.max(10, Number(campaign.processing_delay_seconds || 10));
     const { data: claimedRows, error: claimError } = await supabase.rpc("claim_bulk_email_recipients", {
       p_campaign_id: campaignId,
       p_limit: batchSize,
