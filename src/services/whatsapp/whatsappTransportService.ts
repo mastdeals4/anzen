@@ -398,13 +398,13 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
       };
     }
 
-    const apiKey =
-      this.config.adapterApiKey || '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4';
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'x-api-key': apiKey,
     };
+    if (this.config.adapterApiKey) {
+      headers['Authorization'] = `Bearer ${this.config.adapterApiKey}`;
+      headers['x-api-key'] = this.config.adapterApiKey;
+    }
 
     const payload = JSON.stringify({
       to: recipient,
@@ -419,25 +419,11 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
     });
 
     try {
-      let res: Response;
-      try {
-        res = await fetch(`${this.getBaseUrl()}/api/messages/send`, {
-          method: 'POST',
-          headers,
-          body: payload,
-        });
-      } catch (proxyErr) {
-        // Fallback to direct localhost:3100 if Vite proxy or configured URL was unreachable
-        if (this.getBaseUrl() !== 'http://127.0.0.1:3100') {
-          res = await fetch('http://127.0.0.1:3100/api/messages/send', {
-            method: 'POST',
-            headers,
-            body: payload,
-          });
-        } else {
-          throw proxyErr;
-        }
-      }
+      const res = await fetch(`${this.getBaseUrl()}/api/messages/send`, {
+        method: 'POST',
+        headers,
+        body: payload,
+      });
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
@@ -474,23 +460,13 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
   }
 
   async checkHealth(): Promise<WhatsAppConnectionHealth> {
-    const apiKey =
-      this.config.adapterApiKey || '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4';
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${apiKey}`,
-      'x-api-key': apiKey,
-    };
+    const headers: Record<string, string> = {};
+    if (this.config.adapterApiKey) {
+      headers['Authorization'] = `Bearer ${this.config.adapterApiKey}`;
+      headers['x-api-key'] = this.config.adapterApiKey;
+    }
     try {
-      let res: Response;
-      try {
-        res = await fetch(`${this.getBaseUrl()}/api/status`, { headers });
-      } catch (proxyErr) {
-        if (this.getBaseUrl() !== 'http://127.0.0.1:3100') {
-          res = await fetch('http://127.0.0.1:3100/api/status', { headers });
-        } else {
-          throw proxyErr;
-        }
-      }
+      const res = await fetch(`${this.getBaseUrl()}/api/status`, { headers });
       if (!res.ok) {
         return {
           provider: 'openwa_adapter',
@@ -501,13 +477,16 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
           isSimulation: false,
         };
       }
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       return {
         provider: 'openwa_adapter',
         status: data.status === 'connected' ? 'connected' : 'disconnected',
-        businessPhone: data.businessPhone,
-        details: `Local OpenWA session: ${data.session || 'sapj-business-whatsapp'}. Status: ${data.status}`,
-        webhookStatus: 'verified',
+        businessPhone: data.businessPhone || undefined,
+        details:
+          data.status === 'connected'
+            ? `Connected (${data.businessPhone || data.session})`
+            : `Status: ${data.status}`,
+        webhookStatus: data.status === 'connected' ? 'verified' : 'unverified',
         lastChecked: new Date().toISOString(),
         isSimulation: false,
       };
@@ -515,7 +494,7 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
       return {
         provider: 'openwa_adapter',
         status: 'disconnected',
-        details: `OpenWA adapter offline (${err.message}). Start adapter or configure Meta Cloud API.`,
+        details: `Proxy unreachable: ${err.message}`,
         webhookStatus: 'unverified',
         lastChecked: new Date().toISOString(),
         isSimulation: false,
@@ -607,10 +586,7 @@ export class WhatsAppTransportService {
     metaAppSecret: getEnv().VITE_META_APP_SECRET || '',
     metaWebhookVerifyToken: getEnv().VITE_META_WEBHOOK_VERIFY_TOKEN || 'sapj_meta_wa_verify_2026',
     adapterUrl: getEnv().VITE_WHATSAPP_PROXY_URL || '/api/whatsapp',
-    adapterApiKey:
-      getEnv().VITE_WHATSAPP_ADAPTER_API_KEY ||
-      getEnv().WHATSAPP_ADAPTER_KEY ||
-      '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4',
+    adapterApiKey: getEnv().VITE_WHATSAPP_ADAPTER_API_KEY || '',
   };
 
   private static providerInstances = new Map<WhatsAppTransportType, IWhatsAppProvider>();

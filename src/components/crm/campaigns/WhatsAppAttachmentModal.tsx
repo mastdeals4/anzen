@@ -113,7 +113,7 @@ export const WhatsAppAttachmentModal: React.FC<Props> = ({
         .select('*')
         .eq('lifecycle_status', 'BANKED')
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(1000);
 
       if (error) throw error;
       setBankDocs(data || []);
@@ -206,7 +206,7 @@ export const WhatsAppAttachmentModal: React.FC<Props> = ({
       onSelectAttachment({
         id: doc.id,
         source: 'bank',
-        name: doc.original_file_name || doc.title,
+        name: doc.title || doc.original_file_name || 'Document',
         documentType: doc.document_type || 'COA',
         mediaCategory: isImage ? 'image' : 'document',
         mimeType: doc.mime_type || (isImage ? 'image/jpeg' : 'application/pdf'),
@@ -371,6 +371,8 @@ export const WhatsAppAttachmentModal: React.FC<Props> = ({
                     return (
                       <div
                         key={doc.id}
+                        data-testid="bank-doc-card"
+                        data-doc-id={doc.id}
                         onClick={() => setSelectedBankDocId(doc.id)}
                         className={`p-3 rounded-xl border text-xs cursor-pointer transition flex items-start justify-between gap-3 ${
                           isSelected
@@ -395,7 +397,7 @@ export const WhatsAppAttachmentModal: React.FC<Props> = ({
                           <div className="min-w-0 flex-1 space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-gray-900 truncate">
-                                {doc.original_file_name || doc.title}
+                                {doc.title || doc.original_file_name}
                               </span>
                               <span
                                 className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${

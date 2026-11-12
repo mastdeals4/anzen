@@ -99,6 +99,16 @@ app.get('/api/status', async (req: Request, res: Response) => {
   }
 });
 
+// Diagnostics Check (Safe metadata: engine version, session status, connection health; no secrets)
+app.get('/api/diagnostics', async (_req: Request, res: Response) => {
+  try {
+    const diag = provider.getDiagnostics ? await provider.getDiagnostics() : { status: await provider.getStatus() };
+    res.status(200).json(diag);
+  } catch (err: any) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
 // Live QR Display View for Scanning
 app.get('/api/session/qr', requireAdminAuth, async (_req: Request, res: Response) => {
   try {

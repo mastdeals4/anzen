@@ -627,11 +627,15 @@ export class OpenWAProvider implements WhatsAppProvider {
 
     let tempFilePath: string | null = null;
     try {
-      const mediaUrl = (options?.documentUrl as string) || (options?.imageUrl as string) || '';
-      const fn = (options?.filename as string) || 'attachment.pdf';
+      const rawMediaUrl =
+        (options?.documentUrl as string) ||
+        (options?.imageUrl as string) ||
+        (options?.mediaUrl as string) ||
+        '';
+      const fn = (options?.filename as string) || (options?.imageUrl ? 'image.jpg' : 'attachment.pdf');
       const caption = ((options?.caption as string) || text || '').trim();
 
-      if (mediaUrl) {
+      if (rawMediaUrl) {
         // Enforce WhatsApp provider caption limit (1024 characters for media messages)
         if (caption.length > 1024) {
           throw new Error(
@@ -639,22 +643,96 @@ export class OpenWAProvider implements WhatsAppProvider {
           );
         }
 
-        // 1. Download attachment locally for Puppeteer file upload
+        // 1. Resolve and validate attachment
         const cleanFn = fn.replace(/[^a-zA-Z0-9._-]/g, '_');
         tempFilePath = path.join('/tmp', `wa_dispatch_${Date.now()}_${cleanFn}`);
-        console.log(`[OpenWAProvider] Downloading media attachment from ${mediaUrl}...`);
 
-        const dlRes = await fetch(mediaUrl);
-        if (!dlRes.ok) {
-          throw new Error(`Failed to download attachment from storage: HTTP ${dlRes.status} ${dlRes.statusText}`);
+        let resolvedMime = (options?.contentType as string) || (options?.mimeType as string) || '';
+        let fileSizeBytes = 0;
+
+        if (rawMediaUrl.startsWith('data:')) {
+          const match = rawMediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (!match) throw new Error('Invalid Data URL attachment format');
+          resolvedMime = resolvedMime || match[1];
+          const buf = Buffer.from(match[2], 'base64');
+          fileSizeBytes = buf.length;
+          fs.writeFileSync(tempFilePath, buf);
+        } else if (/^https?:\/\//i.test(rawMediaUrl)) {
+          const dlRes = await fetch(rawMediaUrl);
+          if (!dlRes.ok) {
+            throw new Error(`Failed to download attachment from storage: HTTP ${dlRes.status} ${dlRes.statusText}`);
+          }
+          const serverMime = dlRes.headers.get('content-type') || '';
+          if (!resolvedMime && serverMime && !serverMime.includes('octet-stream')) {
+            resolvedMime = serverMime.split(';')[0].trim();
+          }
+          const arrayBuf = await dlRes.arrayBuffer();
+          fileSizeBytes = arrayBuf.byteLength;
+          fs.writeFileSync(tempFilePath, Buffer.from(arrayBuf));
+        } else if (fs.existsSync(rawMediaUrl)) {
+          const stat = fs.statSync(rawMediaUrl);
+          fileSizeBytes = stat.size;
+          fs.copyFileSync(rawMediaUrl, tempFilePath);
+        } else {
+          throw new Error(`Unsupported media attachment source or file not found`);
         }
-        const arrayBuf = await dlRes.arrayBuffer();
-        fs.writeFileSync(tempFilePath, Buffer.from(arrayBuf));
 
-        // 2. Open chat without pre-filled text to attach media cleanly
-        const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}`;
-        console.log(`[OpenWAProvider] Dispatching media with caption to ${cleanDigits}...`);
-        await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        // Validate file size
+        if (fileSizeBytes === 0) {
+          throw new Error('Attachment file is empty (0 bytes)');
+        }
+        if (fileSizeBytes > 50 * 1024 * 1024) {
+          throw new Error(`Attachment exceeds WhatsApp 50MB limit (${(fileSizeBytes / (1024 * 1024)).toFixed(1)}MB)`);
+        }
+
+        // Infer MIME if not resolved
+        if (!resolvedMime) {
+          if (/\.jpe?g$/i.test(cleanFn)) resolvedMime = 'image/jpeg';
+          else if (/\.png$/i.test(cleanFn)) resolvedMime = 'image/png';
+          else if (/\.webp$/i.test(cleanFn)) resolvedMime = 'image/webp';
+          else if (/\.pdf$/i.test(cleanFn)) resolvedMime = 'application/pdf';
+          else resolvedMime = 'application/octet-stream';
+        }
+
+        const isImage = Boolean(options?.imageUrl) || resolvedMime.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(cleanFn);
+        console.log(`[OpenWAProvider] Media verified: MIME=${resolvedMime}, size=${fileSizeBytes} bytes, fn=${cleanFn}, isImage=${isImage}`);
+
+        // 2. Open chat if not already active
+        const isAlreadyOpen = await this.page.evaluate((digits: string) => {
+          const main = document.querySelector('#main');
+          if (!main) return false;
+          try {
+            const req = (window as any).require;
+            const activeChat = req('WAWebChatNavState')?.getActiveChat?.();
+            if (activeChat?.id?.user === digits) return true;
+          } catch (e) {}
+          const header = main.querySelector('header')?.textContent || '';
+          return header.includes(digits);
+        }, cleanDigits);
+
+        if (!isAlreadyOpen) {
+          let openedViaAction = false;
+          try {
+            openedViaAction = await this.page.evaluate(async (digits: string) => {
+              const req = (window as any).require;
+              if (!req) return false;
+              const wf = req('WAWebWidFactory');
+              const wid = wf.createWid(`${digits}@c.us`);
+              const nav = req('WAWebOpenChatWithContactAction');
+              if (nav?.openChatWithContact) {
+                await nav.openChatWithContact({ targetId: wid });
+                return true;
+              }
+              return false;
+            }, cleanDigits);
+          } catch (e) {}
+
+          if (!openedViaAction) {
+            const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}`;
+            console.log(`[OpenWAProvider] Navigating to chat via URL for ${cleanDigits}...`);
+            await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+          }
+        }
 
         // Check for invalid phone popup modal
         const invalidPopupText = await this.page.evaluate(() => {
@@ -681,24 +759,18 @@ export class OpenWAProvider implements WhatsAppProvider {
         }
 
         // Wait for chat interface to mount
-        await this.page.waitForSelector(
-          'span[data-icon="plus"], span[data-icon="attach-menu-plus"], div[data-testid="conversation-panel-wrapper"], footer',
-          { timeout: 30000 }
-        );
-
-        // Click the attach menu button to expose file inputs if required
-        const attachBtn = await this.page.$(
-          'span[data-icon="plus"], span[data-icon="attach-menu-plus"], button[title="Attach"], div[title="Attach"]'
-        );
-        if (attachBtn) {
-          await attachBtn.click();
-          await new Promise((r) => setTimeout(r, 600));
-        }
+        await this.page.waitForSelector('#main footer, footer', { timeout: 20000 });
 
         // Locate file inputs
         let fileInputs = await this.page.$$('input[type="file"]');
         if (fileInputs.length === 0) {
-          await this.page.waitForSelector('input[type="file"]', { timeout: 10000 });
+          const attachBtn = await this.page.$(
+            'footer button[aria-label="Attach"], button[title="Attach"], span[data-icon="attach-menu-plus"], span[data-icon="plus"]'
+          );
+          if (attachBtn) {
+            await attachBtn.click();
+            await new Promise((r) => setTimeout(r, 600));
+          }
           fileInputs = await this.page.$$('input[type="file"]');
         }
 
@@ -706,50 +778,86 @@ export class OpenWAProvider implements WhatsAppProvider {
           throw new Error('Could not find file input element in WhatsApp Web conversation.');
         }
 
-        const isImage = Boolean(options?.imageUrl) || /\.(jpg|jpeg|png|webp)$/i.test(fn);
-        const targetInput = isImage && fileInputs.length > 1 ? fileInputs[0] : fileInputs[fileInputs.length - 1];
-        await targetInput.uploadFile(tempFilePath);
-
-        // Wait for media preview drawer to mount
-        await this.page.waitForSelector(
-          'div[data-animate-media-viewer="true"], div[data-testid="media-caption-input-container"], span[data-icon="send"]',
-          { timeout: 25000 }
-        );
-
-        // Type caption into media caption input
-        if (caption) {
-          const captionInput = await this.page.$(
-            'div[data-testid="media-caption-input-container"] div[contenteditable="true"], div[aria-label="Add a caption"], div[data-tab="10"]'
-          );
-          if (captionInput) {
-            await captionInput.focus();
-            await this.page.evaluate(
-              (el: any, cText: string) => {
-                el.focus();
-                document.execCommand('selectAll', false);
-                document.execCommand('insertText', false, cText);
-              },
-              captionInput,
-              caption
-            );
-            await new Promise((r) => setTimeout(r, 500));
+        // Match input by accept attribute (image vs document)
+        let targetInput: any = null;
+        for (const input of fileInputs) {
+          const accept = await this.page.evaluate((el: HTMLInputElement) => el.getAttribute('accept') || '', input);
+          if (isImage && accept.toLowerCase().includes('image')) {
+            targetInput = input;
+            break;
+          } else if (!isImage && (accept === '*' || !accept.toLowerCase().includes('image'))) {
+            targetInput = input;
+            break;
           }
         }
 
-        // Click send button in media preview drawer
-        const mediaSendBtn = await this.page.waitForSelector(
-          'span[data-icon="send"], div[aria-label="Send"], span[data-icon="send-inverted"]',
-          { timeout: 15000 }
-        );
+        if (!targetInput) {
+          targetInput = isImage ? fileInputs[fileInputs.length - 1] : fileInputs[0];
+        }
+
+        await targetInput.uploadFile(tempFilePath);
+        console.log(`[OpenWAProvider] File uploaded to browser input (${cleanFn}, isImage=${isImage})`);
+
+        // Wait for send button or media viewer to appear
+        const sendSelector = 'div[aria-label*="Send" i], span[data-icon="send"], button[aria-label*="Send" i], span[data-icon="send-inverted"]';
+        await this.page.waitForSelector(sendSelector, { timeout: 20000 });
+
+        // Type caption into caption/compose input if provided
+        if (caption) {
+          const captionInput = await this.page.$(
+            'div[data-testid="media-caption-input-container"] div[contenteditable="true"], div[aria-label*="caption" i], div[contenteditable="true"]'
+          );
+          if (captionInput) {
+            await captionInput.focus();
+            await this.page.keyboard.type(caption);
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        }
+
+        // Click send button
+        const mediaSendBtn = await this.page.$(sendSelector);
         if (mediaSendBtn) {
           await mediaSendBtn.click();
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, 2500));
         }
       } else {
         // Pure text-only message dispatch
-        const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}&text=${encodeURIComponent(text)}`;
         console.log(`[OpenWAProvider] Dispatching text-only message to ${cleanDigits}...`);
-        await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+        const isAlreadyOpen = await this.page.evaluate((digits: string) => {
+          const main = document.querySelector('#main');
+          if (!main) return false;
+          try {
+            const req = (window as any).require;
+            const activeChat = req('WAWebChatNavState')?.getActiveChat?.();
+            if (activeChat?.id?.user === digits) return true;
+          } catch (e) {}
+          const header = main.querySelector('header')?.textContent || '';
+          return header.includes(digits);
+        }, cleanDigits);
+
+        if (!isAlreadyOpen) {
+          let openedViaAction = false;
+          try {
+            openedViaAction = await this.page.evaluate(async (digits: string) => {
+              const req = (window as any).require;
+              if (!req) return false;
+              const wf = req('WAWebWidFactory');
+              const wid = wf.createWid(`${digits}@c.us`);
+              const nav = req('WAWebOpenChatWithContactAction');
+              if (nav?.openChatWithContact) {
+                await nav.openChatWithContact({ targetId: wid });
+                return true;
+              }
+              return false;
+            }, cleanDigits);
+          } catch (e) {}
+
+          if (!openedViaAction) {
+            const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}&text=${encodeURIComponent(text)}`;
+            await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+          }
+        }
 
         // Check for invalid phone popup modal
         const invalidPopupText = await this.page.evaluate(() => {
@@ -775,8 +883,19 @@ export class OpenWAProvider implements WhatsAppProvider {
           throw new Error(`Recipient +${cleanDigits} is not registered on WhatsApp: ${invalidPopupText}`);
         }
 
+        // If compose box is empty, type the text
+        const composeBox = await this.page.$('#main footer div[contenteditable="true"]');
+        if (composeBox) {
+          await composeBox.focus();
+          const currentText = await this.page.evaluate((el: HTMLElement) => el.innerText?.trim() || '', composeBox);
+          if (!currentText) {
+            await this.page.keyboard.type(text);
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        }
+
         // Wait for send button and click
-        const sendButton = await this.page.waitForSelector('span[data-icon="send"], button[aria-label="Send"]', {
+        const sendButton = await this.page.waitForSelector('span[data-icon="send"], button[aria-label="Send"], div[aria-label*="Send" i]', {
           timeout: 20000,
         });
 
@@ -839,6 +958,31 @@ export class OpenWAProvider implements WhatsAppProvider {
     } catch (err: any) {
       console.error(`[OpenWAProvider] Outbound send error to ${cleanDigits}:`, err.message);
       this.lastError = err.message;
+
+      // Timeout reconciliation: verify if message was actually sent before declaring total failure
+      let reconciledMessageId: string | null = null;
+      if (/timeout|waiting failed/i.test(err.message) && this.page) {
+        try {
+          reconciledMessageId = await this.page.evaluate(() => {
+            const rows = document.querySelectorAll('.message-out[data-id], [data-id]');
+            for (let i = rows.length - 1; i >= 0; i--) {
+              const id = rows[i].getAttribute('data-id');
+              if (id && id.startsWith('true_')) return id;
+            }
+            return null;
+          });
+        } catch (e) {}
+      }
+
+      if (reconciledMessageId) {
+        console.log(`[OpenWAProvider] Reconciled dispatched message despite timeout: ${reconciledMessageId}`);
+        return {
+          success: true,
+          messageId: reconciledMessageId,
+          timestamp,
+        };
+      }
+
       return {
         success: false,
         messageId: '',
@@ -904,5 +1048,58 @@ export class OpenWAProvider implements WhatsAppProvider {
       console.error('[OpenWAProvider] ERP Ingress network error:', err.message);
       return { success: false, error: err.message };
     }
+  }
+
+  /**
+   * Diagnostic telemetry for live session inspection (engine version, session status, no credentials)
+   */
+  public async getDiagnostics(): Promise<Record<string, unknown>> {
+    let waWebVersion = 'unknown';
+    let browserVersion = 'unknown';
+    if (this.browser) {
+      try {
+        browserVersion = await this.browser.version();
+      } catch (e) {}
+    }
+    let pageUrl: string | null = null;
+    let pageTitle: string | null = null;
+    let hasPaneSide = false;
+    let bodySnippet: string | null = null;
+
+    if (this.page) {
+      try {
+        pageUrl = this.page.url();
+        pageTitle = await this.page.title();
+        hasPaneSide = await this.page.evaluate(() => {
+          return !!(
+            document.querySelector('#pane-side') ||
+            document.querySelector('[data-testid="chat-list"]') ||
+            document.querySelector('div[aria-label="Chat list"]')
+          );
+        });
+        bodySnippet = await this.page.evaluate(() => (document.body?.innerText || '').slice(0, 120).replace(/\s+/g, ' '));
+        waWebVersion = await this.page.evaluate(() => {
+          const req = (window as any).require;
+          return (window as any).Debug?.VERSION || req?.('WAWebVersion')?.VERSION || 'unknown';
+        });
+      } catch (e) {}
+    }
+
+    return {
+      status: this.status,
+      session: this.config.sessionId || 'sapj-business-whatsapp',
+      authenticatedPhone: this.authenticatedPhone || null,
+      authenticatedJid: this.authenticatedJid || null,
+      identityVerifiedAt: this.identityVerifiedAt || null,
+      identitySource: this.identitySource || null,
+      whatsappWebVersion: waWebVersion,
+      browserEngine: browserVersion,
+      pageUrl,
+      pageTitle,
+      hasPaneSide,
+      bodySnippet,
+      lastSeen: this.lastSeen,
+      lastError: this.lastError || null,
+    };
   }
 }

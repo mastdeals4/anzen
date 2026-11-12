@@ -1009,24 +1009,11 @@ export function CrmCampaignsWorkspace({ initialRecipients = [] }: Props) {
         throw new Error(`Failed to queue recipients in database: ${recErr.message}`);
       }
 
-      // 3. Trigger Server-Side Worker Edge Function
-      // Supabase Edge Function processes recipient #1 and self-schedules next ticks every 20s.
-      // The browser / Mac can now be completely closed safely!
-      const { error: fnErr } = await supabase.functions.invoke('process-whatsapp-campaign', {
-        body: {
-          campaignId: campaignRow.id,
-          action: 'start',
-        },
-      });
-
-      if (fnErr) {
-        console.warn('Edge function trigger notice:', fnErr);
-      }
-
+      // 3. Queue Campaign for Local OpenWA Dispatch
       showToast({
         type: 'success',
-        title: 'Campaign Live On Server Worker',
-        message: `${recipientRows.length} recipients queued. Execution is 100% server-side with 20-second pacing. Computer can now be closed safely.`,
+        title: 'Campaign Queued',
+        message: `${recipientRows.length} recipients queued. Use Campaign History with active local OpenWA session to monitor and dispatch.`,
       });
 
       // Navigate to delivery report

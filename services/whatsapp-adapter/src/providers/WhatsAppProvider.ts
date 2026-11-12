@@ -64,4 +64,5 @@ export interface WhatsAppProvider {
   connect?(): Promise<WhatsAppConnectionStatus>;
   refreshQr?(): Promise<WhatsAppConnectionStatus>;
   pair?(phone?: string): Promise<WhatsAppConnectionStatus>;
+  getDiagnostics?(): Promise<Record<string, unknown>>;
 }

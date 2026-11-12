@@ -188,10 +188,12 @@ export function WASenderBulkWorkspace({
 
   // Selected candidate phone IDs
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const hasInitializedSelectionRef = useRef(false);
 
-  // Auto-select valid candidates on initial load if none selected
+  // Auto-select valid candidates on initial load if none selected (run once)
   useEffect(() => {
-    if (dedupedCandidates.length > 0 && selectedIds.size === 0) {
+    if (!hasInitializedSelectionRef.current && dedupedCandidates.length > 0) {
+      hasInitializedSelectionRef.current = true;
       if (initialRecipients && initialRecipients.length > 0) {
         const initialPhones = new Set(
           initialRecipients.map((r: any) => r.mobile || r.phone).filter(Boolean)
@@ -222,11 +224,15 @@ export function WASenderBulkWorkspace({
   };
 
   const handleSelectNoneFiltered = () => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      filteredCandidates.forEach((c) => next.delete(c.id));
-      return next;
-    });
+    if (!contactSearchQuery.trim()) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        filteredCandidates.forEach((c) => next.delete(c.id));
+        return next;
+      });
+    }
   };
 
   const handleToggleCandidate = (id: string) => {
@@ -944,6 +950,7 @@ export function WASenderBulkWorkspace({
           {recipientLogs.length > 0 && (
             <button
               type="button"
+              data-testid="campaign-report-btn"
               onClick={() => setIsReportOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
             >
@@ -1451,6 +1458,7 @@ export function WASenderBulkWorkspace({
               <>
                 <button
                   type="button"
+                  data-testid="resume-campaign-btn"
                   onClick={handleResumeCampaign}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
                 >
@@ -1459,6 +1467,7 @@ export function WASenderBulkWorkspace({
                 </button>
                 <button
                   type="button"
+                  data-testid="cancel-campaign-btn"
                   onClick={handleCancelCampaign}
                   className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-lg text-xs font-semibold transition cursor-pointer"
                 >
@@ -1470,6 +1479,7 @@ export function WASenderBulkWorkspace({
               <>
                 <button
                   type="button"
+                  data-testid="pause-campaign-btn"
                   onClick={handlePauseCampaign}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
                 >
@@ -1478,6 +1488,7 @@ export function WASenderBulkWorkspace({
                 </button>
                 <button
                   type="button"
+                  data-testid="cancel-campaign-btn"
                   onClick={handleCancelCampaign}
                   className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-lg text-xs font-semibold transition cursor-pointer"
                 >
@@ -1573,7 +1584,10 @@ export function WASenderBulkWorkspace({
       {/* CAMPAIGN REPORT & EXCEL EXPORT MODAL */}
       {/* ------------------------------------------------------------------ */}
       {isReportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+        <div
+          data-testid="campaign-report-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in"
+        >
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
             {/* Modal Header */}
             <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
@@ -1587,6 +1601,7 @@ export function WASenderBulkWorkspace({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  data-testid="export-excel-btn"
                   onClick={handleExportToExcel}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
                 >

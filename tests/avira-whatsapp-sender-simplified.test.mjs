@@ -152,13 +152,61 @@ test('Avira WhatsApp Sender (WA Sender Simplicity Reference) Suite', async (t) =
   // -----------------------------------------------------------------
   // TEST 5: OpenWA Connection Transport Configuration
   // -----------------------------------------------------------------
-  await t.test('5. WhatsAppTransportService defaults to openwa_adapter with persistent host and API key', () => {
+  await t.test('5. WhatsAppTransportService defaults to openwa_adapter with protected local proxy (/api/whatsapp)', () => {
     const config = WhatsAppTransportService.getConfig();
     assert.equal(config.providerType, 'openwa_adapter', 'Provider type must be openwa_adapter');
-    assert.ok(config.adapterApiKey, 'Adapter API key must be configured');
-    assert.equal(
-      config.adapterApiKey,
-      '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4'
-    );
+    assert.equal(config.adapterUrl, '/api/whatsapp', 'Must route through server-side proxy /api/whatsapp');
+    assert.equal(config.adapterApiKey, '', 'Client bundle must NOT expose hardcoded API keys');
+  });
+
+  // -----------------------------------------------------------------
+  // TEST 6: Campaign History Local OpenWA Engine & Legacy Removal
+  // -----------------------------------------------------------------
+  await t.test('6. WhatsAppCampaignDeliveryReport uses local OpenWA engine without process-whatsapp-campaign', () => {
+    const reportPath = path.join(process.cwd(), 'src/components/crm/campaigns/WhatsAppCampaignDeliveryReport.tsx');
+    assert.ok(fs.existsSync(reportPath), 'WhatsAppCampaignDeliveryReport.tsx must exist');
+    const code = fs.readFileSync(reportPath, 'utf8');
+
+    // Verify removal of edge function call
+    assert.ok(!code.includes("invoke('process-whatsapp-campaign'"), 'Must NOT invoke process-whatsapp-campaign');
+
+    // Verify local transport usage
+    assert.match(code, /WhatsAppTransportService\.sendMessage/i, 'Uses local WhatsAppTransportService');
+    assert.match(code, /WhatsAppTransportService\.checkHealth/i, 'Uses local WhatsAppTransportService.checkHealth');
+
+    // Verify Local Execution Limitations indicator
+    assert.match(code, /Local OpenWA Engine/i, 'Identifies local engine');
+    assert.match(code, /Keep this browser tab active/i, 'Warns user to keep browser tab open');
+  });
+
+  // -----------------------------------------------------------------
+  // TEST 7: Concurrency & Worker Lock Protection Invariants
+  // -----------------------------------------------------------------
+  await t.test('7. Enforces worker lock and sequential pacing in campaign history dispatch', () => {
+    const reportPath = path.join(process.cwd(), 'src/components/crm/campaigns/WhatsAppCampaignDeliveryReport.tsx');
+    const code = fs.readFileSync(reportPath, 'utf8');
+
+    // Verify worker lock
+    assert.match(code, /worker_lock_id/i, 'Tracks worker_lock_id');
+    assert.match(code, /worker_lock_until/i, 'Tracks worker_lock_until');
+    assert.match(code, /Campaign is currently active in another session/i, 'Prevents concurrent execution');
+
+    // Verify pause & cancel controls
+    assert.match(code, /handlePauseCampaign/i, 'Implements pause campaign');
+    assert.match(code, /handleCancelCampaign/i, 'Implements cancel campaign');
+    assert.match(code, /handleResumeCampaign/i, 'Implements resume campaign');
+  });
+
+  // -----------------------------------------------------------------
+  // TEST 8: Reconcile & Manual Retry for Failed Recipients
+  // -----------------------------------------------------------------
+  await t.test('8. Provides reconciliation and safe manual retry for failed recipients', () => {
+    const reportPath = path.join(process.cwd(), 'src/components/crm/campaigns/WhatsAppCampaignDeliveryReport.tsx');
+    const code = fs.readFileSync(reportPath, 'utf8');
+
+    assert.match(code, /handleOpenReconcile/i, 'Implements reconciliation check');
+    assert.match(code, /handleExecuteManualRetry/i, 'Implements manual retry send');
+    assert.match(code, /reconcileTarget/i, 'State for target recipient to reconcile');
+    assert.match(code, /reconcileFinding/i, 'State for reconciliation findings');
   });
 });
