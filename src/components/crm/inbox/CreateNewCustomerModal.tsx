@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
+import { classifyCanonicalPhone, ISO_COUNTRY_NAMES } from '../../../services/crm/canonicalPhoneService';
 import {
   UserPlus,
   Building2,
@@ -10,6 +11,7 @@ import {
   MapPin,
   X,
   Briefcase,
+  Globe,
 } from 'lucide-react';
 
 interface Props {
@@ -33,6 +35,7 @@ export function CreateNewCustomerModal({
   const [contactPerson, setContactPerson] = useState('');
   const [department, setDepartment] = useState('Purchasing');
   const [email, setEmail] = useState('');
+  const [country, setCountry] = useState('ID');
   const [city, setCity] = useState('Jakarta');
   const [address, setAddress] = useState('');
   const [customerType, setCustomerType] = useState('Pharma Manufacturer');
@@ -51,9 +54,21 @@ export function CreateNewCustomerModal({
 
     setSaving(true);
     try {
-      const phoneToSave = normalizedPhone || rawPhone;
+      const phoneInput = normalizedPhone || rawPhone;
+      const classified = classifyCanonicalPhone(phoneInput, {
+        trustedRegion: country === 'OTHER' ? undefined : country,
+        companyCity: city.trim() || null,
+      });
+
+      const phoneToSave = classified.e164 || phoneInput;
+      const phoneCallingCode = classified.callingCode || '+62';
+      const phoneCountryName = classified.phoneCountryName || ISO_COUNTRY_NAMES[country]?.name || (country === 'OTHER' ? 'International' : 'Indonesia');
+      const isMobile = classified.phoneType === 'mobile' || classified.isWhatsAppEligibleCandidate;
 
       // 1. Insert into crm_contacts
+      // FIX 1: company classification -> company_type
+      // FIX 1: customer_type -> 'prospect'
+      // FIX 2: country name & canonical phone
       const { data: newContact, error: contactErr } = await supabase
         .from('crm_contacts')
         .insert({
@@ -62,11 +77,13 @@ export function CreateNewCustomerModal({
           designation: department,
           department: department,
           phone: phoneToSave,
-          mobile: phoneToSave,
+          mobile: isMobile ? phoneToSave : null,
           email: email.trim() || null,
+          country: phoneCountryName,
           city: city.trim() || null,
           address: address.trim() || null,
-          customer_type: customerType,
+          company_type: customerType,
+          customer_type: 'prospect',
           is_active: true,
         })
         .select('id, company_name')
@@ -84,9 +101,9 @@ export function CreateNewCustomerModal({
           department: department,
           raw_phone: rawPhone || phoneToSave,
           normalized_phone: phoneToSave,
-          country_code: '+62',
-          country_name: 'Indonesia',
-          phone_type: 'valid_mobile',
+          country_code: phoneCallingCode,
+          country_name: phoneCountryName,
+          phone_type: isMobile ? 'valid_mobile' : classified.phoneType === 'fixed_line' ? 'landline' : 'valid_mobile',
           is_whatsapp_eligible: true,
           is_primary: true,
           consent_status: 'opted_in',
@@ -243,7 +260,7 @@ export function CreateNewCustomerModal({
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Customer Type
+                Company Classification / Type
               </label>
               <select
                 value={customerType}
@@ -259,8 +276,37 @@ export function CreateNewCustomerModal({
             </div>
           </div>
 
-          {/* City & Address */}
+          {/* Country & City */}
           <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Country
+              </label>
+              <div className="relative">
+                <Globe className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                <select
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value)}
+                  className="w-full pl-9 pr-2.5 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-blue-500 bg-white"
+                >
+                  <option value="ID">🇮🇩 Indonesia (+62)</option>
+                  <option value="IN">🇮🇳 India (+91)</option>
+                  <option value="SG">🇸🇬 Singapore (+65)</option>
+                  <option value="MY">🇲🇾 Malaysia (+60)</option>
+                  <option value="CN">🇨🇳 China (+86)</option>
+                  <option value="US">🇺🇸 United States (+1)</option>
+                  <option value="GB">🇬🇧 United Kingdom (+44)</option>
+                  <option value="DE">🇩🇪 Germany (+49)</option>
+                  <option value="VN">🇻🇳 Vietnam (+84)</option>
+                  <option value="TH">🇹🇭 Thailand (+66)</option>
+                  <option value="KR">🇰🇷 South Korea (+82)</option>
+                  <option value="JP">🇯🇵 Japan (+81)</option>
+                  <option value="AU">🇦🇺 Australia (+61)</option>
+                  <option value="OTHER">🌐 Other / International</option>
+                </select>
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 City / Region
@@ -276,19 +322,20 @@ export function CreateNewCustomerModal({
                 />
               </div>
             </div>
+          </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Street Address (Optional)
-              </label>
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Jl. Industri No. ..."
-                className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-blue-500"
-              />
-            </div>
+          {/* Address */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Street Address (Optional)
+            </label>
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Jl. Industri No. ..."
+              className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-blue-500"
+            />
           </div>
 
           {/* Actions */}

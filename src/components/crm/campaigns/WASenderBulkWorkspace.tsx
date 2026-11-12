@@ -35,6 +35,10 @@ import {
   WHATSAPP_MEDIA_CAPTION_LIMIT,
 } from '../../../utils/whatsappPersonalization';
 import { WhatsAppTransportService } from '../../../services/whatsapp/whatsappTransportService';
+import {
+  classifyCanonicalPhone,
+  getNormalizedDestinationPhone,
+} from '../../../services/crm/canonicalPhoneService';
 
 export interface CampaignRecipientLogItem {
   id: string;
@@ -154,7 +158,7 @@ export function WASenderBulkWorkspace({
     let dups = 0;
 
     for (const item of candidateItems) {
-      const numKey = item.validation?.normalized || item.raw_phone;
+      const numKey = getNormalizedDestinationPhone(item);
       if (!numKey) continue;
       if (seenNumbers.has(numKey)) {
         dups++;
@@ -177,7 +181,7 @@ export function WASenderBulkWorkspace({
     return dedupedCandidates.filter((c) => {
       const company = (c.company_name || '').toLowerCase();
       const person = (c.contact_person || '').toLowerCase();
-      const phone = (c.validation?.normalized || c.raw_phone || '').toLowerCase();
+      const phone = getNormalizedDestinationPhone(c).toLowerCase();
       return company.includes(q) || person.includes(q) || phone.includes(q);
     });
   }, [dedupedCandidates, contactSearchQuery]);
@@ -194,7 +198,7 @@ export function WASenderBulkWorkspace({
         );
         const matched = new Set<string>();
         for (const c of dedupedCandidates) {
-          const ph = c.validation?.normalized || c.raw_phone;
+          const ph = getNormalizedDestinationPhone(c);
           if (ph && initialPhones.has(ph)) {
             matched.add(c.id);
           }
@@ -320,7 +324,7 @@ export function WASenderBulkWorkspace({
         company_name: activePreviewCandidate.company_name,
         contact_name: activePreviewCandidate.contact_person,
         contact_person: activePreviewCandidate.contact_person,
-        phone: activePreviewCandidate.validation?.normalized || activePreviewCandidate.raw_phone,
+        phone: getNormalizedDestinationPhone(activePreviewCandidate),
       },
       { productName }
     );
@@ -503,7 +507,7 @@ export function WASenderBulkWorkspace({
 
     // 2. Insert recipient rows
     const initialLogs: CampaignRecipientLogItem[] = selectedCandidatesList.map((c) => {
-      const phone = c.validation?.normalized || c.raw_phone || '';
+      const phone = getNormalizedDestinationPhone(c);
       const personalized = formatPersonalizedWhatsAppMessage(
         messageText,
         {
@@ -1032,7 +1036,7 @@ export function WASenderBulkWorkspace({
             ) : (
               filteredCandidates.map((c) => {
                 const isSelected = selectedIds.has(c.id);
-                const phone = c.validation?.normalized || c.raw_phone || '';
+                const phone = getNormalizedDestinationPhone(c);
                 return (
                   <label
                     key={c.id}
@@ -1357,7 +1361,7 @@ export function WASenderBulkWorkspace({
                       </div>
                       <div className="text-[9px] text-emerald-100 truncate">
                         {activePreviewCandidate?.contact_person || 'Bpk Rudi'} &bull;{' '}
-                        {activePreviewCandidate?.validation?.normalized || '+628123456789'}
+                        {activePreviewCandidate ? getNormalizedDestinationPhone(activePreviewCandidate) : '+628123456789'}
                       </div>
                     </div>
                   </div>

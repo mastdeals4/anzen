@@ -87,6 +87,55 @@ export interface ClassifyPhoneOptions {
 }
 
 /**
+ * Extracts normalized E.164 destination phone from contact/candidate record.
+ * Guarantees that WhatsApp sending and recipient selection always uses normalized E.164 format.
+ */
+export function getNormalizedDestinationPhone(c?: { validation?: { normalized?: string | null }; raw_phone?: string | null; phone?: string | null; mobile?: string | null } | null): string {
+  if (!c) return '';
+  if (c.validation?.normalized) return c.validation.normalized;
+  const candidateRaw = c.raw_phone || c.mobile || c.phone;
+  if (candidateRaw) {
+    const canonical = classifyCanonicalPhone(candidateRaw, { trustedRegion: 'ID' });
+    if (canonical.e164) return canonical.e164;
+    return candidateRaw;
+  }
+  return '';
+}
+
+/**
+ * Clean up common accidental double country code prefixes:
+ * - Repeated pluses: ++62 -> +62
+ * - Double calling codes: +62+62..., +62 62 ..., +62628..., +91+91...
+ * - International prefix with local leading zero: +62 0811... -> +62 811...
+ * - Double calling code without plus: 62628... -> +628...
+ */
+export function sanitizeDoubleCountryCode(raw: string): string {
+  let cleaned = (raw || '').trim();
+  if (!cleaned) return cleaned;
+  if (cleaned.startsWith('+0')) return cleaned;
+
+  // 1. Remove consecutive pluses: ++62 -> +62
+  cleaned = cleaned.replace(/^\+{2,}/, '+');
+
+  // 2. Repeated country calling code with plus: +62+62... or +91+91...
+  cleaned = cleaned.replace(/^\+([1-9]\d{0,3})\s*\+\1(?=[1-9]\d{6,})/, '+$1');
+
+  // 3. Repeated country calling code with spaces/dashes: +62 62 ... or +62-62-...
+  cleaned = cleaned.replace(/^\+([1-9]\d{0,3})[\s\-]+\1(?=[\s\-]*[1-9]\d{6,})/, '+$1 ');
+
+  // 4. Compact duplicate country code: +62628..., +91919...
+  cleaned = cleaned.replace(/^\+(62|91|65|60|1|44)\1(?=[1-9]\d{6,})/, '+$1');
+
+  // 5. Country code followed by erroneous local trunk prefix 0: +62 0811... -> +62 811...
+  cleaned = cleaned.replace(/^(\+[1-9]\d{0,2})[\s\-]*0([1-9]\d{6,})/, '$1 $2');
+
+  // 6. Double country code without plus: 62628... or 9191...
+  cleaned = cleaned.replace(/^(62|91|65|60)\1(?=[1-9]\d{6,})/, '+$1');
+
+  return cleaned.trim();
+}
+
+/**
  * Authoritative canonical phone classification function.
  * Single source of truth used across all CRM, campaign, and inbox modules.
  */
@@ -116,7 +165,8 @@ export function classifyCanonicalPhone(
     };
   }
 
-  const trimmed = rawPhone.trim();
+  const sanitized = sanitizeDoubleCountryCode(rawPhone);
+  const trimmed = sanitized.trim();
   const digitsOnly = trimmed.replace(/[^\d+]/g, '');
 
   // 2. Malformed international prefix starting with +0 (e.g. +021...)

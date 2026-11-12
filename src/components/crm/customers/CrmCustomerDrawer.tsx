@@ -66,6 +66,7 @@ export interface CustomerDetail {
   country?: string | null;
   website?: string | null;
   customer_type?: string | null;
+  company_type?: string | null;
   notes?: string | null;
   is_active?: boolean;
   erp_customer_id?: string | null;
@@ -607,9 +608,9 @@ export function CrmCustomerDrawer({
                 }`}>
                   {customer.is_active !== false ? 'Active' : 'Inactive'}
                 </span>
-                {customer.customer_type && (
+                {(customer.company_type || customer.customer_type) && (
                   <span className="px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded">
-                    {customer.customer_type}
+                    {customer.company_type || customer.customer_type}
                   </span>
                 )}
               </div>
@@ -838,8 +839,8 @@ export function CrmCustomerDrawer({
                         {customer.landline && <span className="text-xs text-gray-500 ml-1">(Landline: {customer.landline})</span>}
                       </div>
                       <div>
-                        <span className="text-xs text-gray-500 block">Customer Segment / Type</span>
-                        <span className="font-medium text-gray-900">{customer.customer_type || 'General'}</span>
+                        <span className="text-xs text-gray-500 block">Customer Classification / Type</span>
+                        <span className="font-medium text-gray-900">{customer.company_type || customer.customer_type || 'General'}</span>
                       </div>
                       <div className="md:col-span-2">
                         <span className="text-xs text-gray-500 block">Address</span>

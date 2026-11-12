@@ -583,13 +583,15 @@ export class SimulationProvider implements IWhatsAppProvider {
 }
 
 const getEnv = (): Record<string, any> => {
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-    return (import.meta as any).env;
-  }
-  if (typeof process !== 'undefined' && process.env) {
+  if (typeof process !== 'undefined' && process?.env) {
     return process.env;
   }
-  return {};
+  try {
+    const fn = new Function('try { return import.meta.env; } catch { return {}; }');
+    return fn() || {};
+  } catch {
+    return {};
+  }
 };
 
 /**
@@ -646,8 +648,8 @@ export class WhatsAppTransportService {
         provider: this.activeConfig.providerType,
         timestamp: new Date().toISOString(),
         isSimulation: false,
-        error: 'Bulk WhatsApp dispatch is blocked: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.',
-        errorCode: 'BULK_DISPATCH_LOCKED',
+        error: 'Bulk WhatsApp dispatch is disabled: live bulk campaigns require verified individual customer opt-in consent records and approved dispatch readiness.',
+        errorCode: 'BULK_DISPATCH_DISABLED',
       };
     }
     const provider = this.getProvider();

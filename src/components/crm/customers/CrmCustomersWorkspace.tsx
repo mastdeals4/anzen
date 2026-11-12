@@ -6,6 +6,7 @@ import { CustomerDatabaseExcel } from '../CustomerDatabaseExcel';
 import { Customer360Panel } from '../Customer360Panel';
 import { FloatingField, FLOAT_INPUT } from '../../finance/FloatingField';
 import { SapRow } from '../../finance/SapLayout';
+import { classifyCanonicalPhone, ISO_COUNTRY_NAMES } from '../../../services/crm/canonicalPhoneService';
 import {
   Users,
   Search,
@@ -73,6 +74,7 @@ export function CrmCustomersWorkspace({
   const [newContact, setNewContact] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [newCountry, setNewCountry] = useState('ID');
   const [newCity, setNewCity] = useState('');
   const [newType, setNewType] = useState('Pharma Manufacturer');
   const [savingNew, setSavingNew] = useState(false);
@@ -205,6 +207,7 @@ export function CrmCustomersWorkspace({
           city: c.city,
           country: c.country,
           website: c.website,
+          company_type: c.company_type,
           customer_type: c.customer_type,
           notes: c.notes,
           is_active: c.is_active,
@@ -277,18 +280,69 @@ export function CrmCustomersWorkspace({
     }
     setSavingNew(true);
     try {
-      const { data: auth } = await supabase.auth.getUser();
+      // 1. Phone number normalisation & classification
+      const rawPhone = newPhone.trim();
+      let normalizedPhone: string | null = null;
+      let phoneCallingCode = '+62';
+      let phoneCountryName = 'Indonesia';
+      let phoneType = 'unknown';
+      let isWhatsAppEligible = false;
+
+      if (rawPhone) {
+        const classified = classifyCanonicalPhone(rawPhone, {
+          trustedRegion: newCountry === 'OTHER' ? undefined : newCountry,
+          companyCity: newCity.trim() || null,
+        });
+        normalizedPhone = classified.e164;
+        phoneCallingCode = classified.callingCode || '+62';
+        phoneCountryName = classified.phoneCountryName || 'Indonesia';
+        phoneType = classified.phoneType === 'mobile' ? 'valid_mobile' : classified.phoneType === 'fixed_line' ? 'landline' : 'unknown';
+        isWhatsAppEligible = classified.isWhatsAppEligibleCandidate;
+      }
+
+      const countryName = ISO_COUNTRY_NAMES[newCountry]?.name || (newCountry === 'OTHER' ? 'International' : 'Indonesia');
+      const phoneToSave = normalizedPhone || rawPhone || null;
+
+      // 2. Insert into crm_contacts
+      // FIX 1: company classification -> company_type
+      // FIX 1: new customer status -> customer_type = 'prospect'
+      // FIX 2: country name & normalized phone stored
       const { data, error } = await supabase.from('crm_contacts').insert({
         company_name: newCompany.trim(),
         contact_person: newContact.trim() || null,
         email: newEmail.trim() || null,
-        phone: newPhone.trim() || null,
+        phone: phoneToSave,
+        mobile: phoneType === 'valid_mobile' ? phoneToSave : null,
         city: newCity.trim() || null,
-        customer_type: newType,
+        country: countryName,
+        company_type: newType,
+        customer_type: 'prospect',
         is_active: true,
       }).select().single();
 
       if (error) throw error;
+
+      // 3. Insert into crm_contact_phones to sync with WhatsApp bulk sender & CRM phones
+      if (data && rawPhone) {
+        const { error: phoneErr } = await supabase.from('crm_contact_phones').insert({
+          contact_id: data.id,
+          company_name: data.company_name,
+          contact_person: newContact.trim() || null,
+          department: 'Purchasing',
+          raw_phone: rawPhone,
+          normalized_phone: normalizedPhone || rawPhone,
+          country_code: phoneCallingCode,
+          country_name: phoneCountryName,
+          phone_type: phoneType,
+          is_whatsapp_eligible: isWhatsAppEligible,
+          is_primary: true,
+          consent_status: 'pending',
+        });
+
+        if (phoneErr && !phoneErr.message.includes('duplicate')) {
+          console.warn('Could not insert crm_contact_phones record:', phoneErr);
+        }
+      }
 
       showToast({ type: 'success', title: 'Customer Created', message: `${newCompany} added to customer database.` });
       setShowNewModal(false);
@@ -296,7 +350,9 @@ export function CrmCustomersWorkspace({
       setNewContact('');
       setNewEmail('');
       setNewPhone('');
+      setNewCountry('ID');
       setNewCity('');
+      setNewType('Pharma Manufacturer');
       loadCustomers();
       setExcelRefreshKey(k => k + 1);
 
@@ -822,18 +878,41 @@ export function CrmCustomersWorkspace({
                   />
                 </FloatingField>
 
-                <FloatingField label="Phone" span={6} filled={!!newPhone}>
+                <FloatingField label="Phone / Mobile" span={6} filled={!!newPhone}>
                   <input
                     type="tel"
                     value={newPhone}
                     onChange={(e) => setNewPhone(e.target.value)}
-                    placeholder="+62 21 ..."
+                    placeholder="0811... or +62..."
                     className={FLOAT_INPUT}
                   />
                 </FloatingField>
               </SapRow>
 
               <SapRow>
+                <FloatingField label="Country" span={6} filled={!!newCountry}>
+                  <select
+                    value={newCountry}
+                    onChange={(e) => setNewCountry(e.target.value)}
+                    className={FLOAT_INPUT}
+                  >
+                    <option value="ID">🇮🇩 Indonesia (+62)</option>
+                    <option value="IN">🇮🇳 India (+91)</option>
+                    <option value="SG">🇸🇬 Singapore (+65)</option>
+                    <option value="MY">🇲🇾 Malaysia (+60)</option>
+                    <option value="CN">🇨🇳 China (+86)</option>
+                    <option value="US">🇺🇸 United States (+1)</option>
+                    <option value="GB">🇬🇧 United Kingdom (+44)</option>
+                    <option value="DE">🇩🇪 Germany (+49)</option>
+                    <option value="VN">🇻🇳 Vietnam (+84)</option>
+                    <option value="TH">🇹🇭 Thailand (+66)</option>
+                    <option value="KR">🇰🇷 South Korea (+82)</option>
+                    <option value="JP">🇯🇵 Japan (+81)</option>
+                    <option value="AU">🇦🇺 Australia (+61)</option>
+                    <option value="OTHER">🌐 Other / International</option>
+                  </select>
+                </FloatingField>
+
                 <FloatingField label="City" span={6} filled={!!newCity}>
                   <input
                     type="text"
@@ -843,8 +922,10 @@ export function CrmCustomersWorkspace({
                     className={FLOAT_INPUT}
                   />
                 </FloatingField>
+              </SapRow>
 
-                <FloatingField label="Type" span={6} filled={!!newType}>
+              <SapRow>
+                <FloatingField label="Customer Type (Classification)" span={12} filled={!!newType}>
                   <select
                     value={newType}
                     onChange={(e) => setNewType(e.target.value)}
