@@ -39,8 +39,10 @@ export function formatPersonalizedWhatsAppMessage(
 ): string {
   if (!template) return '';
 
-  const contactPerson = (recipient?.contact_person || '').trim() || 'Bapak/Ibu';
-  const companyName = (recipient?.company_name || '').trim() || 'Rekan Bisnis';
+  const contactPerson =
+    (recipient?.contact_name || recipient?.contact_person || '').trim() || 'Bapak/Ibu';
+  const companyName =
+    (recipient?.customer_name || recipient?.company_name || '').trim() || 'Rekan Bisnis';
   const productName = (options?.productName || '').trim() || 'Bahan Baku Farmasi & API';
   const designation = (recipient?.designation || '').trim() || 'Purchasing';
   const city = (recipient?.city || '').trim() || (options?.defaultCity || 'Jakarta');
@@ -51,8 +53,10 @@ export function formatPersonalizedWhatsAppMessage(
     'Tim Sales SAPJ';
 
   let resolved = template
+    .replace(/\{\{contact_name\}\}/gi, contactPerson)
     .replace(/\{\{contact_person\}\}/gi, contactPerson)
     .replace(/\{\{company_name\}\}/gi, companyName)
+    .replace(/\{\{customer_name\}\}/gi, companyName)
     .replace(/\{\{product_name\}\}/gi, productName)
     .replace(/\{\{designation\}\}/gi, designation)
     .replace(/\{\{city\}\}/gi, city)

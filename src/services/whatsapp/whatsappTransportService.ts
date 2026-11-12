@@ -398,22 +398,46 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
       };
     }
 
+    const apiKey =
+      this.config.adapterApiKey || '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'x-api-key': apiKey,
+    };
+
+    const payload = JSON.stringify({
+      to: recipient,
+      text: captionText,
+      options: {
+        ...options,
+        caption: captionText,
+        documentUrl: options.documentUrl,
+        imageUrl: options.imageUrl,
+        filename: options.filename,
+      },
+    });
+
     try {
-      const res = await fetch(`${this.getBaseUrl()}/api/messages/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: recipient,
-          text: captionText,
-          options: {
-            ...options,
-            caption: captionText,
-            documentUrl: options.documentUrl,
-            imageUrl: options.imageUrl,
-            filename: options.filename,
-          },
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${this.getBaseUrl()}/api/messages/send`, {
+          method: 'POST',
+          headers,
+          body: payload,
+        });
+      } catch (proxyErr) {
+        // Fallback to direct localhost:3100 if Vite proxy or configured URL was unreachable
+        if (this.getBaseUrl() !== 'http://127.0.0.1:3100') {
+          res = await fetch('http://127.0.0.1:3100/api/messages/send', {
+            method: 'POST',
+            headers,
+            body: payload,
+          });
+        } else {
+          throw proxyErr;
+        }
+      }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
@@ -450,8 +474,23 @@ export class OpenWaAdapterProvider implements IWhatsAppProvider {
   }
 
   async checkHealth(): Promise<WhatsAppConnectionHealth> {
+    const apiKey =
+      this.config.adapterApiKey || '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4';
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${apiKey}`,
+      'x-api-key': apiKey,
+    };
     try {
-      const res = await fetch(`${this.getBaseUrl()}/api/status`);
+      let res: Response;
+      try {
+        res = await fetch(`${this.getBaseUrl()}/api/status`, { headers });
+      } catch (proxyErr) {
+        if (this.getBaseUrl() !== 'http://127.0.0.1:3100') {
+          res = await fetch('http://127.0.0.1:3100/api/status', { headers });
+        } else {
+          throw proxyErr;
+        }
+      }
       if (!res.ok) {
         return {
           provider: 'openwa_adapter',
@@ -559,14 +598,17 @@ const getEnv = (): Record<string, any> => {
 export class WhatsAppTransportService {
   private static activeConfig: WhatsAppProviderConfig = {
     providerType:
-      (getEnv().VITE_WHATSAPP_PROVIDER as WhatsAppTransportType) ||
-      (getEnv().VITE_META_PHONE_NUMBER_ID ? 'meta_cloud' : 'openwa_adapter'),
+      (getEnv().VITE_WHATSAPP_PROVIDER as WhatsAppTransportType) || 'openwa_adapter',
     metaPhoneNumberId: getEnv().VITE_META_PHONE_NUMBER_ID || '',
     metaWabaId: getEnv().VITE_META_WABA_ID || '',
     metaAccessToken: getEnv().VITE_META_ACCESS_TOKEN || '',
     metaAppSecret: getEnv().VITE_META_APP_SECRET || '',
     metaWebhookVerifyToken: getEnv().VITE_META_WEBHOOK_VERIFY_TOKEN || 'sapj_meta_wa_verify_2026',
     adapterUrl: getEnv().VITE_WHATSAPP_PROXY_URL || '/api/whatsapp',
+    adapterApiKey:
+      getEnv().VITE_WHATSAPP_ADAPTER_API_KEY ||
+      getEnv().WHATSAPP_ADAPTER_KEY ||
+      '6677a271668085c00c3f37ae6cf77d155f4c5a83b0573ac184e135fe1bf726b4',
   };
 
   private static providerInstances = new Map<WhatsAppTransportType, IWhatsAppProvider>();
