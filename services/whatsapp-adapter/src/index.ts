@@ -109,6 +109,15 @@ app.get('/api/diagnostics', async (_req: Request, res: Response) => {
   }
 });
 
+app.get('/api/debug-inspect', requireAdminAuth, async (_req: Request, res: Response) => {
+  try {
+    const inspect = (provider as any).debugInspect ? await (provider as any).debugInspect() : { error: 'No debug inspect' };
+    res.status(200).json(inspect);
+  } catch (err: any) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
 // Live QR Display View for Scanning
 app.get('/api/session/qr', requireAdminAuth, async (_req: Request, res: Response) => {
   try {

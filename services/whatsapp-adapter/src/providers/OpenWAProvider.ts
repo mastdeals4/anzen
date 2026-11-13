@@ -725,14 +725,41 @@ export class OpenWAProvider implements WhatsAppProvider {
               }
               return false;
             }, cleanDigits);
+            if (openedViaAction) {
+              await this.page.waitForSelector('#main footer', { timeout: 8000 }).catch(() => null);
+            }
           } catch (e) {}
 
-          if (!openedViaAction) {
+          const checkChatOpen = await this.page.evaluate((digits: string) => {
+            const main = document.querySelector('#main');
+            if (!main) return false;
+            try {
+              const req = (window as any).require;
+              const activeChat = req('WAWebChatNavState')?.getActiveChat?.();
+              if (activeChat?.id?.user === digits) return true;
+            } catch (e) {}
+            const header = main.querySelector('header')?.textContent || '';
+            return header.includes(digits) || header.includes('You');
+          }, cleanDigits).catch(() => false);
+
+          if (!checkChatOpen) {
             const sendUrl = `https://web.whatsapp.com/send?phone=${cleanDigits}`;
             console.log(`[OpenWAProvider] Navigating to chat via URL for ${cleanDigits}...`);
             await this.page.goto(sendUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+            await this.page.waitForSelector('#main footer', { timeout: 20000 });
           }
         }
+
+        // Close any stale media viewer if lingering from previous attempt
+        try {
+          const staleCloseBtn = await this.page.$(
+            'div[data-animate-media-viewer="true"] button[aria-label*="Close" i], div[data-animate-media-viewer="true"] span[data-icon="x"], span[data-icon="x"]'
+          );
+          if (staleCloseBtn) {
+            await staleCloseBtn.click();
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        } catch (e) {}
 
         // Check for invalid phone popup modal
         const invalidPopupText = await this.page.evaluate(() => {
@@ -761,64 +788,118 @@ export class OpenWAProvider implements WhatsAppProvider {
         // Wait for chat interface to mount
         await this.page.waitForSelector('#main footer, footer', { timeout: 20000 });
 
-        // Locate file inputs
-        let fileInputs = await this.page.$$('input[type="file"]');
-        if (fileInputs.length === 0) {
-          const attachBtn = await this.page.$(
-            'footer button[aria-label="Attach"], button[title="Attach"], span[data-icon="attach-menu-plus"], span[data-icon="plus"]'
-          );
-          if (attachBtn) {
-            await attachBtn.click();
-            await new Promise((r) => setTimeout(r, 600));
+        // Locate and click Attach button to open attach menu
+        const attachBtn = await this.page.$(
+          'footer button[aria-label="Attach"], button[title="Attach"], span[data-icon="attach-menu-plus"], span[data-icon="plus"]'
+        );
+        if (!attachBtn) {
+          throw new Error('Could not find Attach button in WhatsApp Web conversation.');
+        }
+
+        await attachBtn.click();
+        await new Promise((r) => setTimeout(r, 600));
+
+        // Choose item based on isImage vs document
+        // CRITICAL: Explicitly select Photos & videos or Document, NEVER "New sticker"
+        let attachItemSelector = '';
+        if (isImage) {
+          attachItemSelector = 'button[aria-label*="Photos" i], button[aria-label*="Foto" i], div[aria-label*="Photos" i], div[aria-label*="Foto" i]';
+        } else {
+          attachItemSelector = 'button[aria-label*="Document" i], button[aria-label*="Dokumen" i], div[aria-label*="Document" i], div[aria-label*="Dokumen" i]';
+        }
+
+        const pageRef = this.page;
+        let fileUploaded = false;
+
+        try {
+          const [fileChooser] = await Promise.all([
+            pageRef.waitForFileChooser({ timeout: 8000 }),
+            (async () => {
+              const btn = await pageRef.waitForSelector(attachItemSelector, { timeout: 5000 });
+              if (btn) {
+                await btn.click();
+              } else {
+                throw new Error(`Could not find ${isImage ? 'Photos & videos' : 'Document'} option in attach menu`);
+              }
+            })(),
+          ]);
+
+          await fileChooser.accept([tempFilePath]);
+          fileUploaded = true;
+          console.log(`[OpenWAProvider] File uploaded via native file chooser (${cleanFn}, isImage=${isImage})`);
+        } catch (fcErr: any) {
+          console.warn(`[OpenWAProvider] File chooser trigger warning: ${fcErr.message}. Attempting direct input fallback...`);
+          // Fallback: locate specific file input element
+          const fileInputs = await pageRef.$$('input[type="file"]');
+          let targetInput: any = null;
+          for (const input of fileInputs) {
+            const accept = await pageRef.evaluate((el: HTMLInputElement) => el.getAttribute('accept') || '', input);
+            if (isImage && (accept.includes('video') || (accept.includes('image') && !accept.includes('webp')))) {
+              targetInput = input;
+              break;
+            } else if (!isImage && (accept === '*' || !accept.includes('image'))) {
+              targetInput = input;
+              break;
+            }
           }
-          fileInputs = await this.page.$$('input[type="file"]');
-        }
-
-        if (fileInputs.length === 0) {
-          throw new Error('Could not find file input element in WhatsApp Web conversation.');
-        }
-
-        // Match input by accept attribute (image vs document)
-        let targetInput: any = null;
-        for (const input of fileInputs) {
-          const accept = await this.page.evaluate((el: HTMLInputElement) => el.getAttribute('accept') || '', input);
-          if (isImage && accept.toLowerCase().includes('image')) {
-            targetInput = input;
-            break;
-          } else if (!isImage && (accept === '*' || !accept.toLowerCase().includes('image'))) {
-            targetInput = input;
-            break;
+          if (targetInput) {
+            await targetInput.uploadFile(tempFilePath);
+            fileUploaded = true;
+            console.log(`[OpenWAProvider] File uploaded via fallback input (${cleanFn}, isImage=${isImage})`);
+          } else {
+            throw new Error(`Failed to upload ${isImage ? 'image' : 'document'} attachment: ${fcErr.message}`);
           }
         }
 
-        if (!targetInput) {
-          targetInput = isImage ? fileInputs[fileInputs.length - 1] : fileInputs[0];
+        if (!fileUploaded) {
+          throw new Error('Failed to attach file to WhatsApp Web conversation');
         }
 
-        await targetInput.uploadFile(tempFilePath);
-        console.log(`[OpenWAProvider] File uploaded to browser input (${cleanFn}, isImage=${isImage})`);
-
-        // Wait for send button or media viewer to appear
+        // Wait for media viewer and send button to appear
         const sendSelector = 'div[aria-label*="Send" i], span[data-icon="send"], button[aria-label*="Send" i], span[data-icon="send-inverted"]';
-        await this.page.waitForSelector(sendSelector, { timeout: 20000 });
+        await pageRef.waitForSelector(sendSelector, { timeout: 20000 });
 
-        // Type caption into caption/compose input if provided
+        // Set caption in media viewer
         if (caption) {
-          const captionInput = await this.page.$(
-            'div[data-testid="media-caption-input-container"] div[contenteditable="true"], div[aria-label*="caption" i], div[contenteditable="true"]'
-          );
-          if (captionInput) {
-            await captionInput.focus();
-            await this.page.keyboard.type(caption);
-            await new Promise((r) => setTimeout(r, 400));
+          const captionInputSelector = 'div[data-testid="media-caption-input-container"], div[aria-placeholder*="caption" i], div[aria-label*="caption" i], div[aria-label*="keterangan" i]';
+          const captionInput = await pageRef.waitForSelector(captionInputSelector, { timeout: 10000 });
+          if (!captionInput) {
+            throw new Error('Could not locate caption input in media viewer');
           }
+
+          await captionInput.focus();
+
+          // Clear any draft text in caption input first (Command+A / Control+A + Backspace)
+          await pageRef.keyboard.down('Meta');
+          await pageRef.keyboard.press('KeyA');
+          await pageRef.keyboard.up('Meta');
+          await pageRef.keyboard.down('Control');
+          await pageRef.keyboard.press('KeyA');
+          await pageRef.keyboard.up('Control');
+          await pageRef.keyboard.press('Backspace');
+          await new Promise((r) => setTimeout(r, 100));
+
+          // Type line-by-line with Shift+Enter so newlines are strictly preserved and raw Enter is NEVER pressed
+          const lines = caption.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i]) {
+              await pageRef.keyboard.type(lines[i]);
+            }
+            if (i < lines.length - 1) {
+              await pageRef.keyboard.down('Shift');
+              await pageRef.keyboard.press('Enter');
+              await pageRef.keyboard.up('Shift');
+              await new Promise((r) => setTimeout(r, 40));
+            }
+          }
+          await new Promise((r) => setTimeout(r, 500));
         }
 
         // Click send button
-        const mediaSendBtn = await this.page.$(sendSelector);
+        const mediaSendBtn = await pageRef.$(sendSelector);
         if (mediaSendBtn) {
           await mediaSendBtn.click();
-          await new Promise((r) => setTimeout(r, 2500));
+          await new Promise((r) => setTimeout(r, 3000));
         }
       } else {
         // Pure text-only message dispatch
@@ -1100,6 +1181,34 @@ export class OpenWAProvider implements WhatsAppProvider {
       bodySnippet,
       lastSeen: this.lastSeen,
       lastError: this.lastError || null,
+    };
+  }
+
+  public async debugInspect(): Promise<Record<string, unknown>> {
+    if (!this.page || this.page.isClosed()) {
+      return { error: 'Page not active or closed' };
+    }
+
+    const screenshotPath = '/Users/Kunal/.gemini/antigravity/brain/ba0a5665-f6f0-4bb7-bcd8-a665594273a2/debug_chat_live.png';
+    try {
+      await this.page.screenshot({ path: screenshotPath });
+    } catch (e: any) {
+      console.warn('Screenshot failed:', e.message);
+    }
+
+    const messages = await this.page.evaluate(() => {
+      const msgContainers = Array.from(document.querySelectorAll('.message-out, [data-testid="msg-container"]'));
+      return msgContainers.slice(-5).map((el) => {
+        return {
+          text: (el as HTMLElement).innerText?.slice(0, 200),
+          html: el.outerHTML.slice(0, 300),
+        };
+      });
+    }).catch(() => []);
+
+    return {
+      messages,
+      screenshotPath,
     };
   }
 }
