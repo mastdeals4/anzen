@@ -486,6 +486,9 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
           })
           .eq('id', selectedCampaignId);
 
+        setSelectedCampaign((prev) => prev ? { ...prev, sent_count: sentCount } : null);
+        setCampaigns((prev) => prev.map((c) => c.id === selectedCampaignId ? { ...c, sent_count: sentCount } : c));
+
         setRecipients((prev) =>
           prev.map((item) =>
             item.id === r.id
@@ -519,6 +522,9 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
           })
           .eq('id', selectedCampaignId);
 
+        setSelectedCampaign((prev) => prev ? { ...prev, failed_count: failedCount } : null);
+        setCampaigns((prev) => prev.map((c) => c.id === selectedCampaignId ? { ...c, failed_count: failedCount } : c));
+
         setRecipients((prev) =>
           prev.map((item) =>
             item.id === r.id ? { ...item, status: 'failed', error_message: errorMessage } : item
@@ -542,6 +548,25 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
     setIsSending(false);
     setCurrentRecipientInfo(null);
     setCountdown(null);
+
+    // Ensure no recipient remains stuck in 'sending' status in database
+    await supabase
+      .from('whatsapp_campaign_recipients')
+      .update({
+        status: 'failed',
+        error_message: 'Dispatch interrupted or timeout occurred while in transit',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('campaign_id', selectedCampaignId)
+      .eq('status', 'sending');
+
+    setRecipients((prev) =>
+      prev.map((item) =>
+        item.status === 'sending'
+          ? { ...item, status: 'failed', error_message: 'Dispatch interrupted or timeout occurred while in transit' }
+          : item
+      )
+    );
 
     if (isCancelledRef.current) {
       await supabase
@@ -1145,7 +1170,9 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
               {/* Total */}
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-left">
                 <span className="text-[10px] uppercase font-bold text-gray-500 block">Total Recipients</span>
-                <span className="text-lg font-extrabold text-gray-900">{selectedCampaign.total_recipients}</span>
+                <span className="text-lg font-extrabold text-gray-900">
+                  {recipients.length > 0 ? recipients.length : selectedCampaign.total_recipients}
+                </span>
                 <span className="text-[10px] text-gray-400 block mt-0.5">Campaign total</span>
               </div>
 
@@ -1155,7 +1182,11 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
                   <Send className="w-3 h-3 text-blue-600" />
                   Sent
                 </span>
-                <span className="text-lg font-extrabold text-blue-900">{selectedCampaign.sent_count}</span>
+                <span className="text-lg font-extrabold text-blue-900">
+                  {recipients.length > 0
+                    ? recipients.filter((r) => r.status === 'sent' || r.status === 'delivered' || r.status === 'read').length
+                    : selectedCampaign.sent_count}
+                </span>
                 <span className="text-[10px] text-blue-600 block mt-0.5">Dispatched via OpenWA</span>
               </div>
 
@@ -1165,7 +1196,11 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
                   <CheckCheck className="w-3 h-3 text-indigo-600" />
                   Delivered
                 </span>
-                <span className="text-lg font-extrabold text-indigo-900">{selectedCampaign.delivered_count}</span>
+                <span className="text-lg font-extrabold text-indigo-900">
+                  {recipients.length > 0
+                    ? recipients.filter((r) => r.status === 'delivered' || r.status === 'read').length
+                    : selectedCampaign.delivered_count}
+                </span>
                 <span className="text-[10px] text-indigo-600 block mt-0.5">Device confirmed</span>
               </div>
 
@@ -1175,7 +1210,11 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                   Read
                 </span>
-                <span className="text-lg font-extrabold text-emerald-900">{selectedCampaign.read_count}</span>
+                <span className="text-lg font-extrabold text-emerald-900">
+                  {recipients.length > 0
+                    ? recipients.filter((r) => r.status === 'read').length
+                    : selectedCampaign.read_count}
+                </span>
                 <span className="text-[10px] text-emerald-700 block mt-0.5">Read receipt verified</span>
               </div>
 
@@ -1185,7 +1224,11 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
                   <XCircle className="w-3 h-3 text-rose-600" />
                   Failed
                 </span>
-                <span className="text-lg font-extrabold text-rose-900">{selectedCampaign.failed_count}</span>
+                <span className="text-lg font-extrabold text-rose-900">
+                  {recipients.length > 0
+                    ? recipients.filter((r) => r.status === 'failed').length
+                    : selectedCampaign.failed_count}
+                </span>
                 <span className="text-[10px] text-rose-600 block mt-0.5">Needs reconciliation</span>
               </div>
             </div>

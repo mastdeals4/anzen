@@ -141,25 +141,30 @@ export class OpenWAProvider implements WhatsAppProvider {
         ],
       });
 
-      this.page = await this.browser.newPage();
+      const existingPages = await this.browser.pages();
+      this.page = existingPages.length > 0 ? existingPages[0] : await this.browser.newPage();
       await this.page.setViewport({ width: 1366, height: 900 });
       await this.page.setUserAgent(
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
       );
 
       // Expose incoming message receiver to page
-      await this.page.exposeFunction('onInboundWhatsAppMessageBridge', async (payloadStr: string) => {
-        try {
-          const payload = JSON.parse(payloadStr) as WhatsAppInboundMessage;
-          console.log(`[OpenWAProvider] Inbound WhatsApp message received from ${payload.senderPhone}`);
-          await this.forwardInboundToErp(payload);
-        } catch (e: any) {
-          console.error('[OpenWAProvider] Error processing inbound bridge payload:', e);
-        }
-      });
+      try {
+        await this.page.exposeFunction('onInboundWhatsAppMessageBridge', async (payloadStr: string) => {
+          try {
+            const payload = JSON.parse(payloadStr) as WhatsAppInboundMessage;
+            console.log(`[OpenWAProvider] Inbound WhatsApp message received from ${payload.senderPhone}`);
+            await this.forwardInboundToErp(payload);
+          } catch (e: any) {
+            console.error('[OpenWAProvider] Error processing inbound bridge payload:', e);
+          }
+        });
+      } catch (e) {}
 
-      console.log('[OpenWAProvider] Navigating to https://web.whatsapp.com ...');
-      await this.page.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      if (!this.page.url().includes('web.whatsapp.com')) {
+        console.log('[OpenWAProvider] Navigating to https://web.whatsapp.com ...');
+        await this.page.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      }
 
       // Begin session monitoring
       this.startSessionMonitor();
@@ -174,6 +179,22 @@ export class OpenWAProvider implements WhatsAppProvider {
   }
 
   /**
+   * Resolves the active WhatsApp Web page tab from browser instance
+   */
+  private async getActivePage(): Promise<Page | null> {
+    if (!this.browser) return this.page;
+    try {
+      const pages = await this.browser.pages();
+      const waPage = pages.find((p) => p.url().includes('web.whatsapp.com'));
+      if (waPage) {
+        this.page = waPage;
+        return waPage;
+      }
+    } catch (e) {}
+    return this.page;
+  }
+
+  /**
    * Monitors the WhatsApp Web page to extract real authentic QR or detect authenticated chat list
    */
   private startSessionMonitor(): void {
@@ -182,11 +203,12 @@ export class OpenWAProvider implements WhatsAppProvider {
     }
 
     this.monitorInterval = setInterval(async () => {
-      if (!this.page || this.page.isClosed()) return;
+      const page = await this.getActivePage();
+      if (!page || page.isClosed()) return;
 
       try {
         // 1. Check if authenticated (chat list container exists)
-        const isAuth = await this.page.evaluate(() => {
+        const isAuth = await page.evaluate(() => {
           return !!(
             document.querySelector('#pane-side') ||
             document.querySelector('[data-testid="chat-list"]') ||
@@ -214,7 +236,7 @@ export class OpenWAProvider implements WhatsAppProvider {
         }
 
         // 2. Check for Click-To-Reload QR Button (when QR expires after 20-30s)
-        const reloaded = await this.page
+        const reloaded = await page
           .evaluate(() => {
             const reloadSpan = document.querySelector('span[data-icon="refresh"]');
             if (reloadSpan) {
@@ -240,9 +262,9 @@ export class OpenWAProvider implements WhatsAppProvider {
         }
 
         // 3. Check for real QR Code Canvas (supports all WhatsApp Web DOM variations)
-        const qrCanvas = await this.page.$('canvas[aria-label], div[data-ref] canvas, canvas');
+        const qrCanvas = await page.$('canvas[aria-label], div[data-ref] canvas, canvas');
         if (qrCanvas) {
-          const qrDataUrl = await this.page.evaluate((c: any) => {
+          const qrDataUrl = await page.evaluate((c: any) => {
             if (c && c.width > 50 && c.height > 50) {
               return c.toDataURL('image/png');
             }
@@ -263,7 +285,7 @@ export class OpenWAProvider implements WhatsAppProvider {
         const now = Date.now();
         if (!this.lastDiagnosticTime || now - this.lastDiagnosticTime > 10000) {
           this.lastDiagnosticTime = now;
-          const diag = await this.page.evaluate(() => {
+          const diag = await page.evaluate(() => {
             const canvasEl = document.querySelector('canvas');
             const spinner = !!document.querySelector('[data-testid="loading-spinner"]');
             const intro = !!document.querySelector('[data-testid="intro-title"], [data-testid="intro-md-beta-logo-dark"]');
@@ -594,8 +616,10 @@ export class OpenWAProvider implements WhatsAppProvider {
 
     const cleanDigits = to.replace(/\D/g, '');
 
-    const isAuth = this.page
-      ? await this.page
+    const activePage = await this.getActivePage();
+
+    const isAuth = activePage
+      ? await activePage
           .evaluate(() => {
             return !!(
               document.querySelector('#pane-side') ||
@@ -616,7 +640,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       };
     }
 
-    if (!this.page || !isAuth) {
+    if (!activePage || !isAuth) {
       return {
         success: false,
         messageId: '',
@@ -624,6 +648,8 @@ export class OpenWAProvider implements WhatsAppProvider {
         error: 'WhatsApp Business session is not authenticated in browser. Scan QR code to connect.',
       };
     }
+
+    this.page = activePage;
 
     let tempFilePath: string | null = null;
     try {
@@ -726,7 +752,7 @@ export class OpenWAProvider implements WhatsAppProvider {
               return false;
             }, cleanDigits);
             if (openedViaAction) {
-              await this.page.waitForSelector('#main footer', { timeout: 8000 }).catch(() => null);
+              await this.page.waitForSelector('#main footer', { timeout: 10000 }).catch(() => null);
             }
           } catch (e) {}
 
@@ -739,7 +765,7 @@ export class OpenWAProvider implements WhatsAppProvider {
               if (activeChat?.id?.user === digits) return true;
             } catch (e) {}
             const header = main.querySelector('header')?.textContent || '';
-            return header.includes(digits) || header.includes('You');
+            return header.includes(digits);
           }, cleanDigits).catch(() => false);
 
           if (!checkChatOpen) {
@@ -750,13 +776,29 @@ export class OpenWAProvider implements WhatsAppProvider {
           }
         }
 
-        // Close any stale media viewer if lingering from previous attempt
+        // Allow WhatsApp Web SPA to finish mounting chat view
+        await new Promise((r) => setTimeout(r, 1200));
+
+        // Close any lingering media preview ONLY if an actual caption container is currently visible
         try {
-          const staleCloseBtn = await this.page.$(
-            'div[data-animate-media-viewer="true"] button[aria-label*="Close" i], div[data-animate-media-viewer="true"] span[data-icon="x"], span[data-icon="x"]'
-          );
-          if (staleCloseBtn) {
-            await staleCloseBtn.click();
+          const hasLingeringPreview = await this.page.evaluate(() => {
+            const el = document.querySelector('div[data-testid="media-caption-input-container"]');
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          });
+          if (hasLingeringPreview) {
+            console.log('[OpenWAProvider] Dismissing lingering media preview overlay...');
+            await this.page.keyboard.press('Escape');
+            await new Promise((r) => setTimeout(r, 400));
+            await this.page.evaluate(() => {
+              const modal = document.querySelector('[data-animate-modal-popup="true"], div[role="dialog"]');
+              if (modal) {
+                const btns = Array.from(modal.querySelectorAll('button, div[role="button"]'));
+                const discardBtn = btns.find((b) => (b.textContent || '').trim().toLowerCase() === 'discard');
+                if (discardBtn) (discardBtn as HTMLElement).click();
+              }
+            });
             await new Promise((r) => setTimeout(r, 400));
           }
         } catch (e) {}
@@ -785,91 +827,81 @@ export class OpenWAProvider implements WhatsAppProvider {
           throw new Error(`Recipient +${cleanDigits} is not registered on WhatsApp: ${invalidPopupText}`);
         }
 
-        // Wait for chat interface to mount
+        // Wait for chat interface footer to mount
         await this.page.waitForSelector('#main footer, footer', { timeout: 20000 });
 
-        // Locate and click Attach button to open attach menu
-        const attachBtn = await this.page.$(
-          'footer button[aria-label="Attach"], button[title="Attach"], span[data-icon="attach-menu-plus"], span[data-icon="plus"]'
-        );
-        if (!attachBtn) {
-          throw new Error('Could not find Attach button in WhatsApp Web conversation.');
-        }
-
-        await attachBtn.click();
-        await new Promise((r) => setTimeout(r, 600));
-
-        // Choose item based on isImage vs document
-        // CRITICAL: Explicitly select Photos & videos or Document, NEVER "New sticker"
-        let attachItemSelector = '';
-        if (isImage) {
-          attachItemSelector = 'button[aria-label*="Photos" i], button[aria-label*="Foto" i], div[aria-label*="Photos" i], div[aria-label*="Foto" i]';
-        } else {
-          attachItemSelector = 'button[aria-label*="Document" i], button[aria-label*="Dokumen" i], div[aria-label*="Document" i], div[aria-label*="Dokumen" i]';
-        }
-
+        // Ensure attach menu is opened by clicking Attach button
         const pageRef = this.page;
-        let fileUploaded = false;
+        let menuOpen = await pageRef.evaluate(() => {
+          const items = Array.from(document.querySelectorAll('button[role="menuitem"], div[role="menuitem"]'));
+          return items.some((el) => /photos?|foto|document|dokumen/i.test((el.textContent || '') + (el.getAttribute('aria-label') || '')));
+        });
 
-        try {
-          const [fileChooser] = await Promise.all([
-            pageRef.waitForFileChooser({ timeout: 8000 }),
-            (async () => {
-              const btn = await pageRef.waitForSelector(attachItemSelector, { timeout: 5000 });
-              if (btn) {
-                await btn.click();
+        if (!menuOpen) {
+          const attachBtn = await pageRef.$(
+            'footer button[aria-label="Attach"], button[title="Attach"], span[data-icon="attach-menu-plus"], span[data-icon="plus"]'
+          );
+          if (!attachBtn) {
+            throw new Error('Could not find Attach button in WhatsApp Web conversation.');
+          }
+          await attachBtn.click();
+          await new Promise((r) => setTimeout(r, 600));
+
+          menuOpen = await pageRef.evaluate(() => {
+            const items = Array.from(document.querySelectorAll('button[role="menuitem"], div[role="menuitem"]'));
+            return items.some((el) => /photos?|foto|document|dokumen/i.test((el.textContent || '') + (el.getAttribute('aria-label') || '')));
+          });
+
+          if (!menuOpen) {
+            // Retry clicking Attach button once more with slight pause
+            await attachBtn.click();
+            await new Promise((r) => setTimeout(r, 800));
+          }
+        }
+
+        // Explicitly trigger file upload via Photos & videos (NEVER New sticker or Camera) or Document
+        console.log(`[OpenWAProvider] Triggering file chooser for ${isImage ? 'Photos & videos' : 'Document'}...`);
+        const [fileChooser] = await Promise.all([
+          pageRef.waitForFileChooser({ timeout: 10000 }),
+          pageRef.evaluate((isImg: boolean) => {
+            const items = Array.from(document.querySelectorAll('button[role="menuitem"], div[role="menuitem"]'));
+            const target = items.find((el) => {
+              const text = (el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '');
+              if (isImg) {
+                return /photos?|foto/i.test(text) && !/sticker|camera/i.test(text);
               } else {
-                throw new Error(`Could not find ${isImage ? 'Photos & videos' : 'Document'} option in attach menu`);
+                return /document|dokumen/i.test(text);
               }
-            })(),
-          ]);
-
-          await fileChooser.accept([tempFilePath]);
-          fileUploaded = true;
-          console.log(`[OpenWAProvider] File uploaded via native file chooser (${cleanFn}, isImage=${isImage})`);
-        } catch (fcErr: any) {
-          console.warn(`[OpenWAProvider] File chooser trigger warning: ${fcErr.message}. Attempting direct input fallback...`);
-          // Fallback: locate specific file input element
-          const fileInputs = await pageRef.$$('input[type="file"]');
-          let targetInput: any = null;
-          for (const input of fileInputs) {
-            const accept = await pageRef.evaluate((el: HTMLInputElement) => el.getAttribute('accept') || '', input);
-            if (isImage && (accept.includes('video') || (accept.includes('image') && !accept.includes('webp')))) {
-              targetInput = input;
-              break;
-            } else if (!isImage && (accept === '*' || !accept.includes('image'))) {
-              targetInput = input;
-              break;
+            });
+            if (target) {
+              (target as HTMLElement).click();
+              return true;
             }
-          }
-          if (targetInput) {
-            await targetInput.uploadFile(tempFilePath);
-            fileUploaded = true;
-            console.log(`[OpenWAProvider] File uploaded via fallback input (${cleanFn}, isImage=${isImage})`);
-          } else {
-            throw new Error(`Failed to upload ${isImage ? 'image' : 'document'} attachment: ${fcErr.message}`);
-          }
+            return false;
+          }, isImage),
+        ]);
+
+        await fileChooser.accept([tempFilePath]);
+        console.log(`[OpenWAProvider] File uploaded via native file chooser (${cleanFn}, isImage=${isImage})`);
+
+        // Wait for verified media preview caption container to appear
+        console.log('[OpenWAProvider] Waiting for media preview caption container...');
+        const captionInput = await pageRef.waitForSelector('div[data-testid="media-caption-input-container"]', {
+          timeout: 15000,
+        });
+
+        if (!captionInput) {
+          // If media preview failed to mount, abort safely and dismiss any open drawer
+          await pageRef.keyboard.press('Escape');
+          throw new Error('Could not locate media caption input container in preview');
         }
 
-        if (!fileUploaded) {
-          throw new Error('Failed to attach file to WhatsApp Web conversation');
-        }
-
-        // Wait for media viewer and send button to appear
-        const sendSelector = 'div[aria-label*="Send" i], span[data-icon="send"], button[aria-label*="Send" i], span[data-icon="send-inverted"]';
-        await pageRef.waitForSelector(sendSelector, { timeout: 20000 });
-
-        // Set caption in media viewer
+        // Set caption in media preview
         if (caption) {
-          const captionInputSelector = 'div[data-testid="media-caption-input-container"], div[aria-placeholder*="caption" i], div[aria-label*="caption" i], div[aria-label*="keterangan" i]';
-          const captionInput = await pageRef.waitForSelector(captionInputSelector, { timeout: 10000 });
-          if (!captionInput) {
-            throw new Error('Could not locate caption input in media viewer');
-          }
-
+          console.log('[OpenWAProvider] Entering caption into media preview...');
           await captionInput.focus();
 
-          // Clear any draft text in caption input first (Command+A / Control+A + Backspace)
+          // Clear any draft text in caption input first (Meta+A / Control+A + Backspace)
           await pageRef.keyboard.down('Meta');
           await pageRef.keyboard.press('KeyA');
           await pageRef.keyboard.up('Meta');
@@ -893,14 +925,39 @@ export class OpenWAProvider implements WhatsAppProvider {
             }
           }
           await new Promise((r) => setTimeout(r, 500));
+
+          // Confirm caption text is actually present before clicking Send
+          const enteredCaption = await pageRef.evaluate(() => {
+            const el = document.querySelector('div[data-testid="media-caption-input-container"]');
+            return el ? (el as HTMLElement).innerText : '';
+          });
+
+          if (!enteredCaption || enteredCaption.length === 0) {
+            // Dismiss preview safely and abort
+            await pageRef.keyboard.press('Escape');
+            throw new Error('Failed to verify caption entered into media preview');
+          }
+          console.log(`[OpenWAProvider] Caption verified in preview (${enteredCaption.length} chars)`);
         }
 
-        // Click send button
-        const mediaSendBtn = await pageRef.$(sendSelector);
-        if (mediaSendBtn) {
-          await mediaSendBtn.click();
-          await new Promise((r) => setTimeout(r, 3000));
+        // Locate Send button in media preview
+        const sendSelector = 'div[aria-label*="Send" i], button[aria-label*="Send" i], span[data-icon="send"], span[data-icon="send-inverted"]';
+        const mediaSendBtn = await pageRef.waitForSelector(sendSelector, { timeout: 10000 });
+        if (!mediaSendBtn) {
+          await pageRef.keyboard.press('Escape');
+          throw new Error('Could not find Send button in media preview');
         }
+
+        console.log('[OpenWAProvider] Clicking Send in media preview...');
+        await mediaSendBtn.click();
+
+        // Wait until media preview overlay is dismissed, confirming message dispatch
+        await pageRef.waitForSelector('div[data-testid="media-caption-input-container"]', {
+          hidden: true,
+          timeout: 20000,
+        });
+        console.log('[OpenWAProvider] Media preview dismissed. Outbound message dispatched.');
+        await new Promise((r) => setTimeout(r, 2500));
       } else {
         // Pure text-only message dispatch
         console.log(`[OpenWAProvider] Dispatching text-only message to ${cleanDigits}...`);
