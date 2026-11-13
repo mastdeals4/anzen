@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { showToast } from '../../ToastNotification';
 import { WhatsAppTransportService } from '../../../services/whatsapp/whatsappTransportService';
@@ -76,8 +76,22 @@ interface Props {
   onSelectCampaign?: (id: string) => void;
 }
 
+export function isTestWhatsAppCampaign(name: string): boolean {
+  const s = (name || '').toLowerCase();
+  return (
+    s.includes('acceptance test') ||
+    s.includes('history resume') ||
+    s.includes('history reconcile') ||
+    s.includes('history pause-cancel') ||
+    s.includes('test lab') ||
+    s.includes('[test]') ||
+    s.includes('qa_')
+  );
+}
+
 export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
   const [campaigns, setCampaigns] = useState<WhatsAppCampaignItem[]>([]);
+  const [showTestCampaigns, setShowTestCampaigns] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(initialCampaignId || null);
   const [selectedCampaign, setSelectedCampaign] = useState<WhatsAppCampaignItem | null>(null);
   const [recipients, setRecipients] = useState<WhatsAppCampaignRecipientItem[]>([]);
@@ -149,15 +163,16 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
         .from('whatsapp_campaigns')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(30);
+        .limit(200);
 
       if (error) throw error;
       setCampaigns(data || []);
 
       if (data && data.length > 0) {
         if (!selectedCampaignId) {
-          setSelectedCampaignId(data[0].id);
-          setSelectedCampaign(data[0]);
+          const firstNonTest = data.find((c) => !isTestWhatsAppCampaign(c.name)) || data[0];
+          setSelectedCampaignId(firstNonTest.id);
+          setSelectedCampaign(firstNonTest);
         } else {
           const found = data.find((c) => c.id === selectedCampaignId);
           if (found) setSelectedCampaign(found);
@@ -169,6 +184,20 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
       setLoading(false);
     }
   }, [selectedCampaignId]);
+
+  const displayedCampaigns = useMemo(() => {
+    if (showTestCampaigns) return campaigns;
+    return campaigns.filter((c) => !isTestWhatsAppCampaign(c.name));
+  }, [campaigns, showTestCampaigns]);
+
+  useEffect(() => {
+    if (displayedCampaigns.length > 0) {
+      if (!selectedCampaignId || !displayedCampaigns.some((c) => c.id === selectedCampaignId)) {
+        setSelectedCampaignId(displayedCampaigns[0].id);
+        setSelectedCampaign(displayedCampaigns[0]);
+      }
+    }
+  }, [displayedCampaigns, selectedCampaignId]);
 
   // Load recipients for selected campaign
   const loadRecipients = useCallback(async (campaignId: string) => {
@@ -899,19 +928,30 @@ export function WhatsAppCampaignDeliveryReport({ initialCampaignId }: Props) {
             </button>
           )}
 
+          {/* Optional Test/QA History View Toggle */}
+          <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer select-none bg-slate-50 px-2 py-1 rounded border border-slate-200">
+            <input
+              type="checkbox"
+              checked={showTestCampaigns}
+              onChange={(e) => setShowTestCampaigns(e.target.checked)}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+            />
+            <span>Show QA/Test Campaigns</span>
+          </label>
+
           {/* Campaign Selector */}
           <select
             data-testid="campaign-history-selector"
             value={selectedCampaignId || ''}
             onChange={(e) => {
               setSelectedCampaignId(e.target.value);
-              const found = campaigns.find((c) => c.id === e.target.value);
+              const found = displayedCampaigns.find((c) => c.id === e.target.value);
               if (found) setSelectedCampaign(found);
             }}
             className="text-xs border border-gray-300 rounded-lg p-1.5 bg-slate-50 text-gray-800 max-w-xs font-medium"
           >
-            {campaigns.length === 0 && <option value="">No campaigns found</option>}
-            {campaigns.map((c) => (
+            {displayedCampaigns.length === 0 && <option value="">No campaigns found</option>}
+            {displayedCampaigns.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name} ({new Date(c.created_at).toLocaleDateString()}) — {c.status}
               </option>

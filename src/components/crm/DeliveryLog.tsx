@@ -50,6 +50,11 @@ interface Recipient {
   sent_at: string | null;
 }
 
+export function isTestEmailCampaign(subject: string | null | undefined): boolean {
+  const s = (subject || '').toLowerCase();
+  return s.includes('[test]') || s.includes('qa_test') || s.includes('probe_test');
+}
+
 type CampaignFilter = 'all' | 'active' | 'partial_failed' | 'completed' | 'cancelled';
 type RecipientTab = 'all' | 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled';
 // Summary card filter — drives both campaign list narrowing AND default recipient tab
@@ -142,6 +147,7 @@ export function DeliveryLog() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const [campaignFilter, setCampaignFilter] = useState<CampaignFilter>('all');
   const [hideCancelled, setHideCancelled] = useState(false);
+  const [showTestCampaigns, setShowTestCampaigns] = useState(false);
   // Summary card click: narrows campaign list AND sets default recipient tab
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>(null);
 
@@ -736,6 +742,7 @@ export function DeliveryLog() {
 
   const filteredCampaigns = campaigns.filter(c => {
     if (hideCancelled && c.status === 'cancelled') return false;
+    if (!showTestCampaigns && isTestEmailCampaign(c.subject)) return false;
 
     // Campaign status filter
     if (campaignFilter === 'active' && !(c.status === 'in_progress' || c.status === 'paused')) return false;
@@ -924,6 +931,15 @@ export function DeliveryLog() {
             className="rounded border-gray-300"
           />
           Hide cancelled
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+          <input name="checkbox" aria-label="Show QA/Test campaigns"
+            type="checkbox"
+            checked={showTestCampaigns}
+            onChange={e => setShowTestCampaigns(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Show QA/Test campaigns
         </label>
         <button
           onClick={handleArchiveOld}
