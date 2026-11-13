@@ -567,6 +567,9 @@ export function CRM() {
         await ensureUniqueCrmContactName(updateData.company_name, customerChanges.customer.id);
       }
 
+      updateData.updated_at = new Date().toISOString();
+      updateData.updated_by = profile?.id || null;
+
       const { error } = await supabase
         .from('crm_contacts')
         .update(updateData)

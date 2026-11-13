@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../contexts/AuthContext';
 import { showToast } from '../../ToastNotification';
 import {
   VerifiedContactItem,
@@ -89,6 +90,7 @@ export function PhoneAuditCorrectionModal({
   onContactUpdated,
   onContactsBatchUpdated,
 }: PhoneAuditCorrectionModalProps) {
+  const { profile } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState<AuditCategory>(initialCategory);
   const [searchQuery, setSearchQuery] = useState('');
   const [reasonFilter, setReasonFilter] = useState<string>('all');
@@ -452,7 +454,10 @@ export function PhoneAuditCorrectionModal({
       // 3. Keep crm_contacts.mobile / phone in sync
       const normNumber = item.validation.normalized || item.raw_phone;
       if (normNumber) {
-        const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+        const patch: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+          updated_by: profile?.id || null,
+        };
         if (item.validation.isWhatsAppEligible) {
           patch.mobile = normNumber;
         } else {
@@ -687,7 +692,10 @@ export function PhoneAuditCorrectionModal({
 
       // Keep crm_contacts in sync if primary
       if (newPhoneIsPrimary) {
-        const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+        const patch: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+          updated_by: profile?.id || null,
+        };
         if (validation.isWhatsAppEligible) {
           patch.mobile = validation.normalized;
         } else {
@@ -764,7 +772,10 @@ export function PhoneAuditCorrectionModal({
           .update({ is_primary: true, updated_at: new Date().toISOString() })
           .eq('id', nextPrimary.id);
 
-        const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+        const patch: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+          updated_by: profile?.id || null,
+        };
         if (nextPrimary.is_whatsapp_eligible) {
           patch.mobile = nextPrimary.normalized_phone;
         } else {

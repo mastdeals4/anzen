@@ -127,8 +127,7 @@ export const ensureUniqueCrmContactName = async (companyName: string, excludeCon
 
   let query = supabase
     .from('crm_contacts')
-    .select('id, company_name')
-    .eq('is_active', true)
+    .select('id, company_name, is_active')
     .limit(10000);
 
   if (excludeContactId) {
@@ -138,11 +137,14 @@ export const ensureUniqueCrmContactName = async (companyName: string, excludeCon
   const { data, error } = await query;
   if (error) throw error;
 
-  const duplicate = (data || []).some(row =>
+  const match = (data || []).find(row =>
     normalizeCustomerName((row as { company_name?: string }).company_name || '') === normalizedName
   );
 
-  if (duplicate) {
+  if (match) {
+    if (match.is_active === false) {
+      throw new Error(`A customer named "${match.company_name}" already exists in the system as an archived record. You can restore the archived record instead.`);
+    }
     throw new Error(DUPLICATE_CRM_CONTACT_MESSAGE);
   }
 };
@@ -198,6 +200,10 @@ export const findOrCreateCrmContact = async (
     return { contact: match as CrmContactRow, created: false };
   }
 
+  const authUserRes = await supabase.auth.getUser();
+  const currentUserId = authUserRes.data.user?.id || null;
+  const now = new Date().toISOString();
+
   const { data: inserted, error: insertError } = await supabase
     .from('crm_contacts')
     .insert({
@@ -210,6 +216,10 @@ export const findOrCreateCrmContact = async (
       city:           fields.city || null,
       customer_type:  'prospect',
       is_active:      true,
+      created_at:     now,
+      created_by:     currentUserId,
+      updated_at:     now,
+      updated_by:     currentUserId,
     })
     .select('id, company_name, contact_person, email, phone, country, address, city')
     .single();

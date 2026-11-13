@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../contexts/AuthContext';
 import { showToast } from '../../ToastNotification';
+import { showConfirm } from '../../ConfirmDialog';
 import { SpeechToTextButton } from '../SpeechToTextButton';
 import { getSignedUrlCached } from '../../../utils/signedUrlCache';
+import { getUserDisplayMap, resolveUserDisplayName } from '../../../services/crm/userResolver';
+import {
+  checkCustomerDependencies,
+  archiveCustomer,
+  restoreCustomer,
+  deleteCustomerPermanent,
+  CustomerDependencyReport,
+} from '../../../services/crm/customerDeletionService';
 import {
   X,
   Building,
@@ -30,6 +40,11 @@ import {
   ListFilter,
   CheckSquare,
   MessageCircle,
+  History,
+  Archive,
+  RotateCcw,
+  Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 
 export interface CustomerBriefData {
@@ -70,6 +85,10 @@ export interface CustomerDetail {
   notes?: string | null;
   is_active?: boolean;
   erp_customer_id?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
 }
 
 interface InquirySummary {
@@ -175,6 +194,104 @@ export function CrmCustomerDrawer({
   const [newReminderTitle, setNewReminderTitle] = useState('');
   const [newReminderDate, setNewReminderDate] = useState('');
   const [savingReminder, setSavingReminder] = useState(false);
+
+  // CRM Audit Trail & Lifecycle Action States
+  const { profile } = useAuth();
+  const [userMap, setUserMap] = useState<Map<string, string>>(new Map());
+  const [actionLoading, setActionLoading] = useState(false);
+  const [dependencyConflictModal, setDependencyConflictModal] = useState<CustomerDependencyReport | null>(null);
+  const [localActive, setLocalActive] = useState<boolean>(customer?.is_active !== false);
+
+  useEffect(() => {
+    getUserDisplayMap().then(setUserMap);
+  }, []);
+
+  useEffect(() => {
+    if (customer) {
+      setLocalActive(customer.is_active !== false);
+    }
+  }, [customer?.id, customer?.is_active]);
+
+  const handleArchiveClick = async () => {
+    if (!customer || actionLoading) return;
+    const confirmed = await showConfirm({
+      title: 'Archive Customer Record',
+      message: `Archive "${customer.company_name}"? This safely deactivates the customer from active sales workflows while permanently preserving all emails, inquiries, quotes, and audit history.`,
+      confirmLabel: 'Archive Customer',
+      variant: 'warning',
+    });
+    if (!confirmed) return;
+
+    setActionLoading(true);
+    try {
+      const res = await archiveCustomer(customer.id, profile?.id);
+      if (!res.success) throw new Error(res.error);
+      setLocalActive(false);
+      showToast({
+        type: 'success',
+        title: 'Customer Archived',
+        message: `"${customer.company_name}" has been safely archived.`,
+      });
+      onRefresh?.();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Archive Failed', message: err.message || 'Failed to archive customer' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRestoreClick = async () => {
+    if (!customer || actionLoading) return;
+    setActionLoading(true);
+    try {
+      const res = await restoreCustomer(customer.id, profile?.id);
+      if (!res.success) throw new Error(res.error);
+      setLocalActive(true);
+      showToast({
+        type: 'success',
+        title: 'Customer Restored',
+        message: `"${customer.company_name}" restored to active status.`,
+      });
+      onRefresh?.();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Restore Failed', message: err.message || 'Failed to restore customer' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteClick = async () => {
+    if (!customer || actionLoading) return;
+    setActionLoading(true);
+    try {
+      const report = await checkCustomerDependencies(customer.id, customer.company_name);
+      if (report.hasDependencies) {
+        setDependencyConflictModal(report);
+      } else {
+        const confirmed = await showConfirm({
+          title: 'Permanent Customer Deletion',
+          message: `Permanently delete "${customer.company_name}"? This customer has NO linked activities, inquiries, or transactions. This action cannot be undone.`,
+          variant: 'danger',
+          confirmLabel: 'Delete Permanently',
+        });
+        if (!confirmed) return;
+
+        const res = await deleteCustomerPermanent(customer.id, customer.company_name);
+        if (!res.success) throw new Error(res.error);
+        showToast({
+          type: 'success',
+          title: 'Customer Deleted',
+          message: `Permanently deleted ${customer.company_name}.`,
+        });
+        onRefresh?.();
+        onClose();
+      }
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Deletion Error', message: err.message || 'Failed to delete customer' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen && customer) {
@@ -868,6 +985,81 @@ export function CrmCustomerDrawer({
                       <p className="text-sm text-amber-900 whitespace-pre-wrap">{customer.notes}</p>
                     </div>
                   )}
+
+                  {/* Audit Trail & Lifecycle Management */}
+                  <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider flex items-center gap-2">
+                        <History className="w-4 h-4 text-gray-500" />
+                        CRM Audit Trail & Lifecycle
+                      </h3>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold border ${
+                        localActive
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-100 text-slate-700 border-slate-300'
+                      }`}>
+                        {localActive ? '● Active Customer' : '● Archived / Inactive'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80">
+                        <span className="text-slate-500 font-semibold block text-[10px] uppercase">Record Created</span>
+                        <div className="font-bold text-slate-900 mt-1">
+                          {customer.created_at ? new Date(customer.created_at).toLocaleString() : '—'}
+                        </div>
+                        <div className="text-slate-600 mt-0.5">
+                          By: <span className="font-semibold text-slate-900">{resolveUserDisplayName(customer.created_by, userMap)}</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80">
+                        <span className="text-slate-500 font-semibold block text-[10px] uppercase">Last Updated</span>
+                        <div className="font-bold text-slate-900 mt-1">
+                          {customer.updated_at ? new Date(customer.updated_at).toLocaleString() : '—'}
+                        </div>
+                        <div className="text-slate-600 mt-0.5">
+                          By: <span className="font-semibold text-slate-900">{resolveUserDisplayName(customer.updated_by, userMap)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                      {!localActive ? (
+                        <button
+                          type="button"
+                          disabled={actionLoading}
+                          onClick={handleRestoreClick}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition disabled:opacity-50"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          {actionLoading ? 'Restoring...' : 'Restore Customer'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={actionLoading}
+                          onClick={handleArchiveClick}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-semibold shadow-2xs transition disabled:opacity-50"
+                          title="Safely archive to deactivate without losing historical transactions"
+                        >
+                          <Archive className="w-3.5 h-3.5" />
+                          {actionLoading ? 'Archiving...' : 'Archive Customer'}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={handleDeleteClick}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold shadow-2xs transition disabled:opacity-50"
+                        title="Check dependencies and safely delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete Record
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1350,6 +1542,84 @@ export function CrmCustomerDrawer({
           )}
         </div>
       </div>
+
+      {/* Dependency Conflict Modal for Drawer */}
+      {dependencyConflictModal && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100 mb-4 text-amber-600">
+              <ShieldAlert className="w-5 h-5 shrink-0" />
+              <h3 className="text-base font-bold text-slate-900">
+                Cannot Delete Customer with Historical Records
+              </h3>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-3 leading-relaxed">
+              Permanent deletion was stopped because <strong>{dependencyConflictModal.companyName}</strong> has historical interaction records:
+            </p>
+
+            <div className="space-y-1.5 mb-4 p-3 bg-amber-50/60 rounded-lg border border-amber-200/80 text-xs text-amber-900">
+              <span className="font-bold block text-[11px] uppercase tracking-wider text-amber-900">
+                Linked Records Found ({dependencyConflictModal.totalCount}):
+              </span>
+              <ul className="list-disc list-inside space-y-0.5 text-amber-800 text-[11px]">
+                {dependencyConflictModal.summaryList.map((item, idx) => (
+                  <li key={idx}>{item}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="p-3 bg-blue-50/80 rounded-lg border border-blue-200 text-xs text-blue-900 mb-4">
+              <div className="font-semibold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                Recommended Action: Archive Customer
+              </div>
+              <p className="text-[11px] text-blue-800 mt-1">
+                Archiving deactivates this account while permanently preserving all emails, quotes, and audit history.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={() => setDependencyConflictModal(null)}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={async () => {
+                  if (!customer) return;
+                  setActionLoading(true);
+                  try {
+                    const res = await archiveCustomer(customer.id, profile?.id);
+                    if (!res.success) throw new Error(res.error);
+                    setLocalActive(false);
+                    setDependencyConflictModal(null);
+                    showToast({
+                      type: 'success',
+                      title: 'Customer Archived',
+                      message: `"${customer.company_name}" has been safely archived.`,
+                    });
+                    onRefresh?.();
+                  } catch (err: any) {
+                    showToast({ type: 'error', title: 'Archive Failed', message: err.message });
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                className="px-4 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-2xs transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                {actionLoading ? 'Archiving...' : 'Archive Customer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

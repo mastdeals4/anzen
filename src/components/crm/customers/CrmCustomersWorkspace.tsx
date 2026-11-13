@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../contexts/AuthContext';
 import { showToast } from '../../ToastNotification';
 import { CrmCustomerDrawer, CustomerDetail } from './CrmCustomerDrawer';
 import { CustomerDatabaseExcel } from '../CustomerDatabaseExcel';
@@ -7,6 +8,7 @@ import { Customer360Panel } from '../Customer360Panel';
 import { FloatingField, FLOAT_INPUT } from '../../finance/FloatingField';
 import { SapRow } from '../../finance/SapLayout';
 import { classifyCanonicalPhone, ISO_COUNTRY_NAMES } from '../../../services/crm/canonicalPhoneService';
+import { ensureUniqueCrmContactName } from '../../../utils/customerValidation';
 import {
   Users,
   Search,
@@ -46,6 +48,7 @@ export function CrmCustomersWorkspace({
   onOpenInquiry,
   onNavigateBulkEmail,
 }: Props) {
+  const { profile } = useAuth();
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -303,10 +306,12 @@ export function CrmCustomersWorkspace({
       const countryName = ISO_COUNTRY_NAMES[newCountry]?.name || (newCountry === 'OTHER' ? 'International' : 'Indonesia');
       const phoneToSave = normalizedPhone || rawPhone || null;
 
-      // 2. Insert into crm_contacts
-      // FIX 1: company classification -> company_type
-      // FIX 1: new customer status -> customer_type = 'prospect'
-      // FIX 2: country name & normalized phone stored
+      // Duplicate check (checks active and archived records)
+      await ensureUniqueCrmContactName(newCompany.trim());
+
+      // 2. Insert into crm_contacts with audit trail fields
+      const now = new Date().toISOString();
+      const actorId = profile?.id || null;
       const { data, error } = await supabase.from('crm_contacts').insert({
         company_name: newCompany.trim(),
         contact_person: newContact.trim() || null,
@@ -318,6 +323,10 @@ export function CrmCustomersWorkspace({
         company_type: newType,
         customer_type: 'prospect',
         is_active: true,
+        created_at: now,
+        created_by: actorId,
+        updated_at: now,
+        updated_by: actorId,
       }).select().single();
 
       if (error) throw error;

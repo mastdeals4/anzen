@@ -374,8 +374,8 @@ export function extractMultiplePhones(
     const trimmed = seg.trim();
     if (!trimmed) continue;
 
-    let contactPerson = options?.defaultContactPerson || null;
-    let department = options?.defaultDepartment || null;
+    const contactPerson = options?.defaultContactPerson || null;
+    const department = options?.defaultDepartment || null;
     let extension: string | undefined = undefined;
     let phonePart = trimmed;
 

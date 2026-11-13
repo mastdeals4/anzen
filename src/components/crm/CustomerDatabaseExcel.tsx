@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Download, Upload, Trash2, Send, UserCheck, ChevronUp, ChevronDown, ChevronRight, ChevronsUpDown, Filter, X, Users, Mail, Phone, Building2 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { Download, Upload, Trash2, Send, UserCheck, ChevronUp, ChevronDown, ChevronRight, ChevronsUpDown, Filter, X, Users, Mail, Phone, Archive, RotateCcw, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
 import { showToast } from '../ToastNotification';
 import { showConfirm } from '../ConfirmDialog';
+import { getUserDisplayMap, resolveUserDisplayName, formatUserDisplay } from '../../services/crm/userResolver';
+import {
+  batchEvaluateCustomersForDeletion,
+  batchArchiveCustomers,
+  restoreCustomer,
+  deleteCustomerPermanent,
+  CustomerDependencyReport,
+} from '../../services/crm/customerDeletionService';
 
 interface SalesMember {
   id: string;
@@ -28,6 +37,11 @@ interface Customer {
   notes: string | null;
   is_active: boolean;
   created_at: string;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  updated_by_name?: string | null;
   assigned_sales?: string | null;
   assigned_sales_ids?: string[];
 }
@@ -66,14 +80,21 @@ export function CustomerDatabaseExcel({
   externalSearch = '',
   refreshTrigger,
 }: CustomerDatabaseExcelProps = {}) {
+  const { profile } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<'active' | 'archived' | 'all'>('active');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConflictModal, setDeleteConflictModal] = useState<{
+    mustArchive: Array<{ id: string; company_name: string; report: CustomerDependencyReport }>;
+    safeToDelete: Array<{ id: string; company_name: string }>;
+  } | null>(null);
   const [bulkEmailModalOpen, setBulkEmailModalOpen] = useState(false);
-  const [sortCol, setSortCol] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [sortCol, setSortCol] = useState<string | null>('updated_at');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilter>>({});
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
   const [tempFilterSearch, setTempFilterSearch] = useState('');
@@ -81,6 +102,7 @@ export function CustomerDatabaseExcel({
   const [expandedContactRows, setExpandedContactRows] = useState<Set<string>>(new Set());
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
     company_name: 240,
+    status: 80,
     customer_type: 130,
     city: 110,
     contact_person: 140,
@@ -92,9 +114,13 @@ export function CustomerDatabaseExcel({
     assigned_sales: 135,
     notes: 180,
     created_at: 95,
+    created_by_name: 140,
+    updated_at: 125,
+    updated_by_name: 140,
     country: 100,
     address: 180,
     website: 130,
+    actions: 80,
   });
   const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
   const [salesMembers, setSalesMembers] = useState<SalesMember[]>([]);
@@ -139,12 +165,13 @@ export function CustomerDatabaseExcel({
 
   const loadCustomers = async () => {
     try {
-      const [contactsRes, assignmentsRes] = await Promise.all([
+      const [contactsRes, assignmentsRes, userMap] = await Promise.all([
         supabase.from('crm_contacts').select('*').order('company_name'),
         supabase.from('customer_assignments')
           .select('crm_contact_id, sales_member_id, sales_team_members(name)')
           .eq('is_active', true)
           .not('crm_contact_id', 'is', null),
+        getUserDisplayMap(),
       ]);
 
       if (contactsRes.error) throw contactsRes.error;
@@ -164,6 +191,8 @@ export function CustomerDatabaseExcel({
         ...c,
         assigned_sales: assignmentMap[c.id]?.names.join(', ') || null,
         assigned_sales_ids: assignmentMap[c.id]?.ids || [],
+        created_by_name: resolveUserDisplayName(c.created_by, userMap),
+        updated_by_name: resolveUserDisplayName(c.updated_by, userMap),
       }));
 
       setCustomers(enriched);
@@ -186,12 +215,21 @@ export function CustomerDatabaseExcel({
   const handleAssignSalesMember = async () => {
     if (!assignModal || !selectedSalesMember) return;
     try {
+      const now = new Date().toISOString();
+      const actorId = profile?.id || null;
       const { error } = await supabase.from('customer_assignments').upsert({
         crm_contact_id: assignModal.contactId,
         sales_member_id: selectedSalesMember,
         is_active: true,
       }, { onConflict: 'crm_contact_id,sales_member_id' });
       if (error) throw error;
+
+      // Update audit timestamp on customer contact
+      await supabase.from('crm_contacts').update({
+        updated_at: now,
+        updated_by: actorId,
+      }).eq('id', assignModal.contactId);
+
       showToast({ type: 'success', title: 'Assigned', message: 'Salesperson assigned successfully' });
       setAssignModal(null);
       setSelectedSalesMember('');
@@ -202,7 +240,15 @@ export function CustomerDatabaseExcel({
   };
 
   const handleCellDoubleClick = (customer: Customer, field: string) => {
-    if (field === 'assigned_sales' || field === 'created_at') return;
+    if (
+      field === 'assigned_sales' ||
+      field === 'created_at' ||
+      field === 'created_by_name' ||
+      field === 'updated_at' ||
+      field === 'updated_by_name' ||
+      field === 'status' ||
+      field === 'actions'
+    ) return;
     setEditingCell({ rowId: customer.id, field });
     setEditValue((customer[field as keyof Customer] as string) || '');
   };
@@ -210,14 +256,30 @@ export function CustomerDatabaseExcel({
   const handleCellBlur = async () => {
     if (!editingCell) return;
     try {
+      const now = new Date().toISOString();
+      const actorId = profile?.id || null;
       const { error } = await supabase
         .from('crm_contacts')
-        .update({ [editingCell.field]: editValue || null })
+        .update({
+          [editingCell.field]: editValue || null,
+          updated_at: now,
+          updated_by: actorId,
+        })
         .eq('id', editingCell.rowId);
       if (error) throw error;
+
+      const actorName = profile ? formatUserDisplay(profile) : 'You';
       setCustomers(prev =>
         prev.map(c =>
-          c.id === editingCell.rowId ? { ...c, [editingCell.field]: editValue || null } : c
+          c.id === editingCell.rowId
+            ? {
+                ...c,
+                [editingCell.field]: editValue || null,
+                updated_at: now,
+                updated_by: actorId,
+                updated_by_name: actorName,
+              }
+            : c
         )
       );
     } catch (error) {
@@ -234,19 +296,96 @@ export function CustomerDatabaseExcel({
     else if (e.key === 'Escape') { setEditingCell(null); setEditValue(''); }
   };
 
-
-
   const handleDeleteSelected = async () => {
-    if (selectedRows.size === 0) return;
-    if (!await showConfirm({ title: 'Confirm', message: `Delete ${selectedRows.size} customer(s)?`, variant: 'danger', confirmLabel: 'Delete' })) return;
+    if (selectedRows.size === 0 || deleting) return;
+    setDeleting(true);
     try {
-      const { error } = await supabase.from('crm_contacts').delete().in('id', Array.from(selectedRows));
-      if (error) throw error;
-      setCustomers(prev => prev.filter(c => !selectedRows.has(c.id)));
+      const targets = customers
+        .filter(c => selectedRows.has(c.id))
+        .map(c => ({ id: c.id, company_name: c.company_name }));
+
+      const evaluation = await batchEvaluateCustomersForDeletion(targets);
+
+      if (evaluation.mustArchive.length > 0) {
+        setDeleteConflictModal(evaluation);
+      } else {
+        const confirmed = await showConfirm({
+          title: 'Permanent Customer Deletion',
+          message: `Permanently delete ${evaluation.safeToDelete.length} customer(s)? These records have NO historical inquiries, emails, or transactions. This action cannot be undone.`,
+          variant: 'danger',
+          confirmLabel: 'Delete Permanently',
+        });
+        if (!confirmed) return;
+
+        for (const item of evaluation.safeToDelete) {
+          const res = await deleteCustomerPermanent(item.id, item.company_name);
+          if (!res.success) throw new Error(res.error);
+        }
+
+        setCustomers(prev => prev.filter(c => !selectedRows.has(c.id)));
+        setSelectedRows(new Set());
+        showToast({
+          type: 'success',
+          title: 'Deleted',
+          message: `Successfully deleted ${evaluation.safeToDelete.length} customer(s).`,
+        });
+      }
+    } catch (error: any) {
+      console.error('Error during customer deletion:', error);
+      showToast({
+        type: 'error',
+        title: 'Deletion Error',
+        message: error.message || 'Failed to delete selected customer(s).',
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleArchiveConflictConfirm = async () => {
+    if (!deleteConflictModal || deleting) return;
+    setDeleting(true);
+    try {
+      const idsToArchive = deleteConflictModal.mustArchive.map(m => m.id);
+      const res = await batchArchiveCustomers(idsToArchive, profile?.id);
+      if (!res.success) throw new Error(res.error);
+
+      if (deleteConflictModal.safeToDelete.length > 0) {
+        for (const item of deleteConflictModal.safeToDelete) {
+          await deleteCustomerPermanent(item.id, item.company_name);
+        }
+      }
+
+      showToast({
+        type: 'success',
+        title: 'Customer Records Preserved',
+        message: `Archived ${idsToArchive.length} customer(s) to protect historical CRM records.${deleteConflictModal.safeToDelete.length > 0 ? ` (${deleteConflictModal.safeToDelete.length} unused records deleted)` : ''}`,
+      });
+
+      setDeleteConflictModal(null);
       setSelectedRows(new Set());
-    } catch (error) {
-      console.error('Error deleting customers:', error);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to delete customers' });
+      loadCustomers();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Archive Error', message: err.message || 'Failed to archive customer(s).' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleRestoreCustomer = async (customer: Customer, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const res = await restoreCustomer(customer.id, profile?.id);
+      if (!res.success) throw new Error(res.error);
+
+      showToast({
+        type: 'success',
+        title: 'Customer Restored',
+        message: `"${customer.company_name}" has been restored to active status.`,
+      });
+      loadCustomers();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Restore Error', message: err.message || 'Failed to restore customer.' });
     }
   };
 
@@ -459,16 +598,31 @@ export function CustomerDatabaseExcel({
     e.target.value = '';
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString?: string | null) => {
+    if (!dateString) return '—';
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '—';
     const day = date.getDate().toString().padStart(2, '0');
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const year = date.getFullYear();
     return `${day}-${month}-${year}`;
   };
 
+  const formatDateTime = (dateString?: string | null) => {
+    if (!dateString) return '—';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '—';
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = date.getHours().toString().padStart(2, '0');
+    const mins = date.getMinutes().toString().padStart(2, '0');
+    return `${day}-${month}-${year} ${hours}:${mins}`;
+  };
+
   const COLUMNS = [
     { key: 'company_name', label: 'Company Name' },
+    { key: 'status', label: 'Status' },
     { key: 'customer_type', label: 'Type' },
     { key: 'city', label: 'City' },
     { key: 'contact_person', label: 'Contact Person' },
@@ -478,16 +632,25 @@ export function CustomerDatabaseExcel({
     { key: 'landline', label: 'Landline' },
     { key: 'phone', label: 'Phone' },
     { key: 'assigned_sales', label: 'Sales Person' },
+    { key: 'updated_at', label: 'Last Updated' },
+    { key: 'updated_by_name', label: 'Updated By' },
+    { key: 'created_at', label: 'Created Date' },
+    { key: 'created_by_name', label: 'Created By' },
     { key: 'notes', label: 'Notes' },
-    { key: 'created_at', label: 'Date' },
     { key: 'country', label: 'Country' },
     { key: 'address', label: 'Address' },
     { key: 'website', label: 'Website' },
+    { key: 'actions', label: 'Actions' },
   ];
 
   const getColValue = (c: Customer, key: string): string => {
+    if (key === 'status') return c.is_active !== false ? 'Active' : 'Archived';
     if (key === 'created_at') return formatDate(c.created_at);
+    if (key === 'created_by_name') return c.created_by_name || '';
+    if (key === 'updated_at') return c.updated_at ? formatDateTime(c.updated_at) : '';
+    if (key === 'updated_by_name') return c.updated_by_name || '';
     if (key === 'assigned_sales') return c.assigned_sales || '';
+    if (key === 'actions') return '';
     return (c[key as keyof Customer] as string) || '';
   };
 
@@ -525,6 +688,7 @@ export function CustomerDatabaseExcel({
   };
 
   const handleSort = (key: string) => {
+    if (key === 'actions') return;
     if (sortCol === key) {
       if (sortDir === 'asc') setSortDir('desc');
       else if (sortDir === 'desc') { setSortCol(null); setSortDir(null); }
@@ -537,6 +701,14 @@ export function CustomerDatabaseExcel({
 
   const filteredCustomers = (() => {
     let result = [...customers];
+
+    // Status filter (Active / Archived / All)
+    if (statusFilter === 'active') {
+      result = result.filter(c => c.is_active !== false);
+    } else if (statusFilter === 'archived') {
+      result = result.filter(c => c.is_active === false);
+    }
+
     const activeSearch = (externalSearch || '').trim();
 
     if (activeSearch) {
@@ -547,7 +719,9 @@ export function CustomerDatabaseExcel({
         (c.email?.toLowerCase().includes(norm)) ||
         (c.phone?.includes(norm) || c.mobile?.includes(norm) || c.landline?.includes(norm)) ||
         (c.city?.toLowerCase().includes(norm)) ||
-        (c.assigned_sales?.toLowerCase().includes(norm))
+        (c.assigned_sales?.toLowerCase().includes(norm)) ||
+        (c.created_by_name?.toLowerCase().includes(norm)) ||
+        (c.updated_by_name?.toLowerCase().includes(norm))
       );
     }
 
@@ -559,6 +733,13 @@ export function CustomerDatabaseExcel({
 
     if (sortCol && sortDir) {
       result.sort((a, b) => {
+        if (sortCol === 'updated_at' || sortCol === 'created_at') {
+          const aVal = a[sortCol];
+          const bVal = b[sortCol];
+          const aTime = aVal ? new Date(aVal).getTime() : 0;
+          const bTime = bVal ? new Date(bVal).getTime() : 0;
+          return sortDir === 'asc' ? aTime - bTime : bTime - aTime;
+        }
         const av = getColValue(a, sortCol).toLowerCase();
         const bv = getColValue(b, sortCol).toLowerCase();
         const cmp = av.localeCompare(bv, undefined, { numeric: true });
@@ -600,10 +781,103 @@ export function CustomerDatabaseExcel({
     const isEditing = editingCell?.rowId === customer.id && editingCell?.field === field;
     const value = customer[field];
 
-    if (field === 'created_at') {
+    if (field === ('status' as any)) {
       return (
         <div className="px-2 py-0 h-full flex items-center">
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+            customer.is_active !== false
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70'
+              : 'bg-slate-100 text-slate-600 border-slate-300'
+          }`}>
+            {customer.is_active !== false ? 'Active' : 'Archived'}
+          </span>
+        </div>
+      );
+    }
+
+    if (field === 'created_at') {
+      return (
+        <div className="px-2 py-0 h-full flex items-center" title={customer.created_at ? new Date(customer.created_at).toLocaleString() : ''}>
           <span className="truncate text-[10.5px] text-slate-500 font-mono">{formatDate(customer.created_at)}</span>
+        </div>
+      );
+    }
+
+    if (field === ('created_by_name' as any)) {
+      return (
+        <div className="px-2 py-0 h-full flex items-center" title={`Created by: ${customer.created_by_name || 'System'}`}>
+          <span className="truncate text-[11px] text-slate-700">{customer.created_by_name || '—'}</span>
+        </div>
+      );
+    }
+
+    if (field === ('updated_at' as any)) {
+      return (
+        <div className="px-2 py-0 h-full flex items-center" title={customer.updated_at ? new Date(customer.updated_at).toLocaleString() : ''}>
+          <span className="truncate text-[10.5px] text-slate-600 font-mono">{formatDateTime(customer.updated_at)}</span>
+        </div>
+      );
+    }
+
+    if (field === ('updated_by_name' as any)) {
+      return (
+        <div className="px-2 py-0 h-full flex items-center" title={`Last updated by: ${customer.updated_by_name || '—'}`}>
+          <span className="truncate text-[11px] text-slate-700">{customer.updated_by_name || '—'}</span>
+        </div>
+      );
+    }
+
+    if (field === ('actions' as any)) {
+      return (
+        <div className="px-1 py-0 h-full flex items-center gap-1">
+          {customer.is_active === false ? (
+            <button
+              type="button"
+              onClick={(e) => handleRestoreCustomer(customer, e)}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition"
+              title="Restore to active customer list"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              Restore
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                setSelectedRows(new Set([customer.id]));
+                setDeleting(true);
+                try {
+                  const evalRes = await batchEvaluateCustomersForDeletion([{ id: customer.id, company_name: customer.company_name }]);
+                  if (evalRes.mustArchive.length > 0) {
+                    setDeleteConflictModal(evalRes);
+                  } else {
+                    const confirmed = await showConfirm({
+                      title: 'Permanent Deletion',
+                      message: `Permanently delete "${customer.company_name}"? This record has NO historical activities or inquiries. This cannot be undone.`,
+                      variant: 'danger',
+                      confirmLabel: 'Delete Permanently',
+                    });
+                    if (confirmed) {
+                      const res = await deleteCustomerPermanent(customer.id, customer.company_name);
+                      if (!res.success) throw new Error(res.error);
+                      showToast({ type: 'success', title: 'Deleted', message: `Deleted ${customer.company_name}` });
+                      setCustomers(prev => prev.filter(c => c.id !== customer.id));
+                    }
+                  }
+                } catch (err: any) {
+                  showToast({ type: 'error', title: 'Error', message: err.message });
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition"
+              title="Review deletion / archive"
+            >
+              <Trash2 className="w-2.5 h-2.5" />
+              Delete
+            </button>
+          )}
         </div>
       );
     }
@@ -841,6 +1115,31 @@ export function CustomerDatabaseExcel({
       {/* Top Action Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-3 py-2 border-b border-slate-200/80 bg-slate-50/50">
         <div className="flex items-center gap-2">
+          {/* Status filter: Active / Archived / All */}
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px] font-semibold">
+            <button
+              type="button"
+              onClick={() => setStatusFilter('active')}
+              className={`px-2.5 py-0.5 rounded transition ${statusFilter === 'active' ? 'bg-white text-blue-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              Active ({customers.filter(c => c.is_active !== false).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('archived')}
+              className={`px-2.5 py-0.5 rounded transition ${statusFilter === 'archived' ? 'bg-white text-amber-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              Archived ({customers.filter(c => c.is_active === false).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('all')}
+              className={`px-2.5 py-0.5 rounded transition ${statusFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              All ({customers.length})
+            </button>
+          </div>
+
           {selectedRows.size > 0 && (
             <div className="flex items-center gap-1.5 bg-blue-50/90 border border-blue-200/80 px-2 py-0.5 rounded-lg">
               <span className="text-[11px] font-bold text-blue-900 mr-1">
@@ -854,11 +1153,12 @@ export function CustomerDatabaseExcel({
                 <span>Send Email</span>
               </button>
               <button
+                disabled={deleting}
                 onClick={handleDeleteSelected}
-                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition"
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3 h-3" />
-                <span>Delete</span>
+                <span>{deleting ? 'Checking...' : 'Delete / Archive'}</span>
               </button>
             </div>
           )}
@@ -1189,6 +1489,72 @@ export function CustomerDatabaseExcel({
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 Assign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dependency Conflict & Archive Recommendation Modal */}
+      {deleteConflictModal && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100 mb-4 text-amber-600">
+              <ShieldAlert className="w-5 h-5 shrink-0" />
+              <h3 className="text-base font-bold text-slate-900">
+                Cannot Delete Customer with Historical Records
+              </h3>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-3 leading-relaxed">
+              Permanent deletion was stopped because the following customer(s) contain transaction, inquiry, or communication history. Deleting them would break CRM audit trails and corrupt historical logs:
+            </p>
+
+            <div className="max-h-56 overflow-y-auto space-y-2 mb-4 p-3 bg-amber-50/60 rounded-lg border border-amber-200/80 text-xs">
+              {deleteConflictModal.mustArchive.map(item => (
+                <div key={item.id} className="bg-white p-2.5 rounded border border-amber-200 shadow-2xs">
+                  <div className="font-bold text-slate-900">{item.company_name}</div>
+                  <ul className="list-disc list-inside text-amber-800 text-[11px] mt-1 space-y-0.5">
+                    {item.report.summaryList.map((s, idx) => (
+                      <li key={idx}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {deleteConflictModal.safeToDelete.length > 0 && (
+                <div className="text-[11px] text-slate-500 italic pt-1">
+                  Note: {deleteConflictModal.safeToDelete.length} unused record(s) with 0 history will be permanently deleted.
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 bg-blue-50/80 rounded-lg border border-blue-200 text-xs text-blue-900 mb-4">
+              <div className="font-semibold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                Recommended Action: Archive Customer
+              </div>
+              <p className="text-[11px] text-blue-800 mt-1">
+                Archiving deactivates the customer from active CRM sales lists while preserving all historical inquiries, quotes, emails, and audit trails intact.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteConflictModal(null)}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleArchiveConflictConfirm}
+                className="px-4 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-2xs transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                {deleting ? 'Archiving...' : `Archive ${deleteConflictModal.mustArchive.length} Customer(s)`}
               </button>
             </div>
           </div>
