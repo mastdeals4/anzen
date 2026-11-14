@@ -342,4 +342,48 @@ test('BPJS Final Database & Payroll Reconciliation Suite', async (t) => {
     });
   });
 
+  await t.test('8. September 2026 BPJS Adjusting Journal & Register Linkage Closure', async () => {
+    await withDbClient(async (client) => {
+      // 1. Adjustment journal
+      const adjRes = await client.query(`
+        SELECT id, entry_number, entry_date, total_debit, total_credit, is_posted, reference_number
+        FROM public.journal_entries
+        WHERE reference_number = 'BPJS-2026-09-ADJ'
+      `);
+      assert.equal(adjRes.rows.length, 1, 'Exactly one adjusting journal must exist');
+      const adj = adjRes.rows[0];
+      assert.equal(Number(adj.total_debit), 767520.00);
+      assert.equal(Number(adj.total_credit), 767520.00);
+      assert.equal(adj.is_posted, true);
+
+      // 2. Lines breakdown
+      const linesRes = await client.query(`
+        SELECT jel.line_number, coa.code, jel.debit, jel.credit
+        FROM public.journal_entry_lines jel
+        JOIN public.chart_of_accounts coa ON coa.id = jel.account_id
+        WHERE jel.journal_entry_id = $1
+        ORDER BY jel.line_number
+      `, [adj.id]);
+      assert.equal(linesRes.rows.length, 3);
+      assert.equal(linesRes.rows[0].code, '6115');
+      assert.equal(Number(linesRes.rows[0].debit), 521520.00);
+      assert.equal(linesRes.rows[1].code, '6110');
+      assert.equal(Number(linesRes.rows[1].debit), 246000.00);
+      assert.equal(linesRes.rows[2].code, '2134');
+      assert.equal(Number(linesRes.rows[2].credit), 767520.00);
+
+      // 3. September register linkage
+      const regRes = await client.query(`
+        SELECT id, status, payment_status, journal_entry_id, payment_journal_entry_id, bank_statement_line_id
+        FROM public.bpjs_monthly_registers
+        WHERE period_year = 2026 AND period_month = 9
+      `);
+      const reg = regRes.rows[0];
+      assert.equal(reg.journal_entry_id, adj.id, 'September register must link to adjusting journal');
+      assert.equal(reg.payment_journal_entry_id, 'b7c563eb-257a-4182-b8ad-6e2241bf5967', 'Payment journal untouched');
+      assert.equal(reg.status, 'reconciled');
+      assert.equal(reg.payment_status, 'paid');
+    });
+  });
+
 });

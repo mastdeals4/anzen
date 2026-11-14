@@ -493,3 +493,4 @@ REVOKE ALL ON FUNCTION public.reconcile_bpjs_register_payment(uuid, uuid, text) 
 GRANT EXECUTE ON FUNCTION public.reconcile_bpjs_register_payment(uuid, uuid, text) TO authenticated, service_role;
 
 COMMIT;
+
