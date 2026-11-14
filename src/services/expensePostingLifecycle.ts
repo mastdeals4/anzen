@@ -233,5 +233,27 @@ export async function getEffectiveExpensePostingState(
   return states.get(expenseId) || null;
 }
 
+export async function getConsistentExpensePostingState(
+  expenseId: string,
+  maxRetries = 4,
+  delayMs = 150,
+): Promise<EffectiveExpensePostingState | null> {
+  let state = await getEffectiveExpensePostingState(expenseId);
+  let retries = 0;
+  while (
+    retries < maxRetries &&
+    state &&
+    state.document_approval_status === 'approved' &&
+    state.effective_posting_state === 'AMBIGUOUS' &&
+    (state.ambiguity_reason === 'approved_without_visible_posted_journal_evidence' ||
+     state.ambiguity_reason === 'approved_without_posted_journal_evidence')
+  ) {
+    retries++;
+    await new Promise(r => setTimeout(r, delayMs));
+    state = await getEffectiveExpensePostingState(expenseId);
+  }
+  return state;
+}
+
 export const isEffectiveExpensePosting = (state: ExpensePostingState | null | undefined): boolean =>
   state === 'ACTIVE' || state === 'REPLACED';

@@ -22,6 +22,7 @@ import {
   unlinkFinanceExpenseBankLink,
 } from '../../services/financeCommands';
 import {
+  getConsistentExpensePostingState,
   getEffectiveExpensePostingState,
   getEffectiveExpensePostingStates,
   type EffectiveExpensePostingState,
@@ -271,14 +272,21 @@ const getExpenseCurrency = (expense: FinanceExpense): string =>
 
 async function hydrateExpensePostingLifecycle<T extends FinanceExpense>(expenses: T[]): Promise<T[]> {
   const states = await getEffectiveExpensePostingStates(expenses.map(expense => expense.id));
-  return expenses.map(expense => {
-    const lifecycle = states.get(expense.id) || null;
+  return Promise.all(expenses.map(async expense => {
+    let lifecycle = states.get(expense.id) || null;
+    if (
+      expense.approval_status === 'approved' &&
+      (!lifecycle || (lifecycle.effective_posting_state === 'AMBIGUOUS' && lifecycle.ambiguity_reason?.includes('posted_journal_evidence')))
+    ) {
+      const consistent = await getConsistentExpensePostingState(expense.id);
+      if (consistent) lifecycle = consistent;
+    }
     return {
       ...expense,
       posting_lifecycle: lifecycle,
       effective_posting_state: lifecycle?.effective_posting_state || 'AMBIGUOUS',
     };
-  });
+  }));
 }
 
 const SETTLED_EXPENSE_CANCELLATION_MESSAGE =
@@ -2044,7 +2052,8 @@ export function ExpenseManager({
         console.log('document_urls from DB:', newExpense?.document_urls);
         console.log('Full new expense:', newExpense);
 
-        const finalExpense = newExpense;
+        const [hydratedNewExpense] = await hydrateExpensePostingLifecycle([newExpense as FinanceExpense]);
+        const finalExpense = (hydratedNewExpense as FinanceExpense) || (newExpense as FinanceExpense);
 
         if (selectedBankTransactionId && newExpense) {
           const isApproved = isAdmin || (newExpense.approval_status === 'approved');
@@ -2077,12 +2086,13 @@ export function ExpenseManager({
             await syncExpenseBankLinks([newExpense.id]);
             notifyFinanceReconciliationRefresh();
           }
-          onExpenseSavedFromBankReconciliation?.(newExpense as FinanceExpense, selectedBankTransactionId);
+          onExpenseSavedFromBankReconciliation?.(finalExpense, selectedBankTransactionId);
         }
 
         // Add to local state (with bank link if applicable)
         setExpenses(prev => [finalExpense, ...prev]);
         inFlightExpenseIdRef.current = null;
+        void loadHealthCheck();
         if (!embeddedModalOnly) {
           alert('Expense recorded successfully');
         }
@@ -2316,7 +2326,7 @@ export function ExpenseManager({
 
       await syncExpenseBankLinks([id]);
       notifyFinanceReconciliationRefresh();
-      const lifecycle = await getEffectiveExpensePostingState(id);
+      const lifecycle = await getConsistentExpensePostingState(id);
       setExpenses(prev => prev.map(e => e.id === id ? {
         ...e,
         approval_status: 'approved',
@@ -2729,8 +2739,8 @@ export function ExpenseManager({
     try {
       const today = new Date().toISOString().split('T')[0];
       const [r1, r2, r3, r4, r5, r6, r7] = await Promise.all([
-        supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).is('payment_method', null).is('supplier_id', null),
-        supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).is('payment_method', null).is('due_date', null),
+        supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).neq('approval_status', 'cancelled').is('payment_method', null).is('supplier_id', null).is('staff_id', null).is('payee_id', null),
+        supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).neq('approval_status', 'cancelled').is('payment_method', null).is('due_date', null),
         supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).or('document_urls.is.null,document_urls.eq.{}').gte('created_at', new Date(Date.now() - 90 * 86400000).toISOString()),
         supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).eq('expense_category', 'fixed_asset').is('fixed_asset_account_id', null),
         supabase.from('finance_expenses').select('id', { count: 'exact', head: true }).eq('expense_category', 'import_broker').is('import_container_id', null),
