@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import {
   FileText, Download, RefreshCw, UploadCloud,
   Link2, Trash2, ExternalLink, ShieldCheck,
-  Check, Search, X, CheckCircle2
+  Check, Search, X, CheckCircle2, RotateCcw
 } from 'lucide-react';
 import { FinancePage } from './FinancePage';
 import { FinanceTable } from './FinanceTable';
@@ -36,6 +36,7 @@ interface BpjsRegister {
   total_employer_expenses: number;
   total_contribution_payable: number;
   official_billed_amount: number | null;
+  has_official_bill?: boolean;
   actual_paid_amount: number;
   payment_status: 'unpaid' | 'partially_paid' | 'paid';
   reconciliation_status: 'unreconciled' | 'reconciled' | 'variance';
@@ -277,6 +278,37 @@ export function BpjsRegisterManager({ canManage }: Props) {
     }
   };
 
+  const handleReopenRegister = async () => {
+    if (!register) return;
+    const ok = await showConfirm({
+      title: 'Reopen Approved Register?',
+      message: `Revert BPJS register for ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear} back to Draft for revision?`,
+      confirmLabel: 'Reopen to Draft',
+      variant: 'warning',
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.rpc('reopen_bpjs_monthly_register', {
+        p_register_id: register.id,
+        p_reason: 'User requested revision from dashboard',
+      });
+
+      if (error) {
+        showToast({ type: 'error', title: 'Reopen failed', message: error.message });
+        return;
+      }
+
+      showToast({ type: 'success', title: 'Register Reopened', message: 'Status reverted to Draft for recalculation and edits.' });
+      await loadRegister(selectedYear, selectedMonth);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Reopen error', message: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchCandidateBankLines = async (start?: string, end?: string, accountId?: string) => {
     setLoadingBankLines(true);
     try {
@@ -323,7 +355,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
 
         // Auto-select ONLY if there is a STRONG match:
         // Matches exact contribution payable AND description has BPJS/NPP, AND NOT already reconciled!
-        const targetAmount = Number(register?.official_billed_amount || register?.total_contribution_payable || 0);
+        const targetAmount = Number((register?.has_official_bill ? register?.official_billed_amount : register?.total_contribution_payable) || 0);
         const strongMatch = lines.find(l => {
           const isNotSettled = l.reconciliation_status === 'matched' && !l.matched_entry_id;
           const isAmtMatch = Math.abs(Number(l.debit_amount) - targetAmount) < 0.01;
@@ -521,7 +553,9 @@ export function BpjsRegisterManager({ canManage }: Props) {
       ['Total Employee Deductions (2%):', Number(register.total_employee_deductions)],
       ['Total Employer Contributions (4.24%):', Number(register.total_employer_expenses)],
       ['Total Contribution Payable:', Number(register.total_contribution_payable)],
-      ['Official Billed Amount:', Number(register.official_billed_amount || register.total_contribution_payable)],
+      register.has_official_bill
+        ? ['Official Billed Amount:', Number(register.official_billed_amount || 0)]
+        : ['Calculated Contribution:', Number(register.total_contribution_payable || 0)],
       ['Actual Paid Amount:', Number(register.actual_paid_amount)],
       [],
     ];
@@ -595,7 +629,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
   }, [items, searchTerm, departmentFilter]);
 
   const variance = register
-    ? Number(register.actual_paid_amount) - Number(register.official_billed_amount || register.total_contribution_payable)
+    ? Number(register.actual_paid_amount || 0) - Number((register.has_official_bill ? register.official_billed_amount : register.total_contribution_payable) || 0)
     : 0;
 
   return (
@@ -700,12 +734,17 @@ export function BpjsRegisterManager({ canManage }: Props) {
               )}
 
               {register && register.status === 'approved' && canManage && (
-                <FinanceButton variant="primary" onClick={handlePostRegister} className="!h-[34px]">
-                  <FileText className="w-3.5 h-3.5" /> Post Accounting Entry
-                </FinanceButton>
+                <>
+                  <FinanceButton variant="primary" onClick={handlePostRegister} className="!h-[34px]">
+                    <FileText className="w-3.5 h-3.5" /> Post Accounting Entry
+                  </FinanceButton>
+                  <FinanceButton variant="secondary" onClick={handleReopenRegister} className="!h-[34px] !text-amber-700 hover:!bg-amber-50">
+                    <RotateCcw className="w-3.5 h-3.5" /> Reopen Draft
+                  </FinanceButton>
+                </>
               )}
 
-              {register && (register.status === 'posted' || (register.status === 'approved' && !register.journal_entry_id)) && canManage && (
+              {register && register.status === 'posted' && register.journal_entry_id && canManage && (
                 <FinanceButton variant="primary" onClick={openBankReconciliationModal} className="!h-[34px]">
                   <Link2 className="w-3.5 h-3.5" /> Link Bank Payment
                 </FinanceButton>
@@ -717,9 +756,11 @@ export function BpjsRegisterManager({ canManage }: Props) {
                 </FinanceButton>
               )}
 
-              <FinanceButton variant="primary" onClick={handleGenerateRegister} className="!h-[34px]">
-                <RefreshCw className="w-3.5 h-3.5" /> {register ? 'Recalculate Draft' : 'Generate Register'}
-              </FinanceButton>
+              {(!register || register.status === 'draft') && (
+                <FinanceButton variant="primary" onClick={handleGenerateRegister} className="!h-[34px]">
+                  <RefreshCw className="w-3.5 h-3.5" /> {register ? 'Recalculate Draft' : 'Generate Register'}
+                </FinanceButton>
+              )}
             </div>
           </div>
         </div>
@@ -762,7 +803,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
             </div>
 
             {(() => {
-              const hasOfficialBill = Boolean((register as any).has_official_bill || (register.document_urls && register.document_urls.length > 0));
+              const hasOfficialBill = Boolean(register.has_official_bill);
               const billTitle = hasOfficialBill ? 'Official Bill' : 'Calculated Contribution';
               const billSubtitle = hasOfficialBill ? 'Official Determination' : 'Anzen Generated';
               return (
@@ -778,7 +819,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
                     </button>
                   </div>
                   <div className="text-sm font-bold font-mono text-gray-900 mt-1">
-                    Rp {Number(register.official_billed_amount || register.total_contribution_payable).toLocaleString('id-ID')}
+                    Rp {Number(hasOfficialBill ? (register.official_billed_amount || register.total_contribution_payable) : register.total_contribution_payable).toLocaleString('id-ID')}
                   </div>
                   <div className="text-[10px] text-gray-400 mt-0.5">{billSubtitle}</div>
                 </div>
@@ -1033,10 +1074,12 @@ export function BpjsRegisterManager({ canManage }: Props) {
               <div>
                 <span className="text-gray-500 block text-[11px] font-medium uppercase tracking-wider">BPJS Period Payable</span>
                 <span className="font-mono font-bold text-sm text-indigo-950">
-                  Rp {Number(register?.official_billed_amount || register?.total_contribution_payable || 0).toLocaleString('id-ID')}
+                  Rp {Number((register?.has_official_bill ? register?.official_billed_amount : register?.total_contribution_payable) || 0).toLocaleString('id-ID')}
                 </span>
                 <span className="text-[11px] text-gray-500 ml-2">
-                  (Bill: Rp {Number(register?.official_billed_amount || 0).toLocaleString('id-ID')} • Calc: Rp {Number(register?.total_contribution_payable || 0).toLocaleString('id-ID')})
+                  {register?.has_official_bill
+                    ? `(Official Bill: Rp ${Number(register?.official_billed_amount || 0).toLocaleString('id-ID')})`
+                    : `(Calculated Contribution: Rp ${Number(register?.total_contribution_payable || 0).toLocaleString('id-ID')})`}
                 </span>
               </div>
               <div className="text-right">
@@ -1149,7 +1192,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
                   <span>Loading bank transactions...</span>
                 </div>
               ) : (() => {
-                const targetAmt = Number(register?.official_billed_amount || register?.total_contribution_payable || 0);
+                const targetAmt = Number((register?.has_official_bill ? register?.official_billed_amount : register?.total_contribution_payable) || 0);
                 const filtered = candidateBankLines.filter(line => {
                   const isSettled = line.reconciliation_status === 'matched' || !!line.matched_entry_id;
                   if (unlinkedOnly && isSettled) return false;
@@ -1268,7 +1311,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
             {selectedBankLineId && (() => {
               const selectedLine = candidateBankLines.find(l => l.id === selectedBankLineId);
               if (!selectedLine) return null;
-              const targetAmt = Number(register?.official_billed_amount || register?.total_contribution_payable || 0);
+              const targetAmt = Number((register?.has_official_bill ? register?.official_billed_amount : register?.total_contribution_payable) || 0);
               const selectedAmt = Number(selectedLine.debit_amount || 0);
               const variance = selectedAmt - targetAmt;
 
