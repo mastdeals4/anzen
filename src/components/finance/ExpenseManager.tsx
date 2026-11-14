@@ -217,6 +217,11 @@ interface FinanceExpense {
   pph_treatment?: 'deduct' | 'add' | null;
   stamp_duty_amount?: number | null;
   fixed_asset_account_id?: string | null;
+  // BPJS & Payroll period integration
+  bpjs_employee_deduction?: number | null;
+  bpjs_register_item_id?: string | null;
+  payroll_period_month?: number | null;
+  payroll_period_year?: number | null;
   // Utility-only optional bank charges
   bank_charges_amount?: number | null;
   batches?: { batch_number: string } | null;
@@ -741,6 +746,10 @@ export function ExpenseManager({
     pph_dpp_amount: 0,
     pph_rate: 0,
     is_tax_manual_override: false,
+    bpjs_employee_deduction: 0,
+    bpjs_register_item_id: null as string | null,
+    payroll_period_month: null as number | null,
+    payroll_period_year: null as number | null,
   });
 
   useEffect(() => {
@@ -885,11 +894,17 @@ export function ExpenseManager({
             ...previous,
             pph_amount: calculation.pph21_method === 'percentage' ? calculation.pph21_amount : previous.pph_amount,
             pph_code_id: calculation.pph21_applicable && pph21Code ? pph21Code.id : previous.pph_code_id,
+            bpjs_employee_deduction: calculation.bpjs_amount,
             payment_method: editingExpense
               ? previous.payment_method
               : (calculation.default_payment_method === 'bank_transfer'
                 ? calculation.default_payment_method
                 : previous.payment_method),
+          }));
+        } else if (calculation && preservingHistoricalValues) {
+          setFormData((previous) => ({
+            ...previous,
+            bpjs_employee_deduction: previous.bpjs_employee_deduction || calculation.bpjs_amount,
           }));
         }
       });
@@ -919,6 +934,24 @@ export function ExpenseManager({
       ),
     } : current);
   }, [formData.expense_category, formData.pph_amount, formData.pph_treatment]);
+
+  useEffect(() => {
+    if (formData.expense_category === 'salary' && periodLabel) {
+      const normalized = normalizeSalaryPeriod(periodLabel);
+      const parts = normalized.split('-');
+      if (parts.length === 2) {
+        const year = Number(parts[0]);
+        const month = Number(parts[1]);
+        if (!isNaN(year) && !isNaN(month)) {
+          setFormData(prev => ({
+            ...prev,
+            payroll_period_year: year,
+            payroll_period_month: month,
+          }));
+        }
+      }
+    }
+  }, [formData.expense_category, periodLabel]);
 
   useEffect(() => {
     if (!viewingExpense || viewingExpense.expense_category !== 'salary') {
@@ -1843,6 +1876,12 @@ export function ExpenseManager({
         bank_account_currency: selectedExpenseBank?.currency || transactionCurrency,
         payment_currency: transactionCurrency,
         sales_order_allocations: requiresDC && soAllocations.length > 0 ? soAllocations : [],
+        bpjs_employee_deduction: formData.expense_category === 'salary'
+          ? Number(formData.bpjs_employee_deduction || salaryCalculation?.bpjs_amount || 0)
+          : 0,
+        bpjs_register_item_id: formData.expense_category === 'salary' ? (formData.bpjs_register_item_id || null) : null,
+        payroll_period_month: formData.expense_category === 'salary' ? (formData.payroll_period_month || null) : null,
+        payroll_period_year: formData.expense_category === 'salary' ? (formData.payroll_period_year || null) : null,
       };
 
       console.log('=== EXPENSE DATA TO SAVE ===');
@@ -2256,7 +2295,10 @@ export function ExpenseManager({
     if (rules.staff === 'show' && expense.staff_id) loadedStaffId = expense.staff_id;
     setSelectedStaffId(loadedStaffId);
     setSelectedUtilityId(loadedUtilityId);
-    setPeriodLabel(rules.salaryMonth === 'show' ? normalizeSalaryPeriod(loadedPeriod, new Date(expense.expense_date).getFullYear()) : loadedPeriod);
+    const explicitPeriod = (expense.payroll_period_year && expense.payroll_period_month)
+      ? `${expense.payroll_period_year}-${String(expense.payroll_period_month).padStart(2, '0')}`
+      : (rules.salaryMonth === 'show' ? normalizeSalaryPeriod(loadedPeriod, new Date(expense.expense_date).getFullYear()) : loadedPeriod);
+    setPeriodLabel(explicitPeriod);
 
     setFormData({
       expense_category: expense.expense_category,
@@ -2298,6 +2340,10 @@ export function ExpenseManager({
       pph_dpp_amount: expense.pph_dpp_amount ?? (expense.pph_amount ? Math.round(expense.amount * 0.5) : 0),
       pph_rate: expense.pph_rate ?? 0,
       is_tax_manual_override: expense.is_tax_manual_override ?? false,
+      bpjs_employee_deduction: Number(expense.bpjs_employee_deduction) || 0,
+      bpjs_register_item_id: expense.bpjs_register_item_id || null,
+      payroll_period_month: expense.payroll_period_month || null,
+      payroll_period_year: expense.payroll_period_year || null,
     });
 
     setProviderType(expense.payee_id ? 'individual' : 'corporate');
@@ -2637,6 +2683,10 @@ export function ExpenseManager({
       pph_dpp_amount: 0,
       pph_rate: 0,
       is_tax_manual_override: false,
+      bpjs_employee_deduction: 0,
+      bpjs_register_item_id: null,
+      payroll_period_month: null,
+      payroll_period_year: null,
     });
     setProviderType('corporate');
     setWorkingDays(1);
@@ -5122,11 +5172,14 @@ export function ExpenseManager({
                       minimumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
                       maximumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
                     });
+                    const isSalary = formData.expense_category === 'salary';
+                    const bpjsDeduction = isSalary ? (Number(formData.bpjs_employee_deduction) || salaryCalculation?.bpjs_amount || 0) : 0;
                     type FormulaCell = { label: string; value: number; valueColor: string; op?: string; show: boolean };
                     const rawCells: Array<{ label: string; value: number; valueColor: string; isDeduction?: boolean; show: boolean }> = [
-                      { label: formData.expense_category === 'salary' ? 'Gross Salary' : 'Invoice Amount', value: formData.amount || 0, valueColor: 'text-gray-900', show: true },
+                      { label: isSalary ? 'Gross Salary' : 'Invoice Amount', value: formData.amount || 0, valueColor: 'text-gray-900', show: true },
                       { label: 'PPN', value: formData.ppn_amount || 0, valueColor: 'text-blue-700', show: (formData.ppn_amount || 0) > 0 },
                       { label: 'PPh Withheld', value: pphAmount, valueColor: 'text-orange-700', isDeduction: true, show: !isAdd && pphAmount > 0 },
+                      { label: 'BPJS Withheld', value: bpjsDeduction, valueColor: 'text-amber-700', isDeduction: true, show: isSalary && bpjsDeduction > 0 },
                       { label: 'Stamp Duty', value: formData.stamp_duty_amount || 0, valueColor: 'text-gray-900', show: (formData.stamp_duty_amount || 0) > 0 },
                       { label: 'Bank Charges', value: bc, valueColor: 'text-gray-900', show: bc > 0 },
                     ].filter(c => c.show);
@@ -5766,16 +5819,16 @@ export function ExpenseManager({
             })()}
 
             {isSalary && (
-              <div className="px-4 py-2 border-b border-gray-100">
+              <div className="px-4 py-2 border-b border-gray-100 space-y-2">
                 <h3 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Salary Settlement Summary</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
                   {[
                     ['Gross Salary', Number(viewingExpense.amount || 0)],
                     ['Salary Advance Applied', salaryAdvanceApplied],
-                    ['PPh21', Number(viewingExpense.pph_amount || 0)],
-                    ['BPJS', 0],
-                    ['Net Payable', Math.max(canonicalCashPayable - salaryAdvanceApplied, 0)],
-                    ['Paid Amount', salaryCashPaid],
+                    ['PPh21 Deduction', Number(viewingExpense.pph_amount || 0)],
+                    ['Employee BPJS Deduction', Number(viewingExpense.bpjs_employee_deduction || 0)],
+                    ['Net Payable to Employee', Math.max(canonicalCashPayable - salaryAdvanceApplied, 0)],
+                    ['Actual Payment', salaryCashPaid],
                     ['Outstanding Balance', salaryOutstanding],
                   ].map(([label, value]) => (
                     <div key={String(label)}>
@@ -5783,6 +5836,39 @@ export function ExpenseManager({
                       <div className="text-[12px] font-medium font-mono text-gray-800">{fmtMoney(Number(value))}</div>
                     </div>
                   ))}
+                </div>
+
+                {/* Company BPJS Contribution Breakdown (separate from employee deduction) */}
+                <div className="mt-2 p-2.5 bg-blue-50/60 border border-blue-200 rounded text-xs">
+                  <div className="flex items-center justify-between font-semibold text-blue-900 mb-1">
+                    <span>BPJS Ketenagakerjaan Integration</span>
+                    <span className="text-[10px] text-blue-700 font-normal">
+                      Payroll Period: {viewingExpense.payroll_period_year && viewingExpense.payroll_period_month ? `${viewingExpense.payroll_period_year}-${String(viewingExpense.payroll_period_month).padStart(2, '0')}` : 'Unallocated'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                    <div className="p-1.5 bg-white rounded border border-blue-100">
+                      <span className="text-gray-500 block text-[10px]">Employee Deduction (Withheld)</span>
+                      <span className="font-mono font-bold text-amber-900">
+                        {fmtMoney(Number(viewingExpense.bpjs_employee_deduction || 0))}
+                      </span>
+                      <span className="block text-[9px] text-gray-400">JHT 2.0% deducted from salary</span>
+                    </div>
+                    <div className="p-1.5 bg-white rounded border border-blue-100">
+                      <span className="text-gray-500 block text-[10px]">Employer Contribution (Company Cost)</span>
+                      <span className="font-mono font-bold text-purple-900">
+                        {fmtMoney(Math.round(Number(viewingExpense.amount || 0) * 0.0424))}
+                      </span>
+                      <span className="block text-[9px] text-gray-400">JHT 3.7% + JKK 0.24% + JKM 0.3% (NOT deducted)</span>
+                    </div>
+                    <div className="p-1.5 bg-white rounded border border-blue-100">
+                      <span className="text-gray-500 block text-[10px]">Total BPJS Payable</span>
+                      <span className="font-mono font-bold text-emerald-900">
+                        {fmtMoney(Number(viewingExpense.bpjs_employee_deduction || 0) + Math.round(Number(viewingExpense.amount || 0) * 0.0424))}
+                      </span>
+                      <span className="block text-[9px] text-gray-400">Settled via monthly BPJS register</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

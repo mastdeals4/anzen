@@ -113,6 +113,7 @@ test('BPJS Ketenagakerjaan End-to-End Test Suite', async (t) => {
 
   await t.test('4. Server-Side BPJS Calculation Engine (Single Source of Truth)', async () => {
     await withDbClient(async (client) => {
+      await setAuthenticatedUser(client, adminId);
       // Calculate Nia
       const niaCalcRes = await client.query(`
         SELECT calculate_staff_bpjs(id) as calc

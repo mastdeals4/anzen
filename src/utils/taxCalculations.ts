@@ -569,6 +569,7 @@ export interface ExpenseTotalsInput {
   pph_treatment?: 'deduct' | 'add' | string | null;
   stamp_duty_amount?: number | null;
   bank_charges_amount?: number | null;
+  bpjs_employee_deduction?: number | null;
   expense_category?: string | null;
 }
 
@@ -578,6 +579,7 @@ export interface ExpenseTotals {
   pphAmount: number;
   pphTreatment: 'deduct' | 'add';
   stampDutyAmount: number;
+  bpjsEmployeeDeduction: number;
   /** Additional bank charges included in the actual cash payment. */
   bankChargesAmount: number;
   /** Supplier/employee payable before bank-owned charges. */
@@ -600,10 +602,11 @@ export function calculateExpenseTotals(exp: ExpenseTotalsInput): ExpenseTotals {
   const stamp = Number(exp.stamp_duty_amount) || 0;
   const rawBank = Number(exp.bank_charges_amount) || 0;
   const bank = rawBank;
+  const bpjs = Number(exp.bpjs_employee_deduction) || 0;
 
   const netPayable = treatment === 'add'
-    ? amount + ppn + stamp + bank
-    : amount + ppn - pph + stamp + bank;
+    ? amount + ppn + stamp + bank - bpjs
+    : amount + ppn - pph + stamp + bank - bpjs;
   const settlementAmount = netPayable;
   const totalCashOutflow = treatment === 'add'
     ? amount + ppn + pph + stamp + bank
@@ -615,6 +618,7 @@ export function calculateExpenseTotals(exp: ExpenseTotalsInput): ExpenseTotals {
     pphAmount: pph,
     pphTreatment: treatment,
     stampDutyAmount: stamp,
+    bpjsEmployeeDeduction: bpjs,
     bankChargesAmount: bank,
     netPayable,
     settlementAmount,

@@ -460,6 +460,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
         .from('bpjs_monthly_registers')
         .update({
           official_billed_amount: officialBillInput,
+          has_official_bill: true,
           updated_at: new Date().toISOString(),
         })
         .eq('id', register.id);
@@ -760,30 +761,37 @@ export function BpjsRegisterManager({ canManage }: Props) {
               <div className="text-[10px] text-emerald-700 mt-0.5">Calculated payable</div>
             </div>
 
-            <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-xs relative">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase font-bold text-gray-500">Official Bill</span>
-                <button
-                  type="button"
-                  onClick={() => setOfficialBillModalOpen(true)}
-                  className="text-[10px] text-indigo-600 hover:underline"
-                >
-                  Edit
-                </button>
-              </div>
-              <div className="text-sm font-bold font-mono text-gray-900 mt-1">
-                Rp {Number(register.official_billed_amount || register.total_contribution_payable).toLocaleString('id-ID')}
-              </div>
-              <div className="text-[10px] text-gray-400 mt-0.5">Avira Determination</div>
-            </div>
+            {(() => {
+              const hasOfficialBill = Boolean((register as any).has_official_bill || (register.document_urls && register.document_urls.length > 0));
+              const billTitle = hasOfficialBill ? 'Official Bill' : 'Calculated Contribution';
+              const billSubtitle = hasOfficialBill ? 'Official Determination' : 'Anzen Generated';
+              return (
+                <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-xs relative">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-gray-500">{billTitle}</span>
+                    <button
+                      type="button"
+                      onClick={() => setOfficialBillModalOpen(true)}
+                      className="text-[10px] text-indigo-600 hover:underline"
+                    >
+                      {hasOfficialBill ? 'Edit' : 'Set Official Bill'}
+                    </button>
+                  </div>
+                  <div className="text-sm font-bold font-mono text-gray-900 mt-1">
+                    Rp {Number(register.official_billed_amount || register.total_contribution_payable).toLocaleString('id-ID')}
+                  </div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">{billSubtitle}</div>
+                </div>
+              );
+            })()}
 
             <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-xs">
               <div className="text-[10px] uppercase font-bold text-gray-500">Actual Paid</div>
               <div className="text-sm font-bold font-mono text-gray-900 mt-1">
-                Rp {Number(register.actual_paid_amount).toLocaleString('id-ID')}
+                Rp {Number(register.actual_paid_amount || 0).toLocaleString('id-ID')}
               </div>
               <div className="text-[10px] text-gray-400 mt-0.5">
-                {register.bank_statement_line_id ? 'Linked to BCA' : 'Not linked'}
+                {register.bank_statement_line_id ? 'Linked to BCA' : 'Unpaid (No bank link)'}
               </div>
             </div>
 
