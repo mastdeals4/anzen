@@ -1108,6 +1108,74 @@ export function canonicalBankReconciliationStatus(
   return 'partially_reconciled';
 }
 
+export type ExpenseSettlementStatus = 'reconciled' | 'partial' | 'outstanding';
+
+/**
+ * Categorizes an expense into one of three authoritative settlement buckets:
+ * - 'reconciled': Fully settled/reconciled expenses (balance <= 0.01)
+ * - 'partial': Some payment received, but outstanding balance remains
+ * - 'outstanding': No payment received yet
+ */
+export function getExpenseSettlementStatus(
+  exp: ExpenseReconciliationInput & {
+    amount?: number | string | null;
+    paid_amount?: number | string | null;
+  }
+): ExpenseSettlementStatus {
+  const recon = calculateExpenseReconciliation(exp);
+  const payable = calculateCanonicalCashPayable(exp);
+
+  if (payable <= 0.01 || recon.isFullyReconciled) {
+    return 'reconciled';
+  }
+
+  // 1. Authoritative DB paid_amount (maintained by recalculate_expense_payment_state)
+  const dbPaid = Number(exp.paid_amount || 0);
+
+  // 2. Bank statement allocations / lines
+  const inputLines = (exp.bank_statement_lines || []).map((line, index) => ({
+    ...line,
+    id: line.id || line.raw_line_id || `bsl-${index}`,
+  }));
+  const bankLines = normalizeExpenseBankLinks(inputLines);
+  const bankPaid = bankLines.reduce(
+    (sum, line) => sum + Number((line as any).payment_kind === 'pph23' ? 0 : line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+    0
+  );
+
+  // 3. Payment voucher allocations
+  const voucherAllocs = exp.voucher_allocations || [];
+  const voucherPaid = voucherAllocs.reduce(
+    (sum, va) => sum + Number((va as any).payment_kind === 'pph23' ? 0 : va.allocated_amount || 0),
+    0
+  );
+
+  // 4. Salary advance applications
+  const advanceApps = exp.salary_advance_applications || [];
+  const advancePaid = advanceApps.reduce(
+    (sum, sa) => sum + Number(sa.applied_amount || 0),
+    0
+  );
+
+  // Deduplication across valid sources:
+  const accumulatedPaid = Math.min(
+    payable,
+    Math.max(dbPaid, bankPaid + advancePaid, voucherPaid + advancePaid, bankPaid, voucherPaid, advancePaid)
+  );
+
+  const balance = Math.max(0, payable - accumulatedPaid);
+
+  if (balance <= 0.01 && accumulatedPaid > 0.01) {
+    return 'reconciled';
+  }
+
+  if (recon.isPartiallyReconciled || (accumulatedPaid > 0.01 && balance > 0.01)) {
+    return 'partial';
+  }
+
+  return 'outstanding';
+}
+
 // ---------------------------------------------------------------------------
 // Date utilities
 // ---------------------------------------------------------------------------
