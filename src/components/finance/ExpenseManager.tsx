@@ -4440,9 +4440,24 @@ export function ExpenseManager({
                         const isAdd = formData.pph_treatment === 'add';
                         const pph21Val = Number(formData.pph_amount ?? salaryCalculation.pph21_amount ?? 0);
                         const netPayable = salaryCalculation.net_salary_payable;
-                        const totalCashOutflow = netPayable + pph21Val + Number(salaryCalculation.outstanding_salary_advances || 0);
+                        const totals = calculateExpenseTotals({
+                          ...formData,
+                          amount: Number(formData.amount || salaryCalculation.gross_salary || 0),
+                          pph_amount: pph21Val,
+                          pph_treatment: formData.pph_treatment,
+                          bpjs_employee_deduction: salaryCalculation.bpjs_amount,
+                        });
+                        const totalCashOutflow = totals.totalCashOutflow;
+                        const alreadyPaid = Math.max(
+                          editingBankLines.reduce(
+                            (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+                            0,
+                          ),
+                          Number(editingExpense?.paid_amount || 0)
+                        );
+                        const balance = Math.max(0, netPayable - alreadyPaid);
                         return (
-                          <div className="mt-2 grid grid-cols-2 sm:grid-cols-6 gap-2 border-t border-amber-200 pt-2 text-xs">
+                          <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 border-t border-amber-200 pt-2 text-xs">
                             <div><span className="text-amber-700">Gross Salary</span><div className="font-mono font-semibold text-amber-950">{formatCurrency(salaryCalculation.gross_salary, expenseFormCurrency)}</div></div>
                             <div><span className="text-amber-700">Less Advance</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.outstanding_salary_advances, expenseFormCurrency)}</div></div>
                             <div>
@@ -4454,6 +4469,8 @@ export function ExpenseManager({
                             <div><span className="text-amber-700">Less BPJS</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.bpjs_amount, expenseFormCurrency)}</div></div>
                             <div><span className="text-amber-700 font-bold">Net Payable (Employee)</span><div className="font-mono font-bold text-emerald-800">{formatCurrency(netPayable, expenseFormCurrency)}</div></div>
                             <div><span className="text-amber-700 font-bold">Total Cash Outflow</span><div className="font-mono font-bold text-purple-900">{formatCurrency(totalCashOutflow, expenseFormCurrency)}</div></div>
+                            <div><span className="text-amber-700 font-bold">Paid</span><div className="font-mono font-bold text-gray-900">{formatCurrency(alreadyPaid, expenseFormCurrency)}</div></div>
+                            <div><span className="text-amber-700 font-bold">Balance</span><div className={`font-mono font-bold ${balance > 0.01 ? 'text-amber-700' : 'text-emerald-700'}`}>{formatCurrency(balance, expenseFormCurrency)}</div></div>
                           </div>
                         );
                       })()}
@@ -5163,9 +5180,12 @@ export function ExpenseManager({
                     const isAdd = formData.pph_treatment === 'add';
                     const pphAmount = Number(formData.pph_amount || 0);
                     const totalCashOutflow = totals.totalCashOutflow;
-                    const alreadyPaid = editingBankLines.reduce(
-                      (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
-                      0,
+                    const alreadyPaid = Math.max(
+                      editingBankLines.reduce(
+                        (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
+                        0,
+                      ),
+                      Number(editingExpense?.paid_amount || 0)
                     );
                     const balance = Math.max(0, payable - alreadyPaid);
                     const fmt = (n: number) => formatCurrency(n, expenseFormCurrency, {
@@ -5825,7 +5845,7 @@ export function ExpenseManager({
                   {[
                     ['Gross Salary', Number(viewingExpense.amount || 0)],
                     ['Salary Advance Applied', salaryAdvanceApplied],
-                    ['PPh21 Deduction', Number(viewingExpense.pph_amount || 0)],
+                    [viewingExpense.pph_treatment === 'add' ? 'PPh 21 (Add-on)' : 'PPh21 Deduction', Number(viewingExpense.pph_amount || 0)],
                     ['Employee BPJS Deduction', Number(viewingExpense.bpjs_employee_deduction || 0)],
                     ['Net Payable to Employee', Math.max(canonicalCashPayable - salaryAdvanceApplied, 0)],
                     ['Actual Payment', salaryCashPaid],

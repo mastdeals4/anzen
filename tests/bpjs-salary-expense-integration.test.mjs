@@ -140,10 +140,29 @@ test('BPJS and Salary Expense Integration Suite', async (t) => {
       assert.equal(Number(nia.amount), 8500000);
       assert.equal(Number(nia.pph_amount), 170000);
       assert.equal(Number(nia.bpjs_employee_deduction), 170000, 'Nia employee BPJS deduction must be Rp 170,000');
-      assert.equal(nia.payroll_period_month, 11, 'Nia payroll month must be 11 (November)');
+      assert.equal(nia.payroll_period_month, 10, 'Nia payroll month must be 10 (October)');
       assert.equal(nia.payroll_period_year, 2026, 'Nia payroll year must be 2026');
-      assert.equal(nia.bpjs_register_item_id, null, 'Nia must NOT be linked to October register item');
+      assert.equal(nia.bpjs_register_item_id, '81be19b2-0339-4607-b90a-da4e9f23dc97', 'Nia must be linked to October register item');
       assert.equal(Number(nia.paid_amount), 8330000, 'Nia historical payment of Rp 8,330,000 must be preserved');
+
+      // Telekom EXP/26/314:
+      const telekomRes = await client.query(`
+        SELECT fe.voucher_number, fe.amount, fe.bank_charges_amount, fe.paid_amount,
+               COALESCE(SUM(bsa.allocation_amount), 0) AS total_bank_allocation
+        FROM public.finance_expenses fe
+        LEFT JOIN public.bank_statement_allocations bsa ON bsa.document_id = fe.id
+        WHERE fe.voucher_number = 'EXP/26/314'
+        GROUP BY fe.voucher_number, fe.amount, fe.bank_charges_amount, fe.paid_amount
+      `);
+      assert.equal(telekomRes.rows.length, 1, 'Telekom expense must exist');
+      const telekom = telekomRes.rows[0];
+      assert.equal(Number(telekom.amount), 102938);
+      assert.equal(Number(telekom.bank_charges_amount), 3000);
+      assert.equal(Number(telekom.paid_amount), 105938, 'Telekom paid_amount must be Rp 105,938');
+      assert.equal(Number(telekom.total_bank_allocation), 105938, 'Telekom bank allocation must be Rp 105,938');
+      const telekomOutstanding = (Number(telekom.amount) + Number(telekom.bank_charges_amount)) - Number(telekom.paid_amount);
+      assert.equal(telekomOutstanding, 0, 'Telekom outstanding balance must be Rp 0');
     });
   });
 });
+
