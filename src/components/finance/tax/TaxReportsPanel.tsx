@@ -130,7 +130,17 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
       }));
     }
     case 'pph_register': {
-      const [feRes, importRes] = await Promise.all([
+      // 1. Fetch payment-level PPh allocations falling in date range or associated with selected periods
+      const [allocRes, feRes, importRes] = await Promise.all([
+        supabase
+          .from('finance_expense_pph_allocations')
+          .select(`
+            id, expense_id, tax_period_id, payment_source, payment_date, payment_amount, recognized_pph_amount, is_reversed, notes,
+            tax_period:tax_period_id(fiscal_year, period_month, tax_type)
+          `)
+          .gte('payment_date', startDate)
+          .lte('payment_date', endDate)
+          .eq('is_reversed', false),
         supabase
           .from('finance_expenses')
           .select(`
@@ -141,10 +151,7 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
             staff:staff_id(full_name, employee_code, nik, npwp),
             payees:payee_id(full_name, nik, npwp, business_role)
           `)
-          .gte('expense_date', startDate)
-          .lte('expense_date', endDate)
-          .gt('pph_amount', 0)
-          .order('expense_date', { ascending: false }),
+          .gt('pph_amount', 0),
         supabase
           .from('finance_expenses')
           .select(`
@@ -154,41 +161,38 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
           `)
           .in('expense_category', ['pib_import', 'pph_import'])
           .gte('expense_date', startDate)
-          .lte('expense_date', endDate)
-          .order('expense_date', { ascending: false }),
+          .lte('expense_date', endDate),
       ]);
 
-      const expenses = (feRes.data ?? []).map((r: any) => {
-        const d = String(r.expense_date ?? '');
-        const periodLabel = d ? formatFinancePeriod(Number(d.slice(0,4)), Number(d.slice(5,7))) : '';
+      const allocations = (allocRes.data ?? []) as any[];
+      const allocatedExpenseIds = new Set(allocations.map(a => a.expense_id));
+      const feData = (feRes.data ?? []) as any[];
+      const feMap = new Map<string, any>(feData.map(e => [e.id, e]));
+
+      // 2. Lines from payment-level allocations
+      const allocationRows = allocations.map((alloc: any) => {
+        const r = feMap.get(alloc.expense_id) || {};
+        const pDate = String(alloc.payment_date || '');
+        const periodLabel = pDate ? formatFinancePeriod(Number(pDate.slice(0,4)), Number(pDate.slice(5,7))) : '';
         const partyName = r.payees?.full_name ?? r.staff?.full_name ?? r.suppliers?.company_name ?? '—';
         const partyType = r.payees ? 'Payee / Individual' : r.staff ? 'Staff / Employee' : r.suppliers ? 'Supplier' : 'Other';
         const nik = r.payees?.nik ?? r.staff?.nik ?? null;
         const npwp = r.payees?.npwp ?? r.staff?.npwp ?? r.suppliers?.npwp ?? null;
         const idStatus = npwp ? 'NPWP' : nik ? 'NIK' : 'Missing';
-        const gross = Number(r.amount || 0);
-        const pphType = r.pph_code?.tax_type || 'PPh21';
-        const isPph21 = pphType === 'PPh21';
-        const pphInfo = calculateRecognizedPPh(r);
-        const pph = pphInfo.recognizedPph;
-        let dpp = r.pph_dpp_amount ? Number(r.pph_dpp_amount) : gross;
-        if (!r.pph_dpp_amount && (pphType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee')) {
+        const gross = Number(alloc.payment_amount || r.amount || 0);
+        const pphType = alloc.tax_period?.tax_type || r.pph_code?.tax_type || 'PPh21';
+        const pph = Number(alloc.recognized_pph_amount || 0);
+        let dpp = gross;
+        if (pphType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee') {
           dpp = Math.round(gross * 0.5);
         }
         const net = gross - pph;
         const pphCode = r.pph_code?.code || '—';
 
-        let status = r.approval_status === 'approved' ? 'Approved' : 'Pending';
-        if (!pphInfo.isPaid) {
-          status = 'Unpaid (Withholding Pending)';
-        } else if (pphInfo.status === 'partial') {
-          status = `Partially Paid (${Math.round(pphInfo.paymentRatio * 100)}%)`;
-        }
-
         return {
           'Period': periodLabel,
           'Voucher No': r.voucher_number || '—',
-          'Date': r.expense_date || '—',
+          'Date': alloc.payment_date || r.expense_date || '—',
           'Tax Type': pphType,
           'Tax Code': pphCode,
           'Recipient Name': partyName,
@@ -200,12 +204,70 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
           'DPP (Rp)': dpp,
           'PPh Withheld (Rp)': pph,
           'Net Paid (Rp)': net,
-          'Payment Method': r.payment_method || '—',
-          'Status': status,
+          'Payment Method': alloc.payment_source || r.payment_method || '—',
+          'Status': 'Disbursed (Allocated)',
           'Filing Readiness': (npwp || nik) ? 'Ready' : '⚠️ Missing NIK/NPWP',
-          'Notes': r.description || '',
+          'Notes': alloc.notes || r.description || '',
         };
       });
+
+      // 3. Lines from legacy expenses without allocation rows (where pph_tax_period falls in range or expense_date falls in range)
+      const legacyExpenses = feData
+        .filter((r: any) => {
+          if (allocatedExpenseIds.has(r.id)) return false; // Prevent double-counting!
+          if (periodIds.length > 0 && r.pph_tax_period_id) {
+            return periodIds.includes(r.pph_tax_period_id);
+          }
+          const d = String(r.expense_date ?? '');
+          return d >= startDate && d <= endDate && r.pph_tax_period_id;
+        })
+        .map((r: any) => {
+          const d = String(r.expense_date ?? '');
+          const periodLabel = d ? formatFinancePeriod(Number(d.slice(0,4)), Number(d.slice(5,7))) : '';
+          const partyName = r.payees?.full_name ?? r.staff?.full_name ?? r.suppliers?.company_name ?? '—';
+          const partyType = r.payees ? 'Payee / Individual' : r.staff ? 'Staff / Employee' : r.suppliers ? 'Supplier' : 'Other';
+          const nik = r.payees?.nik ?? r.staff?.nik ?? null;
+          const npwp = r.payees?.npwp ?? r.staff?.npwp ?? r.suppliers?.npwp ?? null;
+          const idStatus = npwp ? 'NPWP' : nik ? 'NIK' : 'Missing';
+          const gross = Number(r.amount || 0);
+          const pphType = r.pph_code?.tax_type || 'PPh21';
+          const pphInfo = calculateRecognizedPPh(r);
+          const pph = pphInfo.recognizedPph;
+          let dpp = r.pph_dpp_amount ? Number(r.pph_dpp_amount) : gross;
+          if (!r.pph_dpp_amount && (pphType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee')) {
+            dpp = Math.round(gross * 0.5);
+          }
+          const net = gross - pph;
+          const pphCode = r.pph_code?.code || '—';
+
+          let status = r.approval_status === 'approved' ? 'Approved' : 'Pending';
+          if (!pphInfo.isPaid) {
+            status = 'Unpaid (Withholding Pending)';
+          } else if (pphInfo.status === 'partial') {
+            status = `Partially Paid (${Math.round(pphInfo.paymentRatio * 100)}%)`;
+          }
+
+          return {
+            'Period': periodLabel,
+            'Voucher No': r.voucher_number || '—',
+            'Date': r.expense_date || '—',
+            'Tax Type': pphType,
+            'Tax Code': pphCode,
+            'Recipient Name': partyName,
+            'Recipient Type': partyType,
+            'ID Type': idStatus,
+            'NIK (Citizen ID)': nik || '',
+            'NPWP (Tax ID)': npwp || '',
+            'Gross Amount (Rp)': gross,
+            'DPP (Rp)': dpp,
+            'PPh Withheld (Rp)': pph,
+            'Net Paid (Rp)': net,
+            'Payment Method': r.payment_method || '—',
+            'Status': status,
+            'Filing Readiness': (npwp || nik) ? 'Ready' : '⚠️ Missing NIK/NPWP',
+            'Notes': r.description || '',
+          };
+        });
 
       const imports = (importRes.data ?? []).map((r: any) => {
         const d = String(r.expense_date ?? '');
@@ -237,7 +299,7 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
         };
       });
 
-      return [...expenses, ...imports];
+      return [...allocationRows, ...legacyExpenses, ...imports];
     }
     case 'pph_summary': {
       const startYM = startDate.slice(0, 7); // "YYYY-MM"

@@ -410,3 +410,19 @@ export const unlinkFinanceExpenseBankLink = (expenseId: string, reason?: string)
       p_reason: reason || 'Bank statement link removed by user',
     },
   );
+
+export const recordExpenseCashPayment = (
+  expenseId: string,
+  paymentDate: string,
+  paymentAmount: number,
+  notes?: string | null,
+  paymentEventId?: string | null,
+) =>
+  rpc<string>('record_expense_cash_payment', {
+    p_expense_id: expenseId,
+    p_payment_date: paymentDate,
+    p_payment_amount: paymentAmount,
+    p_notes: notes || null,
+    p_payment_event_id: paymentEventId || null,
+  });
+

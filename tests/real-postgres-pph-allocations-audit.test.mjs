@@ -46,6 +46,9 @@ test('Disposable Real PostgreSQL Migration, Concurrency, and Filed-Period Audit'
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
           CREATE ROLE anon;
         END IF;
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN
+          CREATE ROLE postgres SUPERUSER;
+        END IF;
       END
       $$;
 
@@ -96,6 +99,7 @@ test('Disposable Real PostgreSQL Migration, Concurrency, and Filed-Period Audit'
 
       CREATE TABLE public.payment_vouchers (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        voucher_number TEXT,
         tax_period_id UUID REFERENCES public.tax_periods(id),
         voucher_date DATE,
         pph_amount NUMERIC(18,2) DEFAULT 0,
@@ -179,10 +183,46 @@ test('Disposable Real PostgreSQL Migration, Concurrency, and Filed-Period Audit'
         payment_kind TEXT DEFAULT 'supplier',
         created_at TIMESTAMPTZ DEFAULT now()
       );
+
+      CREATE TABLE public.voucher_allocations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        voucher_type VARCHAR NOT NULL DEFAULT 'payment',
+        payment_voucher_id UUID REFERENCES public.payment_vouchers(id),
+        finance_expense_id UUID REFERENCES public.finance_expenses(id),
+        allocated_amount NUMERIC(18,2) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+
+      CREATE TABLE public.petty_cash_transactions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        transaction_number VARCHAR NOT NULL,
+        transaction_date DATE NOT NULL,
+        transaction_type VARCHAR NOT NULL DEFAULT 'expense',
+        amount NUMERIC(18,2) NOT NULL,
+        description TEXT,
+        approval_status TEXT NOT NULL DEFAULT 'approved',
+        finance_expense_id UUID REFERENCES public.finance_expenses(id),
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+
+      CREATE OR REPLACE FUNCTION public._sec_check_finance_role()
+      RETURNS void LANGUAGE plpgsql AS $$
+      BEGIN
+        IF auth.role() = 'service_role' THEN RETURN; END IF;
+        IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM public.user_profiles
+          WHERE id = auth.uid() AND role IN ('admin', 'accounts')
+        ) THEN
+          RAISE EXCEPTION 'Permission denied: only admin/accounts can perform finance operations';
+        END IF;
+      END;
+      $$;
     `);
 
     // Step 3: Apply migrations in order
     const mig170 = readFileSync('supabase/migrations/20261114170000_multi_period_pph_allocations_and_cash_strictness.sql', 'utf8');
+    const mig180 = readFileSync('supabase/migrations/20261114180000_secure_pph_allocations_and_multi_payment_triggers.sql', 'utf8');
 
     // Run trigger validation function and migration 170
     await client.query(`
@@ -226,8 +266,9 @@ test('Disposable Real PostgreSQL Migration, Concurrency, and Filed-Period Audit'
         EXECUTE FUNCTION public.validate_tax_expense_linkage();
     `);
 
-    // Apply migration 170 in full (table, indices, triggers, sync function)
+    // Apply migration 170 and 180 in full (table, indices, triggers, sync function)
     await client.query(mig170);
+    await client.query(mig180);
 
     // Seed test master data
     const payeeRes = await client.query(`
@@ -606,6 +647,21 @@ test('Disposable Real PostgreSQL Migration, Concurrency, and Filed-Period Audit'
       const bsaNovId = 'aaaaaaaa-1111-2222-3333-444444444444';
       const bsaDecId = 'bbbbbbbb-1111-2222-3333-444444444444';
 
+      // Insert prerequisite bank statement line and allocations so source validation succeeds
+      const bslRes = await client.query(`
+        INSERT INTO public.bank_statement_lines (bank_account_id, transaction_date, description, debit_amount)
+        VALUES ('${bcaId}', '2026-11-15', 'Split payment for notary', 950000)
+        RETURNING id;
+      `);
+      const bslId = bslRes.rows[0].id;
+
+      await client.query(`
+        INSERT INTO public.bank_statement_allocations (id, bank_statement_line_id, document_type, document_id, allocation_amount)
+        VALUES 
+          ('${bsaNovId}', '${bslId}', 'expense', '${multiExpId}', 950000),
+          ('${bsaDecId}', '${bslId}', 'expense', '${multiExpId}', 950000);
+      `);
+
       // Payment 1 in November: Rp 950,000 (50%)
       await client.query(`
         SELECT public.sync_expense_pph_allocation(
@@ -653,6 +709,168 @@ test('Disposable Real PostgreSQL Migration, Concurrency, and Filed-Period Audit'
       `);
       assert.equal(afterRev.rows[0].is_reversed, true);
       assert.equal(Number(afterRev.rows[0].recognized_pph_amount), 0);
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST I: Direct writes on finance_expense_pph_allocations blocked for authenticated role
+    // ------------------------------------------------------------------------
+    await t.test('I. Direct INSERT/UPDATE/DELETE on finance_expense_pph_allocations blocked for authenticated role', async () => {
+      await client.query('SET ROLE authenticated;');
+      try {
+        await assert.rejects(
+          client.query(`
+            INSERT INTO public.finance_expense_pph_allocations (
+              expense_id, tax_period_id, payment_source, payment_event_id, payment_date, payment_amount, recognized_pph_amount
+            ) VALUES (
+              gen_random_uuid(), '${novPeriodId}', 'cash', gen_random_uuid(), '2026-11-15', 100000, 10000
+            );
+          `),
+          /permission denied for table finance_expense_pph_allocations/i,
+          'Authenticated users must not be permitted direct INSERT on finance_expense_pph_allocations'
+        );
+      } finally {
+        await client.query('RESET ROLE;');
+      }
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST J: Direct execution of sync_expense_pph_allocation blocked for authenticated role
+    // ------------------------------------------------------------------------
+    await t.test('J. Direct execution of sync_expense_pph_allocation blocked for authenticated role', async () => {
+      await client.query('SET ROLE authenticated;');
+      try {
+        await assert.rejects(
+          client.query(`
+            SELECT public.sync_expense_pph_allocation(
+              gen_random_uuid(), 'cash', gen_random_uuid(), '2026-11-15', 100000
+            );
+          `),
+          /permission denied for function sync_expense_pph_allocation/i,
+          'Authenticated users must not have execute permission on internal sync_expense_pph_allocation'
+        );
+      } finally {
+        await client.query('RESET ROLE;');
+      }
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST K: Voucher allocation trigger automatically syncs PPh allocation
+    // ------------------------------------------------------------------------
+    await t.test('K. Voucher allocation trigger syncs PPh allocation automatically', async () => {
+      const expRes = await client.query(`
+        INSERT INTO public.finance_expenses (voucher_number, expense_category, amount, expense_date, pph_amount, payee_id, payment_method, bank_account_id)
+        VALUES ('EXP/TEST/VOUCHER', 'services', 1000000, '2026-11-01', 50000, '${yenyId}', 'bank_transfer', '${bcaId}')
+        RETURNING id;
+      `);
+      const expId = expRes.rows[0].id;
+
+      const pvRes = await client.query(`
+        INSERT INTO public.payment_vouchers (voucher_date, is_posted)
+        VALUES ('2026-11-20', true)
+        RETURNING id;
+      `);
+      const pvId = pvRes.rows[0].id;
+
+      const vaRes = await client.query(`
+        INSERT INTO public.voucher_allocations (payment_voucher_id, finance_expense_id, allocated_amount)
+        VALUES ('${pvId}', '${expId}', 950000)
+        RETURNING id;
+      `);
+      const vaId = vaRes.rows[0].id;
+
+      const alloc = await client.query(`
+        SELECT tax_period_id, payment_source, payment_event_id, recognized_pph_amount, is_reversed
+        FROM public.finance_expense_pph_allocations
+        WHERE expense_id = '${expId}' AND payment_event_id = '${vaId}';
+      `);
+      assert.equal(alloc.rows.length, 1);
+      assert.equal(alloc.rows[0].payment_source, 'voucher_allocation');
+      assert.equal(Number(alloc.rows[0].recognized_pph_amount), 50000);
+      assert.equal(alloc.rows[0].is_reversed, false);
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST L: Petty cash transaction trigger syncs PPh allocation automatically
+    // ------------------------------------------------------------------------
+    await t.test('L. Petty cash transaction trigger syncs PPh allocation automatically', async () => {
+      const expRes = await client.query(`
+        INSERT INTO public.finance_expenses (voucher_number, expense_category, amount, expense_date, pph_amount, payee_id, payment_method, bank_account_id)
+        VALUES ('EXP/TEST/PETTY', 'services', 500000, '2026-11-05', 25000, '${yenyId}', 'cash', '${bcaId}')
+        RETURNING id;
+      `);
+      const expId = expRes.rows[0].id;
+
+      const pcRes = await client.query(`
+        INSERT INTO public.petty_cash_transactions (transaction_number, transaction_date, amount, finance_expense_id, approval_status)
+        VALUES ('PC-202611-0001', '2026-11-18', 475000, '${expId}', 'approved')
+        RETURNING id;
+      `);
+      const pcId = pcRes.rows[0].id;
+
+      const alloc = await client.query(`
+        SELECT tax_period_id, payment_source, payment_event_id, recognized_pph_amount, is_reversed
+        FROM public.finance_expense_pph_allocations
+        WHERE expense_id = '${expId}' AND payment_event_id = '${pcId}';
+      `);
+      assert.equal(alloc.rows.length, 1);
+      assert.equal(alloc.rows[0].payment_source, 'petty_cash');
+      assert.equal(Number(alloc.rows[0].recognized_pph_amount), 25000);
+      assert.equal(alloc.rows[0].is_reversed, false);
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST M: Cash disbursement RPC validates finance role and creates unique allocation
+    // ------------------------------------------------------------------------
+    await t.test('M. Cash disbursement RPC validates finance role, persists payment event ID, and syncs PPh allocation', async () => {
+      const expRes = await client.query(`
+        INSERT INTO public.finance_expenses (voucher_number, expense_category, amount, expense_date, pph_amount, payee_id)
+        VALUES ('EXP/TEST/CASHRPC', 'services', 600000, '2026-11-01', 30000, '${yenyId}')
+        RETURNING id;
+      `);
+      const expId = expRes.rows[0].id;
+
+      // 1. Viewer role attempt rejected by _sec_check_finance_role
+      await client.query(`
+        SET request.jwt.claim.role = 'authenticated';
+        SET request.jwt.claim.sub = '00000000-0000-0000-0000-000000000002'; -- viewer
+      `);
+      await assert.rejects(
+        client.query(`
+          SELECT public.record_expense_cash_payment('${expId}', '2026-11-22', 570000, 'Disbursed by viewer');
+        `),
+        /Permission denied: only admin\/accounts can perform finance operations/i,
+        'Viewer role must not be permitted to disburse cash'
+      );
+
+      // 2. Admin role attempt succeeds
+      await client.query(`
+        SET request.jwt.claim.role = 'authenticated';
+        SET request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001'; -- admin
+      `);
+      const cashEventId = 'cccccccc-1111-2222-3333-444444444444';
+      await client.query(`
+        SELECT public.record_expense_cash_payment('${expId}', '2026-11-22', 570000, 'Disbursed by admin', '${cashEventId}');
+      `);
+      await client.query(`
+        RESET request.jwt.claim.role;
+        RESET request.jwt.claim.sub;
+      `);
+
+      const alloc = await client.query(`
+        SELECT tax_period_id, payment_source, payment_event_id, recognized_pph_amount, is_reversed
+        FROM public.finance_expense_pph_allocations
+        WHERE expense_id = '${expId}' AND payment_event_id = '${cashEventId}';
+      `);
+      assert.equal(alloc.rows.length, 1);
+      assert.equal(alloc.rows[0].payment_source, 'cash');
+      assert.equal(Number(alloc.rows[0].recognized_pph_amount), 30000);
+      assert.equal(alloc.rows[0].is_reversed, false);
+
+      const expCheck = await client.query(`
+        SELECT payment_method, paid_amount FROM public.finance_expenses WHERE id = '${expId}';
+      `);
+      assert.equal(expCheck.rows[0].payment_method, 'cash');
+      assert.equal(Number(expCheck.rows[0].paid_amount), 570000);
     });
 
   } finally {

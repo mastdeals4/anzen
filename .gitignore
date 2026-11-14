@@ -43,3 +43,7 @@ services/whatsapp-adapter/logs/
 services/whatsapp-adapter/*.png
 /*.png
 scratch/
+# Sensitive SQL database backups
+docs/backups/*.sql
+*.sql.gz
+

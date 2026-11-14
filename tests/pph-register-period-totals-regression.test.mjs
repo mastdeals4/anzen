@@ -31,11 +31,10 @@ test('zero total and zero paid can never resolve to Paid', () => {
 });
 
 test('register drill-down uses the same explicit-period/payment-date attribution without synthetic sources', () => {
-  assert.match(register, /usesStoredTotal/);
+  assert.match(register, /pph_total/);
   assert.match(register, /pph_paid_total/);
-  assert.match(register, /paymentDateMap\.get\(expense\.id\) \?\? expense\.due_date \?\? expense\.expense_date/);
-  assert.match(register, /expense\.due_date \?\? expense\.expense_date/);
-  assert.match(register, /expense\.pph_tax_period_id\) return expense\.pph_tax_period_id === row\.tax_period_id/);
+  assert.match(register, /alloc\.payment_date/);
+  assert.match(register, /expense\.pph_tax_period_id/);
   assert.doesNotMatch(register, /expense\.pph_tax_period_id \?\? expense\.tax_period_id/);
   assert.doesNotMatch(register, /latestPaymentDate/);
   assert.doesNotMatch(register, /Historical tax snapshot/);

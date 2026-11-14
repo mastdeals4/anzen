@@ -87,10 +87,37 @@ function fmtDate(s: string) {
 async function loadPphDetail(row: Row): Promise<SourceLine[]> {
   const yr = row.fiscal_year;
   const mo = row.period_month;
-  const startDate = `${yr}-${String(mo).padStart(2,'0')}-01`;
-  const lastDay = new Date(yr, mo, 0).getDate();
-  const endDate = `${yr}-${String(mo).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+  const pphType = row.tax_type;
 
+  // 1. Resolve target tax period IDs (for consolidated unifikasi vs single type)
+  let targetPeriodIds: string[] = [row.tax_period_id];
+  if (pphType === 'PPh_Unifikasi') {
+    const { data: siblingPeriods } = await supabase
+      .from('tax_periods')
+      .select('id')
+      .eq('fiscal_year', yr)
+      .eq('period_month', mo)
+      .neq('tax_type', 'PPN');
+    if (siblingPeriods && siblingPeriods.length > 0) {
+      targetPeriodIds = siblingPeriods.map(p => p.id);
+    }
+  }
+
+  // 2. Query payment-level PPh allocations for the target period(s)
+  const { data: allocData, error: allocErr } = await supabase
+    .from('finance_expense_pph_allocations')
+    .select('id, expense_id, tax_period_id, payment_source, payment_event_id, source_id, payment_date, payment_amount, recognized_pph_amount, is_reversed, notes')
+    .in('tax_period_id', targetPeriodIds)
+    .eq('is_reversed', false);
+
+  if (allocErr) {
+    console.error('Failed to load expense PPh allocations:', allocErr);
+  }
+
+  const allocations = (allocData ?? []) as any[];
+  const allocatedExpenseIds = new Set(allocations.map(a => a.expense_id));
+
+  // 3. Fetch expenses with PPh
   const [feRes, importRes] = await Promise.all([
     supabase
       .from('finance_expenses')
@@ -106,60 +133,79 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
     console.error('Failed to load expense PPh detail:', feRes.error);
   }
 
-  // Fetch payment dates for cash/bank disbursements
   const rawFeData = (feRes.data ?? []) as any[];
-  const feIds = rawFeData.map(e => e.id);
-  const origBslIds = rawFeData.map(e => e.originating_bank_statement_line_id).filter(Boolean);
+  const expenseMap = new Map<string, any>(rawFeData.map(e => [e.id, e]));
 
-  const [bsaRes, bslRes] = await Promise.all([
-    feIds.length
-      ? supabase.from('bank_statement_allocations')
-          .select('document_id, bank_statement_lines(transaction_date)')
-          .in('document_id', feIds)
-      : { data: [] },
-    origBslIds.length
-      ? supabase.from('bank_statement_lines')
-          .select('id, transaction_date')
-          .in('id', origBslIds)
-      : { data: [] },
-  ]);
-
-  const paymentDatesMap = new Map<string, string>();
-  for (const bsl of ((bslRes.data ?? []) as any[])) {
-    if (bsl?.id && bsl?.transaction_date) {
-      paymentDatesMap.set(bsl.id, bsl.transaction_date);
-    }
-  }
-  for (const bsa of ((bsaRes.data ?? []) as any[])) {
-    const txDate = bsa?.bank_statement_lines?.transaction_date;
-    if (bsa?.document_id && txDate) {
-      paymentDatesMap.set(bsa.document_id, txDate);
-    }
-  }
-
-  const resolvePaymentDate = (expense: any): string | null => {
-    if (paymentDatesMap.has(expense.id)) return paymentDatesMap.get(expense.id)!;
-    if (expense.originating_bank_statement_line_id && paymentDatesMap.has(expense.originating_bank_statement_line_id)) {
-      return paymentDatesMap.get(expense.originating_bank_statement_line_id)!;
-    }
-    if (expense.actual_payment_date) return expense.actual_payment_date;
-    if (expense.cash_payment_date) return expense.cash_payment_date;
-    // Do NOT guess from expense_date for cash or bank payments when unverified.
-    // Statutory cash-basis rule: without actual payment evidence, leave unallocated.
-    return null;
+  const allExpenseSources = [
+    ...rawFeData,
+    ...((importRes.data ?? []) as any[]),
+  ];
+  const expenseStates = await getEffectiveExpensePostingStates(allExpenseSources.map(expense => expense.id));
+  const isEffectiveExpense = (expense: any) => {
+    if (expense.approval_status === 'approved') return true;
+    return isEffectiveExpensePosting(expenseStates.get(expense.id)?.effective_posting_state);
   };
 
-  const periodDate = (expense: any): string => {
-    const payDate = resolvePaymentDate(expense);
-    return payDate || expense.expense_date;
-  };
+  // Build lines from payment-level allocations
+  const allocationLines: SourceLine[] = [];
+  for (const alloc of allocations) {
+    const r = expenseMap.get(alloc.expense_id);
+    if (!r || !isEffectiveExpense(r)) continue;
 
-  const isSelectedPeriod = (expense: any): boolean => {
-    // Statutory cash-basis rule: Expenses with PPh are recognized only when assigned
-    // to a PPh tax period upon payment. Unallocated expenses (pph_tax_period_id IS NULL)
-    // must NOT bleed into any tax period by expense date.
+    const codeType = r.pph_code?.tax_type ?? null;
+    if (pphType !== 'PPh_Unifikasi' && codeType && codeType !== pphType) continue;
+
+    const party = r.payees?.full_name ?? r.staff?.full_name ?? r.suppliers?.company_name ?? '—';
+    const partyType: SourceLine['party_type'] = r.payees ? 'Payee' : r.staff ? 'Staff' : r.suppliers ? 'Supplier' : 'Other';
+    const rawNpwp = r.payees?.npwp ?? r.staff?.npwp ?? r.suppliers?.npwp ?? null;
+    const rawNik = r.payees?.nik ?? r.staff?.nik ?? null;
+    const taxId = rawNpwp || rawNik || null;
+    const taxIdStatus: 'NPWP' | 'NIK' | 'Missing' = rawNpwp ? 'NPWP' : rawNik ? 'NIK' : 'Missing';
+    const filingReady = !!taxId;
+    const gross = Number(alloc.payment_amount || 0);
+    const recognizedPph = Number(alloc.recognized_pph_amount || 0);
+
+    let dpp = gross;
+    if (codeType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee') {
+      dpp = Math.round(gross * 0.5);
+    }
+
+    allocationLines.push({
+      module: 'expense',
+      id: `${r.id}_${alloc.id}`,
+      doc_number: r.voucher_number ?? '—',
+      doc_date: r.expense_date,
+      period_date: alloc.payment_date,
+      party,
+      party_type: partyType,
+      raw_nik: rawNik,
+      raw_npwp: rawNpwp,
+      gross_amount: gross,
+      party_tax_id: taxId,
+      tax_id_status: taxIdStatus,
+      filing_ready: filingReady,
+      dpp_amount: dpp,
+      description: alloc.notes || r.description,
+      pph_code: r.pph_code?.code ?? null,
+      pph_amount: recognizedPph,
+      payment_method: alloc.payment_source,
+      recon_status: 'Allocated Payment',
+      journal_reference: null,
+      journal_id: null,
+      posting_date: null,
+      journal_status: 'Posted',
+      tax_type: codeType || pphType,
+      source_status: 'Disbursed (Allocated)',
+      is_official: true,
+      tax_period_id: alloc.tax_period_id,
+    });
+  }
+
+  // 4. Fallback for legacy single-period expenses that do NOT have allocation rows
+  const isSelectedPeriodLegacy = (expense: any): boolean => {
+    if (allocatedExpenseIds.has(expense.id)) return false; // Prevent double-counting!
     if (expense.pph_tax_period_id) {
-      if (row.tax_type === 'PPh_Unifikasi') {
+      if (pphType === 'PPh_Unifikasi') {
         if (expense.pph_period) {
           return expense.pph_period.fiscal_year === yr && expense.pph_period.period_month === mo;
         }
@@ -170,19 +216,10 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
     return false;
   };
 
-  const allExpenseSources = [
-    ...((feRes.data ?? []) as any[]),
-    ...((importRes.data ?? []) as any[]),
-  ];
-  const expenseStates = await getEffectiveExpensePostingStates(allExpenseSources.map(expense => expense.id));
-  const isEffectiveExpense = (expense: any) => {
-    if (expense.approval_status === 'approved') return true;
-    return isEffectiveExpensePosting(expenseStates.get(expense.id)?.effective_posting_state);
-  };
-  const expenseData = ((feRes.data ?? []) as any[]).filter(isEffectiveExpense).filter(isSelectedPeriod);
-  const importData = ((importRes.data ?? []) as any[]).filter(isEffectiveExpense).filter(isSelectedPeriod);
+  const legacyExpenseData = rawFeData.filter(isEffectiveExpense).filter(isSelectedPeriodLegacy);
+  const legacyImportData = ((importRes.data ?? []) as any[]).filter(isEffectiveExpense).filter(isSelectedPeriodLegacy);
 
-  const sourceRows = [...expenseData, ...importData];
+  const sourceRows = [...legacyExpenseData, ...legacyImportData];
   const sourceIds = [...new Set(sourceRows.map(r => r.id).filter(Boolean))];
   const journalRes = sourceIds.length
     ? await supabase
@@ -205,9 +242,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
     };
   };
 
-  const pphType = row.tax_type;
-
-  const expenses: SourceLine[] = expenseData
+  const legacyExpenses: SourceLine[] = legacyExpenseData
     .filter(r => {
       if (r.expense_category === 'pib_import' || r.expense_category === 'pph_import') return false;
       const codeType = r.pph_code?.tax_type ?? null;
@@ -245,7 +280,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         id: r.id,
         doc_number: r.voucher_number ?? '—',
         doc_date: r.expense_date,
-        period_date: periodDate(r),
+        period_date: r.expense_date,
         party,
         party_type: partyType,
         raw_nik: rawNik,
@@ -258,19 +293,19 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         description: r.description,
         pph_code: r.pph_code?.code ?? null,
         pph_amount: recognizedPph,
-        tax_type: codeType,
-        source_status: sourceStatus,
-        is_official: isOfficial,
-        tax_period_id: r.pph_tax_period_id ?? null,
         payment_method: r.payment_method,
         recon_status: null,
         ...journalFields(r.id),
+        tax_type: codeType,
+        source_status: sourceStatus,
+        is_official: isOfficial,
+        tax_period_id: r.pph_tax_period_id,
       };
     });
 
   // Import PPh 22 — only relevant to the PPh22 and consolidated tabs.
   const imports: SourceLine[] = (pphType === 'PPh22' || pphType === 'PPh_Unifikasi')
-    ? importData
+    ? legacyImportData
         .map(r => {
           const amt = r.expense_category === 'pib_import'
             ? Number(r.pib_pph_amount ?? 0)
@@ -289,7 +324,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
             id: r.id,
             doc_number: r.voucher_number ?? '—',
             doc_date: r.expense_date,
-            period_date: periodDate(r),
+            period_date: r.expense_date,
             party,
             party_type: 'Supplier' as const,
             raw_nik: null,
@@ -313,7 +348,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         })
     : [];
 
-  return [...expenses, ...imports].sort((a, b) =>
+  return [...allocationLines, ...legacyExpenses, ...imports].sort((a, b) =>
     a.period_date.localeCompare(b.period_date) || a.doc_date.localeCompare(b.doc_date),
   );
 }
