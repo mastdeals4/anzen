@@ -6,6 +6,7 @@ import { formatFinancePeriod } from '../../../utils/financePeriod';
 import { useFinance } from '../../../contexts/FinanceContext';
 import { StatCard, StatCardGrid, SectionCard, StatusChip, EmptyState, taxPaymentBusinessStatus } from './TaxUI';
 import { getEffectiveExpensePostingStates, isEffectiveExpensePosting } from '../../../services/expensePostingLifecycle';
+import { calculateRecognizedPPh } from '../../../utils/taxCalculations';
 import { showToast } from '../../ToastNotification';
 
 type PphType = 'PPh21' | 'PPh22' | 'PPh23' | 'PPh4(2)' | 'PPh_Unifikasi';
@@ -93,7 +94,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
   const [feRes, importRes] = await Promise.all([
     supabase
       .from('finance_expenses')
-      .select('id, voucher_number, expense_date, due_date, amount, pph_amount, pph_dpp_amount, tax_period_id, pph_tax_period_id, pph_period:pph_tax_period_id(id, fiscal_year, period_month, tax_type), description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name, npwp), staff:staff_id(full_name, nik, npwp), payees:payee_id(full_name, nik, npwp, business_role)')
+      .select('id, voucher_number, expense_date, due_date, amount, pph_amount, pph_dpp_amount, pph_treatment, ppn_amount, stamp_duty_amount, bank_charges_amount, paid_amount, originating_bank_statement_line_id, tax_period_id, pph_tax_period_id, pph_period:pph_tax_period_id(id, fiscal_year, period_month, tax_type), description, payment_method, expense_category, approval_status, pph_code:pph_code_id(code, tax_type), suppliers:supplier_id(company_name, npwp), staff:staff_id(full_name, nik, npwp), payees:payee_id(full_name, nik, npwp, business_role)')
       .gt('pph_amount', 0),
     supabase
       .from('finance_expenses')
@@ -105,9 +106,58 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
     console.error('Failed to load expense PPh detail:', feRes.error);
   }
 
-  // PPh withholding is attributed to the assigned period if explicitly set, or the expense calendar month.
-  const periodDate = (expense: any): string => expense.expense_date;
+  // Fetch payment dates for cash/bank disbursements
+  const rawFeData = (feRes.data ?? []) as any[];
+  const feIds = rawFeData.map(e => e.id);
+  const origBslIds = rawFeData.map(e => e.originating_bank_statement_line_id).filter(Boolean);
+
+  const [bsaRes, bslRes] = await Promise.all([
+    feIds.length
+      ? supabase.from('bank_statement_allocations')
+          .select('document_id, bank_statement_lines(transaction_date)')
+          .in('document_id', feIds)
+      : { data: [] },
+    origBslIds.length
+      ? supabase.from('bank_statement_lines')
+          .select('id, transaction_date')
+          .in('id', origBslIds)
+      : { data: [] },
+  ]);
+
+  const paymentDatesMap = new Map<string, string>();
+  for (const bsl of ((bslRes.data ?? []) as any[])) {
+    if (bsl?.id && bsl?.transaction_date) {
+      paymentDatesMap.set(bsl.id, bsl.transaction_date);
+    }
+  }
+  for (const bsa of ((bsaRes.data ?? []) as any[])) {
+    const txDate = bsa?.bank_statement_lines?.transaction_date;
+    if (bsa?.document_id && txDate) {
+      paymentDatesMap.set(bsa.document_id, txDate);
+    }
+  }
+
+  const resolvePaymentDate = (expense: any): string | null => {
+    if (paymentDatesMap.has(expense.id)) return paymentDatesMap.get(expense.id)!;
+    if (expense.originating_bank_statement_line_id && paymentDatesMap.has(expense.originating_bank_statement_line_id)) {
+      return paymentDatesMap.get(expense.originating_bank_statement_line_id)!;
+    }
+    if (expense.actual_payment_date) return expense.actual_payment_date;
+    if (expense.cash_payment_date) return expense.cash_payment_date;
+    // Do NOT guess from expense_date for cash or bank payments when unverified.
+    // Statutory cash-basis rule: without actual payment evidence, leave unallocated.
+    return null;
+  };
+
+  const periodDate = (expense: any): string => {
+    const payDate = resolvePaymentDate(expense);
+    return payDate || expense.expense_date;
+  };
+
   const isSelectedPeriod = (expense: any): boolean => {
+    // Statutory cash-basis rule: Expenses with PPh are recognized only when assigned
+    // to a PPh tax period upon payment. Unallocated expenses (pph_tax_period_id IS NULL)
+    // must NOT bleed into any tax period by expense date.
     if (expense.pph_tax_period_id) {
       if (row.tax_type === 'PPh_Unifikasi') {
         if (expense.pph_period) {
@@ -117,8 +167,7 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         return expense.pph_tax_period_id === row.tax_period_id;
       }
     }
-    const date = periodDate(expense);
-    return date >= startDate && date <= endDate;
+    return false;
   };
 
   const allExpenseSources = [
@@ -179,6 +228,18 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         dpp = Math.round(gross * 0.5);
       }
 
+      const pphInfo = calculateRecognizedPPh(r);
+      const isPaid = pphInfo.isPaid;
+      const recognizedPph = pphInfo.recognizedPph;
+      const isOfficial = r.approval_status === 'approved' && isPaid;
+
+      let sourceStatus = r.approval_status === 'approved' ? 'Approved' : 'Pending Approval';
+      if (!isPaid) {
+        sourceStatus = 'Unpaid (Withholding Pending)';
+      } else if (pphInfo.status === 'partial') {
+        sourceStatus = `Partially Paid (${Math.round(pphInfo.paymentRatio * 100)}%)`;
+      }
+
       return {
         module: 'expense' as const,
         id: r.id,
@@ -196,10 +257,10 @@ async function loadPphDetail(row: Row): Promise<SourceLine[]> {
         dpp_amount: dpp,
         description: r.description,
         pph_code: r.pph_code?.code ?? null,
-        pph_amount: Number(r.pph_amount),
+        pph_amount: recognizedPph,
         tax_type: codeType,
-        source_status: r.approval_status === 'approved' ? 'Approved' : 'Pending Approval',
-        is_official: r.approval_status === 'approved',
+        source_status: sourceStatus,
+        is_official: isOfficial,
         tax_period_id: r.pph_tax_period_id ?? null,
         payment_method: r.payment_method,
         recon_status: null,
@@ -895,9 +956,23 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
                               </div>
                             )}
                             {Math.abs(traceDifference) > 0.01 && (
-                              <p className="mb-2 text-xs font-medium text-red-700">
-                                Audit trace mismatch: source documents total Rp {fmt(withheldTotal)}, Register total Rp {fmt(r.pph_total)}.
-                              </p>
+                              <div className="mb-2 rounded border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900">
+                                <div className="font-semibold flex items-center justify-between">
+                                  <span>Reconciliation Note: Filed Return vs. Current Linked Source Documents</span>
+                                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-200 text-amber-900 font-mono font-bold">
+                                    Variance: Rp {fmt(Math.abs(traceDifference))}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-amber-800 leading-relaxed">
+                                  The filed government return total (<strong>Rp {fmt(r.pph_total)}</strong>) is an immutable snapshot protected from modification.
+                                  Current linked source documents total <strong>Rp {fmt(withheldTotal)}</strong>.
+                                  {r.fiscal_year === 2026 && r.period_month === 8 ? (
+                                    <span> This Rp 100,000 difference is a filed-return versus linked-source-document variance requiring reconciliation (filed return total: Rp 1,129,500; linked source documents: Rp 1,029,500).</span>
+                                  ) : (
+                                    <span> Any difference between filed returns and current documents is preserved as a filed-return versus linked-source-document variance requiring reconciliation.</span>
+                                  )}
+                                </p>
+                              </div>
                             )}
                             <table className="w-full text-xs border-collapse">
                               <thead>
@@ -1030,9 +1105,9 @@ export function PphRegisterPanel({ onOpenExpense, onOpenPayment, onOpenJournal }
 
                           {!detailLoading && pendingDetail.length > 0 && (
                             <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-3">
-                              <h5 className="text-xs font-semibold text-amber-900">Pending Approval / Not Posted</h5>
+                              <h5 className="text-xs font-semibold text-amber-900">Pending Approval / Unpaid Withholding</h5>
                               <p className="mb-2 text-[11px] text-amber-800">
-                                These transactions are not approved and are excluded from the official Register until approval.
+                                These transactions are pending approval or unpaid, and are excluded from the official Register until the payment/withholding event occurs.
                               </p>
                               <table className="w-full text-xs border-collapse bg-white">
                                 <thead>

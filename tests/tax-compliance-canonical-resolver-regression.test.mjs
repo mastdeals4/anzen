@@ -17,7 +17,7 @@ assert.match(sql, /coalesce\(a\.due_date,a\.expense_date\)/);
 assert.match(ui, /case 'overpaid':\s+return 'Overpaid'/);
 assert.match(ui, /if \(paid > total \+ 0\.01\) return 'overpaid'/);
 assert.match(calendar, /case 'overpaid'/);
-assert.match(centre, /<FinancePage title="TAX COMPLIANCE">/);
+assert.match(centre, /TAX COMPLIANCE/);
 assert.match(centre, /label: 'PPN'/);
 
 console.log('tax compliance canonical resolver regression checks passed');

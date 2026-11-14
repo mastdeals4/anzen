@@ -12,6 +12,7 @@ import { SapRow, SapField, SAP_INPUT } from './SapLayout';
 import { FloatingField } from './FloatingField';
 import { useExpenseCategories } from './useExpenseCategories';
 import { BankTransactionLinkField } from './BankTransactionLinkField';
+import { validateExpenseMandatoryTaxLinkage } from '../../utils/expenseValidation';
 import {
   approveFinanceExpense,
   editApprovedFinanceExpense,
@@ -648,6 +649,7 @@ export function ExpenseManager({
     customers: { company_name: string } | null;
   }>>([]);
   const [providerType, setProviderType] = useState<'corporate' | 'individual'>('corporate');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [workingDays, setWorkingDays] = useState<number>(1);
   const [selectedStaffId, setSelectedStaffId] = useState<string>('');
   const [salaryAdvances, setSalaryAdvances] = useState<Array<{
@@ -1577,6 +1579,60 @@ export function ExpenseManager({
       // respective master row to be picked. Supplier categories keep the
       // existing behaviour (supplier is optional at the DB level).
       const preRules = getCategoryFieldRules(formData.expense_category);
+
+      // Mandatory Tax Linkage Validation:
+      // Any expense containing PPN or PPh > 0 must have a valid Supplier/Payee selected.
+      // If recorded as paid, valid payment details are mandatory.
+      const isPibExpense = formData.expense_category === 'pib_import';
+      const resolvedSupplierId = (preRules.supplier === 'hide' || isPibExpense || preRules.payee === 'show' || (preRules.providerTypeToggle && providerType === 'individual'))
+        ? null
+        : (formData.supplier_id || null);
+      const resolvedPayeeId = (preRules.payee === 'show' || (preRules.providerTypeToggle && providerType === 'individual'))
+        ? (formData.payee_id || null)
+        : null;
+      const resolvedStaffId = preRules.staff === 'show' ? (selectedStaffId || null) : null;
+
+      const taxValidation = validateExpenseMandatoryTaxLinkage({
+        expense_category: formData.expense_category,
+        amount: formData.amount,
+        ppn_amount: formData.ppn_amount,
+        pph_amount: formData.pph_amount,
+        supplier_id: resolvedSupplierId,
+        payee_id: resolvedPayeeId,
+        staff_id: resolvedStaffId,
+        payment_method: formData.payment_method,
+        bank_account_id: formData.bank_account_id,
+        selected_bank_transaction_id: selectedBankTransactionId,
+        paid_amount: editingExpense?.paid_amount,
+      });
+
+      if (!taxValidation.isValid) {
+        setFieldErrors(taxValidation.errors);
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+
+        const msg = taxValidation.firstErrorMessage || 'Please select a Supplier/Payee and complete the required payment details before saving this tax expense.';
+        alert(msg);
+
+        setTimeout(() => {
+          if (taxValidation.firstErrorField === 'party') {
+            const el = document.querySelector(
+              'input[placeholder="Search supplier..."], input[placeholder="Search payee..."], input[placeholder="Search staff..."], input[placeholder="Search utility..."]'
+            ) as HTMLElement;
+            el?.focus();
+          } else if (taxValidation.firstErrorField === 'bank_account_id') {
+            const el = document.querySelector('select[name="bank_account_id"]') as HTMLElement;
+            el?.focus();
+          } else if (taxValidation.firstErrorField === 'payment_method') {
+            const el = document.querySelector('select[name="payment_method"]') as HTMLElement;
+            el?.focus();
+          }
+        }, 50);
+
+        return;
+      }
+      setFieldErrors({});
+
       if (formData.expense_category === 'non_permanent_employee_fee' && selectedSupplier
           && !['employee', 'non-permanent individual', 'freelancer', 'casual worker', 'honorarium recipient']
             .includes((selectedSupplier.supplier_type || '').trim().toLowerCase())) {
@@ -2588,6 +2644,7 @@ export function ExpenseManager({
 
   // Handle supplier selection — auto-fills category, due_date, tax fields
   const handleSupplierSelect = (supplierId: string) => {
+    setFieldErrors(prev => ({ ...prev, party: '' }));
     const sup = suppliers.find(s => s.id === supplierId) ?? null;
     setSelectedSupplier(sup);
     setFormData(prev => {
@@ -2622,6 +2679,7 @@ export function ExpenseManager({
 
   // Handle payee selection — recommends default tax code and recalculates PPh
   const handlePayeeSelect = (payeeId: string) => {
+    setFieldErrors(prev => ({ ...prev, party: '' }));
     const payee = payeeRoster.find(p => p.id === payeeId) ?? null;
     let defaultCodeId = payee?.default_pph_code_id || '';
     if (!defaultCodeId) {
@@ -4123,6 +4181,7 @@ export function ExpenseManager({
                           : (isPib ? 'Statutory Payee' : isBroker ? 'Broker' : 'Supplier')
                       }
                       required={!isPib && (rules.staff === 'show' || rules.utility === 'show' || rules.supplier === 'show' || rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual'))}
+                      error={fieldErrors.party}
                       span={3}
                       filled={
                         isPib ? true
@@ -4177,6 +4236,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={selectedStaffId}
                           onChange={(val) => {
+                            setFieldErrors(prev => ({ ...prev, party: '' }));
                             setSelectedStaffId(val);
                             const staff = staffRoster.find((item) => item.id === val);
                             setFormData(prev => ({
@@ -4195,6 +4255,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={selectedUtilityId}
                           onChange={(val) => {
+                            setFieldErrors(prev => ({ ...prev, party: '' }));
                             setSelectedUtilityId(val);
                             const util = utilityRoster.find(u => u.id === val);
                             if (util?.supplier_id) handleSupplierSelect(util.supplier_id);
@@ -5129,10 +5190,11 @@ export function ExpenseManager({
               <div className="space-y-2">
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Payment</p>
 
-                <FloatingField label="Method" required span={12} filled={!!formData.payment_method || formData.payment_method === null}>
+                <FloatingField label="Method" required error={fieldErrors.payment_method} span={12} filled={!!formData.payment_method || formData.payment_method === null}>
                   <select name="payment_method" aria-label="Payment Method" value={formData.payment_method ?? 'outstanding'}
                     onChange={(e) => {
                       const val = e.target.value === 'outstanding' ? null : e.target.value;
+                      setFieldErrors(prev => ({ ...prev, payment_method: '', bank_account_id: '' }));
                       setFormData(prev => ({ ...prev, payment_method: val, bank_account_id: val ? prev.bank_account_id : '' }));
                       if (!e.target.value || e.target.value === 'outstanding') {
                         setSelectedBankTransactionId('');
@@ -5162,9 +5224,10 @@ export function ExpenseManager({
                 <p className="text-[9px] text-gray-400 -mt-1">💡 For cash payments: record as Outstanding (A/P 2110), then record disbursement in Petty Cash Manager or Payment Voucher.</p>
 
                 {formData.payment_method !== null && (
-                  <FloatingField label="Bank Account" required span={12} filled={!!formData.bank_account_id}>
+                  <FloatingField label="Bank Account" required error={fieldErrors.bank_account_id} span={12} filled={!!formData.bank_account_id}>
                     <select name="bank_account_id" aria-label="Bank Account Id" value={formData.bank_account_id}
                       onChange={(e) => {
+                        setFieldErrors(prev => ({ ...prev, bank_account_id: '' }));
                         const bank = bankAccounts.find(item => item.id === e.target.value);
                         const currency = normalizeCurrency(bank?.currency) as 'IDR' | 'USD';
                         setFormData({ ...formData, bank_account_id: e.target.value, transaction_currency: currency,

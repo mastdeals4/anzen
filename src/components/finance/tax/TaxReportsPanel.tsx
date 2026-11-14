@@ -6,6 +6,7 @@ import { useFinance } from '../../../contexts/FinanceContext';
 import { sanitizeExportRows } from '../../../utils/csvSafe';
 import { SectionCard, EmptyState } from './TaxUI';
 import { formatFinancePeriod, formatFinancePeriodValue } from '../../../utils/financePeriod';
+import { calculateRecognizedPPh } from '../../../utils/taxCalculations';
 
 type ReportId =
   | 'pph_register'
@@ -133,7 +134,7 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
         supabase
           .from('finance_expenses')
           .select(`
-            id, voucher_number, expense_date, amount, pph_amount, pph_dpp_amount, 
+            id, voucher_number, expense_date, amount, pph_amount, pph_dpp_amount, pph_treatment, ppn_amount, stamp_duty_amount, bank_charges_amount, paid_amount,
             tax_period_id, pph_tax_period_id, description, payment_method, expense_category, approval_status,
             pph_code:pph_code_id(code, tax_type, rate),
             suppliers:supplier_id(company_name, npwp),
@@ -166,14 +167,23 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
         const npwp = r.payees?.npwp ?? r.staff?.npwp ?? r.suppliers?.npwp ?? null;
         const idStatus = npwp ? 'NPWP' : nik ? 'NIK' : 'Missing';
         const gross = Number(r.amount || 0);
-        const pph = Number(r.pph_amount || 0);
         const pphType = r.pph_code?.tax_type || 'PPh21';
+        const isPph21 = pphType === 'PPh21';
+        const pphInfo = calculateRecognizedPPh(r);
+        const pph = pphInfo.recognizedPph;
         let dpp = r.pph_dpp_amount ? Number(r.pph_dpp_amount) : gross;
         if (!r.pph_dpp_amount && (pphType === 'PPh21' || r.expense_category === 'non_permanent_employee_fee')) {
           dpp = Math.round(gross * 0.5);
         }
         const net = gross - pph;
         const pphCode = r.pph_code?.code || '—';
+
+        let status = r.approval_status === 'approved' ? 'Approved' : 'Pending';
+        if (!pphInfo.isPaid) {
+          status = 'Unpaid (Withholding Pending)';
+        } else if (pphInfo.status === 'partial') {
+          status = `Partially Paid (${Math.round(pphInfo.paymentRatio * 100)}%)`;
+        }
 
         return {
           'Period': periodLabel,
@@ -191,7 +201,7 @@ async function fetchReport(id: ReportId, startDate: string, endDate: string): Pr
           'PPh Withheld (Rp)': pph,
           'Net Paid (Rp)': net,
           'Payment Method': r.payment_method || '—',
-          'Status': r.approval_status === 'approved' ? 'Approved' : 'Pending',
+          'Status': status,
           'Filing Readiness': (npwp || nik) ? 'Ready' : '⚠️ Missing NIK/NPWP',
           'Notes': r.description || '',
         };

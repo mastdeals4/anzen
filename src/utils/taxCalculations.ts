@@ -700,6 +700,258 @@ export function calculateOutstanding(exp: OutstandingInput): Outstanding {
   };
 }
 
+export interface RecognizedPPhResult {
+  recognizedPph: number;
+  unrecognizedPph: number;
+  cashPayable: number;
+  paidAmount: number;
+  isPaid: boolean;
+  paymentRatio: number;
+  status: 'unpaid' | 'partial' | 'fully_paid';
+  actualPaymentDate?: string | null;
+}
+
+/**
+ * Calculates statutory recognized PPh withholding based on actual payment.
+ * Under Indonesian tax law (PPh 21 / PPh 23 / PPh 4(2)), withholding tax
+ * (pemotongan pajak) is legally effected upon payment / cash disbursement.
+ * An unpaid bill or expense does not have completed withholding until cash is paid.
+ * For partial payments, withholding is recognized proportionately.
+ *
+ * CASH STRICTNESS:
+ * Selecting 'cash' does NOT prove payment occurred. A genuine cash payment record,
+ * actual payment date, or paid_amount > 0 must exist. If payment is unconfirmed,
+ * the expense remains unpaid and PPh remains unallocated (Rp 0 recognized).
+ */
+export function calculateRecognizedPPh(
+  exp: ExpenseTotalsInput & BrokerExpenseTotalsInput & {
+    paid_amount?: number | null;
+    payment_method?: string | null;
+    actual_payment_date?: string | null;
+    cash_payment_date?: string | null;
+    has_verified_cash_payment?: boolean | null;
+  },
+): RecognizedPPhResult {
+  const pphTotal = Number(exp.pph_amount) || 0;
+  const cashPayable = calculateCanonicalCashPayable(exp);
+  const paidAmount = Math.max(0, Number(exp.paid_amount) || 0);
+
+  // Selecting 'cash' does NOT prove payment occurred.
+  // Only treat as paid if paid_amount > 0.01 OR verified cash payment flag is explicitly true.
+  const isCashVerified = exp.payment_method === 'cash' && (exp.has_verified_cash_payment === true || paidAmount > 0.01);
+  const effectivePaidAmount = isCashVerified
+    ? (paidAmount > 0.01 ? paidAmount : cashPayable)
+    : paidAmount;
+
+  // Resolve actual payment date: do NOT guess from expense_date
+  let actualPaymentDate: string | null = null;
+  if (effectivePaidAmount > 0.01) {
+    actualPaymentDate = exp.actual_payment_date || exp.cash_payment_date || null;
+  }
+
+  if (pphTotal <= 0) {
+    return {
+      recognizedPph: 0,
+      unrecognizedPph: 0,
+      cashPayable,
+      paidAmount: effectivePaidAmount,
+      isPaid: effectivePaidAmount > 0.01,
+      paymentRatio: cashPayable > 0 ? Math.min(1, effectivePaidAmount / cashPayable) : 1,
+      status: effectivePaidAmount <= 0.01 ? 'unpaid' : (effectivePaidAmount >= cashPayable - 0.01 ? 'fully_paid' : 'partial'),
+      actualPaymentDate,
+    };
+  }
+
+  if (cashPayable <= 0.01) {
+    return {
+      recognizedPph: pphTotal,
+      unrecognizedPph: 0,
+      cashPayable,
+      paidAmount: effectivePaidAmount,
+      isPaid: true,
+      paymentRatio: 1,
+      status: 'fully_paid',
+      actualPaymentDate,
+    };
+  }
+
+  if (effectivePaidAmount <= 0.01) {
+    return {
+      recognizedPph: 0,
+      unrecognizedPph: pphTotal,
+      cashPayable,
+      paidAmount: effectivePaidAmount,
+      isPaid: false,
+      paymentRatio: 0,
+      status: 'unpaid',
+      actualPaymentDate: null,
+    };
+  }
+
+  if (effectivePaidAmount >= cashPayable - 0.01) {
+    return {
+      recognizedPph: pphTotal,
+      unrecognizedPph: 0,
+      cashPayable,
+      paidAmount: effectivePaidAmount,
+      isPaid: true,
+      paymentRatio: 1,
+      status: 'fully_paid',
+      actualPaymentDate,
+    };
+  }
+
+  const paymentRatio = Math.min(1, effectivePaidAmount / cashPayable);
+  const recognizedPph = Math.min(pphTotal, Math.round(pphTotal * paymentRatio));
+  const unrecognizedPph = Math.max(0, pphTotal - recognizedPph);
+
+  return {
+    recognizedPph,
+    unrecognizedPph,
+    cashPayable,
+    paidAmount: effectivePaidAmount,
+    isPaid: true,
+    paymentRatio,
+    status: 'partial',
+    actualPaymentDate,
+  };
+}
+
+export interface ExpensePaymentAllocation {
+  id?: string;
+  source: 'bank_statement_allocation' | 'voucher_allocation' | 'petty_cash' | 'cash' | 'direct_payment';
+  sourceId?: string | null;
+  paymentDate: string; // ISO date YYYY-MM-DD
+  amount: number;
+  isReversed?: boolean;
+  taxPeriodId?: string | null;
+  notes?: string | null;
+}
+
+export interface MultiPeriodPPhAllocation {
+  source: ExpensePaymentAllocation['source'];
+  sourceId?: string | null;
+  paymentDate: string;
+  taxPeriodYear: number;
+  taxPeriodMonth: number;
+  taxPeriodId?: string | null;
+  paymentAmount: number;
+  paymentRatio: number;
+  recognizedPph: number;
+  isReversed: boolean;
+}
+
+export interface MultiPeriodPPhResult {
+  allocations: MultiPeriodPPhAllocation[];
+  periodTotals: Record<string, { year: number; month: number; pphTotal: number; paymentTotal: number }>;
+  totalRecognizedPph: number;
+  unrecognizedPph: number;
+  isFullySettled: boolean;
+}
+
+/**
+ * Multi-Period PPh Allocation Engine
+ *
+ * Handles partial payments across multiple tax periods for a single expense:
+ * - Proportional recognition per instalment: each payment recognizes withholding in its payment month.
+ * - Idempotency: deduplicates repeated reconciliations by (source, sourceId).
+ * - Reversals: excludes reversed payments without losing audit history.
+ * - Final settlement: absorbs rounding residual so sum(allocations) === expense.pph_amount.
+ */
+export function calculateMultiPeriodPPhAllocations(
+  expense: ExpenseTotalsInput & BrokerExpenseTotalsInput & { pph_amount?: number | null },
+  payments: ExpensePaymentAllocation[],
+): MultiPeriodPPhResult {
+  const totalPph = Math.max(0, Number(expense.pph_amount) || 0);
+  const cashPayable = calculateCanonicalCashPayable(expense);
+
+  if (totalPph <= 0 || cashPayable <= 0.01) {
+    return {
+      allocations: [],
+      periodTotals: {},
+      totalRecognizedPph: 0,
+      unrecognizedPph: 0,
+      isFullySettled: true,
+    };
+  }
+
+  // Deduplicate by source + sourceId if present (idempotency guard)
+  const seenKeys = new Set<string>();
+  const deduplicatedPayments: ExpensePaymentAllocation[] = [];
+  for (const p of payments) {
+    const key = p.sourceId ? `${p.source}:${p.sourceId}` : `${p.source}:${p.paymentDate}:${p.amount}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      deduplicatedPayments.push(p);
+    }
+  }
+
+  // Filter out reversed payments or non-positive amounts
+  const activePayments = deduplicatedPayments.filter(p => !p.isReversed && Number(p.amount) > 0.01);
+
+  // Chronological sort by paymentDate
+  const sortedPayments = [...activePayments].sort((a, b) => a.paymentDate.localeCompare(b.paymentDate));
+
+  let cumulativePaid = 0;
+  let cumulativeRecognized = 0;
+  const allocations: MultiPeriodPPhAllocation[] = [];
+  const periodTotals: Record<string, { year: number; month: number; pphTotal: number; paymentTotal: number }> = {};
+
+  for (let i = 0; i < sortedPayments.length; i++) {
+    const p = sortedPayments[i];
+    const pAmt = Number(p.amount);
+    cumulativePaid += pAmt;
+
+    let pphForThisPayment = 0;
+
+    if (cumulativePaid >= cashPayable - 0.01) {
+      // Final settlement: absorbs any rounding remainder
+      pphForThisPayment = Math.max(0, totalPph - cumulativeRecognized);
+    } else {
+      // Proportional recognition
+      const rawShare = Math.round(totalPph * (pAmt / cashPayable));
+      pphForThisPayment = Math.min(Math.max(0, totalPph - cumulativeRecognized), rawShare);
+    }
+
+    cumulativeRecognized += pphForThisPayment;
+
+    const d = new Date(p.paymentDate);
+    const yr = !isNaN(d.getTime()) ? d.getFullYear() : 0;
+    const mo = !isNaN(d.getTime()) ? d.getMonth() + 1 : 0;
+    const periodKey = `${yr}-${String(mo).padStart(2, '0')}`;
+
+    allocations.push({
+      source: p.source,
+      sourceId: p.sourceId,
+      paymentDate: p.paymentDate,
+      taxPeriodYear: yr,
+      taxPeriodMonth: mo,
+      taxPeriodId: p.taxPeriodId || null,
+      paymentAmount: pAmt,
+      paymentRatio: cashPayable > 0 ? pAmt / cashPayable : 1,
+      recognizedPph: pphForThisPayment,
+      isReversed: false,
+    });
+
+    if (!periodTotals[periodKey]) {
+      periodTotals[periodKey] = { year: yr, month: mo, pphTotal: 0, paymentTotal: 0 };
+    }
+    periodTotals[periodKey].pphTotal += pphForThisPayment;
+    periodTotals[periodKey].paymentTotal += pAmt;
+  }
+
+  const unrecognizedPph = Math.max(0, totalPph - cumulativeRecognized);
+  const isFullySettled = cumulativePaid >= cashPayable - 0.01;
+
+  return {
+    allocations,
+    periodTotals,
+    totalRecognizedPph: cumulativeRecognized,
+    unrecognizedPph,
+    isFullySettled,
+  };
+}
+
 export interface ExpenseReconciliationInput extends ExpenseTotalsInput, BrokerExpenseTotalsInput {
   paid_amount?: number | null;
   payment_method?: string | null;

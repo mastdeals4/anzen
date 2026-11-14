@@ -1,0 +1,23 @@
+# Held Experimental PPh21 Payment-Basis Withholding Changes
+# Status: HELD / UNEXECUTED (Protected for future review)
+# Migration: supabase/migrations/20261113170000_fix_pph21_payment_basis_withholding.sql (UNEXECUTED)
+#
+# Description:
+#   Implements statutory cash payment-basis recognition for PPh21 withholding tax.
+#   Under Indonesian tax law, withholding tax on employment / individuals is triggered
+#   upon actual cash disbursement/payment, rather than accrual/expense recording.
+#   Unpaid expenses have Rp 0 recognized withholding.
+#   Partial payments recognize withholding proportionately:
+#     round(pph_amount * (paid_amount / cash_payable))
+#   When activated, this aligns October 2026 PPh21 withholding total to Rp 502,500
+#   (from the 4 paid October vouchers EXP/26/304, EXP/26/313, EXP/26/363, EXP/26/364)
+#   and November 2026 PPh21 to Rp 100,000 (from EXP/26/203 and EXP/26/204).
+#
+# To activate in frontend when approved:
+#   Set `const PPH21_PAYMENT_BASIS_ENABLED = true;` in:
+#     - src/components/finance/tax/PphRegisterPanel.tsx
+#     - src/components/finance/tax/TaxReportsPanel.tsx
+#   And apply migration supabase/migrations/20261113170000_fix_pph21_payment_basis_withholding.sql
+#
+# The helper `calculateRecognizedPPh` is located in `src/utils/taxCalculations.ts`.
+

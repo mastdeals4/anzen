@@ -168,6 +168,8 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
+import { validateExpenseMandatoryTaxLinkage } from '../utils/expenseValidation';
+
 /** Shared existing USD→IDR resolver used when a normal USD document does not
  * carry a transaction-specific conversion rate. Fund Transfers continue to
  * supply their own business rate. */
@@ -177,20 +179,31 @@ export const getReportingUsdRate = async (): Promise<number> => {
   return rate;
 };
 
-export const saveFinanceExpense = (expenseId: string | null, payload: FinanceExpensePayload) =>
-  rpc<string>('save_finance_expense', { p_expense_id: expenseId, p_payload: payload });
+export const saveFinanceExpense = (expenseId: string | null, payload: FinanceExpensePayload) => {
+  const validation = validateExpenseMandatoryTaxLinkage(payload as any);
+  if (!validation.isValid) {
+    throw new Error(validation.firstErrorMessage || 'Please select a Supplier/Payee and complete the required payment details before saving this tax expense.');
+  }
+  return rpc<string>('save_finance_expense', { p_expense_id: expenseId, p_payload: payload });
+};
 
 export const editApprovedFinanceExpense = (
   expenseId: string,
   payload: FinanceExpensePayload,
   bankStatementLineId?: string | null,
   allocationAmount?: number,
-) => rpc<string>('edit_approved_finance_expense_atomic', {
-  p_expense_id: expenseId,
-  p_payload: payload,
-  p_bank_statement_line_id: bankStatementLineId || null,
-  p_allocation_amount: allocationAmount && allocationAmount > 0.01 ? allocationAmount : null,
-});
+) => {
+  const validation = validateExpenseMandatoryTaxLinkage(payload as any);
+  if (!validation.isValid) {
+    throw new Error(validation.firstErrorMessage || 'Please select a Supplier/Payee and complete the required payment details before saving this tax expense.');
+  }
+  return rpc<string>('edit_approved_finance_expense_atomic', {
+    p_expense_id: expenseId,
+    p_payload: payload,
+    p_bank_statement_line_id: bankStatementLineId || null,
+    p_allocation_amount: allocationAmount && allocationAmount > 0.01 ? allocationAmount : null,
+  });
+};
 
 export const approveFinanceExpense = (expenseId: string, approvedBy?: string | null) =>
   rpc<string>('approve_finance_expense', { p_expense_id: expenseId, p_approved_by: approvedBy || null });
